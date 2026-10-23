@@ -426,15 +426,23 @@ ordered point in its wall line. On a stair move a man still on the level
 his unit is leaving follows the trail (`_stair_goal`; a unit spread over
 two stretches puts the junction in the tower first going down); men on the
 walkway keep to walkway and towers; a stair counts as down, not up. "Man
-the wall" (view) sends a unit to the stretch within 60 m nearest the
-nearest enemy (`man_wall_target`); "Come down" to the foot of its nearer
-stair (`wall_inside`). Attackers climb by ladders from outside ("Siege
+the wall" (view): since 2026-10-23 there are no Man the wall / Come down
+buttons: a click or tap on a wall stretch (`BattleSim.wall_stretch_at`, the
+stretch `wall_snap` finds under the point: body, walkway, stair, tower)
+sends each selected unit that may to THAT stretch, a move to its point
+nearest the click facing `ws_dir`, `wall_refusal` flashing why not (the
+tapped stretch lights briefly on touch); a click in a gate's doorway stays
+the gate's, a click or tap on the street or ground is an ordinary move and
+brings men down by a stair. M still sends a unit to the stretch within 60 m
+nearest the nearest enemy (`man_wall_target`), Shift+M to the foot of its
+nearer stair (`wall_inside`) (keyboard only; the `man_wall` counter counts
+every wall click as well). Attackers climb by ladders from outside ("Siege
 equipment and wall towers") and, since the 2026-10-15 stairs fix (it was
 "Attackers cannot use the stairs once inside"), by the inner stairs once
 inside: an attacking foot or missile unit on the ground whose ground
 (gates as they are) reaches a foot of the stretch's stairs (`att_stairs`)
 takes a move onto the wall as defenders do (order rule, so preview and
-peers agree; "Man the wall" too). Inside the walls (its anchor's piece
+peers agree; a wall click too). Inside the walls (its anchor's piece
 with every gate shut holds a stair foot: `att_inside`) it always uses the
 stairs, never out to ladders; outside, ladders on that stretch first, else
 a stair its ground reaches (a broken gate), else an ordinary move. An

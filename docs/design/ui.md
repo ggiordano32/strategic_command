@@ -350,6 +350,18 @@ selecting or ordering anything.
   drag pans when nothing is selected), also keys; wheel zooms. A unit's book
   page is on the card / B key. Gates, engines, equipment and the targeting
   modes (Release, Sabotage...) still take a left click.
+- Walls (2026-10-23): there are no Man the wall / Come down buttons. With
+  men selected that may man a wall (or stand on one), a left click (mouse)
+  or a tap (touch) on a wall stretch (body, walkway, stair or tower:
+  `BattleSim.wall_stretch_at`) sends them onto THAT stretch (the same move
+  as before, to its point nearest the click, facing `ws_dir`; refusals
+  flash their reason). The mouse hover lights the stretch beforehand; a tap
+  lights it for 0.9 s (`Overlay.flash_stretch`). A click in a gate's
+  doorway stays the gate's; a click or tap on the street or ground is an
+  ordinary move and brings men down by a stair. M (nearest stretch to the
+  enemy) and Shift+M (down) stay as keys (Keys panel). A selected unit near
+  a wall shows "Click a wall to man it" / "Tap a wall to man it" in the
+  carry-note line. The `man_wall` counter counts wall clicks too.
 - Two-finger tap deselects all (touch, battle only): both fingers down within
   120 ms, both up within 250 ms of the first touch, each moved under 12 px;
   pinch / pan motion cancels it (`TWO_TAP_*` in `game/battle.gd`).

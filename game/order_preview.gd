@@ -314,7 +314,7 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 			if kc != 0 and BattleSim.EQ_LANES[kc] > 0 and sim.city_walls < BattleSim.EQ_WALLS[kc]:
 				return "These walls are too low for a siege tower: use ladders (or Drop it)"
 			if sim.u_wall[u] > 0:
-				return "Down into the town first (Come down), or along this wall"
+				return "Down into the town first (tap the street), or along this wall"
 			var c0: int = sim.u_cls[u]
 			if c0 == UT.CLS_CAV or c0 == UT.CLS_ART:
 				return "Only foot can climb ladders"

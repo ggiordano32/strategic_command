@@ -4594,6 +4594,12 @@ static func wall_snap(sim, x: int, y: int) -> Vector3i:
 	return Vector3i(p.x, p.y, best)
 
 
+## The wall stretch under (x, y) (wall_snap's stretch: body, walkway, stair
+## or tower), or -1. Read-only: the view's click on a wall uses it.
+static func wall_stretch_at(sim, x: int, y: int) -> int:
+	return wall_snap(sim, x, y).z
+
+
 ## Files of a unit `count` strong on a wall: two ranks (one man: one).
 static func wall_nf(count: int) -> int:
 	return maxi((count + 1) / 2, 1)

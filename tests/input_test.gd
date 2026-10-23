@@ -265,6 +265,15 @@ func _initialize() -> void:
 		_step_hover_touch,
 		_step_hover_mouse,
 		_step_hover_mouse2,
+		# Click / tap a wall stretch to man it (no Man the wall button).
+		_step_wc_click,
+		_step_wc_check_click,
+		_step_wc_tap,
+		_step_wc_check_tap,
+		_step_wc_door,
+		_step_wc_check_door,
+		_step_wc_down,
+		_step_wc_check_down,
 		_step_eq_start,
 		_step_eq_tap_piece,
 		_step_eq_check_piece,
@@ -2418,6 +2427,155 @@ func _step_hover_mouse2() -> void:
 	_mouse_move(_hv_pt(), Vector2(3, 3))
 	battle.UiScale._touch_override = was
 	_check(battle.overlay.hover_w.x >= 0.0, "hover: a mouse (touch flag off) sets it for the preview")
+
+
+# Click / tap on a wall stretch mans THAT stretch (not the nearest); a click in
+# a doorway stays the gate's; a tap on the street brings men down.
+var _wc_near := -1
+var _wc_far := -1
+var _wc_pt := Vector2.ZERO     # world px, the middle of the far stretch's walkway
+var _wc_moves0 := 0
+
+
+func _wc_moves_of(u: int) -> Array:
+	var out: Array = []
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_MOVE and int(o["unit"]) == u:
+			out.append(o)
+	return out
+
+
+func _step_wc_click() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_check(not battle.hud.has_method("set_wall_buttons") and battle.hud.get("man_wall_button") == null,
+		"the Man the wall / Come down buttons are gone from the HUD")
+	_wc_near = BattleSim.man_wall_target(sim, _gd_sel).z
+	_check(_wc_near >= 0, "wall click: the ground unit has a nearest stretch (%d)" % _wc_near)
+	_wc_far = -1
+	var best := 0
+	for sg in sim.ws_x0.size():
+		if sg == _wc_near:
+			continue
+		var m := BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+		var w := Vector2(m.x, m.y) / 1024.0 * Battle.PX_PER_M
+		if BattleSim.wall_stretch_at(sim, m.x, m.y) != sg or battle._gate_doorway(w) >= 0 or battle._pick_unit(w) >= 0:
+			continue
+		var d: int = absi(m.x - sim.u_ax[_gd_sel]) + absi(m.y - sim.u_ay[_gd_sel])
+		if _wc_far < 0 or d < best:   # (the nearest of the others: a fair rival)
+			_wc_far = sg
+			best = d
+			_wc_pt = w
+	_check(_wc_far >= 0, "wall click: another clickable stretch (%d, near %d)" % [_wc_far, _wc_near])
+	battle.camera.zoom = Vector2(1, 1)
+	_focus(int(_wc_pt.x / Battle.PX_PER_M * 1024.0), int(_wc_pt.y / Battle.PX_PER_M * 1024.0))
+	battle._select(_gd_sel)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 0
+	_no_double_tap()
+	var p: Vector2 = battle.get_canvas_transform() * _wc_pt
+	_mouse(p, true)
+	_mouse(p, false)
+	battle.UiScale._touch_override = was
+
+
+func _wc_check_order(what: String) -> void:
+	var sim := battle.sim
+	var mv := _wc_moves_of(_gd_sel)
+	_check(mv.size() == 1, "%s: one move for the selected unit (%d)" % [what, mv.size()])
+	if mv.size() == 1:
+		var mo: Dictionary = mv[0]
+		_check(BattleSim.wall_stretch_at(sim, int(mo["x"]), int(mo["y"])) == _wc_far,
+			"%s: the order lands on the clicked stretch %d, not the nearest %d" % [what, _wc_far, _wc_near])
+		_check(int(mo["facing"]) == sim.ws_dir[_wc_far], "%s: facing the stretch's way" % what)
+	_check(battle.overlay._stretch_flash == _wc_far, "%s: the stretch lights up" % what)
+	_check(battle.selection == [_gd_sel], "%s: the selection is kept" % what)
+
+
+func _step_wc_check_click() -> void:
+	_wc_check_order("click on a stretch")
+	battle.sim.pending_orders.clear()
+	battle.overlay._stretch_flash = -1
+
+
+func _step_wc_tap() -> void:
+	battle._select(_gd_sel)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 1
+	_no_double_tap()
+	var p := _world_to_screen(_wc_pt)
+	_touch(0, p, true)
+	_touch(0, p, false)
+	battle.UiScale._touch_override = was
+
+
+func _step_wc_check_tap() -> void:
+	_wc_check_order("tap on a stretch")
+	battle.sim.pending_orders.clear()
+	battle.overlay._stretch_flash = -1
+
+
+func _step_wc_door() -> void:
+	battle._select(_gd_sel)
+	_wc_moves0 = _pending_moves()
+	var gos0 := _gd_gate_orders().size()
+	_focus(battle.sim.g_x[_gd_gate], battle.sim.g_y[_gd_gate])
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 0
+	_no_double_tap()
+	var p: Vector2 = battle.get_canvas_transform() * _gd_point(_gd_gate, 0, 0)
+	_mouse(p, true)
+	_mouse(p, false)
+	battle.UiScale._touch_override = was
+	_wc_near = gos0   # (reused: the gate orders before the click)
+
+
+func _step_wc_check_door() -> void:
+	_check(_gd_gate_orders().size() == _wc_near + 1, "a click in the doorway is about the gate (%d gate orders)" % _gd_gate_orders().size())
+	_check(_pending_moves() == _wc_moves0, "... and mans no wall")
+	battle.sim.pending_orders.clear()
+
+
+## A tap on the street from the wall top: a plain move, accepted, and the men
+## come down a stair (the sim runs on to check it).
+func _step_wc_down() -> void:
+	var sim := battle.sim
+	battle._select(_gd_wall)
+	_check(sim.u_wall[_gd_wall] > 0, "coming down: the unit stands on a wall")
+	var sg: int = sim.u_wall[_gd_wall] - 1
+	var inside: Vector2i = sim.wall_inside(sg, sim.u_cx[_gd_wall], sim.u_cy[_gd_wall])
+	var w := Vector2(inside.x, inside.y) / 1024.0 * Battle.PX_PER_M
+	_check(BattleSim.wall_stretch_at(sim, inside.x, inside.y) < 0, "coming down: the street point is not wall")
+	_focus(inside.x, inside.y)
+	var was: int = battle.UiScale._touch_override
+	battle.UiScale._touch_override = 1
+	_no_double_tap()
+	var p := _world_to_screen(w)
+	_touch(0, p, true)
+	_touch(0, p, false)
+	battle.UiScale._touch_override = was
+
+
+func _step_wc_check_down() -> void:
+	var sim := battle.sim
+	var mv := _wc_moves_of(_gd_wall)
+	_check(mv.size() == 1 and BattleSim.wall_stretch_at(sim, int(mv[0]["x"]), int(mv[0]["y"])) < 0,
+		"a tap on the street from the wall: one ordinary move (%d)" % mv.size())
+	var gx: int = int(mv[0]["x"])
+	var gy: int = int(mv[0]["y"])
+	var n := 0
+	var d2 := 0
+	while n < 4000:
+		sim.step()
+		n += 1
+		var ex: int = sim.u_cx[_gd_wall] - gx
+		var ey: int = sim.u_cy[_gd_wall] - gy
+		d2 = ex * ex + ey * ey
+		if sim.u_wall[_gd_wall] == 0 and sim.u_stair[_gd_wall] == 0 and d2 < 6 * 6 * 1024 * 1024:
+			break
+	_check(sim.u_wall[_gd_wall] == 0 and d2 < 6 * 6 * 1024 * 1024,
+		"... and the men are down in the street within 6 m of it after %d ticks (%d m off)" % [n, int(sqrt(d2) / 1024.0)])
 
 
 # Siege equipment (part 2b): tap a piece to pick it up, refusals, tap a

@@ -79,6 +79,7 @@ const COL_OCC := Color(1.0, 0.82, 0.30)           # an occupiable building, its 
 const COL_ROUTE := Color(1.0, 0.97, 0.78, 0.95)    # the street route a move will take (dotted)
 const COL_NOWAY := Color(1.0, 0.3, 0.25, 0.95)     # ... none found
 const FLASH_MS := 2500
+const STRETCH_FLASH_MS := 900
 const COL_WALL := Color(1.0, 0.92, 0.45)
 const COL_STAIR := Color(0.45, 1.0, 0.95)
 
@@ -96,6 +97,9 @@ var box_b := Vector2.ZERO
 var _flash_text := ""
 var _flash_at := Vector2.ZERO
 var _flash_until := 0
+## A tapped wall stretch lit for a moment (touch has no hover): -1 or index, until (ms).
+var _stretch_flash := -1
+var _stretch_until := 0
 
 
 # View-only effects (fire and blast): no sim state, no hash. Missiles of the
@@ -428,6 +432,13 @@ func _draw_burning_units(vr: Rect2) -> void:
 			n += 1
 
 
+## Light wall stretch sg for a moment (what a tap on a wall chose).
+func flash_stretch(sg: int) -> void:
+	_stretch_flash = sg
+	_stretch_until = Time.get_ticks_msec() + STRETCH_FLASH_MS
+	queue_redraw()
+
+
 ## Show `text` at world point `at` for a couple of seconds.
 func flash(text: String, at: Vector2) -> void:
 	_flash_text = text
@@ -534,6 +545,8 @@ func _draw() -> void:
 		_draw_wall_hover(hover_w, lw)
 		if not occ_mode and sim.city_on != 0 and orders != null and not selected_units.is_empty():
 			_draw_hover_route(hover_w, lw)
+	if _stretch_flash >= 0 and Time.get_ticks_msec() < _stretch_until and _stretch_flash < sim.ws_x0.size():
+		_draw_stretch(_stretch_flash, lw, 0.9)
 	if preview_on:
 		_draw_preview(lw)
 	if sim.phase == BattleSim.PHASE_DEPLOY and sim.fw_on != 0:

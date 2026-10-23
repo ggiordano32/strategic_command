@@ -26,8 +26,6 @@ signal deploy_pressed
 signal refill_pressed
 signal ammo_pressed
 signal forage_pressed
-signal man_wall_pressed
-signal come_down_pressed
 signal drop_pressed
 signal kill_pressed
 signal release_pressed
@@ -125,8 +123,6 @@ var deploy_button: Button
 var refill_button: Button
 var ammo_button: Button
 var forage_button: Button
-var man_wall_button: Button
-var come_down_button: Button
 var drop_button: Button
 ## "Kill elephant": shown while a beast unit of the player's runs amok.
 var kill_button: Button
@@ -426,14 +422,6 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	forage_button.name = "forage"
 	Kit.tip(forage_button, "Forage", "Missile troops in woods make arrows or javelins, slowly. No moving or shooting meanwhile (J).")
 	forage_button.pressed.connect(func(): forage_pressed.emit())
-	man_wall_button = _button("Man the wall", Vector2(0, BTN_H), "wall_up")
-	Kit.tip(man_wall_button, "Man the wall", "Climb the nearest stretch of wall by its stair, facing the enemy (M).")
-	man_wall_button.pressed.connect(func(): man_wall_pressed.emit())
-	man_wall_button.visible = false
-	come_down_button = _button("Come down", Vector2(0, BTN_H), "wall_down")
-	Kit.tip(come_down_button, "Come down", "Leave the wall by a stair, into the street inside it (Shift+M).")
-	come_down_button.pressed.connect(func(): come_down_pressed.emit())
-	come_down_button.visible = false
 	drop_button = _button("Drop", Vector2(0, BTN_H), "drop")
 	Kit.tip(drop_button, "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.")
 	drop_button.pressed.connect(func(): drop_pressed.emit())
@@ -466,7 +454,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
 	for b in [run_button, halt_button, waypoints_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
-			forage_button, man_wall_button, come_down_button, drop_button, release_button,
+			forage_button, drop_button, release_button,
 			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
 		actions.add_child(b)
 	actions.visible = false
@@ -1106,8 +1094,8 @@ func set_char_buttons(acts: Dictionary, armed: String) -> void:
 		b.text = str(act).capitalize() + (": tap" if armed == act else "")
 
 
-## Walls: show "Man the wall" / "Come down" (battle.gd decides when);
-## siege equipment: "Drop" while a selected unit carries a piece.
+## Siege equipment: "Drop" while a selected unit carries a piece (battle.gd
+## decides when; men go up and down walls by a click / tap, M / Shift+M).
 ## The selected unit's carry pattern line ("" hides it).
 func set_carry_note(text: String) -> void:
 	if carry_note.text != text:
@@ -1115,9 +1103,7 @@ func set_carry_note(text: String) -> void:
 	carry_note.visible = text != ""
 
 
-func set_wall_buttons(man: bool, down: bool, drop: bool = false) -> void:
-	man_wall_button.visible = man
-	come_down_button.visible = down
+func set_drop_button(drop: bool) -> void:
 	drop_button.visible = drop
 
 

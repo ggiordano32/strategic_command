@@ -402,8 +402,6 @@ func _ready() -> void:
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.ammo_pressed.connect(_toggle_ammo)
 	hud.forage_pressed.connect(_toggle_forage)
-	hud.man_wall_pressed.connect(_man_wall)
-	hud.come_down_pressed.connect(_come_down)
 	hud.drop_pressed.connect(_drop)
 	hud.kill_pressed.connect(_kill_beasts)
 	hud.release_pressed.connect(_toggle_release)
@@ -2239,14 +2237,13 @@ func _toggle_forage() -> void:
 	_refresh_actions()
 
 
-## Walls: "Man the wall" shows while a selected unit may go up onto a
-## stretch within reach (BattleSim.man_wall_target), "Come down" while one
-## stands on a wall; "Drop" while one carries siege equipment or works
-## engines it can leave (not a tower's).
+## "Drop" shows while a selected unit carries siege equipment or works
+## engines it can leave (not a tower's); the carry line shows what it
+## carries, or (a defender near a wall) the hint that a click / tap on a
+## wall stretch mans it.
 func _refresh_wall_buttons() -> void:
-	var man := false
-	var down := false
 	var drop := false
+	var near_wall := false
 	for u in selection:
 		if sim.u_state[u] == BattleSim.U_READY and (_works_engines(u) or BattleSim.carrying(sim, u) != 0):
 			drop = true
@@ -2256,12 +2253,15 @@ func _refresh_wall_buttons() -> void:
 				continue
 			if BattleSim.carrying(sim, u) != 0:
 				drop = true
-			if sim.u_wall[u] > 0 and sim.u_stair[u] == 0:
-				down = true
 			elif sim.u_wall[u] == 0 and sim.u_stair[u] != 1 and BattleSim.man_wall_target(sim, u).z >= 0:
-				man = true
-	hud.set_wall_buttons(man, down, drop)
-	hud.set_carry_note(Hud.carry_note_text(sim, selected) if selected >= 0 and sim.u_state[selected] == BattleSim.U_READY else "")
+				near_wall = true
+	hud.set_drop_button(drop)
+	var note := ""
+	if selected >= 0 and sim.u_state[selected] == BattleSim.U_READY:
+		note = Hud.carry_note_text(sim, selected)
+		if note == "" and near_wall:
+			note = "Tap a wall to man it" if UiScale.is_touch() else "Click a wall to man it"
+	hud.set_carry_note(note)
 
 
 ## "Drop": each selected unit carrying siege equipment puts it down where
@@ -2590,9 +2590,10 @@ func _tap_equip(q: int, w: Vector2) -> void:
 	overlay.flash("Taking " + what, w)
 
 
-## "Man the wall": each selected unit that may goes up onto the stretch
-## within 60 m nearest the enemy, at its point nearest the unit (an ordinary
-## move order there: the sim takes it up the stair).
+## M: each selected unit that may goes up onto the stretch within 60 m
+## nearest the enemy, at its point nearest the unit (an ordinary move order
+## there: the sim takes it up the stair). (The mouse / touch way is
+## _wall_click: the stretch you click.)
 func _man_wall() -> void:
 	var sent := 0
 	var why := ""
@@ -2615,7 +2616,7 @@ func _man_wall() -> void:
 			Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M)
 
 
-## "Come down": each selected unit on a wall goes down its nearer stair to
+## Shift+M: each selected unit on a wall goes down its nearer stair to
 ## the street at its foot (BattleSim.wall_inside), facing out, in its
 ## normal block.
 func _come_down() -> void:
@@ -2628,6 +2629,50 @@ func _come_down() -> void:
 		_queue(BattleSim.make_move_order(0, u, p.x, p.y, sim.ws_dir[sg],
 			BattleSim.files_to_width(files, sim.u_type[u]), orders.value(u, "run")))
 	_count("come_down")
+
+
+## True if a click / tap at world point w (px) is about a wall with men to
+## put on it: the point is on a stretch (BattleSim.wall_stretch_at) and a
+## selected unit can man walls or already stands on one.
+func _wall_click_at(w: Vector2) -> int:
+	if sim.city_on == 0 or sim.ws_x0.size() == 0 or selection.is_empty():
+		return -1
+	var any := false
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and (BattleSim.can_man_walls(sim, u) or sim.u_wall[u] > 0):
+			any = true
+	if not any:
+		return -1
+	var p := w / PX_PER_M * M
+	return BattleSim.wall_stretch_at(sim, int(p.x), int(p.y))
+
+
+## A click / tap on wall stretch sg at world point w (px): each selected
+## unit goes onto THAT stretch (a move to its point nearest the click, facing
+## the stretch's way, in its own files and run; the sim takes it up a stair, or
+## along the wall when it already stands on one), refused with the reason
+## wall_refusal gives. The stretch flashes so a tap shows what it chose.
+func _wall_click(sg: int, w: Vector2, double: bool) -> void:
+	var p := w / PX_PER_M * M
+	var ws := BattleSim.wall_snap(sim, int(p.x), int(p.y))
+	var sent := 0
+	var why := ""
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY:
+			continue
+		var r: String = orders.wall_refusal(u, ws.x, ws.y)
+		if r != "":
+			why = r
+			continue
+		_queue(BattleSim.make_move_order(0, u, ws.x, ws.y, sim.ws_dir[sg],
+			BattleSim.files_to_width(orders.value(u, "files"), sim.u_type[u]),
+			1 if double else orders.value(u, "run")))
+		sent += 1
+	_count("man_wall")
+	overlay.flash_stretch(sg)
+	if sent == 0:
+		_count("wall_refused")
+		overlay.flash(why if why != "" else "These men cannot go onto the wall", w)
 
 
 func _withdraw() -> void:
@@ -2738,6 +2783,11 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 		_count("release_cancelled")
 		_refresh_actions()
 		return
+	if u < 0 and door < 0 and not _wp_append():
+		var wsg := _wall_click_at(w)
+		if wsg >= 0:
+			_wall_click(wsg, w, double)
+			return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
 		var carriers := 0
@@ -3226,6 +3276,9 @@ func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 			_toggle_in_selection(u)
 		else:
 			_select(u)
+		return
+	if _wall_click_at(w) >= 0 and not _shift_held() and not add_mode:
+		_tap(pos, double, long_press)  # a click on a wall mans it
 		return
 	if not selection.is_empty() and (_gate_at(w) >= 0 or _equip_at(w) >= 0 or (sim.n_eg > 0 and _engines_at(w) >= 0)):
 		_tap(pos, double, long_press)
