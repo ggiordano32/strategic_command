@@ -3026,11 +3026,30 @@ func _step_cr_check_long() -> void:
 	_check(_pending_of(BattleSim.ORDER_MOVE, _cr_a) == 0 and _pending_of(BattleSim.ORDER_MOVE, _cr_b) == 0, "marker: ... and orders nothing")
 
 
+## A point (world px) on unit u's footprint away from its marker: half way
+## from its centre to the back of its box, so outside the loose marker radius
+## (the marker floats 2.2 radii above the centre, the loose radius is at most
+## 2.3) yet inside the tight pick (the box itself).
+func _footprint_point(u: int) -> Vector2:
+	var sim := battle.sim
+	var y: int = sim.u_cy[u] + (sim.u_maxy[u] - sim.u_cy[u]) / 2
+	return Vector2(sim.u_cx[u], y) / 1024.0 * Battle.PX_PER_M
+
+
+## The footprint point's preconditions: on u's own box, off every loose marker.
+func _check_footprint_point(u: int, w: Vector2, what: String) -> void:
+	_check(battle._pick_unit(w, true) == u, "%s: the point is on the unit's footprint" % what)
+	_check(battle._marker_unit(w, battle._marker_hit_r()) < 0, "%s: the point is away from every marker (loose radius)" % what)
+
+
 func _step_cr_dbl() -> void:
 	# A double tap on a friend's body (away from its marker) selects it.
-	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
+	# battle._tap takes viewport coordinates (the canvas transform alone; the
+	# window's stretch is already undone in the events it gets).
 	_focus(sim_cx(_cr_a), sim_cy(_cr_a))
-	battle._tap(_unit_screen(_cr_a) + Vector2(0, 2.0 * r * battle.camera.zoom.x) if not battle.UiScale.is_touch() else _unit_screen(_cr_a) + Vector2(0, 4.0 * r * battle.camera.zoom.x), true)
+	var w := _footprint_point(_cr_a)
+	_check_footprint_point(_cr_a, w, "double tap")
+	battle._tap(battle.get_canvas_transform() * w, true)
 
 
 func _step_cr_check_dbl() -> void:
@@ -3039,13 +3058,12 @@ func _step_cr_check_dbl() -> void:
 
 
 func _step_cr_foot() -> void:
-	# Selection [a]; a plain tap on b's body (centre, below its marker) is a move.
+	# Selection [a]; a plain tap on b's body (away from its marker) is a move.
 	_focus(sim_cx(_cr_b), sim_cy(_cr_b))
 	_no_double_tap()
-	var p := _unit_screen(_cr_b)
-	if battle.UiScale.is_touch():
-		var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-		p += Vector2(0, 2.5 * r * battle.camera.zoom.x)
+	var w := _footprint_point(_cr_b)
+	_check_footprint_point(_cr_b, w, "footprint tap")
+	var p := _world_to_screen(w)  # window coordinates: a real touch event
 	_touch(0, p, true)
 	_touch(0, p, false)
 
