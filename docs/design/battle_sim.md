@@ -2147,3 +2147,43 @@ the kind's `obj`, not the row's.
 - **Lists.** `LINE_ORDER` has `grenadier` after heavy, `dragoon` after pistol and `mortar` after the field guns;
   `WEST_LINES` (the custom picker) and the unit book's building table likewise; the West `CHAINS` texts name the new units
   where they are built. The unit book reads the rows by itself.
+
+## Roles and abilities (plan, agreed 2026-10-23)
+
+The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus
+melee ("skirmishers vs linemen"), so the asymmetry of the sides can grow without a lesson per unit; abilities such
+as grenades should be automatic in sensible situations and triggerable by hand; the battle UI is crowded and will be
+reworked around that. Agreed as proposed, in three steps.
+
+**Roles.** A `role` key on every unit row, one of: `line` (musketeers and veterans, pikemen, Rome's swords, spears,
+pikes: hold formation, volley or at will, partial cover with some men ducking, no explosives, the blade when
+engaged), `skirmish` (buccaneers, coureurs, native bowmen, canoe raiders, javelinmen, slingers: loose order, every
+man to cover, occupy houses, ambush, fall back when charged with Skirmish on, short abilities), `missile` (archers,
+gastraphetes: formed volleys at range, no cover craft, helpless in melee), `shock` (rodeleros, cutlass men, holcan,
+grenadiers, boarding grenadiers, heavy swords, war dogs: the charge, a breach, a door, a gate; poor at holding),
+`horse_shock` (lancers, shock cavalry), `horse_skirmish` (pistoleers, dragoons, light horse, camel archers: ride
+in, fire, retire; charge only when ordered), `guns_field` (bolt throwers, scorpions, falconets, culverins: at men),
+`guns_siege` (stone throwers, heavy guns, mortars: at walls and buildings), `command` (generals, heroes, agents),
+`beast` (elephants, camel riders). The book keeps "beats" / "loses to"; each role has a two-line "plays as" on a
+Roles page of the Key and in the book, a badge glyph and a colour band on the unit card and the selection bar; the
+selection filters become Line / Skirmish / Shock / Horse / Guns. **Step 1 is data and view only**: the key on every
+row (both packs; a test asserts every row has one), the badges, filters, book grouping, the Roles page; no sim
+change, no hash moves.
+
+**Behaviours (step 2, sim).** `skirmish`: loose order by default (wider spacing) and cover seeking (each man drifts
+to the nearest cover point within a few metres when halted in the Cover stance); `line` keeps today's partial cover;
+**pistols at contact** (an ability on buccaneers, coureurs, pistoleers, dragoons: a point-blank shot in each of a
+man's first two melee rounds, then the blade; a man with both pistols spent steps back a rank and reloads over
+30 s while a loaded man steps forward, on the shooter-pointer rotation); **grenades as an ability** (grenadiers,
+boarding grenadiers, later buccaneers: thrown automatically at a formed block, a held door or a gate when the unit
+closes to range; the plain missile path of batch 1 becomes the Auto trigger); **caracole** for `horse_skirmish`
+(ride to pistol range, fire, retire, on the bounds logic); `guns_siege` target walls and buildings when ordered to
+batter. All deterministic, hashed, snapshotted; the AI learns each role once (the AI follow-up of destruction and
+the roles' triggers are one piece of work).
+
+**Abilities and the HUD (step 3).** Every ability has three states: Auto (the default, with its trigger), Hold
+(saved), Use now (arms a target pick, as Occupy lights the buildings). Halt, Run and Withdraw stay fixed; the rest of
+the bottom-right row becomes ability chips the selected unit's role has: `line` Fire at will, Stance, Formation;
+`skirmish` Skirmish, Occupy, Grenades, Ambush; `shock` Charge, Grenades; `horse_skirmish` Caracole, Charge;
+`guns_*` Target (men / walls / buildings), Ammo. A chip cycles its three states on tap; the unit card shows the role
+badge and the chips' states; the Key's Roles page explains each role in two lines.
