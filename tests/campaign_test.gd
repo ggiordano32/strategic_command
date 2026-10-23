@@ -145,6 +145,7 @@ func _init() -> void:
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
+	_rome_fleets()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -3754,13 +3755,13 @@ func _ai_skilled() -> void:
 	var g := CState.new_campaign("test", 4242, [])
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
-	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
+	# (2026-10-23, Rome fleets R2: were 519bcec8 / 2959563086 and, Easy, 9f1555b0 / 3720338208;) (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
 	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
 	# attacks at 55 % predicted instead of 130 % of its defence estimate: were
 	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "519bcec8" and int(g["rng"]) == 2959563086,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "90d0b2cd" and int(g["rng"]) == 2030669350,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3768,7 +3769,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "9f1555b0" and int(ge["rng"]) == 3720338208,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "75f80cd7" and int(ge["rng"]) == 2506378597,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4357,6 +4358,133 @@ func _west_roads() -> void:
 ## part; a fleet at war with an end owner lying on a lane cell raids it (the lane pays 60 % less, the raider takes
 ## half the cut); a blockaded or besieged port's half is not paid; the station orders fraid / fblockade; the AI
 ## raids when its navy is the weaker; the flota follows its lane.
+## (R2, Rome's navy) A new Rome campaign has fleets on the Caribbean machinery: the start fleets sit in docks of
+## their owners, a shipyard builds a trireme, a fleet sails a lane's cells, embarks an army and lands it, and a
+## sea battle between Rome and Carthage builds from cseabattle with the galley rows and the Rome crew kits.
+func _rome_fleets() -> void:
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var car := _f("carthage")
+	var st := CState.new_campaign("rf", 77, [rome])
+	_check(CData.ships_on() and CFleet.on(st) and (st["fleets"] as Array).size() == 8 and CData.CHAINS.size() == 8,
+		"Rome fleets: a new campaign has ships, 8 start fleets, the Shipyard chain (%d fleets)" % (st["fleets"] as Array).size())
+	var in_dock := true
+	for fl in st["fleets"]:
+		var r := -1
+		for rr in CData.region_count():
+			if CFleet.dock(rr) == CFleet.cell(fl):
+				r = rr
+		in_dock = in_dock and r >= 0 and CState.owner(st, r) == int(fl["f"])
+	_check(in_dock, "Rome fleets: every start fleet lies in the dock of a region its faction owns")
+	var lat := _r("latium")
+	_check(CState.building(st, lat, CData.SHIPYARD) == 2 and CState.building(st, _r("zeugitana"), CData.SHIPYARD) == 2
+		and CState.building(st, _r("macedonia"), CData.SHIPYARD) == 2 and CState.building(st, _r("epirus"), CData.SHIPYARD) == 1,
+		"Rome fleets: Shipyard 2 at Rome, Carthage and Macedon, 1 at Epirus")
+	var cf := CFleet.fleets_of(st, car)
+	var kinds := {}
+	for sh in cf[0]["ships"]:
+		kinds[str(sh["t"])] = int(kinds.get(str(sh["t"]), 0)) + 1
+	_check(cf.size() == 1 and int(kinds.get("quinquereme_p", 0)) == 2 and int(kinds.get("trireme", 0)) == 3, "Rome fleets: Carthage 2 Punic quinqueremes and 3 triremes")
+	_check(CData.ship_row("quinquereme")["factions"] == ["rome"] and not (CData.ship_row("quinquereme_p")["factions"] as Array).has("rome"),
+		"Rome fleets: the corvus quinquereme is Rome's, the Punic one everybody else's")
+	# A shipyard builds a trireme (launched at the end of the turn); an unknown West ship is refused.
+	_check(CRules.apply_order(CState.copy(st), rome, {"t": "ship", "r": lat, "ship": "frigate"}) != "", "Rome fleets: a West ship is refused")
+	var n0 := 0
+	for fl in CFleet.fleets_of(st, rome):
+		n0 += (fl["ships"] as Array).size()
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "ship", "r": lat, "ship": "trireme"}])])
+	var built := false
+	for e in s1["events"]:
+		if str(e["k"]) == "ship_built" and int(e["f"]) == rome:
+			built = true
+	var n1 := 0
+	for fl in CFleet.fleets_of(s1, rome):
+		n1 += (fl["ships"] as Array).size()
+	_check(built and n1 == n0 + 1, "Rome fleets: a trireme launched at Rome (%d -> %d ships)" % [n0, n1])
+	var js := CState.from_json(CState.to_json(s1))
+	_check(not js.is_empty() and CState.hash_text(js) == CState.hash_text(s1), "Rome fleets: the state round-trips JSON (%s)" % CState.hash_text(s1))
+	# A fleet sails along a lane: Latium - Sardinia, to the lane's middle cell.
+	var lane := CLanes.lane_between(lat, _r("sardinia"))
+	var cells := CLanes.sea_cells(lane)
+	var rf: Dictionary = CFleet.fleets_of(st, rome)[0]
+	var tgt: int = cells[cells.size() / 2]
+	var s2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "fmove", "fleet": int(rf["id"]), "x": CGrid.cx(tgt), "y": CGrid.cy(tgt), "persist": 1}])])
+	var moved := CFleet.cell(CFleet.fleet(s2, int(rf["id"])))
+	_check(lane >= 0 and moved != CFleet.cell(rf) and CFleet.is_sea(moved), "Rome fleets: a fleet sails out along the Latium - Sardinia lane (cell %d -> %d)" % [CFleet.cell(rf), moved])
+	# A fleet raiding the lane is a raid (clanes is pack-agnostic).
+	var sr := CState.copy(st)
+	var raider := {"id": 9601, "f": car, "x": CGrid.cx(tgt), "y": CGrid.cy(tgt), "ships": [{"t": "trireme", "h": 100, "c": 100}], "carry": [], "moved": 0}
+	(sr["fleets"] as Array).append(raider)
+	_check(not CState.at_war(sr, rome, car) and not CLanes.raiders(sr).has(lane), "Rome fleets: a Punic fleet at peace on a Rome lane does not raid it")
+	CState.set_dip(sr, rome, car, CState.WAR)
+	_check(CLanes.raiders(sr).has(lane), "Rome fleets: a Punic fleet at war with Rome on the Latium - Sardinia lane raids it")
+	# An army embarks at Rome and lands on Corsica.
+	var a: Dictionary = CState.armies_of(st, rome)[0]
+	a["units"] = (a["units"] as Array).slice(0, 3)   # (the Roman fleet carries 3 companies)
+	CState.place(a, CGrid.site(lat))
+	var cors := _r("corsica")
+	var dest := CFleet.beach(cors)
+	var orders: Array = [{"t": "embark", "army": int(a["id"]), "fleet": int(rf["id"])},
+		{"t": "fmove", "fleet": int(rf["id"]), "x": CGrid.cx(dest), "y": CGrid.cy(dest), "persist": 1}]
+	var pv := CTurn.preview(st, rome, orders)
+	_check((pv["errors"] as Array).is_empty(), "Rome fleets: preview of embark and a voyage to Corsica is valid %s" % str(pv["errors"]))
+	var g := CTurn.resolve_turn(st, [CTurn.submission(st, rome, orders)])
+	var aid := int(a["id"])
+	var aboard := not CState.carried_army(g, aid).is_empty()
+	var landed := false
+	for t in 8:
+		var ar := CState.army(g, aid)
+		if not ar.is_empty() and int(CData.REGIONS[int(ar["r"])]["land"]) == 4:
+			landed = true
+			break
+		if ar.is_empty() and not aboard and CState.carried_army(g, aid).is_empty():
+			break
+		g = CTurn.resolve_turn(g, [CTurn.submission(g, rome, [])])
+	_check(landed, "Rome fleets: an army embarked at Rome and landed on Corsica (aboard %s, landed %s)" % [aboard, landed])
+	# A sea battle: a Roman fleet (quinquereme with the corvus) meets a Punic one.
+	var open := -1
+	for c in CGrid.count():
+		if CFleet.is_sea(c) and CFleet.coast_dist(c) >= 3:
+			var ok := true
+			for dx in range(-8, 9):
+				var j := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c))
+				if j < 0 or not CFleet.is_sea(j):
+					ok = false
+			if ok:
+				open = c
+				break
+	var sb := CState.copy(st)
+	CState.set_dip(sb, rome, car, CState.WAR)
+	sb["fleets"] = [
+		{"id": 900, "f": rome, "x": CGrid.cx(open) + 5, "y": CGrid.cy(open), "ships": [{"t": "quinquereme", "h": 100, "c": 100}, {"t": "trireme", "h": 90, "c": 95}, {"t": "corbita", "h": 100, "c": 100}], "carry": [], "moved": 0},
+		{"id": 901, "f": car, "x": CGrid.cx(open) - 5, "y": CGrid.cy(open), "ships": [{"t": "quinquereme_p", "h": 100, "c": 100}, {"t": "trireme", "h": 100, "c": 100}], "carry": [], "moved": 0}]
+	var s3 := CTurn.resolve_turn(sb, [CTurn.submission(sb, rome, [{"t": "fmove", "fleet": 900, "x": CGrid.cx(open) - 5, "y": CGrid.cy(open), "tgt": 901}])])
+	var pend := CTurn.pending_for(s3, rome)
+	_check(not pend.is_empty() and int(pend[0].get("sea", 0)) == 1, "Rome fleets: a voyage into a Punic fleet leaves a pending sea battle")
+	if not pend.is_empty():
+		var CSB := load("res://campaign/cseabattle.gd")
+		var bt: Dictionary = CBattle.build(s3, pend[0], rome)
+		var scn: Dictionary = bt["scenario"]
+		var units: Array = scn["units"]
+		var keys := ""
+		for u in units:
+			keys += "%s:%s " % [str(u["t"]), str(u["ck"])]
+		_check(units.size() == 5 and str(units[0]["t"]) == "quinquereme" and str(units[0]["ck"]) == "rome" and str(units[3]["t"]) == "quinquereme_p"
+			and str(units[3]["ck"]) == "carthage" and int(units[0]["q"]) == 92 and int(units[3]["q"]) == 112 and int(scn["wind_deg"]) >= 285 and int(scn["wind_deg"]) <= 345,
+			"Rome fleets: the sea battle builds with the galley rows, the crew kits and a north-westerly (%s)" % keys)
+		_check(str(CBattle.build(s3, pend[0], rome)) == str(bt), "Rome fleets: the same sea scenario twice")
+		var SS := load("res://sim/sea_sim.gd")
+		scn["ai_sides"] = [1, 1]
+		var sim = SS.new()
+		sim.setup(scn, int(bt["seed"]))
+		while sim.ended == 0 and sim.tick < 9200:
+			sim.step()
+		var oc: Dictionary = CSB.outcome_from_result(bt, sim.result(), "fought")
+		var ap := CTurn.apply_battle(s3, int(pend[0]["id"]), oc)
+		_check(sim.ended != 0 and not ap.is_empty(), "Rome fleets: the galley battle is decided (%d s) and written back" % (sim.tick / 10))
+	CData.use_pack("rome")
+
+
 func _sea_lanes() -> void:
 	CData.use_pack("west")
 	var eng := _f("england")
@@ -4904,6 +5032,8 @@ func _sight_coast(pack: String, f: int) -> void:
 			if q == r or CState.owner(one, q) == f or _near(r, q):
 				continue
 			for c in Sight._halo(q, 2):
+				if cs[1] and h3.has(c):
+					continue  # (a port's own 3-cell sea may reach another region's coast: Rome's Latium, R2)
 				if CGrid.cheb(c, CGrid.site(r)) > 8:
 					if vis[c] == 1:
 						lit += 1

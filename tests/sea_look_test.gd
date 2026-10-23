@@ -62,6 +62,17 @@ func _initialize() -> void:
 		for t in lk.trees:
 			if lk.sdf_at(Vector2(t[0], t[1])) > 0.0:
 				_check(false, "tree in the sea")
+	# (R2) The Mediterranean (the Rome pack, TROPIC 0): no palms, the same fields and trees twice.
+	var med := _look(Checks.scenario("coast"), 7)
+	var ml: SeaLook = med[1]
+	var palms := 0
+	for t in ml.trees:
+		var nm: String = SeaLook.Atlas.NAMES[int(t[2])]
+		if nm.begins_with("tree_palm"):
+			palms += 1
+	_check(not ml.tropic and ml.shore_ok() and not ml.trees.is_empty() and palms == 0,
+		"Mediterranean (Rome pack): not tropic, %d trees, no palms, the shore inside the sim's land" % ml.trees.size())
+	_check((ml.water_mat.get_shader_parameter("c_deep") as Vector3).z < 0.45, "Mediterranean: the deep water is the deeper blue")
 	# Graphics Low (fewer trees, the same fields).
 	var lowr := _low_look()
 	_check(lowr, "Graphics Low: the same coast, no more than %d trees" % SeaLook.TREE_CAP_LOW)
@@ -77,6 +88,7 @@ func _initialize() -> void:
 	scn["land"] = {"kind": 2, "dirs": 6, "mseed": 69729}
 	var rr := _look(scn, 11, cell, rh)
 	var hl: SeaLook = rr[1]
+	_check(hl.tropic, "Havana (West pack): tropic, palms and the Caribbean palette")
 	_check(hl.shore_ok(), "Havana: the drawn shore is inside the sim's land")
 	_check(hl.forts.size() == 2, "Havana: its two harbour forts (%d)" % hl.forts.size())
 	var f_ok := true

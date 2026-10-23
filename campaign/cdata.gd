@@ -129,14 +129,14 @@ const BASE_CHAINS: Array[Dictionary] = [
 ## The Shipyard (packs with ships only; ports only): builds and repairs
 ## ships, level = the ships' yard level (campaign/data/<pack>_ships.gd).
 const SHIPYARD_CHAIN := {"key": "shipyard", "name": "Shipyard", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
-	"desc": "Ships of yard level = level (sloops and brigantines 1, frigates 2, galleons and ships of the line 3); faster repairs in port"}
+	"desc": "Ships of yard level = level (the smaller hulls 1, the big warships 2 and 3); faster repairs in port"}
 const SHIPYARD := 7
-static var CHAINS: Array[Dictionary] = BASE_CHAINS
+static var CHAINS: Array[Dictionary] = _chains_of(true)
 ## The active pack's ships script (campaign/data/<pack>_ships.gd: ROWS, the
 ## wind, the starting fleets and yards), null without ships.
-static var SHIPS: GDScript = null
+static var SHIPS: GDScript = _ROME.SHIPS
 static var _ship_idx := {}
-static var _ship_c := {}  # the SHIPS script's constants (read once a pack)
+static var _ship_c: Dictionary = _consts_of(SHIPS)  # the SHIPS script's constants (read once a pack)
 const FARM := E.FARM
 const MARKET := E.MARKET
 const BARRACKS := E.BARRACKS
@@ -381,6 +381,17 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	_adj = []
 	for path in _DERIVED:
 		(load(path) as GDScript).call("pack_reset")
+
+
+static func _consts_of(sc: GDScript) -> Dictionary:
+	return sc.get_script_constant_map() if sc != null else {}
+
+
+static func _chains_of(ships: bool) -> Array[Dictionary]:
+	var ch: Array[Dictionary] = BASE_CHAINS.duplicate()
+	if ships:
+		ch.append(SHIPYARD_CHAIN)
+	return ch
 
 
 ## The active pack has ships (fleets on the sea; no sea lanes for armies).

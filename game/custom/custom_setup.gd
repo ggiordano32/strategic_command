@@ -89,6 +89,8 @@ static func set_pack(st: Dictionary, pack: String) -> void:
 	var army: Array = WEST_ARMY if pack == "west" else (default_setup(0)["sides"][0]["armies"][0]["units"] as Array)
 	for s in 2:
 		st["sides"][s]["armies"] = [{"ctrl": "p1" if s == 0 else "ai", "units": army.duplicate(true)}]
+	if st.get("sea") is Dictionary:
+		st["sea"] = sea_default(pack)  # (R2: the ships on offer follow the setting)
 
 
 ## The picker's lines for pack `pack` (Rome: the base lines with the light
@@ -487,6 +489,8 @@ static func summary(st: Dictionary) -> Dictionary:
 # is Player 1's, side 1 the battle AI's (solo only). Built for sim/sea_sim.gd.
 
 const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe", "fire_ship"]
+## (R2, Rome's navy) Rome's setting: the oared galleys and the merchantman.
+const SEA_SHIPS_ROME: Array[String] = ["lembos", "trireme", "quinquereme", "quinquereme_p", "corbita"]
 const SEA_MAX := 8
 const SEA_WATER_NAMES := ["Open sea", "An island", "A coast to the north"]
 const SEA_START_NAMES := {"ns": "Fleets meet across the wind", "gauge0": "Your fleet upwind (the weather gauge)",
@@ -497,7 +501,16 @@ static func sea_on(st: Dictionary) -> bool:
 	return st.get("sea") is Dictionary and int(st["sea"].get("on", 0)) != 0
 
 
-static func sea_default() -> Dictionary:
+## The ships on offer in setting `pack` (the West's list unchanged).
+static func sea_ships(pack: String) -> Array[String]:
+	return SEA_SHIPS_ROME if pack == "rome" else SEA_SHIPS
+
+
+static func sea_default(pack: String = "west") -> Dictionary:
+	if pack == "rome":
+		# The Mediterranean: a north-westerly (the pack's WIND_FROM_DEG), triremes and a quinquereme a side.
+		return {"on": 1, "ships": [["trireme", "trireme", "trireme", "quinquereme"], ["trireme", "trireme", "trireme", "quinquereme_p"]],
+			"wind": 315, "str": 55, "water": 0, "start": "ns"}
 	return {"on": 1, "ships": [["frigate", "sloop"], ["frigate", "brigantine"]], "wind": 90, "str": 70, "water": 0,
 		"start": "ns"}
 

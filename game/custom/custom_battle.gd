@@ -145,17 +145,17 @@ func _rebuild() -> void:
 		_box.add_child(_lobby_view())
 	_info = Kit.label("", Kit.FONT, Kit.COL_DIM, true)
 	_box.add_child(_info)
-	if CS.pack_of(setup) == "west" and session == null:
+	if session == null:
 		# (N3a) A sea battle instead of a land battle (solo).
 		var sb := Kit.button("Sea battle: " + ("on" if CS.sea_on(setup) else "off"), func():
 			if CS.sea_on(setup):
 				setup.erase("sea")
 			else:
-				setup["sea"] = CS.sea_default()
+				setup["sea"] = CS.sea_default(CS.pack_of(setup))
 			_changed(), 0, 14)
 		sb.name = "custom_sea"
 		sb.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		sb.tooltip_text = "Ships in real time with the wind (the West setting)"
+		sb.tooltip_text = "Ships in real time: sail and wind in the West, oars and rams in Rome's Mediterranean"
 		_box.add_child(sb)
 	if CS.sea_on(setup):
 		_box.add_child(_sea_view())
@@ -626,7 +626,7 @@ func _sea_view() -> Control:
 			have.add_child(b)
 		col.add_child(have)
 		var add := Kit.flow(4)
-		for key in CS.SEA_SHIPS:
+		for key in CS.sea_ships(CS.pack_of(setup)):
 			var k2 := str(key)
 			var ab := Kit.button("+ " + SeaSim.ST.name_of(SeaSim.ST.index_of(k2)), func():
 				if list.size() < CS.SEA_MAX:

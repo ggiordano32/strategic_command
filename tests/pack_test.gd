@@ -24,10 +24,10 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
-const ROME_20 := "91b91238"  # format 8 (the AI's odds as win chances, docs/AI.md 12.1, 2026-10-22: was 244711de and 6fd1aac2 as format 7; the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
+const ROME_20 := "a2def14b"  # format 8 (Rome fleets, R2, 2026-10-23: was 91b91238; the AI's odds as win chances, docs/AI.md 12.1, 2026-10-22: was 244711de and 6fd1aac2 as format 7; the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
 ## The same play without the fog keys (CState.as_format 7) = HEAD 1c04fbe
 ## before the pack switch existed: the fog changes no rule.
-const ROME_20_V7 := "4a93a2f1"  # (6fd1aac2 until the AI's odds as win chances, 2026-10-22; 57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
+const ROME_20_V7 := "a0016f69"  # (4a93a2f1 until Rome fleets, R2, 2026-10-23; 6fd1aac2 until the AI's odds as win chances, 2026-10-22; 57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
 
 var fails := 0
 
@@ -187,8 +187,9 @@ func _west() -> void:
 func _fleets() -> void:
 	CData.use_pack("rome")
 	var rs := CState.new_campaign("r", 3, [])
-	_check(not CData.ships_on() and CData.CHAINS.size() == 7 and not rs.has("fleets") and not rs.has("next_fleet"),
-		"Rome: no ships, seven building chains, no fleet keys")
+	_check(CData.ships_on() and CData.CHAINS.size() == 8 and rs.has("fleets") and rs.has("next_fleet") and (rs["fleets"] as Array).size() == 8
+		and CGrid.links(CGrid.port(CData.region_index("latium"))).size() > 0,
+		"Rome (R2): ships on, eight building chains, eight start fleets, the sea lanes still link armies")
 	CData.use_pack("west")
 	var eng := CData.faction_index("england")
 	var st := CState.new_campaign("w", 11, [eng], {}, [], "west")
@@ -321,8 +322,9 @@ func _sea() -> void:
 	CData.use_pack("rome")
 	var rs := CState.new_campaign("r", 3, [])
 	CSea.update_blockades(rs)
-	_check(not CSea.on(rs) and not rs.has("marques") and CSea.marque_check(rs, 0, 1) != "" and not CSea.afloat(rs, 0),
-		"Rome: no blockades, flota or letters (N2 off)")
+	_check(not rs.has("marques") and CSea.marque_check(rs, 0, 1) != "" and not CSea.afloat(rs, 0)
+		and (CData.ship_const("FLOTA_PARTS", []) as Array).is_empty() and not CStorm.on(rs) and not CCaptain.pack_on(),
+		"Rome (R2): fleets and blockades on, no flota, letters, hurricanes or captains")
 	CData.use_pack("west")
 	var eng := CData.faction_index("england")
 	var ns := CData.faction_index("new_spain")

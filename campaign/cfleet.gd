@@ -403,6 +403,22 @@ static func carried_units(fl: Dictionary) -> int:
 	return n
 
 
+## A ship row's arms for the cards: "N guns", "rowed" (a galley: oars, ram and marines) or "no guns".
+static func arms_text(row: Dictionary) -> String:
+	if int(row.get("guns", 0)) > 0:
+		return "%d guns" % int(row["guns"])
+	return "rowed" if int(row.get("oars", 0)) != 0 else "no guns"
+
+
+## The wind in words for the fleet hints: "the wind blows from the east, so westward is fast" (the pack's
+## WIND_FROM_DEG; a galley's pace ignores it).
+static func wind_words() -> String:
+	var names := ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
+	var from_deg := int(CData.ship_const("WIND_FROM_DEG", 90))
+	var i := (from_deg + 22) / 45 % 8
+	return "the wind blows from the %s, so %sward is fast" % [names[i], names[(i + 4) % 8]]
+
+
 static func ship_power(s: Dictionary) -> int:
 	var row := CData.ship_row(str(s["t"]))
 	if row.is_empty():

@@ -1631,6 +1631,7 @@ func _j_view(dx: int) -> void:
 func _j_setup() -> void:
 	hold = true
 	cs.queue_free()
+	await process_frame   # (R2: the Rome screen has fleets now, so it must be gone before the pack switches)
 	CData.use_pack("west")
 	var eng := CData.faction_index("england")
 	var st := CState.new_campaign("Fleets", 3, [eng], {}, [], "west")

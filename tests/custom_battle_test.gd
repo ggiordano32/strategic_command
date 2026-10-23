@@ -232,6 +232,34 @@ func _check_sea() -> void:
 		_fail("sea: the custom sea battle was not decided")
 	else:
 		print("PASS sea: the custom sea battle builds the same twice and is decided in %d s (side %d)" % [sim.tick / 10, sim.winner])
+	# (R2) Rome's setting: the five galley and merchant rows on offer, its own default (3 triremes and a quinquereme a side).
+	var rs := CS.default_setup(5)
+	rs["sea"] = CS.sea_default("rome")
+	var ra := CS.build_sea(rs)
+	var rl := CS.sea_ships("rome")
+	if ra.has("error") or rl != ["lembos", "trireme", "quinquereme", "quinquereme_p", "corbita"] or CS.sea_ships("west") != CS.SEA_SHIPS \
+			or (ra["scenario"]["units"] as Array).size() != 8 or int(ra["scenario"]["wind_deg"]) != 315:
+		_fail("sea: Rome's custom sea setup (ships on offer, default fleets, north-westerly)")
+		return
+	CS.set_pack(rs, "west")
+	if (rs["sea"]["ships"][0] as Array)[0] != "frigate":
+		_fail("sea: switching the setting did not reset the fleets")
+		return
+	for k in rl:
+		var rsim := SeaSim.new()
+		var sc := CS.build_sea({"sea": {"on": 1, "ships": [[k, "trireme"], ["trireme", k]], "wind": 315, "str": 55, "water": 0, "start": "ns"},
+			"sides": [{}, {}], "seed": 3})
+		if sc.has("error"):
+			_fail("sea: %s" % str(sc["error"]))
+			return
+		(sc["scenario"] as Dictionary)["ai_sides"] = [1, 1]
+		rsim.setup(sc["scenario"], 3)
+		while rsim.ended == 0 and rsim.tick < 9300:
+			rsim.step()
+		if rsim.ended == 0:
+			_fail("sea: a battle with a %s was not decided" % k)
+			return
+	print("PASS sea: Rome's custom sea setup lists the five rows and fights with each of them")
 
 
 ## Player 1: archers with fire arrows, javelinmen with none, a supply

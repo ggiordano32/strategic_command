@@ -202,7 +202,9 @@ static func ensure() -> void:
 			_nb[i * 8 + k] = j
 	# A pack with ships (CData.ships_on) has no sea lanes for armies: they
 	# cross on fleets (campaign/cfleet.gd).
-	for pair in ([] if CData.ships_on() else CData.SEA_LANES):
+	# (R2: the Rome pack keeps them, its SHIPS constant LANES_FOR_ARMIES.)
+	var lanes_armies := not CData.ships_on() or int(CData.ship_const("LANES_FOR_ARMIES", 0)) != 0
+	for pair in (CData.SEA_LANES if lanes_armies else []):
 		var a := CData.region_index(pair[0])
 		var b := CData.region_index(pair[1])
 		_link(port(a), port(b), b)

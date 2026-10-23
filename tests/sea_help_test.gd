@@ -13,6 +13,7 @@ extends SceneTree
 const SeaBattle := preload("res://game/sea_battle.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
+const SeaBook := preload("res://game/sea_book.gd")
 const Checks := preload("res://tests/sea_checks.gd")
 
 var sb: Node2D
@@ -134,6 +135,12 @@ func _process(_d: float) -> bool:
 						ft += (c as Label).text + "\n"
 					_check(ft.contains("Chain for a ship you mean to board") and ft.contains("cannot fire beyond that") and not ft.contains("thin her crew with grape"),
 						"the boarding advice: chain to board, round to sink, grape point-blank only (no grape first)")
+				if sb.book.PAGES[page] == "Galleys":
+					var gt := ""
+					for c in sb.book.find_children("*", "Label", true, false):
+						gt += (c as Label).text + "\n"
+					_check(gt.contains("ignores the wind") and gt.contains("Dash") and gt.contains("Ramming") and gt.contains("corvus") and gt.contains("Missiles"),
+						"the Galleys page: the stroke and the dash meter, ramming, the corvus, missiles, the wind ignored")
 				if sb.book.PAGES[page] == "Fire":
 					var txt := ""
 					for c in sb.book.find_children("*", "Label", true, false):
@@ -143,6 +150,14 @@ func _process(_d: float) -> bool:
 				return false
 			sb.book.show_page(sb.book.PAGES.find("Ships"))
 			_check(sb.book.find_children("sea_book_ship_*", "", true, false).size() == ST.ROWS.size(), "the Ships page lists every row (%d)" % ST.ROWS.size())
+			var shp := ""
+			for c in sb.book.find_children("*", "Label", true, false):
+				shp += (c as Label).text + "\n"
+			_check(shp.contains("Trireme") and shp.contains("Corbita") and shp.contains("Ram 100") and shp.contains("and the corvus") and shp.contains("A merchantman"),
+				"the Ships page describes the galleys (ram, corvus, marines) and the merchantman without range 0 text")
+			var gh := SeaBook.order_help("sea_full", ST.index_of("trireme"))
+			_check(str(gh["title"]) == "Dash" and str(SeaBook.order_help("sea_stop", ST.index_of("trireme"))["title"]) == "Rest"
+				and str(SeaBook.order_help("sea_full", ST.index_of("frigate"))["title"]) == "Full sail", "a galley's sail buttons are her stroke; a sailing ship's are unchanged")
 			sb.book.close()
 			_check(not sb.book.visible and sb.speed_q == 4, "closing the book resumes the speed")
 			# The Key (owner 2026-10-22: "what the different coloured lines mean"): a bar button, a panel with a row and a

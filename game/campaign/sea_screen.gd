@@ -104,11 +104,11 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	if int(land.get("kind", 0)) == 1:
 		water = "Open sea with an island"
 	elif int(land.get("kind", 0)) == 2:
-		water = "Close to the coast (shoals: frigates and galleons run aground, sloops and canoes pass)"
+		water = "Close to the coast (shoals: deep-draught ships run aground, shallow hulls and canoes pass)"
 	var wb := int(scn["wind_deg"])
 	var compass: String = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][int(round(wb / 45.0)) % 8]
 	var force := "a light" if int(scn["wind_str"]) < 40 else "a moderate" if int(scn["wind_str"]) < 65 else "a fresh" if int(scn["wind_str"]) < 85 else "a strong"
-	info.add_child(Kit.label("%s. The wind: %s breeze from the %s. Fought in real time with the wind: keep sea room, take the weather gauge when it is yours, rake, board." % [
+	info.add_child(Kit.label("%s. The wind: %s breeze from the %s. Fought in real time: keep sea room, use the wind (sail) or the stroke (oars), shoot, ram, board." % [
 		water, force, compass], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var facs: Array = snap["facs"]
 	var hs := CRules.battle_humans(st, b)
@@ -157,7 +157,7 @@ static func _sides_view(snap: Dictionary, fates: Dictionary, wide: bool) -> Cont
 				var nm := str(row.get("name", sh["t"]))
 				if str(sh["nm"]) != "":
 					nm = "%s (%s)" % [str(sh["nm"]), nm.to_lower()]
-				var line := "%s: %d guns, hull %d%%, crew %d%%" % [nm, int(row.get("guns", 0)), int(sh["h"]), int(sh["c"])]
+				var line := "%s: %s, hull %d%%, crew %d%%" % [nm, CFleet.arms_text(row), int(sh["h"]), int(sh["c"])]
 				if int(sh["g"]) > 0:
 					line += ", %d in silver" % int(sh["g"])
 				var key := "%d:%d" % [int(g["fleet"]), int(sh["k"])]

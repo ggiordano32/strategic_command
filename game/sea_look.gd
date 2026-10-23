@@ -109,7 +109,7 @@ func setup(sim, seed_v: int, scn: Dictionary, cell: Vector2i, region: int) -> vo
 	kind = int(land.get("kind", 0))
 	dirs = int(land.get("dirs", 0))
 	mseed = int(land.get("mseed", 1))
-	tropic = CData.pack == "west"
+	tropic = int(CData.ship_const("TROPIC", 1 if CData.pack == "west" else 0)) != 0   # (R2: the pack's SHIPS says)
 	palette = 3 if tropic else 0
 	if has_cell and region >= 0 and region < CData.REGIONS.size():
 		palette = int(CData.REGIONS[region].get("ground", palette))
@@ -467,6 +467,14 @@ func _materials() -> void:
 		m.set_shader_parameter("shore_amp", SHORE_AMP)
 		BattleLook.apply(m)
 	water_mat.set_shader_parameter("hi", 0.0 if low else 1.0)
+	if not tropic:
+		# The Mediterranean: a deeper blue, the shallows less turquoise (R2).
+		water_mat.set_shader_parameter("c_sand", Vector3(0.74, 0.80, 0.70))
+		water_mat.set_shader_parameter("c_shal", Vector3(0.30, 0.62, 0.70))
+		water_mat.set_shader_parameter("c_tq", Vector3(0.14, 0.46, 0.64))
+		water_mat.set_shader_parameter("c_mid", Vector3(0.08, 0.32, 0.55))
+		water_mat.set_shader_parameter("c_blue", Vector3(0.06, 0.25, 0.47))
+		water_mat.set_shader_parameter("c_deep", Vector3(0.04, 0.18, 0.37))
 	var pal := GroundPalette.get_palette(palette)
 	land_mat.set_shader_parameter("low", low)
 	land_mat.set_shader_parameter("base_col", _v3(pal["base"]))
@@ -475,7 +483,7 @@ func _materials() -> void:
 	land_mat.set_shader_parameter("patch_a", lush)
 	land_mat.set_shader_parameter("patch_b", dry)
 	land_mat.set_shader_parameter("rock_col", _v3((pal["rock"] as Color).lerp(pal["base"], 0.18)))
-	land_mat.set_shader_parameter("sand_col", _v3(pal["sand"]))
+	land_mat.set_shader_parameter("sand_col", _v3(pal["sand"]) if tropic else Vector3(0.84, 0.80, 0.68))   # (pale limestone shore, R2)
 	var wc := (pal["trees"][2] as Color)
 	land_mat.set_shader_parameter("wood_col", Vector3(wc.r, wc.g, wc.b) * 0.9)
 	var dryg := palette == 1 or palette == 2
@@ -531,7 +539,7 @@ func _props() -> void:
 	_place_forts()
 	var pieces: Array = []
 	var names: Array = ["tree_palm_a", "tree_palm_b", "tree_palm_a", "tree_broad_a", "bush_a"] if tropic else \
-		["tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_pine_a", "tree_pine_b"]
+		["tree_pine_a", "tree_pine_b", "tree_pine_a", "tree_broad_b", "bush_a", "bush_b"]   # (the Mediterranean: pines and scrub; no cypress or olive pieces in the kit)
 	for nm in names:
 		pieces.append(Atlas.NAMES.find(nm))
 	var cap := TREE_CAP_LOW if low else TREE_CAP
@@ -554,7 +562,7 @@ func _props() -> void:
 				continue
 			var pc: int = pieces[_hi(i, j, 8 + _seed) % pieces.size()]
 			var sc := 0.85 + 0.55 * _hf(i, j, 9 + _seed)
-			if Atlas.NAMES[pc] == "bush_a":
+			if Atlas.NAMES[pc] == "bush_a" or Atlas.NAMES[pc] == "bush_b":
 				sc *= 1.5
 			var tint := 0.88 + 0.2 * _hf(i, j, 10 + _seed)
 			trees.append([p.x, p.y, pc, sc, tint])

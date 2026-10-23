@@ -574,3 +574,44 @@ quinquereme's marines 40 (the plan gave none; at 120 the corvus side won
 1 of 32). Not done (R2): the view (rig, oars, the stroke buttons and
 help, the Ship book's galley page; the book lists the new rows as text),
 the campaign rows.
+
+### Rome's navy R2: Rome fleets on the campaign (as built 2026-10-23)
+
+Built as planned (`campaign/data/rome_ships.gd`, `SHIPS` of `rome.gd`; the view),
+with these differences. **Rows**: `lembos` (cost 250, upkeep 15, hull 12, crew 50, speed 370, no
+yard, coastal), `trireme` (500 / 30, hull 26, crew 200, speed 340, yard 1, carries 1), `quinquereme`
+(900 / 50, hull 42, crew 300, speed 320, yard 2, carries 1, Rome's only), `quinquereme_p` (hull 44,
+every faction but Rome), `corbita` (300 / 10, hull 30, crew 30, speed 260, carries 2, any port; a new
+sim row `corbita` at the end of `sea_types.gd`: a sail row with no guns, nothing in any hash). Hull is the
+sim row / 10 as the West's. A galley has no guns, so her worth in `CFleet.ship_power` is the row's `power`
+(110 / 240 / 440 / 420; the corbita has none: hull and crew only). **Start**: yards Rome, Carthage, Macedon
+and Syracuse at 2, Epirus, the Greeks (Athens), the Iberians (Saguntum) and the Gauls (Narbo) at 1
+in the capital if it has a *harbour* (`CFleet.harbour`, which Athens and Pella have, not only the
+regions on a sea lane) else the nearest own harbour; fleets: Carthage 2 Punic quinqueremes and 3
+triremes, Rome a corvus quinquereme and 2 triremes (no corbita: a transport at turn 1 made the early
+landings), Syracuse (yard 2, the great naval power) a Punic quinquereme, 2 triremes and a lembos, Macedon
+2 triremes, every other faction a trireme and a lembos; Bruttium's start army has one more spear. **Off in this pack** (declared at their off value, the rules read them with
+defaults): flota (`FLOTA_PARTS` empty), pirates (`PIRATE_*` 100 %), hurricanes (`STORM_BOX` empty),
+captains (`CAPTAIN_NAMES` empty). **Conditional on data, not the pack**: `CData.SHIPS`, `CHAINS` and
+`_ship_c` default to Rome's (the static defaults were the West-less ones), `CGrid` keeps the sea lanes
+as army links when the ships script says `LANES_FOR_ARMIES` 1 (Rome; the West's islands are crossed on
+fleets only), the Realm panel's flota line is shown only with `FLOTA_PARTS`, `CSea.blockader` tolerates a
+state of another pack, `CState.as_format(st, v < 6)` strips fleets and Shipyards. **Wind** a
+north-westerly 315 degrees, 55, `WIND_PCT` the West's; `SEA_ISLAND_PCT` 20; `SEA_CREWS` Carthage
+[112, 100], the Greek cities [110, 105], Macedon / Epirus [100, 100], Rome [92, 105], the hill peoples
+[85-88, 112]. `DECK_CREWS` Rome keys (rome legionaries 30 / 29, carthage 27 / 25 with javelins and
+slings, macedon / epirus / greeks / syracuse epibatai 28-29 / 30 with shots; the Iberians and Gauls keep
+`navy`). **View**: the custom sea battle is offered in every setting (`CS.sea_ships(pack)`,
+`sea_default(pack)`: Rome 3 triremes and a quinquereme a side, wind 315 / 55; switching the setting
+resets the fleets); `_draw_galley` (banks of oars that sweep with the stroke, a bronze ram, the corvus
+bridge, one mast with the sail furled); a galley's sail buttons read Dash / Cruise / Rest, the shot kinds
+are hidden for her and Fire at will reads At will / Hold (the corvus); the Ship book has a Galleys page
+(stroke and meter, ramming, the corvus, missiles, orders) and the Ships page writes the galley rows and
+the merchantman without gun text; the sea look takes `TROPIC` from the pack (0: a deeper blue, a pale
+limestone shore, pines and scrub, no palms; the kit has no cypress or olive pieces). **Not done**: the
+campaign map draws the galleys with the sprites of the sail ships of about their size (`SHIP_LOOK` in
+`minis_layer.gd`: no oared map sprites yet); `CState.VERSION` is not bumped (the state's hash includes
+the version, so a bump would have moved the West pins; a Rome save without `fleets` plays as before, a
+new one carries them, and the online rules hash separates the builds); Syracuse still falls in 6 of 6
+pin seeds (5 before turn 30; turns 11-44; it fell in 5 of 6 at HEAD): its AI sends its armies abroad
+and Carthage lands in the empty cities; see the history row.

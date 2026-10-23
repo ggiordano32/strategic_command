@@ -648,7 +648,9 @@ func _draw_ship(s: int, lw: float) -> void:
 		var castle := PackedVector2Array([xf * Vector2(-ln * 0.47, -bm * 0.33), xf * Vector2(-ln * 0.3, -bm * 0.38),
 			xf * Vector2(-ln * 0.3, bm * 0.38), xf * Vector2(-ln * 0.47, bm * 0.33)])
 		_ships.draw_colored_polygon(castle, Color(0.85, 0.7, 0.3) if int(d.get("g", 0)) > 0 else COL_HULL.lightened(0.15))
-	if oars:
+	if ST.is_galley(ty):
+		_draw_galley(s, xf, ln, bm, lw, st)
+	elif oars:
 		# Paddlers: strokes along both sides.
 		for i in 5:
 			var f2 := (float(i) + 0.5) / 5.0 - 0.5
@@ -707,6 +709,42 @@ func _draw_ship(s: int, lw: float) -> void:
 		_ships.draw_rect(Rect2(bp + Vector2(0, 4.0 * lw), Vector2(bw, 2.5 * lw)), Color(0, 0, 0, 0.55))
 		_ships.draw_rect(Rect2(bp + Vector2(0, 4.0 * lw), Vector2(bw * cp, 2.5 * lw)), Color(0.6, 0.75, 1.0))
 		_ships.draw_rect(Rect2(bp + Vector2(-5.0 * lw, 0), Vector2(3.5 * lw, 6.5 * lw)), _side_col(sim.u_side[s]))
+
+
+## (R2, Rome's navy) A galley: banks of oars along both sides, a bronze ram at the
+## bow, one mast with the sail furled on its yard. The oars sweep with the stroke
+## (rest: shipped; cruise: slow; dash: quick); no animation beyond that.
+func _draw_galley(s: int, xf: Transform2D, ln: float, bm: float, lw: float, st: int) -> void:
+	var ty := sim.s_type[s]
+	var n := clampi(int(ln / (bm * 0.9)), 6, 16)
+	var rate := 0.0
+	if st == SeaSim.S_SAIL and sim.s_spd[s] > 50:
+		rate = 5.0 if sim.s_sail[s] == 2 else 2.8
+	var oar_col := Color(0.32, 0.22, 0.12)
+	var ow := maxf(0.8 * lw, bm * 0.13)
+	for i in n:
+		var f2 := (float(i) + 0.5) / n - 0.5
+		var sw := sin(_clock * rate + i * 0.55) * 0.32 if rate > 0.0 else 0.0
+		var x := f2 * ln * 0.72
+		for sg in [-1.0, 1.0]:
+			var a0: Vector2 = xf * Vector2(x, sg * bm * 0.5)
+			var a1: Vector2 = xf * Vector2(x + sw * bm * 1.1 - 0.35 * bm, sg * bm * (1.35 if rate > 0.0 else 0.95))
+			_ships.draw_line(a0, a1, oar_col, ow)
+	if ST.stat(ty, "ram") > 0:
+		var ram := PackedVector2Array([xf * Vector2(ln * 0.5, 0), xf * Vector2(ln * 0.43, bm * 0.14), xf * Vector2(ln * 0.43, -bm * 0.14)])
+		_ships.draw_colored_polygon(ram, Color(0.72, 0.5, 0.22))
+		_ships.draw_line(xf * Vector2(ln * 0.5, 0), xf * Vector2(ln * 0.56, 0), Color(0.72, 0.5, 0.22), maxf(1.0, bm * 0.12))
+	if ST.stat(ty, "corvus") != 0:
+		# The boarding bridge: a pale plank stowed upright at the bow, a bar across the mast's foot.
+		var base: Vector2 = xf * Vector2(ln * 0.30, 0)
+		_ships.draw_line(base, xf * Vector2(ln * 0.46, 0), Color(0.86, 0.80, 0.62), maxf(1.6, bm * 0.3))
+		_ships.draw_line(xf * Vector2(ln * 0.42, 0), xf * Vector2(ln * 0.46, 0), Color(0.15, 0.12, 0.1), maxf(2.0, bm * 0.34))   # the iron spike
+		_ships.draw_circle(base, bm * 0.16, Color(0.2, 0.14, 0.1))
+	# One mast, the sail furled along its yard.
+	var rig_a: Vector2 = xf * Vector2(ln * 0.06, -bm * 0.46)
+	var rig_b: Vector2 = xf * Vector2(ln * 0.06, bm * 0.46)
+	_ships.draw_line(rig_a, rig_b, Color(COL_SAIL.darkened(0.1), 0.95), maxf(1.2, bm * 0.14))
+	_ships.draw_circle(xf * Vector2(ln * 0.06, 0), bm * 0.12, Color(0.25, 0.17, 0.1))
 
 
 ## Masts and sails: square sails braced round with the wind (fore-and-aft
@@ -1254,6 +1292,19 @@ func _info_text() -> String:
 		mode += ", all hands dousing the fire (guns silent)"
 	elif sim.s_burn[s] > 0 and not ST.is_fire(sim.s_type[s]):
 		mode += ", on fire"
+	if ST.is_galley(sim.s_type[s]):
+		# (R2) A galley: the stroke, the dash meter, the ram and the bridge.
+		var ty := sim.s_type[s]
+		var stroke: String = ["resting on her oars", "cruising (%d %%)" % SeaSim.CRUISE_PCT, "ramming speed"][sim.s_sail[s]]
+		var gl := "%s: hull %d%%, crew %d; %.1f kn, %s, %s" % [_card_name(s), sim.s_hull[s] * 100 / sim.s_hull0[s], sim.s_crew[s],
+			sim.s_spd[s] * 10.0 / 1024.0 * 1.94, stroke, mode]
+		if ST.stat(ty, "dash") > 0:
+			gl += "; dash meter %d of %d s" % [sim.s_dash[s] / 10, ST.stat(ty, "dash")]
+		if ST.stat(ty, "ram") > 0:
+			gl += ", ram %s" % ("ready" if sim.tick - sim.s_ram_t[s] >= SeaSim.RAM_COOL else "cooling")
+		if ST.stat(ty, "corvus") != 0:
+			gl += ", corvus %s" % ("ready" if sim.tick - sim.s_cv_t[s] >= SeaSim.CORVUS_COOL else "hauled up")
+		return gl + ("; Board armed: tap an enemy" if arm == "board" else "") + "."
 	var sails: String = ["hove to", "battle sail", "full sail"][sim.s_sail[s]]
 	# The first time a setting shows, its speed share too ("battle sail (75 %)").
 	if not _pct_shown.has(sim.s_sail[s]):
@@ -1322,13 +1373,15 @@ func _refresh_bar() -> void:
 			Kit.tip(gb, str(gh["title"]), str(gh["tip"]))
 			_arm_long_help(gb, gh)
 		_bar.add_child(sg)
-	group.call([["Full sail", "sea_full", sim.s_sail[s0] == 2, func(): _orders_all(SeaSim.O_SAILS, {"on": 2})],
-		["Battle sail", "sea_battle_sail", sim.s_sail[s0] == 1, func(): _orders_all(SeaSim.O_SAILS, {"on": 1})],
-		["Heave to", "sea_stop", sim.s_sail[s0] == 0, func(): _orders_all(SeaSim.O_SAILS, {"on": 0})]])
-	group.call([["Round", "sea_round", sim.s_shot[s0] == ST.SHOT_ROUND, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_ROUND})],
-		["Chain", "sea_chain", sim.s_shot[s0] == ST.SHOT_CHAIN, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_CHAIN})],
-		["Grape", "sea_grape", sim.s_shot[s0] == ST.SHOT_GRAPE, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_GRAPE})]])
-	add.call("Fire at will" if sim.s_fire[s0] != 0 else "Hold fire", "sea_fire", sim.s_fire[s0] != 0,
+	var galley := ST.is_galley(ty0)   # (R2: a galley's sail settings are her stroke: dash, cruise, rest)
+	group.call([["Dash" if galley else "Full sail", "sea_full", sim.s_sail[s0] == 2, func(): _orders_all(SeaSim.O_SAILS, {"on": 2})],
+		["Cruise" if galley else "Battle sail", "sea_battle_sail", sim.s_sail[s0] == 1, func(): _orders_all(SeaSim.O_SAILS, {"on": 1})],
+		["Rest" if galley else "Heave to", "sea_stop", sim.s_sail[s0] == 0, func(): _orders_all(SeaSim.O_SAILS, {"on": 0})]])
+	if not galley:
+		group.call([["Round", "sea_round", sim.s_shot[s0] == ST.SHOT_ROUND, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_ROUND})],
+			["Chain", "sea_chain", sim.s_shot[s0] == ST.SHOT_CHAIN, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_CHAIN})],
+			["Grape", "sea_grape", sim.s_shot[s0] == ST.SHOT_GRAPE, func(): _orders_all(SeaSim.O_SHOT, {"on": ST.SHOT_GRAPE})]])
+	add.call(("At will" if sim.s_fire[s0] != 0 else "Hold") if galley else ("Fire at will" if sim.s_fire[s0] != 0 else "Hold fire"), "sea_fire", sim.s_fire[s0] != 0,
 		func(): _orders_all(SeaSim.O_FIRE, {"on": 0 if sim.s_fire[s0] != 0 else 1}))
 	add.call("Board", "sea_board", arm == "board", func():
 		arm = "" if arm == "board" else "board"

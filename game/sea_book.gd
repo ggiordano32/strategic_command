@@ -20,7 +20,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const BTheme := preload("res://game/battle_theme.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 
-const PAGES := ["Points of sail", "Sails", "Shot", "Fighting", "Fire", "Ships"]
+const PAGES := ["Points of sail", "Sails", "Shot", "Fighting", "Fire", "Galleys", "Ships"]
 const KT := 1.94   # the status line's knots per unit (game/sea_battle.gd)
 
 var sim: SeaSim = null
@@ -140,6 +140,8 @@ func show_page(i: int) -> void:
 		4:
 			_page_fire()
 		5:
+			_page_galleys()
+		6:
 			_page_ships()
 	_scroll.scroll_vertical = 0
 
@@ -319,6 +321,24 @@ func _page_fire() -> void:
 	_p("Don't lie alongside a burning ship: when her magazine goes, everything within %d m goes with her, and a fire ship's sparks jump to whatever is close. Board or rake a burning enemy from a distance, or let her burn." % SeaSim.BLAST_M)
 
 
+func _page_galleys() -> void:
+	_p("Rome's navy: the lembos, the trireme and the quinquereme (the Punic one has no corvus) fight with oars, ram and boarders, not guns. A galley ignores the wind: she rows at the same pace on every heading, and her pace falls with her crew (down to 30 % at none). She is lower in the water and turns sharper than a sailing ship. The Ships page lists each row's ram, marines and dash.")
+	_h("The stroke")
+	_p("The three sail buttons are the stroke. Rest: she lies on her oars. Cruise: %d %% of her top speed, as long as you like. Dash (ramming speed): full speed while the dash meter lasts. The meter holds each row's own number of seconds (the Ships page), drains one for every second at the dash and refills %d tenths of a second a second at cruise or rest; when it is empty she drops to cruise by herself. A tired crew does not start a ram run." % [
+		SeaSim.CRUISE_PCT, SeaSim.DASH_FILL])
+	_h("Ramming")
+	_p("A ship with a ram that strikes an enemy hull with her bow (inside %d degrees either side of her heading), closing at %d or more (about %.1f m/s), does the ram's number x the closing speed / %d in hull damage; on the enemy's beam (within 45 degrees of square) it is doubled. Bow to bow, one blow of half the larger ram hurts both. The blow takes half the struck ship's way; the rammer backs water for %d s and cannot ram again for %d s. A push is not a ram: build up speed with the dash first. The battle AI sets up %d m off the target's beam and runs in at a right angle, dashing the last %d m." % [
+		SeaSim.RAM_CONE * 360 / FM.ANGLE_FULL, SeaSim.RAM_MIN, SeaSim.RAM_MIN / 102.4, SeaSim.RAM_DIV, SeaSim.RAM_BACK / 10, SeaSim.RAM_COOL / 10, SeaSim.SETUP_M, SeaSim.RUN_M])
+	_h("The corvus")
+	_p("Rome's quinquereme carries the corvus, a boarding bridge. Within grappling range of an enemy, at a relative speed up to %d (about %.0f m/s), it drops and she boards at once, on firing at will or onto the ship she was ordered to engage. In that melee the boarders have the deck bonus (%d %%) and the defenders lose their home advantage. After her boarders are thrown back the bridge is hauled up for %d s. The Punic quinquereme has none: her boarders must wait for a low relative speed, as any ship's." % [
+		SeaSim.CORVUS_REL, SeaSim.CORVUS_REL / 102.4, SeaSim.DECK_BONUS_PCT, SeaSim.CORVUS_COOL / 10])
+	_h("Missiles")
+	_p("A galley's marines (not the rowers) throw javelins and arrows every reload (8 s) at the nearest enemy within %d m: a few men killed and morale knocked, which is all the exchange before the ships meet. A lembos without a ram engages at %d m and boards the weak; a larger ship will crush her, so the AI keeps her clear of ships over twice her hull unless they are crippled." % [
+		SeaSim.MSL_M, SeaSim.MSL_STAND])
+	_h("Orders")
+	_p("Dash, Cruise and Rest set the stroke. At will lets the corvus drop on the nearest enemy as well; Hold keeps it for the ordered target. Board and Flee as for any ship (a fleeing galley rows straight away from the nearest enemy, not downwind). There is no shot to choose: the shot buttons are hidden for galleys.")
+
+
 func _page_ships() -> void:
 	_p("Every ship row, from the battle's own table. Speeds are in the status line's knots at full sail on the best heading; turn is degrees a second; tack is the share of top speed she needs to go through the wind.")
 	for i in ST.ROWS.size():
@@ -331,6 +351,22 @@ func _page_ships() -> void:
 		var lines: Array[String] = []
 		if ST.is_fire(i):
 			lines.append("No guns. Crew %d, hull %d, rigging %d. Sailed at an enemy and lit near her; boarding quality %d %%." % [int(r["crew"]), int(r["hull"]), int(r["rig"]), int(r["board"])])
+		elif ST.is_galley(i):
+			var gl := "No guns. Crew %d, hull %d. Boarding quality %d %%." % [int(r["crew"]), int(r["hull"]), int(r["board"])]
+			if int(r["ram"]) > 0:
+				gl += " Ram %d" % int(r["ram"])
+				if int(r["corvus"]) != 0:
+					gl += " and the corvus"
+				gl += "."
+			elif int(r["corvus"]) != 0:
+				gl += " The corvus."
+			if int(r["marines"]) > 0:
+				gl += " %d marines." % int(r["marines"])
+			if int(r["dash"]) > 0:
+				gl += " Ramming speed for %d s." % int(r["dash"])
+			lines.append(gl)
+		elif int(r["guns"]) == 0:
+			lines.append("No guns. Crew %d, hull %d, rigging %d. A merchantman: she carries cargo and men, and fights by boarding (quality %d %%)." % [int(r["crew"]), int(r["hull"]), int(r["rig"]), int(r["board"])])
 		else:
 			lines.append("Guns %d a side, %d damage a hit, reload %d s. Range: round %d m, chain %d m, grape %d m." % [
 				int(r["guns"]), int(r["gun"]), int(r["reload"]), int(r["range"]),
@@ -338,7 +374,7 @@ func _page_ships() -> void:
 			lines.append("Crew %d, hull %d, rigging %d. Boarding quality %d %%." % [int(r["crew"]), int(r["hull"]), int(r["rig"]), int(r["board"])])
 		var mv := "Top speed %.1f kn, turns %.1f degrees a second." % [int(r["vmax"]) / 10.0 * KT, int(r["turn"]) / 10.0]
 		if int(r["oars"]) != 0:
-			mv += " Rowed: the wind does not drive her; speed falls with her crew."
+			mv += " Rowed: the wind does not drive her; speed falls with her crew." + (" Cruises at %d %% of top speed." % SeaSim.CRUISE_PCT if ST.is_galley(i) else "")
 		else:
 			mv += " No-go zone %d degrees either side of the wind; tacks at %d %% of top speed." % [int(r["irons"]), int(r["tack"])]
 		mv += " " + ("Deep draught: runs aground on shoals." if int(r["draft"]) != 0 else "Shallow draught: crosses shoals.")
@@ -361,6 +397,25 @@ static func order_help(key: String, ship_type: int, fire_on: bool = true) -> Dic
 	var rd := shot_range(ty, ST.SHOT_ROUND)
 	var ch := shot_range(ty, ST.SHOT_CHAIN)
 	var gr := shot_range(ty, ST.SHOT_GRAPE)
+	if ST.is_galley(ship_type) and ["sea_full", "sea_battle_sail", "sea_stop", "sea_fire"].has(key):
+		# (R2) A galley's sail settings are her stroke.
+		match key:
+			"sea_full":
+				return {"title": "Dash", "tip": "Dash: ramming speed, 100 % of her top speed while the dash meter lasts, then she drops to cruise. Use it for the last run at a ram target.",
+					"more": "The meter drains while she dashes and refills at cruise or rest. A tired crew does not start a ram run. The wind does not matter to a galley.",
+					"hint": "Dash: ramming speed while the meter lasts."}
+			"sea_battle_sail":
+				return {"title": "Cruise", "tip": "Cruise: %d %% of her top speed, for as long as you like; the dash meter refills. Use it to close and to hold station." % SeaSim.CRUISE_PCT,
+					"more": "A rowed ship ignores the wind; her pace falls only with her crew.",
+					"hint": "Cruise: %d %% speed, the dash meter refills." % SeaSim.CRUISE_PCT}
+			"sea_stop":
+				return {"title": "Rest", "tip": "Rest: oars shipped, speed falls to 0. A move order does not start her again: pick cruise or dash.",
+					"more": "Resting refills the dash meter. The marines still throw their javelins.",
+					"hint": "Rest: speed 0, the dash meter refills."}
+			_:
+				return {"title": ("At will" if fire_on else "Hold"), "tip": "At will: the corvus drops on the nearest enemy within reach; Hold: only on the ship she was ordered to engage. Press it to change.",
+					"more": "Rams and missiles work either way. A galley with no corvus has nothing to hold.",
+					"hint": "At will: the corvus drops on any enemy within reach." if fire_on else "Hold: the corvus drops only on her ordered target."}
 	match key:
 		"sea_full":
 			return {"title": "Full sail", "tip": "Full sail: 100 % of the speed the wind allows. Use it to close, to run and to beat to windward.",

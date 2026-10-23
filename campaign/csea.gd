@@ -147,7 +147,8 @@ static func sea_trade(st: Dictionary, r: int) -> int:
 
 ## The faction blockading region r's port (-1 none; as of the last turn's end).
 static func blockader(st: Dictionary, r: int) -> int:
-	return int(st["regions"][r].get("bk", -1))
+	var rg: Array = st["regions"]
+	return int(rg[r].get("bk", -1)) if r >= 0 and r < rg.size() else -1   # (a state of another pack: none)
 
 
 ## What region r's owner loses a turn to its blockade.

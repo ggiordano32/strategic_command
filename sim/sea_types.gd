@@ -78,6 +78,10 @@ const ROWS: Array[Dictionary] = [
 	{"key": "quinquereme_p", "name": "Punic quinquereme", "len": 45, "beam": 7, "vmax": 84, "turn": 60, "irons": 0,
 		"tack": 0, "guns": 0, "gun": 0, "range": 0, "hull": 440, "crew": 300, "rig": 0, "reload": 8, "draft": 1,
 		"oars": 1, "board": 105, "ram": 140, "corvus": 0, "marines": 40, "dash": 35},
+	# (R2) The sailing merchantman: no guns, a handful of sailors; sailed, not rowed.
+	{"key": "corbita", "name": "Corbita", "len": 28, "beam": 9, "vmax": 55, "turn": 40, "irons": 60, "tack": 40,
+		"guns": 0, "gun": 0, "range": 0, "hull": 300, "crew": 30, "rig": 300, "reload": 10, "draft": 0, "oars": 0,
+		"board": 60, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
 ]
 
 const CHAIN_RANGE_PCT := 80
@@ -105,6 +109,14 @@ const DECK_CREWS := {
 	"brethren": {"atk": 34, "def": 22, "shot": 28, "rng": 3, "shots": 2, "rl": 0, "arms": "cutlass, axe and a brace of pistols"},
 	"miskito": {"atk": 30, "def": 20, "shot": 14, "rng": 6, "shots": 3, "rl": 25, "arms": "club, spear and bow"},
 	"itza": {"atk": 30, "def": 22, "shot": 12, "rng": 6, "shots": 3, "rl": 25, "arms": "obsidian club and bow"},
+	# (R2, Rome's navy) The Mediterranean: Rome's legionaries aboard, Carthage's marines with javelins and
+	# slings, the Greek cities' epibatai (hoplites at sea). Iberians and Gauls: the "navy" fallback.
+	"rome": {"atk": 30, "def": 29, "shot": 10, "rng": 3, "shots": 1, "rl": 0, "arms": "gladius, scutum and pila"},
+	"carthage": {"atk": 27, "def": 25, "shot": 18, "rng": 6, "shots": 2, "rl": 30, "arms": "spear, javelin and sling"},
+	"macedon": {"atk": 29, "def": 30, "shot": 12, "rng": 4, "shots": 2, "rl": 30, "arms": "sarissa, hoplite shield and javelin"},
+	"epirus": {"atk": 29, "def": 30, "shot": 12, "rng": 4, "shots": 2, "rl": 30, "arms": "spear, hoplite shield and javelin"},
+	"greeks": {"atk": 28, "def": 30, "shot": 14, "rng": 4, "shots": 2, "rl": 30, "arms": "epibatai: spear, shield and bow"},
+	"syracuse": {"atk": 28, "def": 30, "shot": 14, "rng": 4, "shots": 2, "rl": 30, "arms": "epibatai: spear, shield and bow"},
 }
 ## Soldiers aboard (troops without a kit): musket and bayonet.
 const DECK_TROOPS := {"atk": 26, "def": 24, "shot": 24, "rng": 6, "shots": 2, "rl": 120}

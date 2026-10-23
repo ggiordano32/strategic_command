@@ -805,9 +805,9 @@ func _build_fleet(id: int) -> void:
 		c.men = int(sh["h"])
 		c.full = 100
 		c.bar2 = clampf(float(int(sh["c"])) / 100.0, 0.0, 1.0)
-		c.sub = "%d%%  %d guns" % [int(sh["h"]), int(row.get("guns", 0))]
+		c.sub = "%d%%  %s" % [int(sh["h"]), CFleet.arms_text(row)]
 		c.col = CData.faction_color(ff)
-		c.tooltip_text = "%s: hull %d%%, crew %d%%, %d guns, carries %d.\n%s" % [c.title, int(sh["h"]), int(sh["c"]), int(row.get("guns", 0)), int(row.get("cap", 0)), str(row.get("desc", ""))]
+		c.tooltip_text = "%s: hull %d%%, crew %d%%, %s, carries %d.\n%s" % [c.title, int(sh["h"]), int(sh["c"]), CFleet.arms_text(row), int(row.get("cap", 0)), str(row.get("desc", ""))]
 		c.pressed.connect(func(): s.show_toast(c.tooltip_text))
 		cards.append(c)
 	_assemble(leader, cards, [], acts)

@@ -2196,6 +2196,9 @@ func _realm_sea(box: VBoxContainer, f: int) -> void:
 				CData.faction_name(other), int(m[2]) - int(ps["turn"])], Kit.FONT_SMALL, Kit.COL_GOOD, true)
 			ml.name = "realm_marque"
 			box.add_child(ml)
+	if (CData.ship_const("FLOTA_PARTS", []) as Array).is_empty():
+		_realm_n2b(box, f)   # (R2: a pack without a flota has no flota line)
+		return
 	var at_sea := false
 	for fl in CFleet.fleets(ps):
 		if CSea.is_flota(fl):
@@ -3816,7 +3819,7 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 		h.add_child(nm)
 		var hc := int(sh["h"])
 		var cc := int(sh["c"])
-		h.add_child(Kit.label("hull %d%%, crew %d%%, %d guns, carries %d" % [hc, cc, int(row.get("guns", 0)), int(row.get("cap", 0))],
+		h.add_child(Kit.label("hull %d%%, crew %d%%, %s, carries %d" % [hc, cc, CFleet.arms_text(row), int(row.get("cap", 0))],
 			Kit.FONT_SMALL, Kit.COL_GOOD if mini(hc, cc) >= 70 else (Kit.COL_GOLD if mini(hc, cc) >= 40 else Kit.COL_BAD), true))
 		box.add_child(h)
 		if sh.has("nm"):  # (N2b) a named galleon: her name and her treasure
@@ -3891,7 +3894,7 @@ func _shipyard(box: VBoxContainer, r: int) -> void:
 		nm.custom_minimum_size.x = 130
 		nm.tooltip_text = str(row["desc"])
 		h.add_child(nm)
-		var sub := "%d guns, carries %d, pace %d%s; upkeep %d" % [int(row["guns"]), int(row["cap"]), int(row["speed"]) / 10,
+		var sub := "%s, carries %d, pace %d%s; upkeep %d" % [CFleet.arms_text(row), int(row["cap"]), int(row["speed"]) / 10,
 			", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"])]
 		h.add_child(Kit.label(sub if why == "" or why == "not enough money" or why == "already launching a ship" else why,
 			Kit.FONT_SMALL, Kit.COL_DIM, true))
@@ -4001,7 +4004,7 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 		b.disabled = why != "" and not on
 		b.tooltip_text = str(row["desc"])
 		col.add_child(b)
-		var sub := "%d guns, hull %d, crew %d, carries %d, pace %d%s, upkeep %d, needs Shipyard %d" % [int(row["guns"]), int(row["hull"]), int(row["crew"]),
+		var sub := "%s, hull %d, crew %d, carries %d, pace %d%s, upkeep %d, needs Shipyard %d" % [CFleet.arms_text(row), int(row["hull"]), int(row["crew"]),
 			int(row["cap"]), int(row["speed"]) / 10, ", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"]), int(row["yard"])]
 		col.add_child(Kit.label(sub if why == "" else "%s  -  %s" % [why, sub], Kit.FONT_SMALL, Kit.COL_DIM if why == "" or why == "not enough money" else Kit.COL_BAD, true))
 		v.add_child(col)

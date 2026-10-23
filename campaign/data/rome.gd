@@ -28,6 +28,8 @@ const WORKSHOP := E.WORKSHOP
 
 ## Pack key (the state's "pack"; absent means "rome").
 const KEY := "rome"
+## Fleets (R2, 2026-10-23): the galleys of the Rome pack, campaign/data/rome_ships.gd.
+const SHIPS := preload("res://campaign/data/rome_ships.gd")
 ## The nav grid (campaign/cgrid.gd; written by tools/campaign_grid.gd).
 const GRID := preload("res://campaign/data/grid_data.gd")
 ## Map projection for CData.sector(): lon x LON_PCT / 1000 (cos of the
@@ -165,7 +167,7 @@ const FACTIONS: Array[Dictionary] = [
 	{"key": "syracuse", "culture": GREEK, "name": "Syracuse", "adj": "Syracusan", "color": "2fa8a0", "capital": "sicilia_or",
 		"regions": ["sicilia_or", "bruttium"], "treasury": 2200,
 		"armies": [["sicilia_or", ["spear", "spear", "spear", "spear", "archer", "archer", "heavy", "heavy", "cav", "bolt", "strategos"]],
-			["bruttium", ["spear", "javelin", "light", "strategos"]]],
+			["bruttium", ["spear", "spear", "javelin", "light", "strategos"]]],
 		"mix": {"spear": 40, "heavy": 15, "archer": 15, "javelin": 10, "cav": 10, "bolt": 5, "stone": 5, "cav_missile": 5,
 			"general": 4, "light_art": 3, "belly_bow": 3},
 		"ai_style": AI_BALANCED, "composition": {"arms": ["spear", "archer", "heavy"], "art_pct": 10, "cav_pct": 10, "upgrade": 1}},

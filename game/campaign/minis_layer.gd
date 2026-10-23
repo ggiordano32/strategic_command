@@ -31,7 +31,10 @@ static var _headings := {}   # fleet id -> last heading 0..7
 const SITE_MIN_ZOOM := 0.55
 const SHIP_MIN_ZOOM := 0.35
 const TILE_M := 58.0           # a base tile's width in metres (the sprites' scale)
-const SHIP_RANK := ["ship_of_the_line", "galleon", "frigate", "brigantine", "sloop", "war_canoe"]
+const SHIP_RANK := ["ship_of_the_line", "galleon", "quinquereme", "quinquereme_p", "frigate", "corbita", "trireme", "brigantine", "sloop", "lembos", "war_canoe"]
+## (R2, Rome's navy) The map sprites of the galleys: until they have their own art they stand in as the sail ships of
+## about their size (open: oared sprites).
+const SHIP_LOOK := {"lembos": "sloop", "trireme": "brigantine", "quinquereme": "frigate", "quinquereme_p": "frigate", "corbita": "galleon"}
 const SHIP_K := 1.0
 
 var overlay: Node2D
@@ -314,6 +317,8 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	if types.is_empty():
 		return
 	types.sort_custom(func(a, b): return SHIP_RANK.find(a) < SHIP_RANK.find(b))
+	for i in types.size():
+		types[i] = SHIP_LOOK.get(str(types[i]), str(types[i]))
 	var mp: Vector2 = overlay.cell_point(CFleet.cell(fl))
 	var tt: float = SeaWaves.t if SeaWaves.t > 0.0 else float(overlay.pulse)
 	var amp := clampf(SeaWaves.amp(mp), 0.25, 1.0)

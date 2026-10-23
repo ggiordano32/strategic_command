@@ -437,6 +437,16 @@ static func _migrate_old(st: Dictionary) -> void:
 static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 	var c := copy(st_in)
 	if v < 6:
+		# (Fleets need the overworld: a format 5 Rome state has none, as the build of its day, and no Shipyards.)
+		for k in ["fleets", "next_fleet"]:
+			c.erase(k)
+		if CData.ships_on():
+			for rs in c["regions"]:
+				var keep: Array = []
+				for sl in rs["slots"]:
+					if int(sl[0]) != CData.SHIPYARD:
+						keep.append(sl)
+				rs["slots"] = keep
 		for a in c["armies"]:
 			for k in ["x", "y", "dest_x", "dest_y", "tgt"]:
 				(a as Dictionary).erase(k)
