@@ -6865,6 +6865,8 @@ it applies to plan maps only (a city with `tp`); scenario keys and custom battle
 - **Attackers press on in an open campaign town** (AI.md 29): `S_BEATEN_TOWN_PCT` 25 % in place of `AP.S_BEATEN_PCT` 35 % (Average,
   Hard) for the attackers of a plan map with no outer gates (West walls 0-2).
 
+**Rome walls 1-2 (2026-10-22, AI.md 33).** On a walled Rome plan the defenders' street stack behind the breach holds at most `S_ROME_STACK` 4 units (the rest hold the plaza) and the storm's non-pike foot outside the houses attack at the run. Rome pooled attacker wins at 32 seeds, walls 1 / 2 / 3: 36 / 27 / 21 -> 58 / 35 / 23 % (targets 56 / 38 / 25). The West and generated maps are untouched by construction. Open: the citadel fight on the Greek and Punic plans (the plaza is the citadel), the castrum at walls 2, gate HP at walls 2.
+
 ### Audio (as built, 2026-10-10)
 
 ## DESIGN paragraph (Audio)

@@ -2181,3 +2181,41 @@ the probe's new fire line):
   escaped, 8 held): over seeds 1-4, 2 of the 4 escapes were the companion
   of a ship whose magazine blew; doused, she survives to strike and both
   are taken (seeds 1-16: 10 escapes before, 8 after).
+
+## 33. Rome walls 1-2: the street stack and the storm's run (2026-10-22)
+
+Measured first (32 seeds, the six Rome plan towns Athens / Carthage / Syracuse /
+Rome / Massalia / Arverni, equal force): pooled attacker wins walls 1 / 2 / 3 =
+36 / 27 / 21 % (targets 56 / 38 / 25; generated maps 56 / 27 / 21). The gate
+fell in 0.9-3 min at walls 1; 650-814 of ~1,030 defenders then stood in the
+street stack at the first mouth behind it; almost nobody was inside 30-60 s
+after the breach (the ladder parties never climbed at walls 1 because the
+engines broke the gate first); the attackers lost 250-320 men in the 30 m
+outside the gate and 95-150 at the gate inside, and broke with 28-30 % left
+(the 35 % withdrawal fired in 4 of 576 battles). On the Greek and Punic plans
+the plaza is the citadel.
+
+Levers measured one at a time (8 then 16 then 32 seeds) and what stayed:
+- *Storm flow:* ladder parties kept at their escalade beside the gate 35/29 ->
+  19/4 (dropped); a second wave held 40 m out while the gateway is full: no
+  change (dropped); **kept:** on a Rome plan the storm's foot other than pikes
+  outside the houses attack at the run (35/29 -> 40/42 at 8 seeds).
+- *The defenders' street stack:* a reaction range of 8 m 35/29 -> 40/27
+  (dropped); narrower mouths (gate + 4 / 8 / 10 m) overshoot walls 1 or walls 3
+  (dropped); **kept:** `S_ROME_STACK` 4: the stack behind the breach holds at
+  most 4 units and the not-fighting tail holds the plaza (`_compact`, no relief
+  under way), 39/29/23 -> 52/32/24 at 16 seeds.
+- *Gate hit points at walls 2:* queued, not run (the siege pass found the
+  battery time did not move with gate HP). *Withdrawal rule:* not a lever
+  (fires in 4 of 576). *Citadel:* diagnosed only: with the two levers the
+  attackers break the citadel gate far more often (Carthage 6 -> 25 of 32,
+  Syracuse 7 -> 24, Massalia 13 -> 28) and then lose inside the Byrsa
+  (Carthage 7 wins of 25 that reached the plaza).
+
+Kept (levers 1 + 2, `_rome_plan`: `n_outer > 0`, a plan town, not the West),
+32 seeds: walls 1 / 2 / 3 = 36 / 27 / 21 -> **58 / 35 / 23 %**; by town
+after: 78 / 22 / 72 / 56 / 47 / 75, 47 / 16 / 41 / 9 / 16 / 81, 16 / 9 / 22 /
+28 / 31 / 34. No new sim state; the West, generated maps and scenario keys
+untouched by construction; campaign_sim pins unchanged. Open: the Punic and
+Greek citadel fight, Rome's castrum at walls 2 (38 -> 9 %: the plaza fight
+against the stack's tail), gate HP at walls 2, Carthage the low outlier.

@@ -165,6 +165,7 @@ const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain 
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
 const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
 const S_BEATEN_TOWN_PCT := 25  # attackers in an open campaign town (a plan map, no outer gates) withdraw below this % of their start (and weaker; AP.S_BEATEN_PCT elsewhere)
+const S_ROME_STACK := 4  # a walled Rome town on its plan: the street stack behind the breached gate holds at most this many units, the rest (not fighting) hold the plaza (Rome walls pass, docs/AI.md 33)
 const SP_RUN_R := 30 * M   # a West defender further than this from its street post goes there at the run (balance T)
 ## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
 ## fort as well as taking the town round it only with a ram, ladders or guns
@@ -384,6 +385,15 @@ static func _army(sim, side: int) -> void:
 		_fort_choice(sim, side)
 	if sim.n_eq > 0:
 		_assign_equip(sim, side, phase, kn)
+
+
+## A walled Rome town on its campaign plan (a plan map with outer gates,
+## not West): the Rome walls pass's rules (docs/AI.md 33).
+static func _rome_plan(sim) -> bool:
+	if sim.n_outer == 0:
+		return false
+	var c: Dictionary = sim.map_info.get("city", {})
+	return int(c.get("tp", 0)) == 1 and int(c.get("west", 0)) == 0
 
 
 ## Fighting strength of side's ready units off the walls.
@@ -1661,6 +1671,13 @@ static func _compact(sim, side: int) -> void:
 		ks.insert(at, key)
 	for i in us.size():
 		sim.u_ai_y[us[i]] = i
+	if relieved < 0 and us.size() > S_ROME_STACK and _rome_plan(sim):
+		# (A walled Rome town: a short stack, the rest on the plaza; the
+		# whole garrison stacked at the first street mouth won every storm.)
+		while us.size() > S_ROME_STACK and not _engaged(sim, us[us.size() - 1]):
+			BattleAI._set_mode(sim, us[us.size() - 1], A_PLAZA)
+			us.remove_at(us.size() - 1)
+			plz += 1
 	if relieved >= 0:
 		var k: int = -1 - sim.u_ai_y[relieved]
 		var nf: int = us[k] if k < us.size() else -1
@@ -2470,7 +2487,12 @@ static func _storm(sim, u: int) -> void:
 			best_d = d
 	if best >= 0:
 		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
-			BattleAI._attack(sim, u, best, 1 if best_d < kn[AP.S_STORM_RUN] else 0)
+			# (A walled Rome town: the storm's foot, pikes aside, run in from
+			# outside the houses, so the column does not file through the
+			# gateway under the walls' shot; Rome walls pass.)
+			var run_in: bool = sim.u_cls[u] != UT.CLS_PIKE and _rome_plan(sim) \
+					and (sim.veg_bits(sim.u_cx[u], sim.u_cy[u]) & MapGen.V_URBAN) == 0
+			BattleAI._attack(sim, u, best, 1 if best_d < kn[AP.S_STORM_RUN] or run_in else 0)
 		return
 	if sim.fort_on != 0 and sim.ai_fort[sim.u_side[u]] == 2 and sim.fort_taken == 0 and _fort_party(sim, u):
 		# (Storming the fort: over its walls, or in by its broken gate: hold
