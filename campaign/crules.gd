@@ -182,7 +182,7 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _set_stance(st, f, int(o.get("a", -1)), int(o.get("s", 0)))
 		"cancel_move":
 			return _cancel_move(st, f, int(o.get("army", -1)))
-		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle", "fraid", "fblockade":
+		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle", "fraid", "fblockade", "fdock", "fundock":
 			return CFleet.apply_order(st, f, o)  # fleets (a pack with ships)
 		"sack_policy":
 			return CSea.set_policy(st, f, int(o.get("v", 0)))  # pirates (N2)
@@ -2256,6 +2256,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	var sg := CState.siege_at(st, r)
 	if not sg.is_empty():
 		st["sieges"].erase(sg)
+	CFleet.take_docked(st, r, f)  # (Docking) the fleets in the port are prizes
 	if CState.sieges_on(st):
 		# Armies of the old side left in the city (raised there while its
 		# battle was pending) march out (version 4; older states keep them).
@@ -3198,7 +3199,7 @@ const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war"
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
 	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
-	"galleon_lost", "flota_held", "lane_raided", "story"]
+	"galleon_lost", "flota_held", "lane_raided", "story", "fleet_taken"]
 const CHRONICLE_TURNS := 60
 
 

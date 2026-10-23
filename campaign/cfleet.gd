@@ -19,7 +19,9 @@ extends RefCounted
 ##     land the troops on arriving at dest, a coast cell), join (the id of
 ##     another fleet of the faction it sails to merge into; dest_x / dest_y
 ##     are that fleet's cell, refreshed every turn), job (AI: the army
-##     id it is fetching)}] sorted by id,
+##     id it is fetching; "in": r (Docking, 2026-10-23: the fleet lies docked
+##     in region r's port, on dock(r); "dk": r on a stored voyage: dock there on
+##     arriving)}] sorted by id,
 ##   next_fleet, regions[r]["sq"] [ship keys] (ordered this turn, launched
 ##   at the end of it), stats["sea_battles"].
 ## Orders (crules.apply_order): ship {r, ship}, embark {army, fleet}, land
@@ -29,7 +31,11 @@ extends RefCounted
 ## land cell: sail beside it and land everything aboard on arriving; tgt =
 ## one of the faction's own fleets: sail beside it and merge into it, kept
 ## from turn to turn until it does), fmerge {fleet, into} (at once, within
-## a cell), fcancel {fleet}, scuttle {fleet, ship}.
+## a cell), fcancel {fleet}, scuttle {fleet, ship}, fdock {fleet, r} (a
+## station order like fblockade: sail to port r's dock and dock there; at
+## the dock already it docks at once), fundock {fleet} (cast off). A docked
+## fleet has no zone, fights nothing, is sheltered from storms and repaired
+## by the yard; any voyage casts it off (docs/design/sea.md "Docking").
 ## Hooks for N2 (trade, blockades, the flota, pirates) are the docks and
 ## harbours per region, the pirates' capture share and the sea battle event.
 ## N3a: a sea battle with a human faction in it is pending (a battle record
@@ -71,6 +77,7 @@ const TAKEN_PCT := 35           # a prize joins its captor at this hull and crew
 const PORT_DEF_PCT := 110       # defenders in their own port: x this % ...
 const PORT_WALL_PCT := 15       # ... + this % per walls level (shore batteries)
 const RETREAT_R := 5
+const DOCK_NONE := -1
 
 static var _sea := PackedByteArray()     # 1: a sea cell of the open sea (the largest water body)
 static var _cd := PackedByteArray()      # Chebyshev distance to land, capped at 3 (0 land)
@@ -474,6 +481,44 @@ static func port_of(st: Dictionary, fl: Dictionary, f: int, friendly: bool = fal
 	return -1
 
 
+## (Docking) The region fleet fl lies docked in, -1 not docked.
+static func docked(fl: Dictionary) -> int:
+	return int(fl.get("in", DOCK_NONE))
+
+
+## (Docking) Faction f may dock in region r's port: it has a dock and its owner
+## is f, friendly to f, or (a pirate) f's marque patron.
+static func can_dock(st: Dictionary, f: int, r: int) -> bool:
+	if r < 0 or r >= CData.region_count() or dock(r) < 0:
+		return false
+	var o := CState.owner(st, r)
+	if o < 0:
+		return false
+	return o == f or CState.friendly(st, f, o) or (_csea().pirate(f) and _csea().has_marque(st, f, o))
+
+
+## (Docking) The lowest region whose dock is cell c and where f may dock, -1 none.
+static func dock_region(st: Dictionary, f: int, c: int) -> int:
+	for r in CData.region_count():
+		if dock(r) == c and can_dock(st, f, r):
+			return r
+	return -1
+
+
+## (Docking) Fleet fl docks in region r now.
+static func dock_at(fl: Dictionary, r: int) -> void:
+	fl["in"] = r
+
+
+## (Docking) The fleets of faction f docked in region r (in id order).
+static func docked_in(st: Dictionary, r: int, f: int = -1) -> Array:
+	var out: Array = []
+	for fl in fleets(st):
+		if docked(fl) == r and (f < 0 or int(fl["f"]) == f):
+			out.append(fl)
+	return out
+
+
 ## Ship keys faction f may build in region r (by its Shipyard), [] none.
 static func buildable(st: Dictionary, f: int, r: int) -> Array:
 	var out: Array = []
@@ -543,7 +588,7 @@ static func init(st: Dictionary) -> void:
 			if CData.ship_index(str(k)) >= 0:
 				ships.append({"t": str(k), "h": 100, "c": 100})
 		if not ships.is_empty():
-			_new_fleet(st, f, dock(r), ships)
+			dock_at(_new_fleet(st, f, dock(r), ships), r)  # (Docking) the start fleets lie in port
 	_capt().rise(st, true)  # (N2b) the pirates' start fleets sail under their captains
 
 
@@ -593,7 +638,32 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _scuttle(st, f, int(o.get("fleet", -1)), int(o.get("ship", -1)))
 		"fraid", "fblockade":
 			return _csea().station_check(st, f, o)  # (lanes) sail to a lane / a harbour and hold it
+		"fdock":
+			return _fdock(st, f, o)
+		"fundock":
+			var uf := fleet(st, int(o.get("fleet", -1)))
+			if uf.is_empty() or int(uf["f"]) != f:
+				return "no such fleet"
+			uf.erase("in")
+			uf.erase("dk")
+			return ""
 	return "unknown order"
+
+
+## (Docking) fdock {fleet, r}: "" if valid; at the dock already the fleet docks
+## at once, else the voyage is a stored one planned with the fleets' moves
+## (cturn: a station order, kind 3 of CSea.station_plan).
+static func _fdock(st: Dictionary, f: int, o: Dictionary) -> String:
+	var sp: Dictionary = _csea().station_plan(st, f, o)
+	if sp.has("why"):
+		return str(sp["why"])
+	var fl := fleet(st, int(o["fleet"]))
+	if int(sp["dest"]) == cell(fl):
+		_drop_voyage(fl)
+		fl.erase("route")
+		fl.erase("rgoal")
+		dock_at(fl, int(o["r"]))
+	return ""
 
 
 static func _order_ship(st: Dictionary, f: int, r: int, key: String) -> String:
@@ -672,6 +742,8 @@ static func land_ok(st: Dictionary, f: int, c: int) -> bool:
 ## nearest it (ties by cell index), -1 none.
 static func landing_cell(st: Dictionary, f: int, fl: Dictionary, want: int) -> int:
 	var fc := cell(fl)
+	if want >= 0 and docked(fl) >= 0 and want == CGrid.site(docked(fl)) and land_ok(st, f, want):
+		return want  # (Docking) into the city from the quay
 	if want >= 0 and CGrid.cheb(want, fc) <= 1 and land_ok(st, f, want):
 		return want
 	var best := -1
@@ -693,12 +765,17 @@ static func _land_order(st: Dictionary, f: int, fid: int, id: int, c: int) -> St
 		return "no such fleet"
 	if (fl["carry"] as Array).is_empty():
 		return "nobody aboard"
-	if c < 0 or CGrid.cheb(c, cell(fl)) > 1:
+	var dr := docked(fl)
+	var into_city := dr >= 0 and c >= 0 and c == CGrid.site(dr)  # (Docking) straight into the settlement
+	if c < 0 or (CGrid.cheb(c, cell(fl)) > 1 and not into_city):
 		return "not beside the fleet"
 	if not land_ok(st, f, c):
 		return "cannot land there"
 	if id >= 0 and carrier(st, id) != fl:
 		return "not aboard"
+	if dr >= 0 and not into_city:
+		fl.erase("in")  # (Docking) a landing anywhere but the city casts off
+		fl.erase("dk")
 	land(st, fl, c, id)
 	return ""
 
@@ -732,6 +809,8 @@ static func _fmerge(st: Dictionary, f: int, fid: int, into: int) -> String:
 		return "no such fleet"
 	if CGrid.cheb(cell(a), cell(b)) > 1:
 		return "too far apart"
+	if docked(a) >= 0 and docked(b) < 0 and cell(a) == cell(b):
+		b["in"] = a["in"]  # (Docking) the merged fleet lies docked where the one that was did
 	(b["ships"] as Array).append_array(a["ships"])
 	(b["carry"] as Array).append_array(a["carry"])
 	b["moved"] = maxi(int(a["moved"]), int(b["moved"]))
@@ -766,7 +845,7 @@ static func block_mask(st: Dictionary, f: int, tgt: int = -1) -> PackedByteArray
 	m.resize(CGrid.count())
 	m.fill(0)
 	for e in fleets(st):
-		if int(e["id"]) == tgt or not CState.at_war(st, f, int(e["f"])):
+		if int(e["id"]) == tgt or not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0:
 			continue
 		for c in CGrid.disc(cell(e), FLEET_ZONE):
 			m[c] = 1
@@ -977,7 +1056,7 @@ static func zone_owner(st: Dictionary, f: int, c: int) -> int:
 	var best := -1
 	var bd := INF
 	for e in fleets(st):
-		if not CState.at_war(st, f, int(e["f"])):
+		if not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0:
 			continue
 		if CGrid.within(cell(e), c, FLEET_ZONE) and CGrid.d2(cell(e), c) < bd:
 			bd = CGrid.d2(cell(e), c)
@@ -1005,6 +1084,8 @@ static func plan(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1, max
 			return {"why": "no such fleet"}
 		if int(tf["f"]) != f and not CState.at_war(st, f, int(tf["f"])):
 			return {"why": "not our fleet"}
+		if int(tf["f"]) != f and docked(tf) >= 0:
+			return {"why": "docked in port"}  # (Docking) behind the mole: nothing to fight
 		if int(tf["f"]) == f:
 			if tgt == fid:
 				return {"why": "a fleet cannot join itself"}
@@ -1110,6 +1191,7 @@ static func _drop_voyage(fl: Dictionary) -> void:
 	fl.erase("tgt")
 	fl.erase("land")
 	fl.erase("join")
+	fl.erase("dk")
 
 
 ## Fleet fl's stored voyage as [cell, tgt] ([-1, -1] none); tgt is the enemy
@@ -1120,7 +1202,8 @@ static func voyage(fl: Dictionary) -> Array:
 
 
 ## Run a phase's voyages: moves [[fleet id, dest cell, faction, persist,
-## tgt], ...]. Paths are planned first, then every fleet takes one step a
+## tgt, dk], ...] (dk: the region whose dock the voyage ends at, docking there
+## on arriving; optional, -1). Paths are planned first, then every fleet takes one step a
 ## round (by id); a step into an enemy fleet's zone is a sea battle at once
 ## (every fleet in it stops). A voyage that ends on a coast cell lands the
 ## troops. persist: a voyage not finished this turn is stored and goes on.
@@ -1145,6 +1228,8 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			_drop_voyage(fl)
 			_rules().event(st, {"k": "fmove_failed", "f": int(m[2]), "fleet": fid, "why": str(p["why"])})
 			continue
+		fl.erase("in")  # (Docking) any planned voyage casts off, even for zero steps
+		var dk := int(m[5]) if m.size() > 5 else -1
 		var steps: Array = []
 		var path: Array = p["path"]
 		for i in path.size():
@@ -1173,9 +1258,12 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 				fl["tgt"] = int(p["tgt"])
 			if int(p["land"]) != 0:
 				fl["land"] = 1
+			fl.erase("dk")
+			if dk >= 0:
+				fl["dk"] = dk
 		fl["moved"] = 1
 		plans.append({"id": fid, "steps": steps, "done": done, "goal": int(p["goal"]), "land": int(p["land"]),
-			"stop": false})
+			"stop": false, "dk": dk})
 	_mlog = []
 	var rounds := 0
 	for p in plans:
@@ -1184,7 +1272,7 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 		var pf := int(fleet(st, int(p["id"]))["f"])
 		var foes0: Array = []
 		for e in fleets(st):
-			if CState.at_war(st, pf, int(e["f"])) and not e.has("busy"):
+			if CState.at_war(st, pf, int(e["f"])) and not e.has("busy") and docked(e) < 0:
 				foes0.append(e)
 		p["foes"] = foes0
 	for i in rounds:
@@ -1220,6 +1308,16 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			_rules().event(st, {"k": "fmove_failed", "f": int(fl["f"]), "fleet": int(fl["id"]), "why": "nowhere to land"})
 			continue
 		land(st, fl, lc)
+	# (Docking) a voyage that ended at its dock docks the fleet (the port still ours / friendly's).
+	for p in plans:
+		var dkr := int(p["dk"])
+		if dkr < 0 or bool(p["stop"]) or not bool(p["done"]):
+			continue
+		var dfl := fleet(st, int(p["id"]))
+		if dfl.is_empty() or dfl.has("busy") or cell(dfl) != dock(dkr) or not can_dock(st, int(dfl["f"]), dkr):
+			continue
+		_drop_voyage(dfl)
+		dock_at(dfl, dkr)
 	_join_pass(st)
 	if not _mlog.is_empty():
 		_rules().event(st, {"k": "fmoves", "steps": _mlog.duplicate()})
@@ -1264,8 +1362,8 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 	for e in fleets(st):
 		if not CGrid.within(c, cell(e), FLEET_ZONE) and e != mover:
 			continue
-		if e.has("busy"):
-			continue  # (N3a) in a pending sea battle already
+		if e.has("busy") or (docked(e) >= 0 and e != mover):
+			continue  # (N3a) in a pending sea battle already; (Docking) behind the mole
 		if CState.friendly(st, f, int(e["f"])):
 			att.append(e)
 		elif foes.has(e) or CState.at_war(st, f, int(e["f"])):
@@ -1678,11 +1776,17 @@ static func end_of_turn(st: Dictionary) -> void:
 			var ship := {"t": str(key), "h": 100, "c": 100}
 			var into := {}
 			for fl in fleets(st):
-				if int(fl["f"]) == o and CGrid.cheb(cell(fl), dock(r)) <= 1 and not fl.has("sto"):
-					into = fl  # (a story campaign's own fleets, "sto", take no new ships)
+				if int(fl["f"]) == o and docked(fl) == r and not fl.has("sto"):
+					into = fl  # (Docking) the fleet lying docked here first
 					break
 			if into.is_empty():
+				for fl in fleets(st):
+					if int(fl["f"]) == o and CGrid.cheb(cell(fl), dock(r)) <= 1 and not fl.has("sto"):
+						into = fl  # (a story campaign's own fleets, "sto", take no new ships)
+						break
+			if into.is_empty():
 				into = _new_fleet(st, o, dock(r), [ship])
+				dock_at(into, r)  # (Docking)
 			else:
 				(into["ships"] as Array).append(ship)
 			_rules().event(st, {"k": "ship_built", "f": o, "r": r, "ship": str(key), "fleet": int(into["id"])})
@@ -1694,11 +1798,11 @@ static func end_of_turn(st: Dictionary) -> void:
 		ids.append(int(fl["id"]))
 	for id in ids:
 		var fl := fleet(st, id)
-		if fl.is_empty() or (fl["ships"] as Array).is_empty() or fl.has("busy"):
+		if fl.is_empty() or (fl["ships"] as Array).is_empty() or fl.has("busy") or docked(fl) >= 0:
 			continue
 		var foes: Array = []
 		for e in fleets(st):
-			if not (e["ships"] as Array).is_empty() and not e.has("busy") and CState.at_war(st, int(fl["f"]), int(e["f"])) \
+			if not (e["ships"] as Array).is_empty() and not e.has("busy") and docked(e) < 0 and CState.at_war(st, int(fl["f"]), int(e["f"])) \
 					and CGrid.within(cell(fl), cell(e), FLEET_ZONE):
 				foes.append(e)
 		if not foes.is_empty():
@@ -1708,15 +1812,22 @@ static func end_of_turn(st: Dictionary) -> void:
 		var f := int(fl["f"])
 		if not CState.alive(st, f) or (fl["ships"] as Array).is_empty():
 			continue
-		var r := port_of(st, fl, f)
+		var dkr := docked(fl)
+		if dkr >= 0 and not can_dock(st, f, dkr):
+			fl.erase("in")  # (Docking) the port is not ours nor friendly any more: cast off
+			dkr = -1
+		var r := dkr if dkr >= 0 else port_of(st, fl, f)
 		if r < 0 and _csea().pirate(f):
 			r = _csea().patron_port(st, fl)  # (N2) privateers refit in their patron's ports
 		var haven := 0
-		if r >= 0 and _csea().pirate(f):
-			haven = int(CData.ship_const("HAVEN_REPAIR", 0))  # (N2: a pirate haven)
+		if dkr >= 0 and _csea().pirate(f):
+			haven = int(CData.ship_const("HAVEN_REPAIR", 0))  # (N2: a pirate haven; docked)
 		for s in fl["ships"]:
 			if r >= 0:
-				var add := REPAIR + REPAIR_YARD * CState.building(st, r, CData.SHIPYARD) + haven
+				# (Docking) the yard works on ships at its quay; lying off the port the crews put in at the beach.
+				var add := REPAIR
+				if dkr >= 0:
+					add += REPAIR_YARD * CState.building(st, r, CData.SHIPYARD) + haven
 				s["h"] = mini(int(s["h"]) + add, 100)
 				s["c"] = mini(int(s["c"]) + add, 100)
 			elif int(s["c"]) > SCURVY_FLOOR:
@@ -1724,6 +1835,54 @@ static func end_of_turn(st: Dictionary) -> void:
 		fl["moved"] = 0
 		keep.append(fl)
 	st["fleets"] = keep
+
+
+## (Docking) Port r has fallen to faction f (CRules._capture): the fleets
+## docked there that are not friendly to f are prizes. Their ships join (or
+## form) a fleet of f's docked at r at TAKEN_PCT hull and crew (event
+## "fleet_taken" {f, from, r, ships, fleet}); the troops aboard are destroyed
+## (event "destroyed"). Fleets that are friendly to f are cast off.
+static func take_docked(st: Dictionary, r: int, f: int) -> void:
+	if not on(st):
+		return
+	var ids: Array[int] = []
+	for fl in fleets(st):
+		if docked(fl) == r:
+			ids.append(int(fl["id"]))
+	for id in ids:
+		var fl := fleet(st, id)
+		var g := int(fl["f"])
+		if CState.friendly(st, f, g):
+			if not can_dock(st, g, r):
+				fl.erase("in")
+			continue
+		var n := (fl["ships"] as Array).size()
+		for a in fl["carry"]:
+			_rules().event(st, {"k": "destroyed", "f": g, "r": r, "army": int(a["id"]), "men": CState.men(a)})
+		fl["carry"] = []
+		var into := {}
+		for e in fleets(st):
+			if int(e["f"]) == f and docked(e) == r and not e.has("sto") and not e.has("flota") and not e.has("busy"):
+				into = e
+				break
+		var prizes: Array = []
+		for s in fl["ships"]:
+			var pz := {"t": str(s["t"]), "h": TAKEN_PCT, "c": TAKEN_PCT}
+			for key in ["nm", "g", "cap"]:
+				if s.has(key):
+					pz[key] = s[key]
+			prizes.append(pz)
+		_capt().fleet_lost(st, fl, "battle", f, cell(fl))
+		(st["fleets"] as Array).erase(fl)
+		if prizes.is_empty():
+			continue
+		if into.is_empty() and dock(r) >= 0:
+			into = _new_fleet(st, f, dock(r), [])
+			dock_at(into, r)
+		if into.is_empty():
+			continue
+		(into["ships"] as Array).append_array(prizes)
+		_rules().event(st, {"k": "fleet_taken", "f": f, "from": g, "r": r, "ships": n, "fleet": int(into["id"])})
 
 
 ## Faction f is eliminated: its fleets go down with it.

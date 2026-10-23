@@ -47,6 +47,7 @@ static var probe_legacy := false   # test only: the old throttle (no redraw for 
 static var probe_rec := {}
 var _under: Node2D       # drawn behind the sprites: ship wakes and contact shadows
 var _wakes: Array = []   # [position, scale, heading]
+var _moored: Array = []  # (Docking) [position, scale, the town's site on screen]: ships lying docked (no wake, no bob, a mooring line)
 static var texture_bytes := 0
 
 ## The story's characters standing beside their army's banner (tools/hunyuan renders, assets/minis/characters;
@@ -249,6 +250,7 @@ func _draw_body() -> void:
 	var z: float = overlay.zoom
 	var vp := get_viewport_rect().grow(120.0)
 	_wakes.clear()
+	_moored.clear()
 	var items: Array = []   # [screen y, kind, payload...]
 	if on_ships and st.has("fleets"):
 		var fpos: Dictionary = overlay.fleet_positions()
@@ -326,7 +328,13 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	var h := _heading(fl)
 	var pos := c + Vector2(0, bob)
 	var sc := pxm
-	_wakes.append([c, pxm, h])
+	var dkr := CFleet.docked(fl)
+	if dkr >= 0:
+		# (Docking) a ship at the quay: sails furled (nothing in the wind), no wake, no bob, a line to the town.
+		pos = c
+		_moored.append([c, pxm, overlay.to_screen(overlay.site_point(dkr))])
+	else:
+		_wakes.append([c, pxm, h])
 	if types.size() >= 2:
 		var t2: String = types[1]
 		_blit(table, shade, "ship_%s__h%d" % [t2, h], pos + Vector2(-9.0, -5.0) * (pxm / 1.3), sc * 0.82, col)
@@ -339,6 +347,19 @@ func _draw_under() -> void:
 		probe_rec["wakes"] = _wakes.duplicate()
 		probe_rec["wakes_f"] = Engine.get_process_frames()
 	var low := Quality.is_low()
+	for mo in _moored:
+		var mc: Vector2 = mo[0]
+		var mk_: float = mo[1]
+		var pts2 := PackedVector2Array()
+		for j in 16:
+			var t2 := TAU * float(j) / 16.0
+			pts2.append(mc + Vector2(4.0, 3.0) * mk_ + Vector2(cos(t2) * 15.0, sin(t2) * 7.5) * mk_)
+		_under.draw_colored_polygon(pts2, Color(0.03, 0.10, 0.20, 0.18))
+		if not low:
+			var to_town: Vector2 = (mo[2] as Vector2) - mc
+			if to_town.length() > 1.0:
+				var rope := mc + to_town.normalized() * minf(to_town.length(), 16.0 * mk_)
+				_under.draw_line(mc + Vector2(0.0, 2.0 * mk_), rope, Color(0.35, 0.26, 0.15, 0.85), maxf(1.0, 1.1 * mk_), true)
 	for w in _wakes:
 		var c: Vector2 = w[0]
 		var k: float = w[1]

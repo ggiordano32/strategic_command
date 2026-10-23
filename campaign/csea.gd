@@ -27,7 +27,8 @@ extends RefCounted
 ## (state functions) and the "Sea lanes" section below.
 ## Orders (crules.apply_order): sack_policy {v}; propose {to, what:
 ## "marque"} (a nation to a pirate faction or back); (lanes) fraid {fleet,
-## lane}, fblockade {fleet, r}: sail to a station and hold it (stored voyages).
+## lane}, fblockade {fleet, r}: sail to a station and hold it (stored voyages);
+## (Docking) fdock {fleet, r}: sail to a port's dock and dock there.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -298,7 +299,14 @@ static func station_plan(st: Dictionary, f: int, o: Dictionary) -> Dictionary:
 	if fl.has("busy"):
 		return {"why": "in a sea battle"}
 	var dest := -1
-	if str(o.get("t", "")) == "fraid":
+	if str(o.get("t", "")) == "fdock":
+		var dr := int(o.get("r", -1))
+		if dr < 0 or dr >= CData.region_count() or CFleet.dock(dr) < 0:
+			return {"why": "no dock there"}
+		if not CFleet.can_dock(st, f, dr):
+			return {"why": "not a port of ours or a friend's"}
+		dest = CFleet.dock(dr)
+	elif str(o.get("t", "")) == "fraid":
 		var id := int(o.get("lane", -1))
 		if id < 0 or id >= CLanes.total():
 			return {"why": "no lane here"}

@@ -749,13 +749,29 @@ func _build_fleet(id: int) -> void:
 	stats.append(_stat("move", "%d" % (CFleet.speed(fl) / 10), "Cells a turn on a beam reach"))
 	if mine and not flota:
 		stats.append(_stat("coin", "-%d/turn" % up, "Upkeep: what the army costs a turn (not the treasury)", Kit.COL_GOLD))
-	var status := "Has sailed this turn" if int(fl.get("moved", 0)) != 0 else "In port" if CFleet.port_of(ps, fl, ff) >= 0 else "At sea"
+	var dkr := CFleet.docked(fl)
+	var status := "Has sailed this turn" if int(fl.get("moved", 0)) != 0 else "In port at %s" % CData.REGIONS[dkr]["city"] if dkr >= 0 \
+		else "In port" if CFleet.port_of(ps, fl, ff) >= 0 else "At sea"
 	var vy: Array = s.planned_voyage(id) if mine else [-1, -1]
+	var dko: int = s.dock_order(id) if mine else -1
+	var casting: bool = mine and s.cast_off_planned(id)
 	if mine and (int(vy[0]) >= 0 or int(vy[1]) >= 0):
 		status = "Voyage planned"
-	var leader := _leader(ff, "The flota" if flota else "%s fleet" % CData.FACTIONS[ff]["adj"], place, CData.faction_color(ff).lightened(0.45), stats, status, Kit.COL_GOOD if status == "Voyage planned" else Kit.COL_DIM)
+		if dko >= 0:
+			status = "Docking at %s" % CData.REGIONS[dko]["city"] if int(vy[0]) == CFleet.cell(fl) else "Sailing to dock at %s" % CData.REGIONS[dko]["city"]
+	if casting:
+		status = "Casting off"
+	var planned := status == "Voyage planned" or dko >= 0 or casting
+	var leader := _leader(ff, "The flota" if flota else "%s fleet" % CData.FACTIONS[ff]["adj"], place, CData.faction_color(ff).lightened(0.45), stats, status, Kit.COL_GOOD if planned else Kit.COL_DIM)
 	var acts: Array = []
 	if mine and not flota and int(fl.get("moved", 0)) == 0:
+		# (Docking) a fleet lying in port casts off (the same tap again takes the order back); one at sea docks.
+		if casting:
+			acts.append(_action("cancel", "Stay", "Stay in port: take the order to cast off back", func(): s.toggle_cast_off(id), "", "cast_off"))
+		elif dkr >= 0 and dko < 0:
+			acts.append(_action("move", "Cast off", "Cast off from the quay: the fleet lies off the port again, ready to sail or to fight", func(): s.toggle_cast_off(id), "", "cast_off"))
+		elif not fl.has("sto") and dko < 0 and dkr < 0:
+			acts.append(_action("ship", "Dock", "Dock in a port city of yours or an ally's: sheltered from storms and fights, repaired by the yard. At a dock it docks at once, elsewhere tap the city to sail in.", func(): s.start_dock(id), "", "dock"))
 		if int(vy[0]) >= 0 or int(vy[1]) >= 0:
 			acts.append(_action("cancel", "Cancel", "Cancel the voyage", func(): s.set_fmove(id, int(vy[0]), int(vy[1])), "", "cancel_voyage"))
 		else:

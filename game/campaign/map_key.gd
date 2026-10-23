@@ -369,6 +369,13 @@ func rows() -> Array:
 			var k := sz.y * 0.4
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(0.05, -0.95) * k, c + Vector2(0.7, 0.05) * k, c + Vector2(0.05, 0.05) * k]), Color(0.96, 0.94, 0.86))
 			ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-1, 0.15) * k, c + Vector2(1, 0.15) * k, c + Vector2(0.62, 0.62) * k, c + Vector2(-0.7, 0.62) * k]), oc)])
+		out.append(["Docked fleet: at the quay of a port city, sails furled; no storm or enemy fleet reaches it, the yard repairs it (Cast off to sail)", func(ci: Control, sz: Vector2):
+			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+			var dc := sz * 0.5
+			var dk := sz.y * 0.4
+			ci.draw_colored_polygon(PackedVector2Array([dc + Vector2(-1, 0.15) * dk, dc + Vector2(1, 0.15) * dk, dc + Vector2(0.62, 0.62) * dk, dc + Vector2(-0.7, 0.62) * dk]), oc)
+			ci.draw_line(dc + Vector2(0.0, 0.15) * dk, dc + Vector2(0.0, -0.8) * dk, Color(0.96, 0.94, 0.86), 2.0)
+			ci.draw_line(dc + Vector2(-0.8, 0.5) * dk, dc + Vector2(-1.2, 0.2) * dk, Color(0.35, 0.26, 0.15), 2.0)])
 		out.append(["Blockaded port: an enemy fleet on its approach takes its sea trade", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 			Overlay.draw_blockade(ci, sz * 0.5, sz.y * 0.4, Color(0.78, 0.25, 0.18), 0.8)])

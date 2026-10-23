@@ -137,7 +137,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_barfit, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_done, _s_done,
 	]
 
 
@@ -2011,6 +2011,114 @@ func _j_lanes() -> void:
 	await process_frame
 	if rt.has(hv):
 		(ps2["fleets"] as Array).pop_back()
+	cs.deselect_all()
+	hold = false
+
+
+## Docking (2026-10-23): the Dock button at sea asks for a city (a toast), a tap on our port city orders fdock, the same city
+## again cancels; at a dock the button docks at once; a docked fleet's card says "In port at ..." and Cast off orders fundock
+## (the same button again, now Stay, takes it back).
+func _j_dock() -> void:
+	hold = true
+	const CFleetD := preload("res://campaign/cfleet.gd")
+	cs.no_bar = true
+	cs.details_on_select = false
+	cs.close_side()
+	cs.orders = []
+	cs._replan()
+	var pr := CData.region_index("port_royal")
+	var eng: int = cs.f
+	var dkc := CFleetD.dock(pr)
+	# A fleet at sea (900): Dock, then the city.
+	cs.select_fleet(900)
+	await process_frame
+	var db := _bar_btn("act_dock")
+	_check(db != null, "docking: a fleet at sea has the Dock button")
+	if db != null:
+		db.pressed.emit()
+		await process_frame
+		_check(cs.dock_mode == 900, "docking: Dock at sea waits for a port city (toast, mode on)")
+	_bar_done()
+	var hp: Vector2 = cs.overlay.site_point(pr)
+	cs.offset = cs._vp() * 0.5 - hp * cs.zoom
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	_tap(cs.overlay.to_screen(hp))
+	await process_frame
+	await process_frame
+	var o: Dictionary = {}
+	for q in cs.orders:
+		if str(q["t"]) == "fdock":
+			o = q
+	_check(not o.is_empty() and int(o["fleet"]) == 900 and int(o["r"]) == pr and cs.dock_mode == -1,
+		"docking: a tap on Port Royal orders fdock for the selected fleet")
+	_check(cs.dock_order(900) == pr and int(cs.planned_voyage(900)[0]) == dkc, "docking: the planned voyage ends at the dock cell")
+	_tap(cs.overlay.to_screen(hp))
+	await process_frame
+	await process_frame
+	var still := false
+	for q in cs.orders:
+		if str(q["t"]) == "fdock":
+			still = true
+	_check(not still, "docking: the same city again cancels the dock order")
+	cs.deselect_all()
+	# Fleets at the quay: 910 docked, 911 undocked on the dock cell.
+	var st: Dictionary = cs.st
+	var mkf := func(id: int, keys: Array) -> Dictionary:
+		var ships: Array = []
+		for k in keys:
+			ships.append({"t": k, "h": 100, "c": 100})
+		return {"id": id, "f": eng, "x": CGrid.cx(dkc), "y": CGrid.cy(dkc), "ships": ships, "carry": [], "moved": 0}
+	var f910: Dictionary = mkf.call(910, ["sloop"])
+	f910["in"] = pr
+	(st["fleets"] as Array).append(f910)
+	(st["fleets"] as Array).append(mkf.call(911, ["sloop", "sloop"]))
+	st["next_fleet"] = 912
+	cs._replan()
+	await process_frame
+	cs.select_fleet(910)
+	await process_frame
+	_check(cs.panels != null and CFleetD.docked(CFleetD.fleet(cs.ps, 910)) == pr, "docking: fleet 910 lies docked in Port Royal")
+	var cb := _bar_btn("act_cast_off")
+	_check(cb != null and _bar_btn("act_dock") == null, "docking: a docked fleet has Cast off and no Dock button")
+	if cb != null:
+		cb.pressed.emit()
+		await process_frame
+		var cast := false
+		for q in cs.orders:
+			if str(q["t"]) == "fundock" and int(q["fleet"]) == 910:
+				cast = true
+		_check(cast and CFleetD.docked(CFleetD.fleet(cs.ps, 910)) == -1, "docking: Cast off orders fundock and the plan shows the fleet undocked")
+		var sb := _bar_btn("act_cast_off")
+		var had_sb := sb != null
+		if had_sb:
+			sb.pressed.emit()
+			await process_frame
+		var cast2 := false
+		for q in cs.orders:
+			if str(q["t"]) == "fundock":
+				cast2 = true
+		_check(had_sb and not cast2 and CFleetD.docked(CFleetD.fleet(cs.ps, 910)) == pr, "docking: the same button again (Stay) takes the order back")
+	_bar_done()
+	# At a dock the Dock button docks at once.
+	cs.select_fleet(911)
+	await process_frame
+	var d2 := _bar_btn("act_dock")
+	_check(d2 != null, "docking: an undocked fleet on a dock cell has the Dock button")
+	if d2 != null:
+		d2.pressed.emit()
+		await process_frame
+		_check(cs.dock_order(911) == pr and CFleetD.docked(CFleetD.fleet(cs.ps, 911)) == pr, "docking: Dock at a dock orders it and docks at once")
+	_bar_done()
+	cs.undo()
+	await process_frame
+	# The settlement card lists the fleets in port.
+	cs.select_region(pr)
+	await process_frame
+	await process_frame
+	var found := cs.side.find_child("in_port_910", true, false) != null
+	_check(found, "docking: the settlement card lists the fleet in port (In port: English fleet, 1 ship)")
 	cs.deselect_all()
 	hold = false
 

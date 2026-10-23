@@ -672,3 +672,56 @@ fleets in port ("In port: Carthaginian fleet, 5 ships"). The Ship book's campaig
 paragraph. Tests: `campaign_test._docking` (order, arrival, shelter, repair, launches, landing into the
 city, the prize, cast off by a voyage and by capture, the storm) and a campaign input case for the
 buttons and the city tap.
+
+### Docking (as built, 2026-10-23)
+
+Built as planned; what the build settled or changed:
+
+- **State and API** (`campaign/cfleet.gd`): `"in": r` on the fleet (absent otherwise, no `CState.VERSION` bump), `CFleet.docked(fl)`
+  (`r` or -1), `can_dock(st, f, r)` (a dock, and an owner who is `f`, friendly to `f`, or `f`'s marque patron when `f` is a
+  pirate), `dock_region(st, f, cell)`, `dock_at`, `docked_in(st, r, f)`, `take_docked` (the prize rule). `"dk": r` rides a
+  stored voyage. `fdock` / `fundock` are in `CFleet.apply_order` and `CRules.apply_order`'s dispatch, `CSea.station_plan`
+  (kind 3) and the three places of `cturn` that list the station orders (preview, the skip list of the order pass, the fleet
+  phase). `fdock` at the dock docks inside `apply_order` (so the planning preview shows it docked at once); from afar it is
+  a stored voyage planned with the fleets' moves.
+- **Cast off is in `execute_moves`**, not in the orders: any voyage that is planned (a player's `fmove` / `fraid` /
+  `fblockade` / `fdock`, a stored one, or any AI move tuple) erases `in` before the fleet sails, even for zero steps; a failed
+  plan leaves the fleet docked. A landing anywhere but the city (`_land_order`) casts off. A station order that holds the
+  fleet where it lies (`fraid` / `fblockade` at the station) erases `in` in `cturn`.
+- **Docked fleets** are left out of `block_mask`, `zone_owner`, `sea_battle`'s gathering (the mover itself excepted),
+  `execute_moves`' foe list, the end-of-turn zone fights (as fighter and as foe) and `cstorm.strike`. `plan` refuses a
+  chase after a docked enemy fleet ("docked in port"), and the AI's `_prey` skips them. `CSea._blockade_sides` is unchanged.
+- **Repair**: docked, `REPAIR` + `REPAIR_YARD` x the Shipyard level of the dock's region (an ally's yard for an ally's
+  port) + the pirate haven bonus; undocked within `PORT_CELLS` of an own harbour (or a patron's), `REPAIR` alone; at sea,
+  scurvy as before. At the end of a turn a docked fleet whose port is not ours / friendly / a patron's any more is cast
+  off before the repair.
+- **Launches** join the fleet docked at the dock first, else a fleet within a cell of it as before, else a new fleet that
+  starts docked; `init`'s start fleets start docked (story fleets, the flota's galleons and `_new_fleet` itself do not: only
+  `init` and the launch dock them). `fmerge` into a docked fleet keeps the berth when the two share the cell.
+- **Capture** (`CRules._capture` -> `CFleet.take_docked`): docked fleets of factions not friendly to the captor are prizes
+  at `TAKEN_PCT` (names, treasure and the capitana flag kept), joining a fleet of the captor docked there or a new docked
+  one; the troops aboard are destroyed (event `destroyed`), the captain meets his fate as for a lost fleet
+  (`CCaptain.fleet_lost`, one RNG draw), event `fleet_taken {f, from, r, ships, fleet}` (in `CHRONICLE_KINDS`, the
+  chronicle text "took the N ships docked at X"). A docked fleet friendly to the captor stays (cast off if it may not dock
+  there any more).
+- **AI** (`cai_fleet`, header item 9; docs/AI.md 12.3): a free fleet with no job and nothing aboard lying on a dock it may
+  use gets an at-once `fdock` after all other planning; home voyages carry the dock region (sixth tuple element). The
+  fleets already moving are not docked that turn.
+- **View**: the fleet card ("In port at X", "Docking at X", "Sailing to dock at X", "Casting off"), buttons Dock / Cast off /
+  Stay (`act_dock`, `act_cast_off`); `CampaignScreen.start_dock`, `toggle_cast_off`, `dock_order`, `dock_mode` and
+  `set_station(id, lane, r, dock)`; with a fleet of ours selected a tap on one of our (or an ally's) port cities orders
+  `fdock` when nothing is aboard (before: an error), or after the Dock button for a loaded fleet; the same city again
+  cancels. Docked ships are drawn by `MinisLayer` at the quay without wake or bob, with a shadow and a mooring line to the
+  town (no furled-sail sprite exists; the cue is the missing wake and the line). The settlement card has an "In port"
+  section (our fleets, the enemy's we see) with a button per fleet; the map key has a docked-fleet row. The Ship book has
+  no campaign page (it is the sea battle's): the Docking paragraph is on its Ships page.
+- **Knobs**: none new. `PORT_CELLS`, `REPAIR`, `REPAIR_YARD`, `TAKEN_PCT` as before.
+- **Effect**: the pins moved because the AI docks and the repair rule split (fleets lying off a port get the beach repair only): see docs/STATUS.md for the six hashes per pack and the goldens. The `_chars` hero check (seed 77) raised
+  no hero after the move, an emergent change of the sequence; the check uses seed 79 now.
+- **Tests**: `campaign_test._docking` (25 checks: start fleets docked, JSON round trip, fdock at the dock, fundock, an
+  enemy port refused, the preview of fdock from afar, the stored voyage with `dk` docking on arriving, an enemy fleet
+  sailing onto the dock cell fights nothing and the same fleet undocked is fought, the end-of-turn zone fight skipped and
+  undocked not, the repair split, a launch joining the docked fleet and a new fleet starting docked, landing into the city,
+  `fmove` and a zero-step `fmove` casting off, the prize with its event and the troops destroyed, the prizes joining a docked
+  fleet, a port lost without a capture, the storm, the AI docking, determinism) and `campaign_input_test._j_dock` (12
+  checks: Dock at sea and the city tap, the same city cancels, Cast off / Stay, Dock at a dock, the settlement card's list).

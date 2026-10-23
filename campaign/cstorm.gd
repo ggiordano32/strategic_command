@@ -274,8 +274,8 @@ static func strike(st: Dictionary, s: Dictionary, ax: int, ay: int, bx: int, by:
 	for fl in CFleet.fleets(st):
 		var c := CFleet.cell(fl)
 		var z := _zone(seg_d2(cpx(c), cpy(c), ax, ay, bx, by), r)
-		if z == 0 or (fl["ships"] as Array).is_empty() or fl.has("busy"):
-			continue  # ((N3a) a fleet in a pending sea battle: the battle comes first)
+		if z == 0 or (fl["ships"] as Array).is_empty() or fl.has("busy") or CFleet.docked(fl) >= 0:
+			continue  # ((Docking) behind the mole: the storm passes; (N3a) a fleet in a pending sea battle: the battle comes first)
 		var f := int(fl["f"])
 		var pct := 100 if z == 2 else edge
 		var in_port := CFleet.port_of(st, fl, f, true) >= 0

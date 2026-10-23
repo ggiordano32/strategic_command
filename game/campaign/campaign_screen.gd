@@ -91,6 +91,7 @@ var moves: Array = []          # planned moves [[army, to]]
 var sel_army := -1
 var sel_region := -1
 var sel_fleet := -1            # a fleet (a pack with ships, campaign/cfleet.gd)
+var dock_mode := -1            # (Docking) the fleet whose next tap on one of our port cities orders fdock, -1 none
 var _wave_redraw := 0.0        # fleets bob on the waves: the overlay redraws a few times a second
 var zoom := 0.6
 var offset := Vector2.ZERO     # screen = map * zoom + offset
@@ -2539,6 +2540,8 @@ func select_region(r: int) -> void:
 
 
 func select_fleet(id: int) -> void:
+	if id != dock_mode:
+		dock_mode = -1
 	sel_fleet = id
 	sel_army = -1
 	sel_region = -1
@@ -2600,13 +2603,15 @@ func set_fmove(id: int, c: int, tgt: int = -1) -> void:
 
 func _is_station(o: Dictionary) -> bool:
 	var t := str(o.get("t", ""))
-	return t == "fraid" or t == "fblockade"
+	return t == "fraid" or t == "fblockade" or t == "fdock"
 
 
 ## (Sea lanes) Order fleet id to raid lane `lane` or blockade region `r`'s port (-1 the other): it sails to the
 ## station and holds it. The same target again cancels; another target replaces the fleet's voyage.
-func set_station(id: int, lane: int, r: int) -> void:
+func set_station(id: int, lane: int, r: int, dock: bool = false) -> void:
 	var o := {"t": "fraid", "fleet": id, "lane": lane} if lane >= 0 else {"t": "fblockade", "fleet": id, "r": r}
+	if dock:
+		o = {"t": "fdock", "fleet": id, "r": r}   # (Docking) sail to the port's dock and dock there
 	var keep: Array = []
 	var same := false
 	var had := false
@@ -2626,8 +2631,52 @@ func set_station(id: int, lane: int, r: int) -> void:
 	else:
 		why = add_order(o)
 	if why == "":
-		_t("campaign_input", {"what": "fleet_raid" if lane >= 0 else "fleet_blockade"})
+		_t("campaign_input", {"what": "fleet_dock" if dock else "fleet_raid" if lane >= 0 else "fleet_blockade"})
 
+
+## (Docking) The region fleet id is ordered to dock in (an fdock order of the plan), -1 none.
+func dock_order(id: int) -> int:
+	for o in orders:
+		if str(o.get("t", "")) == "fdock" and int(o.get("fleet", -1)) == id:
+			return int(o.get("r", -1))
+	return -1
+
+
+## (Docking) Fleet id is ordered to cast off (fundock in the plan).
+func cast_off_planned(id: int) -> bool:
+	for o in orders:
+		if str(o.get("t", "")) == "fundock" and int(o.get("fleet", -1)) == id:
+			return true
+	return false
+
+
+## (Docking) Cast off fleet id, or take the order back when it is planned already.
+func toggle_cast_off(id: int) -> void:
+	if cast_off_planned(id):
+		var keep: Array = []
+		for o in orders:
+			if not (str(o.get("t", "")) == "fundock" and int(o.get("fleet", -1)) == id):
+				keep.append(o)
+		set_orders(keep)
+		return
+	if add_order({"t": "fundock", "fleet": id}) == "":
+		_t("campaign_input", {"what": "fleet_cast_off"})
+
+
+## (Docking) The Dock button: at one of our docks the fleet docks at once (an fdock order), elsewhere the next tap on one
+## of our port cities sails the fleet in.
+func start_dock(id: int) -> void:
+	var fl := CFleet.fleet(ps, id)
+	if fl.is_empty():
+		return
+	var r := CFleet.dock_region(ps, f, CFleet.cell(fl))
+	if r >= 0:
+		dock_mode = -1
+		set_station(id, -1, r, true)
+		_after_station()
+		return
+	dock_mode = id
+	show_toast("Tap one of your port cities to sail in and dock.")
 
 ## The lanes the fleet (ours) could raid now: CLanes ids at war with it.
 func raid_lanes_of(fl: Dictionary) -> Array:
@@ -3552,6 +3601,12 @@ func _tap_fleets(p: Vector2) -> bool:
 		var c := MapOverlay.cell_of_point(_map_point(p))
 		var tsr := overlay.settlement_at(p)
 		# (Sea lanes) an enemy harbour with no troops aboard: blockade it; a lane we could raid: raid it.
+		# (Docking) one of our (or an ally's) port cities: dock there (an empty fleet at once, a loaded one after the Dock button).
+		if tsr >= 0 and not sf.has("flota") and CFleet.can_dock(ps, f, tsr) and ((sf["carry"] as Array).is_empty() or dock_mode == sel_fleet):
+			dock_mode = -1
+			set_station(sel_fleet, -1, tsr, true)
+			_after_station()
+			return true
 		if tsr >= 0 and (sf["carry"] as Array).is_empty() and CFleet.harbour(tsr) >= 0 and CState.owner(ps, tsr) >= 0 \
 				and CState.at_war(ps, f, CState.owner(ps, tsr)) and not sf.has("flota"):
 			set_station(sel_fleet, -1, tsr)

@@ -70,6 +70,7 @@ const CChars := preload("res://campaign/cchars.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const Sight := preload("res://campaign/csight.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CStorm := preload("res://campaign/cstorm.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
@@ -147,6 +148,7 @@ func _init() -> void:
 	_sea_lanes()
 	_rome_fleets()
 	_ai_sea_garrison()
+	_docking()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -3763,9 +3765,10 @@ func _ai_skilled() -> void:
 	# differs; (2026-10-22: the AI's odds as win chances, docs/AI.md 12.1: it
 	# attacks at 55 % predicted instead of 130 % of its defence estimate: were
 	# e641d961 / 1208372723 and, Easy, 1508a9cb / 256607262;) (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
+	# (2026-10-23, Docking: the AI docks its free fleets, the repair rule splits; were 653fa85c / 3934412497 and, Easy, 123fe3e4 / 662798570;)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "653fa85c" and int(g["rng"]) == 3934412497,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "4c8a4977" and int(g["rng"]) == 2580136663,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3773,7 +3776,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "123fe3e4" and int(ge["rng"]) == 662798570,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "11d7ae9c" and int(ge["rng"]) == 1530193207,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4013,8 +4016,9 @@ func _chars() -> void:
 	_check(CState.state_hash(d1) == CState.state_hash(d2), "characters: two resolutions give the same hash")
 	_check(_plain(d1) and CState.state_hash(CState.from_json(CState.to_json(d1))) == CState.state_hash(d1), "characters in the state: plain data, JSON round trip")
 	# The AI: Average raises heroes, Easy never.
-	var avg := CState.new_campaign("t", 77, [])
-	var easy := CState.new_campaign("t", 77, [], {"ai_campaign_skill": CP.EASY})
+	# (Docking, 2026-10-23: seed 77 raised none after the AI's fleets began to dock; the sequence is emergent, seed 79 raises two.)
+	var avg := CState.new_campaign("t", 79, [])
+	var easy := CState.new_campaign("t", 79, [], {"ai_campaign_skill": CP.EASY})
 	for t in 60:
 		avg = CTurn.resolve_turn(avg, [])
 		easy = CTurn.resolve_turn(easy, [])
@@ -5362,3 +5366,234 @@ func _marker_at(list: Array, c: int) -> bool:
 		if int(q["cell"]) == c:
 			return true
 	return false
+
+
+# ---------------------------------------------------------------- docking ---
+
+func _dk_fleet(st: Dictionary, f: int, c: int, keys: Array, r: int = -1) -> Dictionary:
+	var ships: Array = []
+	for k in keys:
+		ships.append({"t": str(k), "h": 100, "c": 100})
+	var fl := CFleet._new_fleet(st, f, c, ships)
+	if r >= 0:
+		CFleet.dock_at(fl, r)
+	return fl
+
+
+## A sea cell at least `away` cells from cell c (within 8) that fleet fl can sail to.
+func _dk_far(st: Dictionary, f: int, fl: Dictionary, c: int, away: int) -> int:
+	for j in CGrid.disc(c, away + 2):
+		if CFleet.is_sea(j) and CGrid.cheb(j, c) >= away and CFleet.coast_dist(j) >= 1 \
+				and not CFleet.plan(st, f, int(fl["id"]), j).has("why"):
+			return j
+	return -1
+
+
+func _dk_events(st: Dictionary, kind: String) -> int:
+	var n := 0
+	for e in st["events"]:
+		if str(e["k"]) == kind:
+			n += 1
+	return n
+
+
+## Docking (docs/design/sea.md "Docking"): a fleet in a port city.
+func _docking() -> void:
+	CData.use_pack("west")
+	var eng := _f("england")
+	var ns := _f("new_spain")
+	var pr := _r("port_royal")
+	var hv := _r("havana")
+	var st := CState.new_campaign("dk", 11, [eng], {}, [], "west")
+	CState.set_dip(st, eng, ns, CState.WAR)
+	var all_docked := true
+	for fl in st["fleets"]:
+		all_docked = all_docked and CFleet.docked(fl) >= 0 and CFleet.cell(fl) == CFleet.dock(CFleet.docked(fl))
+	_check(all_docked and (st["fleets"] as Array).size() > 0, "docking: the start fleets lie docked on their port's dock")
+	var js := CState.from_json(CState.to_json(st))
+	_check(CState.hash_text(js) == CState.hash_text(st) and CFleet.docked(js["fleets"][0]) == CFleet.docked(st["fleets"][0]),
+		"docking: the \"in\" key round-trips JSON and the hash")
+	var dkc := CFleet.dock(pr)
+	# fdock at the dock docks at once; fundock casts off.
+	st["fleets"] = []
+	var ef := _dk_fleet(st, eng, dkc, ["frigate", "sloop"])
+	var fid := int(ef["id"])
+	_check(CFleet.docked(ef) == -1 and CRules.apply_order(st, eng, {"t": "fdock", "fleet": fid, "r": pr}) == "" and CFleet.docked(ef) == pr,
+		"docking: fdock on the dock cell docks the fleet at once")
+	_check(CRules.apply_order(st, eng, {"t": "fundock", "fleet": fid}) == "" and CFleet.docked(ef) == -1 and CFleet.cell(ef) == dkc,
+		"docking: fundock casts off, the fleet stays on the dock cell")
+	_check(CRules.apply_order(st, eng, {"t": "fdock", "fleet": fid, "r": hv}) != "",
+		"docking: an enemy port is refused")
+	# From afar: a stored voyage, docks on arriving.
+	var far := _dk_far(st, eng, ef, dkc, 16)
+	CFleet.place(ef, far)
+	var sf := CState.copy(st)
+	var o := {"t": "fdock", "fleet": fid, "r": pr}
+	var pv := CTurn.preview(sf, eng, [o])
+	_check((pv["errors"] as Array).is_empty() and (pv["fmoves"] as Array).size() == 1, "docking: fdock from afar previews as a voyage to the dock")
+	var g := sf
+	var turns := 0
+	var at_first := -2
+	while turns < 8 and CFleet.docked(CFleet.fleet(g, fid)) < 0:
+		g = CTurn.resolve_turn(g, [CTurn.submission(g, eng, [o] if turns == 0 else [])])
+		turns += 1
+		if turns == 1:
+			at_first = int(CFleet.fleet(g, fid).get("dk", -1))
+	var gf := CFleet.fleet(g, fid)
+	_check(far >= 0 and CFleet.docked(gf) == pr and CFleet.cell(gf) == dkc and not gf.has("dk") and not gf.has("dest_x") and turns > 1,
+		"docking: fdock from afar stores the voyage (dk %d after turn 1) and docks on arriving (turn %d)" % [at_first, turns])
+	_check(at_first == pr, "docking: the stored voyage carries the dock region")
+	# An enemy fleet sailing onto the dock cell fights nothing.
+	var sb := CState.copy(st)
+	CState.set_dip(sb, eng, ns, CState.WAR)
+	sb["fleets"] = []
+	var dfl := _dk_fleet(sb, eng, dkc, ["frigate", "frigate"], pr)
+	var inv := _dk_fleet(sb, ns, dkc, ["frigate", "sloop"])
+	CFleet.place(inv, _dk_far(sb, ns, inv, dkc, 4))
+	var inv_dest := dkc
+	var inv0 := CFleet.cell(inv)
+	CFleet.execute_moves(sb, [[int(inv["id"]), inv_dest, ns, 0, -1]])
+	_check((sb["battles"] as Array).is_empty() and _dk_events(sb, "sea_battle") == 0 and CFleet.docked(dfl) == pr
+		and (dfl["ships"] as Array).size() == 2,
+		"docking: an enemy fleet sailing to the dock cell fights nothing (it lies at %d, dock %d)" % [CFleet.cell(inv), dkc])
+	# ... and the same fleet undocked is fought.
+	var su := CState.copy(sb)
+	CFleet.fleet(su, int(dfl["id"])).erase("in")
+	CFleet.place(CFleet.fleet(su, int(inv["id"])), inv0)
+	CFleet.fleet(su, int(inv["id"]))["moved"] = 0
+	CFleet.execute_moves(su, [[int(inv["id"]), dkc, ns, 0, -1]])
+	_check(not (su["battles"] as Array).is_empty() or _dk_events(su, "sea_battle") > 0, "docking: the same fleet undocked is fought")
+	# The end-of-turn zone fight skips docked fleets.
+	var se := CState.copy(sb)
+	CFleet.place(CFleet.fleet(se, int(inv["id"])), dkc)
+	CFleet.end_of_turn(se)
+	_check((se["battles"] as Array).is_empty() and _dk_events(se, "sea_battle") == 0, "docking: the end-of-turn zone fight skips a docked fleet")
+	var se2 := CState.copy(se)
+	CFleet.fleet(se2, int(dfl["id"])).erase("in")
+	CFleet.end_of_turn(se2)
+	_check(not (se2["battles"] as Array).is_empty() or _dk_events(se2, "sea_battle") > 0, "docking: undocked, the fleet fights the enemy lying on its dock cell")
+	# Repair: docked = REPAIR + yard; undocked within the port = REPAIR only; at sea = scurvy.
+	var sr := CState.copy(st)
+	sr["fleets"] = []
+	var yard_set := false
+	for sl_ in sr["regions"][pr]["slots"]:
+		if int(sl_[0]) == CData.SHIPYARD:
+			sl_[1] = 2
+			yard_set = true
+	if not yard_set:
+		(sr["regions"][pr]["slots"] as Array).append([CData.SHIPYARD, 2])
+	var yard := CState.building(sr, pr, CData.SHIPYARD)
+	var a1 := _dk_fleet(sr, eng, dkc, ["frigate"], pr)
+	var a2 := _dk_fleet(sr, eng, CFleet.cell(CFleet.fleet(sr, int(a1["id"]))), ["frigate"])
+	var a3 := _dk_fleet(sr, eng, far, ["frigate"])
+	for x in [a1, a2, a3]:
+		x["ships"][0]["h"] = 40
+		x["ships"][0]["c"] = 80
+	CFleet.end_of_turn(sr)
+	var h1 := int(a1["ships"][0]["h"])
+	var h2 := int(a2["ships"][0]["h"])
+	_check(h1 == mini(40 + CFleet.REPAIR + CFleet.REPAIR_YARD * yard, 100) and h2 == 40 + CFleet.REPAIR and int(a3["ships"][0]["c"]) < 80 and int(a3["ships"][0]["h"]) == 40,
+		"docking: repair docked %d (yard %d), lying off %d, at sea scurvy (crew %d)" % [h1, yard, h2, int(a3["ships"][0]["c"])])
+	# A launched ship joins the docked fleet.
+	var sl := CState.copy(st)
+	sl["fleets"] = []
+	var other := _dk_fleet(sl, eng, dkc, ["sloop"])   # (an undocked fleet on the dock cell, lower id)
+	var dk2 := _dk_fleet(sl, eng, dkc, ["frigate"], pr)
+	sl["regions"][pr]["sq"] = ["sloop"]
+	CFleet.end_of_turn(sl)
+	_check((CFleet.fleet(sl, int(dk2["id"]))["ships"] as Array).size() == 2 and (CFleet.fleet(sl, int(other["id"]))["ships"] as Array).size() == 1,
+		"docking: a launched ship joins the fleet docked there first")
+	var sn := CState.copy(st)
+	sn["fleets"] = []
+	sn["regions"][pr]["sq"] = ["sloop"]
+	CFleet.end_of_turn(sn)
+	_check((sn["fleets"] as Array).size() == 1 and CFleet.docked(sn["fleets"][0]) == pr, "docking: a new fleet launched at the dock starts docked")
+	# Landing straight into the city.
+	var sa := CState.copy(st)
+	sa["fleets"] = []
+	var army: Dictionary = CState.armies_of(sa, eng)[0]
+	army["units"] = (army["units"] as Array).slice(0, 2)
+	CState.place(army, CGrid.site(pr))
+	var lf := _dk_fleet(sa, eng, dkc, ["frigate"], pr)
+	var embarked := CRules.apply_order(sa, eng, {"t": "embark", "army": int(army["id"]), "fleet": int(lf["id"])}) == ""
+	var site := CGrid.site(pr)
+	var landed_ok := CRules.apply_order(sa, eng, {"t": "land", "fleet": int(lf["id"]), "army": -1, "x": CGrid.cx(site), "y": CGrid.cy(site)}) == ""
+	var landed := CState.army(sa, int(army["id"]))
+	_check(embarked and landed_ok and not landed.is_empty() and CState.cell(landed) == site and CFleet.docked(lf) == pr,
+		"docking: a docked fleet's troops land straight into the settlement cell, the fleet stays docked")
+	var sa2 := CState.copy(sa)
+	var lf2 := CFleet.fleet(sa2, int(lf["id"]))
+	_check(CRules.apply_order(sa2, eng, {"t": "land", "fleet": int(lf2["id"]), "army": -1, "x": CGrid.cx(site), "y": CGrid.cy(site)}) != "",
+		"docking: nobody aboard, nothing to land")
+	# A voyage order casts off.
+	var sm := CState.copy(st)
+	sm["fleets"] = []
+	var mf := _dk_fleet(sm, eng, dkc, ["frigate"], pr)
+	var m2 := CTurn.resolve_turn(sm, [CTurn.submission(sm, eng, [{"t": "fmove", "fleet": int(mf["id"]), "x": CGrid.cx(far), "y": CGrid.cy(far)}])])
+	_check(CFleet.docked(CFleet.fleet(m2, int(mf["id"]))) == -1 and CFleet.cell(CFleet.fleet(m2, int(mf["id"]))) != dkc, "docking: an fmove casts the fleet off")
+	var m3 := CTurn.resolve_turn(sm, [CTurn.submission(sm, eng, [{"t": "fmove", "fleet": int(mf["id"]), "x": CGrid.cx(dkc), "y": CGrid.cy(dkc)}])])
+	_check(CFleet.docked(CFleet.fleet(m3, int(mf["id"]))) == -1, "docking: an fmove planned for zero steps casts off too")
+	# The city falls: the docked fleet is a prize, its troops are lost.
+	var sc := CState.copy(st)
+	sc["fleets"] = []
+	var hdk := CFleet.dock(hv)
+	var sp := _dk_fleet(sc, ns, hdk, ["galleon", "frigate"], hv)
+	var troops_: Dictionary = (CState.armies_of(sc, ns)[0] as Dictionary).duplicate(true)
+	troops_["units"] = (troops_["units"] as Array).slice(0, 2)
+	(sp["carry"] as Array).append(troops_)
+	var mine := _dk_fleet(sc, eng, hdk, ["sloop"], hv)   # (an English fleet already lying there is not a prize)
+	CRules._capture(sc, hv, eng)
+	var taken_ev := 0
+	for e in sc["events"]:
+		if str(e["k"]) == "fleet_taken":
+			taken_ev += 1
+	var prize_fleet := CFleet.fleets_of(sc, eng)
+	var ships_n := 0
+	var prize_h := 0
+	for fl in prize_fleet:
+		ships_n += (fl["ships"] as Array).size()
+		for sh in fl["ships"]:
+			if str(sh["t"]) == "galleon":
+				prize_h = int(sh["h"])
+	_check(CFleet.fleet(sc, int(sp["id"])).is_empty() and CFleet.fleets_of(sc, ns).is_empty() and ships_n == 3 and prize_h == CFleet.TAKEN_PCT
+		and taken_ev == 1 and _dk_events(sc, "destroyed") == 1,
+		"docking: the city falls: the docked fleet is a prize at %d%% (%d ships, event fleet_taken x%d), its troops destroyed" % [prize_h, ships_n, taken_ev])
+	_check(CFleet.docked_in(sc, hv, eng).size() == 1 and (CFleet.fleet(sc, int(mine["id"]))["ships"] as Array).size() == 3,
+		"docking: the prizes join the captor's fleet docked there")
+	# A port lost without a capture (the owner changes): the fleet is cast off at the end of the turn.
+	var sx := CState.copy(st)
+	sx["fleets"] = []
+	var xf := _dk_fleet(sx, ns, hdk, ["frigate"], hv)
+	sx["regions"][hv]["owner"] = eng
+	CFleet.end_of_turn(sx)
+	_check(CFleet.docked(CFleet.fleet(sx, int(xf["id"]))) == -1, "docking: a docked fleet whose port is no longer friendly is cast off at the end of the turn")
+	# Storms skip docked fleets.
+	var ss := CState.copy(st)
+	var storm := {"id": 1, "px": CStorm.cpx(dkc), "py": CStorm.cpy(dkc), "h": 12, "v": 3000, "r": 6, "life": 2, "born": 0, "yr": 1650,
+		"nm": "San Test", "tr": [], "lost": [], "ports": 0, "men": 0, "gold": 0}
+	ss["fleets"] = []
+	var s_in := _dk_fleet(ss, eng, dkc, ["galleon", "galleon", "galleon"], pr)
+	var s_off := _dk_fleet(ss, eng, dkc, ["galleon", "galleon", "galleon"])
+	ss["storms"] = [storm]
+	CStorm.strike(ss, storm, CStorm.cpx(dkc), CStorm.cpy(dkc), CStorm.cpx(dkc), CStorm.cpy(dkc))
+	var hull_in := 0
+	for sh in CFleet.fleet(ss, int(s_in["id"]))["ships"]:
+		hull_in += int(sh["h"])
+	var hull_off := 0
+	for sh in CFleet.fleet(ss, int(s_off["id"]))["ships"]:
+		hull_off += int(sh["h"])
+	_check(hull_in == 300 and (CFleet.fleet(ss, int(s_in["id"]))["ships"] as Array).size() == 3 and hull_off < 300,
+		"docking: a storm skips the docked fleet (hull %d) and hits the one lying off (%d)" % [hull_in, hull_off])
+	# The AI docks a free fleet lying at its dock, and a pirate fleet in a patron's port may dock.
+	var sai := CState.new_campaign("dk", 11, [eng], {}, [], "west")
+	for fl in sai["fleets"]:
+		fl.erase("in")
+	var ai_n := 0
+	var sai2 := CTurn.resolve_turn(sai, [])
+	for fl in sai2["fleets"]:
+		if CFleet.docked(fl) >= 0:
+			ai_n += 1
+	_check(ai_n > 0, "docking: the AI docks its free fleets lying at its docks (%d of %d docked after a turn)" % [ai_n, (sai2["fleets"] as Array).size()])
+	var sd1 := CTurn.resolve_turn(sai, [])
+	_check(CState.state_hash(sd1) == CState.state_hash(sai2), "docking: the turn is deterministic with docked fleets")
+	CData.use_pack("rome")

@@ -341,6 +341,7 @@ func _page_galleys() -> void:
 
 func _page_ships() -> void:
 	_p("Every ship row, from the battle's own table. Speeds are in the status line's knots at full sail on the best heading; turn is degrees a second; tack is the share of top speed she needs to go through the wind.")
+	_p("On the campaign map a fleet can dock in a port city of yours (or an ally's): tap Dock, then the city. Docked, it lies at the quay with its sails furled: no storm touches it, no enemy fleet fights it, and the yard repairs it fast. Cast off to sail; its troops may land straight into the city. If the city falls, the fleet in its port is taken as a prize.")
 	for i in ST.ROWS.size():
 		var r: Dictionary = ST.row(i)
 		var p := Kit.panel(Color(0.14, 0.17, 0.18, 1.0), 8)

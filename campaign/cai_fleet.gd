@@ -46,6 +46,10 @@ extends RefCounted
 ##     cone; one in port with a storm coming rides it out there; while
 ##     storms are about, fleets in port start no blockade, and no voyage
 ##     (prey, blockade station, landing, pick-up, home) ends in a cone.
+##  9. (Docking, 2026-10-23) a free fleet with no job lying on the dock of a
+##     port of ours (or a patron's) docks there (an at-once fdock: sheltered,
+##     the yard repairs it); a home voyage (7.) docks on arriving; a fleet
+##     given any voyage casts off by it. Docked fleets are not prey.
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
 
@@ -241,7 +245,18 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			continue
 		var home := _home(st, f, fl)
 		if home >= 0:
-			fmoves.append([int(fl["id"]), home, f, 0, -1])
+			fmoves.append([int(fl["id"]), home, f, 0, -1, CFleet.dock_region(st, f, home)])
+	# (Docking) the free fleets lying at a dock of ours with nothing to do dock there.
+	var sailing := {}
+	for m in fmoves:
+		sailing[int(m[0])] = 1
+	for fl in mine:
+		if sailing.has(int(fl["id"])) or used.has(int(fl["id"])) or CFleet.docked(fl) >= 0 or fl.has("job") \
+				or not (fl["carry"] as Array).is_empty():
+			continue
+		var dr := CFleet.dock_region(st, f, CFleet.cell(fl))
+		if dr >= 0:
+			CRules.apply_order(st, f, {"t": "fdock", "fleet": int(fl["id"]), "r": dr})
 
 
 # ----------------------------------------------------------------- money ---
@@ -546,8 +561,8 @@ static func _prey(st: Dictionary, f: int, fl: Dictionary, treasure_only: bool = 
 	var bp := 1 << 30
 	var bg := 0
 	for e in CFleet.fleets(st):
-		if not CState.at_war(st, f, int(e["f"])):
-			continue
+		if not CState.at_war(st, f, int(e["f"])) or CFleet.docked(e) >= 0:
+			continue  # (Docking: a fleet behind the mole is out of reach)
 		var ep := _power(e)
 		var pct := PIRATE_ATTACK_PCT if pir else ATTACK_PCT
 		var horizon := 0

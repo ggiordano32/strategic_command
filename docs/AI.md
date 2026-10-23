@@ -1375,6 +1375,14 @@ AI does; the garrison rules only stop it from walking the rest overseas. A Rome 
 and not kept) did not save it either (5-6 of 6 before `SEA_AWAY_PCT` existed). Frame cost: Rome about 30 ms -> 41 ms a turn mean (6
 seeds, one process; partly the larger realms and armies alive), West about 54 -> 60 ms.
 
+### 12.3 Docking (2026-10-23)
+
+The fleet AI (`campaign/cai_fleet.gd`, item 9 of its header) docks: at the end of its planning every free fleet with no job
+and nothing aboard that lies on the dock of a port of ours (a pirate: a patron's, an ally's too) gets an at-once `fdock`,
+and a home voyage (item 7) carries the dock region as the sixth element of its move tuple, so it docks on arriving. Any
+voyage the AI plans casts a docked fleet off (`CFleet.execute_moves`); docked enemy fleets are not prey (`_prey`: nothing
+to fight behind the mole). No knob; the pins moved (docs/STATUS.md).
+
 ## 13. As built: siege equipment and wall towers (2026-10-07)
 
 The settlement AI uses and answers the siege gear of docs/DESIGN.md
