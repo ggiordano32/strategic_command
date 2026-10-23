@@ -337,6 +337,7 @@ func _ready() -> void:
 	orders.sim = sim
 	overlay = Overlay.new()
 	overlay.sim = sim
+	soldiers.shot_src = overlay
 	overlay.orders = orders
 	overlay.px_per_m = PX_PER_M
 	add_child(overlay)

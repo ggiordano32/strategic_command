@@ -122,6 +122,9 @@ var _tr_rec := {}                      # slot -> [kind, x, y, radius (sim units)
 var _tr_walk := 0
 var _fx_cell := {}                     # landing cell -> view clock of the last effect there
 var _tr_tick := -1
+## The sim tick of each unit's last gun shot by men (view only; the soldier
+## layer reads it: the muzzle flash frame shows only for a fresh shot).
+var shot_t := PackedInt32Array()
 var _bk_seen := -1                     # blocked shots seen so far (sim.bk_n; -1: not looked yet)
 # Gun smoke (docs/DESIGN.md "Firearms"; view only, no sim state): each gun
 # missile seen leaving puts a white puff (one per SMOKE_CELL_M cell per
@@ -177,8 +180,6 @@ func _process(delta: float) -> void:
 	if sim.tick != _tr_tick and sim.pr_bucket.size() > 0:
 		var t0 := Time.get_ticks_usec()
 		_track_missiles()
-		if sim.gun_on != 0:
-			_gun_volleys(clampi(sim.tick - _tr_tick, 1, 30) if _tr_tick >= 0 else 1)
 		if sim.ft_on != 0:
 			_blocked_shots()
 		fx_trk_us += Time.get_ticks_usec() - t0
@@ -222,8 +223,17 @@ func _track_missiles() -> void:
 func _tr_note(p: int) -> void:
 	var ak: int = sim.pr_ak[p]
 	var ty: int = sim.pr_ty[p]
-	if sim.t_m_gun[ty] != 0 and sim.t_cls[ty] == UT.CLS_ART and sim.tick - sim.pr_t0[p] <= 2:
-		_smoke_spawn(p, ty)  # (a gun engine's shot; men's volleys: _gun_volleys)
+	if sim.t_m_gun[ty] != 0 and sim.tick - sim.pr_t0[p] <= 3:
+		# A gun shot: an engine's big puff, or a man's bank puff with his flash
+		# frame (every shot, in line or not).
+		_smoke_spawn(p, ty)
+		if sim.t_cls[ty] != UT.CLS_ART:
+			var u: int = sim.pr_unit[p]
+			if shot_t.size() != sim.n_units:
+				shot_t.resize(sim.n_units)
+				shot_t.fill(-1000)
+			if u >= 0 and u < shot_t.size():
+				shot_t[u] = maxi(shot_t[u], sim.pr_t0[p])
 	var kind := 0
 	var rad := 0
 	if ak >= 0 and UT.ammo_stat(ak, "fire") > 0:
@@ -259,25 +269,7 @@ func _blocked_shots() -> void:
 	_bk_seen = n
 
 
-## Gun units that fired a volley in the last dt ticks (their reload count
-## restarted: u_fire_acc < dt; read off the sim, so a slow frame that steps
-## several ticks still sees it): a puff in front of each man in formation.
-func _gun_volleys(dt: int) -> void:
-	for u in sim.n_units:
-		var ty: int = sim.u_type[u]
-		if sim.t_m_gun[ty] == 0 or sim.u_cls[u] == UT.CLS_ART or sim.u_alive[u] <= 0 \
-				or sim.u_fire_acc[u] >= dt or sim.u_state[u] != BattleSim.U_READY:
-			continue
-		var a: float = float(sim.u_face[u]) * TAU / 1024.0
-		var d := Vector2(cos(a), sin(a))
-		var base: int = sim.u_slot_base[u]
-		for k in sim.u_alive[u]:
-			var i: int = sim.slot_soldier[base + k]
-			if sim.state[i] == BattleSim.S_FORMED:
-				_smoke_at(to_px(sim.pos_x[i], sim.pos_y[i]), d, false)
-
-
-## A gun engine's missile p (of type ty) has just left: a big puff.
+## Gun missile p (of type ty) has just left: a big puff (an engine) or a bank puff (a man).
 func _smoke_spawn(p: int, ty: int) -> void:
 	var s := to_px(sim.pr_sx[p], sim.pr_sy[p])
 	var d := to_px(sim.pr_x[p], sim.pr_y[p]) - s

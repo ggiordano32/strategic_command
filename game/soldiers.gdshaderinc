@@ -13,7 +13,8 @@
 //   0 pos_x, 1 pos_y, 2 prev_x, 3 prev_y, 4 facing, 5 state, 6 unit_of,
 //   7 unit flags (indexed by unit: bit0 side, bit1 selected, bit2 under
 //     fire, bit3 shooting, bits 4-7 sprite, bits 8-11 engine sprite,
-//     bits 12-16 sprite set, bits 17-20 palette),
+//     bits 12-16 sprite set, bits 17-20 palette, bit 21 fired a gun shot
+//     in the last 0.3 s, bit 22 a powder-weapon unit),
 //   8 unit engine set (indexed by unit, 5 bits; its own block: the bits above
 //     24 do not survive the float decode)
 //
@@ -22,7 +23,7 @@
 // soldier_layer.gd, read back through MODEL_MATRIX (layer node at identity):
 //   [3].xy current position, [0].xy previous position, [1].x facing,
 //   [1].y state; INSTANCE_CUSTOM.x sprite, .y side + 2 selected + 4 under
-//   fire + 8 shooting, .z sprite set (engines: engine set) + 32 x palette, .w the instance's
+//   fire + 8 shooting + 16 fired + 32 gun, .z sprite set (engines: engine set) + 32 x palette, .w the instance's
 //   index. No texture fetch, uniform array, int uniform or bit operator in
 //   the vertex stage. Both variants draw the same pixels.
 //
@@ -151,7 +152,7 @@ void tint(inout vec3 add, inout float k, vec3 target, float amt) {
 
 // Atlas men: the action from the state, the frame from the clock and the
 // man's phase; uv in -> atlas uv out, lp = the quad corner in metres.
-void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, inout vec2 uv, out vec2 lp) {
+void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, bool fired, bool gun, float idx, inout vec2 uv, out vec2 lp) {
 	float moved = length(vel);
 	int act = 0;
 	float pick = 0.0;  // < 0: the death's last frame; 1: its middle frame
@@ -217,8 +218,16 @@ void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, in
 		fr = min(pick, n - 1.0);
 	} else if (anim_on > 0.5) {
 		float phase = fract(idx * 0.6180339);
-		float cyc = floor(now * 0.1 * action_fps(act) * rate + phase * n);
-		fr = mod(rev < 0.0 ? n - 1.0 - cyc : cyc, n);
+		if (act == 2 && gun && n > 3.0) {
+			// Powder weapons: attack frame 1 is the muzzle flash, shown only
+			// for a fresh shot; aiming and reloading cycle 0, 2, 3 slowly.
+			float cg = floor(now * 0.1 * action_fps(act) * 0.35 + phase * 3.0);
+			float q = mod(cg, 3.0);
+			fr = fired ? 1.0 : (q < 0.5 ? 0.0 : q + 1.0);
+		} else {
+			float cyc = floor(now * 0.1 * action_fps(act) * rate + phase * n);
+			fr = mod(rev < 0.0 ? n - 1.0 - cyc : cyc, n);
+		}
 	}
 	vec2 px = vec2(uv.x * a.z, uv.y * a.w);  // corner in the frame, px
 	lp = (px - b.xy) / 24.0;                 // metres (ATLAS_PX_PER_M)
@@ -229,7 +238,7 @@ void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, float idx, in
 }
 
 void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, int side, bool sel, bool fire,
-		int set, int pal, bool shoot, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
+		int set, int pal, bool shoot, bool fired, bool gun, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
 	bool engine = st >= 6;
 	bool dead = st == 4 || st == 7 || st == 8;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
@@ -244,7 +253,7 @@ void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, in
 	look = vec4(0.0);
 	vec2 lp;
 	if (set > 0) {
-		atlas_frame(set, st, cur - prv, ang, shoot, idx, uv, lp);
+		atlas_frame(set, st, cur - prv, ang, shoot, fired, gun, idx, uv, lp);
 	} else {
 		lp = vec2(mix(r.x, r.y, uv.x), mix(r.z, r.w, uv.y));
 		uv = vec2((float(spr) + (lp.x - CELL_X0) / CELL_W) / float(SPRITES),
@@ -343,12 +352,14 @@ void vertex() {
 		int side = int(mod(fl, 2.0));
 		bool sel = mod(floor(fl / 2.0), 2.0) > 0.5;
 		bool fire = mod(floor(fl / 4.0), 2.0) > 0.5;
-		bool shoot = fl >= 8.0;
+		bool shoot = mod(floor(fl / 8.0), 2.0) > 0.5;
+		bool fired = mod(floor(fl / 16.0), 2.0) > 0.5;
+		bool gun = mod(floor(fl / 32.0), 2.0) > 0.5;
 		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 32 x palette
 		int set = int(mod(lk, 32.0));
 		int pal = int(floor(lk / 32.0));
 		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
-			side, sel, fire, set, pal, shoot, INSTANCE_CUSTOM.w, uv, pos, col, look);
+			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, uv, pos, col, look);
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
 		VERTEX = pos;
 #else
@@ -360,7 +371,8 @@ void vertex() {
 		place(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
 			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 32) : bitfield(flags, 4096, 32),
-			bitfield(flags, 131072, 16), bitfield(flags, 8, 2) != 0, float(i), uv, pos, col, look);
+			bitfield(flags, 131072, 16), bitfield(flags, 8, 2) != 0,
+			bitfield(flags, 2097152, 2) != 0, bitfield(flags, 4194304, 2) != 0, float(i), uv, pos, col, look);
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).
 		VERTEX = pos - MODEL_MATRIX[3].xy;

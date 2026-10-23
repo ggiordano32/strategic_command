@@ -196,7 +196,10 @@ attack; moving (more than 2 cm a tick) or routing (1.6 x faster), walk;
 else idle. The frame comes from the view clock `now` (ticks, interpolated:
 the soldier materials get it with `alpha`) plus a phase fract(index x
 0.618), so a block does not step in lockstep; nothing is written to the
-sim. The texture path reads the table from a uniform array (`frame_tab`),
+sim. A powder-weapon man (flag 32 gun) never plays attack frame 1, the
+muzzle flash, unless his unit fired in the last 0.3 s (flag 16 fired, from
+the overlay's shot tick; battle_sim.md "Firearms"): aiming and reloading
+cycle frames 0, 2, 3 slowly. The texture path reads the table from a uniform array (`frame_tab`),
 the unit's set, palette and shooting from its flags (bits 12-15, 16-19,
 3); the CPU-fed path from constants (an if chain, as `sprite_rect`), with
 INSTANCE_CUSTOM.z = set + 16 x palette and .w = the instance's index. The

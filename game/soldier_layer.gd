@@ -53,7 +53,13 @@ const C_FLAGS := 9
 const C_LOOK := 10   # sprite set + 32 x palette (per unit run; engines: engine set + 32 x palette)
 const C_IDX := 11    # the instance's index (the man's animation phase)
 ## Per-unit flag bits (both paths; see soldiers.gdshaderinc).
-const F_SHOOT := 8
+const F_SHOOT := 8   # aiming: a fire target held
+const F_FIRED := 16  # a gun shot in the last FLASH_TICKS ticks (the muzzle flash frame)
+const F_GUN := 32    # a powder-weapon unit (its attack frame 1 is the flash)
+const FLASH_TICKS := 3   # 0.3 s at 10 ticks a second
+## Where the last gun shot of each unit is noted (the overlay's missile walk
+## writes `shot_t`: the sim tick of the unit's last gun shot, view only).
+var shot_src
 const PR_STEP := 256
 
 ## Drawn heading (view only; see soldiers.gdshaderinc and `_update_yaw`).
@@ -626,6 +632,11 @@ func upload() -> void:
 	for u in nu:
 		var under_fire := 4 if tick - sim.u_hit_t[u] < 10 else 0
 		var shoot := F_SHOOT if sim.u_ftarget[u] >= 0 else 0
+		var ty: int = sim.u_type[u]
+		if sim.t_m_gun[ty] != 0 and sim.t_cls[ty] != UT.CLS_ART:
+			shoot |= F_GUN
+			if shot_src != null and u < shot_src.shot_t.size() and tick - shot_src.shot_t[u] < FLASH_TICKS:
+				shoot |= F_FIRED | F_SHOOT
 		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
 	# Engines follow the soldiers in every array.
 	var xs: PackedInt32Array = sim.pos_x
@@ -824,6 +835,8 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 	var gelook := PackedInt32Array()
 	gelook.resize(sim.n_units)
 	for u in sim.n_units:
+		# (bits 4-5 of the CPU-path flags, fired / gun, move up past the palette bits)
+		gflags[u] = (gflags[u] & 15) | ((gflags[u] & (F_FIRED | F_GUN)) << 17)
 		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
 		gelook[u] = _unit_elook[u] & 31
 	var block := _rows * TEX_W * 4

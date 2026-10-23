@@ -1727,7 +1727,17 @@ the sea view): soft baked cloud sprites (one generated atlas, lit from the NW,
 grey-blue shade, one texture so the canvas batches them) that roll off the
 muzzles into a continuous bank, expand, rise and drift with a fixed wind over
 10 s; a flame-tongue muzzle flash with a glow; a gun engine adds a ring of
-smoke and a ground dust kick; a capped lingering haze builds over a long
+smoke and a ground dust kick; **a puff and a flash with every shot (2026-10-23)**:
+the overlay's missile walk (`_tr_note`) sees each new gun missile (men's
+or an engine's) and puts the puff at its start toward its target (men in
+line or at will, a bound's holding team, riders: all alike; one puff a cell
+a second keeps a volley of 80 a bank, not a wall), and notes the shooter
+unit's shot tick (`Overlay.shot_t`, view only); the soldier layer turns it
+into the flag bits 16 fired (under `FLASH_TICKS` = 3 ticks, 0.3 s) and 32
+gun unit. The sprite sets' attack frame 1 is the muzzle flash: a gun man
+aiming or reloading (8 shooting) plays frames 0, 2, 3 slowly (about a third
+of the attack rate) and shows frame 1 only in the fired window; the old
+volley-restart check (`_gun_volleys`, formed men only) is gone; a capped lingering haze builds over a long
 firefight. Diorama tints it cotton-white, painterly grey. Graphics Low: fewer
 puffs, no ring, dust or haze. The `musket` and
 `cannon` clips (`stat_volleys`, `stat_cannon`). Later: smoke that blocks
