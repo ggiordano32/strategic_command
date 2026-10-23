@@ -3243,10 +3243,29 @@ static func event(st: Dictionary, e: Dictionary) -> void:
 const CGrid := preload("res://campaign/cgrid.gd")
 
 
+## Amphibious army (2026-10-23): every unit's row has "amphib" 1 (an army with
+## any other unit is not; the general's row stays 0, so a general makes it
+## land-bound). Such an army may step on the coastal sea (CGrid water tables)
+## at foot pace and end its turn there ("afloat"). False in a pack with no ships.
+static func amphibious(_st: Dictionary, a: Dictionary) -> bool:
+	var units: Array = a.get("units", [])
+	if units.is_empty() or not CData.ships_on():
+		return false
+	for u in units:
+		if UT.stat(CState.unit_type(u), "amphib") == 0:
+			return false
+	return true
+
+
+## Army a stands on coastal water (see CFleet.afloat).
+static func afloat(a: Dictionary) -> bool:
+	return CData.ships_on() and CFleet.afloat(a)
+
+
 ## Zone of control radius of army a (0: none: on a forced march, in a
-## battle, or inside its settlement's walls).
+## battle, afloat, or inside its settlement's walls).
 static func zone_r(st: Dictionary, a: Dictionary) -> int:
-	if int(a["busy"]) != 0 or inside(st, a):
+	if int(a["busy"]) != 0 or inside(st, a) or afloat(a):
 		return 0
 	match CState.stance(a):
 		CData.ST_FORCED:
@@ -3454,7 +3473,10 @@ static func order_cell(st: Dictionary, a: Dictionary, o: Dictionary) -> int:
 ## on demand.
 static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, mode: int = CData.MODE_SIEGE,
 		cache: Dictionary = {}, max_turns: int = 12, join: int = -1) -> Dictionary:
-	if dest < 0 or not CGrid.passable(dest):
+	var amph := amphibious(st, a)
+	if amph:
+		CFleet.ensure()
+	if dest < 0 or not (CGrid.passable(dest) or (amph and CGrid.is_wet(dest))):
 		return {"why": "no route"}
 	var aim := move_aim(st, a, dest, tgt, mode, join)
 	var f := int(a["f"])
@@ -3482,7 +3504,7 @@ static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, m
 	if full <= 0:
 		return {"why": "fortified"}
 	var res := CGrid.find_path(CState.cell(a), goal, full, CState.mp(a), m, zm, adjacent, max_turns,
-		400 * max_turns if max_turns <= 2 else 1500 + 1500 * mini(max_turns, 6))
+		400 * max_turns if max_turns <= 2 else 1500 + 1500 * mini(max_turns, 6), amph)
 	if res.is_empty():
 		return {"why": "no route"}
 	res["aim"] = aim
@@ -3526,7 +3548,9 @@ static func _can_move6(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, 
 		tgt = -1
 	if CState.stance(a) == CData.ST_FORTIFY:
 		return "fortified"
-	if dest < 0 or not CGrid.passable(dest):
+	if amphibious(st, a):
+		CFleet.ensure()
+	if dest < 0 or not (CGrid.passable(dest) or (amphibious(st, a) and CGrid.is_wet(dest))):
 		return "no route"
 	if siege_role(st, a) == 2:
 		# Inside a besieged settlement: only a sally against a besieger.
@@ -3538,7 +3562,7 @@ static func _can_move6(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, 
 		var r := CGrid.site_region(dest)
 		if r < 0 or CState.friendly(st, int(a["f"]), CState.owner(st, r)):
 			return "already there"
-	var why := can_enter(st, int(a["f"]), CGrid.region(dest))
+	var why := can_enter(st, int(a["f"]), CGrid.region(dest)) if CGrid.region(dest) >= 0 else ""
 	if why != "" and tgt < 0:
 		return why
 	if CState.stance(a) == CData.ST_FORCED:
@@ -3708,6 +3732,8 @@ static func _step6(st: Dictionary, a: Dictionary, c: int, p: Dictionary) -> Stri
 	var full := CState.full_mp(st, a)
 	var left := CState.mp(a)
 	var cost := CGrid.step_cost(c0, c)
+	if cost <= 0 and (CGrid.is_wet(c0) or CGrid.is_wet(c)) and amphibious(st, a):
+		cost = CGrid.step_cost_w(c0, c)  # a paddle along the coast, or a landing
 	if cost <= 0:
 		if left < full:
 			return "out of points"
@@ -3715,7 +3741,7 @@ static func _step6(st: Dictionary, a: Dictionary, c: int, p: Dictionary) -> Stri
 	elif left < cost:
 		return "out of points"
 	var rc := CGrid.region(c)
-	var why := can_enter(st, f, rc)
+	var why := can_enter(st, f, rc) if rc >= 0 else ""
 	if why != "" and why != "battle pending there":
 		return why
 	var forced := CState.stance(a) == CData.ST_FORCED
@@ -3740,14 +3766,17 @@ static func _step6(st: Dictionary, a: Dictionary, c: int, p: Dictionary) -> Stri
 	var y1 := CGrid.cy(c)
 	var aid := int(a["id"])
 	var zone_hit := false
+	var afloat_step := CGrid.is_wet(c)
 	for e in st["armies"]:
 		var ex := int(e["x"])
 		var ey := int(e["y"])
 		if absi(ex - x1) > 3 or absi(ey - y1) > 3 or int(e["id"]) == aid or int(e["busy"]) != 0:
 			continue
-		if not CState.at_war(st, f, int(e["f"])) or inside(st, e):
-			continue
+		if not CState.at_war(st, f, int(e["f"])) or inside(st, e) or afloat(e):
+			continue  # (an army afloat is out of reach of the land armies)
 		var ec := CGrid.at(ex, ey)
+		if afloat_step:
+			continue  # (and an army stepping onto the water attacks nobody)
 		if absi(ex - x1) <= 1 and absi(ey - y1) <= 1:
 			if forced:
 				return "on a forced march"
@@ -4026,7 +4055,10 @@ static func reach6(st: Dictionary, a: Dictionary, turns: int = 0) -> PackedInt32
 		none.resize(CGrid.count())
 		none.fill(-1)
 		return none
-	return CGrid.reach(CState.cell(a), full, CState.mp(a), m, turns, zm)
+	var amph := amphibious(st, a)
+	if amph:
+		CFleet.ensure()
+	return CGrid.reach(CState.cell(a), full, CState.mp(a), m, turns, zm, amph)
 
 
 ## Version 6 retreat of a beaten army: the best cell within 5 of where it
@@ -4172,8 +4204,11 @@ static func _move_targets6(st: Dictionary, a: Dictionary, this_turn: bool) -> Ar
 			or CState.full_mp(st, a) <= 0:
 		return out
 	var f := int(a["f"])
+	var amph := amphibious(st, a)
+	if amph:
+		CFleet.ensure()
 	var rt := CGrid.reach(CState.cell(a), CState.full_mp(st, a), CState.mp(a), block_mask(st, f),
-		0 if this_turn else 3, zone_mask(st, f))
+		0 if this_turn else 3, zone_mask(st, f), amph)
 	for r in CData.region_count():
 		if r == int(a["r"]) or can_enter(st, f, r) != "":
 			continue

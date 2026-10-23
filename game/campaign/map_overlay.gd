@@ -1530,6 +1530,18 @@ static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human:
 	return rect
 
 
+## Afloat (2026-10-23): a small canoe under the banner of an amphibious army on the water.
+static func draw_canoe(ci: CanvasItem, rect: Rect2, m: float) -> void:
+	var c := Vector2(rect.get_center().x, rect.end.y + 5.0 * m)
+	var hull := PackedVector2Array([c + Vector2(-11, -2) * m, c + Vector2(-5, 2.5) * m, c + Vector2(5, 2.5) * m,
+		c + Vector2(11, -2) * m, c + Vector2(0, -0.5) * m])
+	ci.draw_colored_polygon(hull, Color(0.45, 0.3, 0.16))
+	var ho := hull.duplicate()
+	ho.append(hull[0])
+	ci.draw_polyline(ho, Color(0, 0, 0, 0.85), 1.4, true)
+	ci.draw_line(c + Vector2(-3, -5) * m, c + Vector2(4, 4) * m, Color(0.85, 0.75, 0.55), 1.5, true)   # the paddle
+
+
 ## Inside the walls: a small crenellated tower on the banner's corner.
 static func draw_tower(ci: CanvasItem, rect: Rect2, m: float) -> void:
 	var tw2 := 8.0 * m
@@ -1779,6 +1791,8 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 		draw_stance(_ci, rect, CState.stance(a))
 	if (not grid and int(a.get("stance", 0)) == CData.STANCE_GARRISON) or (grid and CRules.inside(state, a)):
 		draw_tower(_ci, rect, m)
+	if grid and CRules.afloat(a):
+		draw_canoe(_ci, rect, m)   # (amphibious, afloat on the coastal sea)
 
 
 ## A march: from the army's banner along the region sites; this turn's

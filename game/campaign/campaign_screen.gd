@@ -1860,6 +1860,14 @@ func _fog_hint() -> String:
 	return " Faded markers: where an enemy was last seen." if FogView.on else ""
 
 
+## Amphibious army selected: it may paddle along the coast.
+func _paddle_hint() -> String:
+	var a := CState.army(ps, sel_army)
+	if not a.is_empty() and CRules.amphibious(ps, a):
+		return " This army may paddle along the coast (the shaded water): canoes cannot be attacked by land armies, but an enemy fleet sinks them."
+	return ""
+
+
 func _update_hint() -> void:
 	if st.is_empty() or f < 0:
 		hint.text = ""
@@ -1873,13 +1881,13 @@ func _update_hint() -> void:
 	elif sel_fleet >= 0 and _g() and last_mouse:
 		hint.text = "Right-click the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an enemy harbour to blockade it (a left click only selects). Left-click empty sea to deselect."
 	elif sel_army >= 0 and _g() and last_mouse:
-		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect."
+		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect." + _paddle_hint()
 	elif _g() and last_mouse:
 		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans." + _fog_hint()
 	elif sel_fleet >= 0 and _g():
 		hint.text = "Tap the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an empty fleet on an enemy harbour to blockade it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
-		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
+		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel." + _paddle_hint()
 	elif _g():
 		hint.text = "Tap an army to move it or recruit into it (at a city), a city for buildings or a new army." + _fog_hint()
 	elif sel_army >= 0 and CState.moves_on(ps):

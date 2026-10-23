@@ -146,6 +146,7 @@ func _init() -> void:
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
+	_amphibious()
 	_rome_fleets()
 	_ai_sea_garrison()
 	_docking()
@@ -4863,6 +4864,133 @@ func _sea_lanes() -> void:
 	for f in CState.nf():
 		rtot += int(CRules.income(sro, f).get("lanes", 0))
 	_check(rtot > 0 and int(rin2.get("lane_raided", 0)) == 0 and CLanes.raiders(sro).is_empty(), "Rome: the lanes pay (%d in all) and nobody raids them" % rtot)
+
+
+
+## Amphibious armies (2026-10-23): a unit row with "amphib" 1 (here "buccaneers", flagged for the test only)
+## paddles the coastal sea at foot pace, ends its turn afloat, lands, and is sunk by an enemy fleet that
+## sails within FLEET_ZONE. Cumana - Port of Spain (the gulf of Paria) has no land path.
+func _amphibious() -> void:
+	CData.use_pack("west")
+	var eng := _f("england")
+	var ns := _f("new_spain")
+	var cu := _r("cumana")
+	var ps := _r("port_of_spain")
+	var ty := UT.index_of("buccaneers")
+	_check(UT.stat(ty, "amphib") == 0 and UT.stat(UT.index_of("musketeers"), "amphib") == 0 and UT.stat(UT.index_of("general"), "amphib") == 0,
+		"amphibious: no row has the trait (default 0, the general's too)")
+	var st := CState.new_campaign("amph", 5150, [eng], {}, [], "west")
+	st["fleets"] = []
+	st["regions"][cu]["owner"] = eng
+	st["regions"][ps]["owner"] = eng
+	CState.set_dip(st, eng, ns, CState.WAR)
+	var start := CState.field_cell(cu)
+	var goal := CState.field_cell(ps)
+	var canoes := _army(st, eng, "cumana", ["buccaneers", "buccaneers"])
+	var mixed := _army(st, eng, "cumana", ["buccaneers", "musketeers"])
+	var chief := _army(st, eng, "cumana", ["buccaneers", "general"])
+	for x in [canoes, mixed, chief]:
+		CState.place(x, start)
+	var foot0 := CRules.plan_path(st, canoes, goal)
+	var reach0 := CRules.reach6(st, mixed, 1)
+	_check(foot0.has("why"), "amphibious: without the trait no path crosses the gulf (%s)" % str(foot0.get("why", "")))
+	UT.TYPES[ty]["amphib"] = 1
+	_check(CRules.amphibious(st, canoes) and not CRules.amphibious(st, mixed) and not CRules.amphibious(st, chief),
+		"amphibious: only an army of amphibious units is (a mixed army, or one with a general, is not)")
+	var pp := CRules.plan_path(st, canoes, goal)
+	var wet_steps := 0
+	if not pp.has("why"):
+		for c in pp["path"]:
+			if CGrid.is_wet(int(c)):
+				wet_steps += 1
+	_check(not pp.has("why") and wet_steps > 0 and int((pp["path"] as Array).back()) == goal and CFleet.is_sea(int((pp["path"] as Array)[0])) == CGrid.is_wet(int((pp["path"] as Array)[0])),
+		"amphibious: the army crosses the strait no land path crosses (%d cells, %d on the water)" % [(pp["path"] as Array).size() if not pp.has("why") else -1, wet_steps])
+	_check(CRules.plan_path(st, mixed, goal).has("why") and CRules.plan_path(st, chief, goal).has("why"),
+		"amphibious: a mixed army (and one with a general) cannot")
+	var reach1 := CRules.reach6(st, mixed, 1)
+	_check(reach0 == reach1, "amphibious: a normal army's reach is unchanged by the flag on another unit")
+	var rc := CRules.reach6(st, canoes, 1)
+	var wet_ok := false
+	var wet_mixed := false
+	for c in CGrid.count():
+		if CGrid.is_wet(c):
+			wet_ok = wet_ok or rc[c] >= 0
+			wet_mixed = wet_mixed or reach1[c] >= 0
+	_check(wet_ok and not wet_mixed, "amphibious: its reach covers coastal water, a normal army's does not")
+	# Ends the turn afloat, then lands.
+	var s1 := CState.copy(st)
+	var a1 := CState.army(s1, int(canoes["id"]))
+	a1["mp"] = 60
+	CRules.execute_moves6(s1, [[int(a1["id"]), goal, eng, CData.MODE_MARCH, 1, -1, -1]])
+	_check(CGrid.is_wet(CState.cell(a1)) and CRules.afloat(a1) and CFleet.afloat(a1) and int(a1["mp"]) < 20 and CState.cell(a1) != goal,
+		"amphibious: with few points left it ends its turn afloat on a coastal sea cell (%d, %d)" % [CGrid.cx(CState.cell(a1)), CGrid.cy(CState.cell(a1))])
+	_check(int(a1["dest_x"]) == CGrid.cx(goal) and int(a1["dest_y"]) == CGrid.cy(goal), "amphibious: the stored destination is kept while afloat")
+	a1["moved"] = 0
+	a1["mp"] = CState.full_mp(s1, a1)
+	CRules.execute_moves6(s1, [[int(a1["id"]), goal, eng, CData.MODE_MARCH, 1, -1, -1]])
+	_check(CState.cell(a1) == goal and not CRules.afloat(a1) and int(a1["r"]) == ps,
+		"amphibious: the next turn it lands on the far coast (region %s)" % CData.REGIONS[int(a1["r"])]["key"])
+	# A fleet at war that sails within FLEET_ZONE sinks it; one of its own side, or at peace, does not.
+	var s2 := CState.copy(st)
+	var a2 := CState.army(s2, int(canoes["id"]))
+	var path: Array = pp["path"]
+	var wc := -1
+	for i in path.size():
+		if CGrid.is_wet(int(path[i])) and i + 6 < path.size() and CFleet.is_sea(int(path[i + 6])):
+			wc = i
+			break
+	_check(wc >= 0, "amphibious: a wet cell of the path with open sea six cells on (test setup)")
+	if wc >= 0:
+		CState.place(a2, int(path[wc]))
+		var far := int(path[wc + 6])
+		var foe := _lane_fleet(9601, ns, far)
+		foe["id"] = 9601
+		var friend := _lane_fleet(9602, eng, far)
+		(s2["fleets"] as Array).append(friend)
+		CFleet.execute_moves(s2, [[9602, int(path[wc]), eng, 0, -1, -1]])
+		_check(CState.army(s2, int(a2["id"])).is_empty() == false, "amphibious: a fleet of its own side sailing by does not sink it")
+		(s2["fleets"] as Array).clear()
+		(s2["fleets"] as Array).append(foe)
+		CFleet.execute_moves(s2, [[9601, int(path[wc]), ns, 0, -1, -1]])
+		var sunk := false
+		for e in s2["events"]:
+			if str(e["k"]) == "canoes_sunk" and int(e["army"]) == int(a2["id"]) and int(e["f"]) == eng and int(e["by"]) == ns:
+				sunk = true
+		_check(sunk and CState.army(s2, int(a2["id"])).is_empty() and int(s2["stats"].get("sea_battles", 0)) == int(st["stats"].get("sea_battles", 0)),
+			"amphibious: an enemy fleet that sails within the zone captures it (event canoes_sunk) and no sea battle is fought")
+	# A land army cannot attack it, nor it them.
+	var s3 := CState.copy(st)
+	var a3 := CState.army(s3, int(canoes["id"]))
+	var w3 := -1
+	var l1 := -1
+	var l0 := -1
+	for c in path:
+		if not CGrid.is_wet(int(c)):
+			continue
+		for k in 8:
+			var j := CGrid.at(CGrid.cx(int(c)) + CGrid.DX[k], CGrid.cy(int(c)) + CGrid.DY[k])
+			if j < 0 or not CGrid.passable(j) or CGrid.site_region(j) >= 0:
+				continue
+			for k2 in 8:
+				var q := CGrid.at(CGrid.cx(j) + CGrid.DX[k2], CGrid.cy(j) + CGrid.DY[k2])
+				if q >= 0 and CGrid.passable(q) and CGrid.step_cost(q, j) > 0 and CGrid.cheb(q, int(c)) == 2 and CGrid.site_region(q) < 0 and w3 < 0:
+					w3 = int(c)
+					l1 = j
+					l0 = q
+	if w3 >= 0:
+		for oid in [int(mixed["id"]), int(chief["id"])]:
+			(s3["armies"] as Array).erase(CState.army(s3, oid))  # (their zones would stop the step)
+		CState.place(a3, w3)
+		var foe_a := _army(s3, ns, "cumana", ["musketeers"])
+		CState.place(foe_a, l0)
+		foe_a["mp"] = CState.full_mp(s3, foe_a)
+		var nb0 := (s3["battles"] as Array).size()
+		var res := CRules._step6(s3, foe_a, l1, {"aim": {"targets": []}})
+		_check(res == "" and (s3["battles"] as Array).size() == nb0 and int(a3["busy"]) == 0 and CRules.zone_r(s3, a3) == 0,
+			"amphibious: a land army stepping beside an afloat army starts no battle; the afloat army has no zone of control (step \"%s\", %d battles, busy %d)" % [res, (s3["battles"] as Array).size(), int(a3["busy"])])
+	UT.TYPES[ty].erase("amphib")
+	_check(not CRules.amphibious(st, canoes), "amphibious: the test flag is removed again")
+	CData.use_pack("rome")
 
 
 func _lane_fleet(id: int, f: int, c: int) -> Dictionary:

@@ -661,3 +661,37 @@ reaches 85 / 90 % (Average / Skilled), a siege is preferred to a storm on arriva
 the AI gathers or musters instead. The campaign's AI aggression setting shifts every threshold by 10 points (Calm +10,
 Aggressive -10). Skilled never shelters inside the walls. Measured with `tests/ai_odds_probe.gd`; numbers, tables and
 the head-to-head in docs/AI.md 12.1.
+
+### Amphibious armies (2026-10-23)
+
+A per-type unit trait `amphib` (`sim/unit_types.gd` DEFAULTS, 0 / 1; no row has it yet, the Miskito canoe raiders of the
+Caribbean roster batch 1 will be the first). `CRules.amphibious(st, a)`: every unit of army `a` has `amphib` 1 and the
+pack has ships; an army with any other unit is not amphibious, and a general's row is left at 0 on purpose, so a general
+in the army makes it land-bound. Pack-agnostic rules; in a pack without ships (Rome) nothing changes.
+
+- **Movement.** An amphibious army may step onto the coastal sea (`CFleet.is_sea` cells with `CFleet.coast_dist` <= 1,
+  the same water a coastal fleet keeps to; `CFleet.ensure` hands the mask to `CGrid.set_wet`) at foot pace: a water step
+  costs `CGrid.WATER_STEP` (10, x 14 / 10 on a diagonal; the flat land step), a landing the land cell's own cost. The
+  planner is the same: `CGrid.find_path` / `CGrid.reach` take `water` (the neighbour tables `_nbw` / `_nbcw`, built on
+  first use, nothing stored in the state), `CRules.plan_path` / `reach6` / `_move_targets6` pass `amphibious`, the march
+  preview and the stored `dest_x` / `dest_y` work unchanged. The water is not crossed wider than two cells of coast
+  (cells within one cell of land only), so a strait is crossed where the coastal strips meet (Cumana to Port of Spain,
+  Cartagena to Darien); the detour rule is not applied to a water march. No zone of control stops an army stepping onto
+  water, and an army afloat has none.
+- **Afloat.** An army may end its turn on a coastal sea cell; its cell is just a cell (`a["r"]` keeps the region it left).
+  Afloat it cannot be attacked by a land army (contact and zones skip it) and cannot attack (a step onto water starts no
+  contact; landing on a cell beside an enemy army is the normal contact). It keeps its stored march. Entering or ending
+  next to a hostile settlement from the water follows the normal ring / siege / assault rules (a ring cell on the water
+  counts as the ring).
+- **Fleets.** An afloat army never fights a fleet. An enemy (at war) fleet whose voyage steps within `FLEET_ZONE` (2) of an
+  afloat army not in a battle captures it at once: the army is destroyed, event `canoes_sunk` {f, by, army, men, x, y}
+  (no sea battle, no RNG; `CFleet.sink_afloat`, called for every step of every voyage in fleet-id order, armies in index
+  order). Its own side's fleets, and fleets at peace, do not. A fleet that stays put does not sink an army that paddles
+  by (only voyage steps do).
+- **AI.** The AI plans marches through the same planner, so an amphibious army ordered across water gets the wide
+  passability; the AI's distance estimates (`CGrid.field`, the staging and "toward" waypoints) stay land-only, so it does
+  not yet pick targets that only water reaches. Follow-up when the first amphibious row is in.
+- **View.** An afloat army's banner is drawn on its sea cell with a small canoe under it; the hint for a selected
+  amphibious army says it may paddle along the coast; fog sees it as an army (by its cell).
+- **Old saves / pins.** Nothing stored, no unit has the trait: no `CState.VERSION` bump, every pin unmoved. Tests:
+  `tests/campaign_test.gd` `_amphibious`.

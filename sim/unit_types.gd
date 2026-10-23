@@ -256,6 +256,7 @@ const DEFAULTS := {
 	"au_spr": 0, "au_mom": 0, "au_rally": 0, "au_climb": 0, "au_reload": 0, "au_batter": 0,
 	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
 	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0, "cover": 0,
+	"amphib": 0,  # campaign: 1 = paddles the coastal sea at foot pace (CRules.amphibious; the general stays 0)
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness

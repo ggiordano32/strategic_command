@@ -58,6 +58,13 @@ static var _gh := 0
 static var _cpx := 0
 static var _site: Array[int] = []
 static var _port: Array[int] = []
+# Water-extended steps for amphibious armies (2026-10-23): _wet marks the
+# coastal sea cells (set by CFleet.ensure), _nbw / _nbcw the neighbour tables
+# with the steps between land and those cells. Built on first use.
+static var _wet := PackedByteArray()
+static var _nbw := PackedInt32Array()
+static var _nbcw := PackedInt32Array()
+const WATER_STEP := 10
 static var _camp: Array[int] = []
 
 
@@ -81,6 +88,9 @@ static func pack_reset() -> void:
 	_cost = PackedInt32Array()
 	_nb = PackedInt32Array()
 	_nbc = PackedInt32Array()
+	_wet = PackedByteArray()
+	_nbw = PackedInt32Array()
+	_nbcw = PackedInt32Array()
 	_links = {}
 	_cells = []
 	_terr = PackedInt32Array()
@@ -433,6 +443,74 @@ static func step_cost(a: int, b: int) -> int:
 	return 0
 
 
+## CFleet.ensure hands over the coastal sea cells (1 = an open-sea cell within
+## one cell of land) the amphibious armies may paddle on.
+static func set_wet(mask: PackedByteArray) -> void:
+	_wet = mask
+	_nbw = PackedInt32Array()
+	_nbcw = PackedInt32Array()
+
+
+## Cell c is coastal water an amphibious army may stand on.
+static func is_wet(c: int) -> bool:
+	return c >= 0 and c < _wet.size() and _wet[c] != 0
+
+
+## The neighbour tables with the water steps (the land ones plus every step
+## between a land cell and a wet cell, or two wet cells: WATER_STEP a straight
+## step, a diagonal x 14 / 10; a landing costs the land cell's own cost).
+## Without wet cells (a pack with no ships) the land tables.
+static func _water_tables() -> void:
+	ensure()
+	if not _nbw.is_empty() or _wet.size() != _n:
+		return
+	var w := _gw
+	_nbw = _nb.duplicate()
+	_nbcw = _nbc.duplicate()
+	for i in _n:
+		var iw := _wet[i] != 0
+		if not iw and _reg[i] < 0:
+			continue
+		var x := i % w
+		var y := i / w
+		for k in 8:
+			var nx := x + DX[k]
+			var ny := y + DY[k]
+			if nx < 0 or ny < 0 or nx >= w or ny >= _gh:
+				continue
+			var j := ny * w + nx
+			var jw := _wet[j] != 0
+			if not iw and not jw:
+				continue
+			if not jw and _reg[j] < 0:
+				continue
+			if k % 2 == 1:
+				var oa := y * w + nx
+				var ob := ny * w + x
+				if _wet[oa] == 0 and _wet[ob] == 0:
+					continue
+			var base := WATER_STEP if jw else _cost[j]
+			_nbw[i * 8 + k] = j
+			_nbcw[i * 8 + k] = base * 14 / 10 if k % 2 == 1 else base
+
+
+## True when the water tables exist (a pack with ships).
+static func has_water() -> bool:
+	_water_tables()
+	return not _nbw.is_empty()
+
+
+## Step cost from a to its neighbour b with the water steps (0 if not a step).
+static func step_cost_w(a: int, b: int) -> int:
+	_water_tables()
+	if _nbw.is_empty():
+		return step_cost(a, b)
+	for k in 8:
+		if _nbw[a * 8 + k] == b:
+			return _nbcw[a * 8 + k]
+	return 0
+
+
 # --------------------------------------------------------------- searches ---
 
 ## Cheapest path for an army with `full` points a turn and `mp` left now
@@ -446,25 +524,28 @@ static func step_cost(a: int, b: int) -> int:
 ## left there]} or {} (no path within max_turns or max_nodes expansions).
 static func find_path(start: int, goal: int, full: int, mp: int, block: PackedByteArray,
 		zone: PackedInt32Array = PackedInt32Array(), adjacent: bool = false, max_turns: int = 12,
-		max_nodes: int = 6000) -> Dictionary:
-	var res := _find_cheapest(start, goal, full, mp, block, zone, adjacent, max_turns, max_nodes)
-	if not detour_rule or res.is_empty() or (res["path"] as Array).size() < 3:
+		max_nodes: int = 6000, water: bool = false) -> Dictionary:
+	var res := _find_cheapest(start, goal, full, mp, block, zone, adjacent, max_turns, max_nodes, water)
+	if water or not detour_rule or res.is_empty() or (res["path"] as Array).size() < 3:
 		return res
 	return _limit_detour(res, start, goal, full, mp, block, zone, adjacent, max_nodes)
 
 
 ## The cheapest path (A* on the g above), whatever its shape.
 static func _find_cheapest(start: int, goal: int, full: int, mp: int, block: PackedByteArray,
-		zone: PackedInt32Array, adjacent: bool, max_turns: int, max_nodes: int) -> Dictionary:
+		zone: PackedInt32Array, adjacent: bool, max_turns: int, max_nodes: int, water: bool = false) -> Dictionary:
 	ensure()
+	if water:
+		_water_tables()
+		water = not _nbw.is_empty()
 	if start < 0 or goal < 0 or full <= 0:
 		return {}
 	if (adjacent and cheb(start, goal) <= 1) or (not adjacent and start == goal):
 		return {"path": [], "t": [], "m": []}
 	var n := _n
 	var w := _gw
-	var nb := _nb
-	var nbc := _nbc
+	var nb := _nbw if water else _nb
+	var nbc := _nbcw if water else _nbc
 	var g := PackedInt32Array()
 	g.resize(n)
 	g.fill(INF)
@@ -710,8 +791,15 @@ static func _h(c: int, gx: int, gy: int, w: int) -> int:
 ## (PackedInt32Array, may be empty) are entered but not left (a zone of
 ## control).
 static func reach(start: int, full: int, mp: int, block: PackedByteArray, max_t: int = 0,
-		stop: PackedInt32Array = PackedInt32Array()) -> PackedInt32Array:
+		stop: PackedInt32Array = PackedInt32Array(), water: bool = false) -> PackedInt32Array:
 	ensure()
+	var nbr := _nb
+	var nbcr := _nbc
+	if water:
+		_water_tables()
+		if not _nbw.is_empty():
+			nbr = _nbw
+			nbcr = _nbcw
 	var out := PackedInt32Array()
 	out.resize(_n)
 	out.fill(-1)
@@ -740,10 +828,10 @@ static func reach(start: int, full: int, mp: int, block: PackedByteArray, max_t:
 		if has_stop and stop[u] > 0 and u != start:
 			continue
 		for k in 8:
-			var v := _nb[u * 8 + k]
+			var v := nbr[u * 8 + k]
 			if v < 0 or (has_block and block[v] != 0):
 				continue
-			var c := _nbc[u * 8 + k]
+			var c := nbcr[u * 8 + k]
 			var ng := gu + c if left >= c else (t + 1) * full + c
 			if ng <= cap and ng < g[v]:
 				g[v] = ng

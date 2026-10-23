@@ -2911,7 +2911,7 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Color(1.0, 0.72, 0.5)
 		"captain_fate":
 			return Kit.COL_BAD if int(e["f"]) == f else (Kit.COL_GOOD if int(e.get("by", -1)) == f else Kit.COL_GOLD)
-		"army_sunk", "fmove_failed":
+		"army_sunk", "fmove_failed", "canoes_sunk":
 			return Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
 			return Kit.COL_BAD
@@ -3105,6 +3105,8 @@ func event_text(e: Dictionary, f: int) -> String:
 			return "An army went aboard ship at %s." % city.call(e["r"])
 		"landed":
 			return "An army landed in %s." % CData.REGIONS[int(e["r"])]["name"] if int(e["r"]) >= 0 else "An army landed."
+		"canoes_sunk":
+			return "A %s army of %d men afloat was caught by %s's fleet and lost." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), CData.faction_name(int(e["by"]))]
 		"army_sunk":
 			return "%s army of %d units went down with its ships." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["units"])]
 		"fmove_failed":

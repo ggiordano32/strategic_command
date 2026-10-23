@@ -203,6 +203,12 @@ static func ensure() -> void:
 		if nb[i] >= 0 and _sea[nb[i]] == 0:
 			nb[i] = -1
 	_snb = nb
+	# Coastal water an amphibious army may paddle on (open sea within one cell of land).
+	var wet := PackedByteArray()
+	wet.resize(n)
+	for i in n:
+		wet[i] = 1 if _sea[i] != 0 and _cd[i] <= 1 else 0
+	CGrid.set_wet(wet)
 	# Harbours, docks and beaches.
 	_harb = []
 	_dock = []
@@ -311,6 +317,33 @@ static func dock(r: int) -> int:
 static func beach(r: int) -> int:
 	ensure()
 	return _beach[r] if r >= 0 and r < _beach.size() else -1
+
+
+## Army a is afloat: amphibious, standing on a coastal sea cell (it cannot
+## attack or be attacked by armies, and an enemy fleet that sails within
+## FLEET_ZONE of it sinks it: sink_afloat).
+static func afloat(a: Dictionary) -> bool:
+	ensure()
+	return CGrid.is_wet(CState.cell(a))
+
+
+## Fleet fl of faction f has sailed to sea cell c: every afloat army at war
+## with f within FLEET_ZONE of it is destroyed (event "canoes_sunk"), armies
+## in index order.
+static func sink_afloat(st: Dictionary, f: int, c: int) -> void:
+	var gone: Array = []
+	for a in st["armies"]:
+		if int(a["busy"]) != 0 or not afloat(a) or not CState.at_war(st, f, int(a["f"])):
+			continue
+		if CGrid.within(c, CState.cell(a), FLEET_ZONE):
+			gone.append(a)
+	for a in gone:
+		var was: int = _rules().siege_of(st, a)
+		_rules().event(st, {"k": "canoes_sunk", "f": int(a["f"]), "by": f, "army": int(a["id"]),
+			"men": CState.men(a), "x": int(a["x"]), "y": int(a["y"])})
+		st["armies"].erase(a)
+		if was >= 0:
+			_rules()._left_siege(st, was)
 
 
 ## A coastal fleet at sea cell a can reach cell b (sea, or land: a sea cell
@@ -1291,6 +1324,7 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 			var c := int(p["steps"][i])
 			place(fl, c)
 			_mlog.append([int(fl["id"]), c])
+			sink_afloat(st, int(fl["f"]), c)
 			var foes: Array = []
 			for e in p["foes"]:
 				if not (e["ships"] as Array).is_empty() and not e.has("busy") and CGrid.within(c, cell(e), FLEET_ZONE):
