@@ -70,6 +70,8 @@ const CChars := preload("res://campaign/cchars.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const Sight := preload("res://campaign/csight.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CSea := preload("res://campaign/csea.gd")
+const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
 
 var fails := 0
@@ -142,6 +144,7 @@ func _init() -> void:
 	_west_raid_defence()
 	_detour_rule()
 	_west_roads()
+	_sea_lanes()
 	_sight()
 	_town_plan()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
@@ -3708,10 +3711,10 @@ func _ai_skilled() -> void:
 	for t in 20:
 		g = CTurn.resolve_turn(g, [])
 	# (Goldens moved with the roads, rivers and hills, 2026-10-09: movement
-	# differs; were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
+	# differs; (2026-10-22: the sea lanes pay, Rome's income moves: were 3007c1ab / 4197043257 and, Easy, bd76985b / 3786296811;) were 6e1095cd / 3394658370 and 08e7391a / 694925818; then 3666c3b2 / 694925818 and d517c822 / 3622865195 before the Tempe ford and the Tempe and Haliacmon roads; then caadf49a / 1570113520 and 95bb7116 / 2555935071 before the real coasts, rivers and relief, 2026-10-10.)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "3007c1ab" and int(g["rng"]) == 4197043257,
+	_check(CState.hash_text(CState.as_format(g, 7)) == "e641d961" and int(g["rng"]) == 1208372723,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3719,7 +3722,7 @@ func _ai_skilled() -> void:
 		ge = CTurn.resolve_turn(ge, [])
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "bd76985b" and int(ge["rng"]) == 3786296811,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "1508a9cb" and int(ge["rng"]) == 256607262,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4300,6 +4303,271 @@ func _west_roads() -> void:
 			if CGrid.region(cells[k]) != -1:
 				rbad += 1
 	_check(rbad == 0, "no Rome sea lane crosses land")
+
+
+## Sea lanes, the second step (2026-10-22, campaign/clanes.gd, csea.gd): every lane pays (level_a + level_b) x
+## LANE_BASE (a SEA_LANE_TRADE row overrides) half to each end port's owner in the income's "trade lanes"
+## part; a fleet at war with an end owner lying on a lane cell raids it (the lane pays 60 % less, the raider takes
+## half the cut); a blockaded or besieged port's half is not paid; the station orders fraid / fblockade; the AI
+## raids when its navy is the weaker; the flota follows its lane.
+func _sea_lanes() -> void:
+	CData.use_pack("west")
+	var eng := _f("england")
+	var ns := _f("new_spain")
+	var dutch := _f("dutch")
+	var st := CState.new_campaign("w", 11, [eng], {}, [], "west")
+	var st_fleets: Array = st["fleets"]
+	st["fleets"] = []   # (the start fleets lie on lanes already: the income cases below start from an empty sea)
+	var hv := CLanes.lane_between(_r("havana"), _r("veracruz"))
+	var hsa := CLanes.lane_between(_r("havana"), _r("st_augustine"))
+	var hp := CLanes.lane_between(_r("portobelo"), _r("havana"))
+	_check(hv >= 0 and hsa >= 0 and hp >= 0 and CLanes.base_value(st, hv) == 24 and CLanes.base_value(st, hp) == 28,
+		"lane trade: a SEA_LANE_TRADE row overrides (Havana - Veracruz %d, Portobelo - Havana %d, either order)" % [CLanes.base_value(st, hv), CLanes.base_value(st, hp)])
+	var la := int(st["regions"][_r("havana")]["level"])
+	var lb := int(st["regions"][_r("st_augustine")]["level"])
+	_check(CLanes.base_value(st, hsa) == (la + lb) * CData.LANE_BASE, "lane trade: the default is (level_a + level_b) x LANE_BASE (%d)" % CLanes.base_value(st, hsa))
+	# Every lane pays its owned ends: the factions' lane incomes add up to the lanes' payments.
+	var paid := 0
+	for id in CLanes.count():
+		var ls := CLanes.lane_state(st, id, CLanes.raiders(st))
+		paid += int(ls["pa"]) + int(ls["pb"])
+		if int(ls["pa"]) + int(ls["pb"]) > int(ls["v"]):
+			_check(false, "lane %d never pays more than its value" % id)
+	var sum_inc := 0
+	for f in CState.nf():
+		sum_inc += int(CRules.income(st, f).get("lanes", 0))
+	_check(paid > 0 and sum_inc == paid, "lane trade: the factions' 'lanes' incomes sum to what the lanes pay (%d)" % paid)
+	# Split by ownership: Havana - Veracruz is New Spain's both ends (the whole value); give Veracruz to England.
+	var ns0 := int(CRules.income(st, ns)["lanes"])
+	var en0 := int(CRules.income(st, eng)["lanes"])
+	var sp := CState.copy(st)
+	sp["regions"][_r("veracruz")]["owner"] = eng
+	var ns1 := int(CRules.income(sp, ns)["lanes"])
+	var en1 := int(CRules.income(sp, eng)["lanes"])
+	var vb := CLanes.lane_state(sp, hv, {})
+	var vtot := int(CLanes.base_value(sp, hv))
+	_check(int(vb["pa"]) + int(vb["pb"]) == vtot and ns1 < ns0 and en1 > en0 and (ns0 - ns1) + (en1 - en0) >= 0,
+		"lane trade: split by ownership (Veracruz to England: New Spain %d -> %d, England %d -> %d)" % [ns0, ns1, en0, en1])
+	var inc_total: Dictionary = CRules.income(st, ns)
+	_check(inc_total.has("lanes_n") and int(inc_total["lanes_n"]) > 0 and int(inc_total["total"]) >= int(inc_total["lanes"]),
+		"lane trade: the income carries the 'lanes' part and its count")
+	# A raid.
+	_check(CState.at_war(st, eng, ns) and not CState.at_war(st, dutch, ns), "the English are at war with New Spain, the Dutch are not")
+	var cells := CLanes.sea_cells(hv)
+	var mid := cells[cells.size() / 2]
+	for c in cells:   # (a cell of this lane alone: a fleet on a junction raids every lane through it)
+		if CLanes.lanes_at(c).size() == 1:
+			mid = c
+			break
+	var base_t := int(CRules.income(st, ns)["total"])
+	var base_e := int(CRules.income(st, eng)["total"])
+	var sr := CState.copy(st)
+	sr["fleets"] = (sr["fleets"] as Array).duplicate(true)
+	(sr["fleets"] as Array).append(_lane_fleet(9501, eng, mid))
+	var rt := CLanes.raiders(sr)
+	var rls := CLanes.lane_state(sr, hv, rt)
+	var cut := 2 * (12 * CData.LANE_RAID_PCT / 100)
+	var take := cut * CData.LANE_RAID_TAKE / 100
+	_check(rt.has(hv) and int(rls["cuta"]) + int(rls["cutb"]) == cut and int(rls["take"]) == take and int(rls["rf"]) == eng,
+		"raid: a fleet at war on the lane cuts it %d%% (%d gold) and takes %d%% of that (%d)" % [CData.LANE_RAID_PCT, cut, CData.LANE_RAID_TAKE, take])
+	var rin := CRules.income(sr, ns)
+	var ein := CRules.income(sr, eng)
+	_check(int(rin["total"]) == base_t - cut and int(rin["lanes_lost"]) >= cut and int(ein["total"]) == base_e + take and int(ein["lane_take"]) == take
+		and int(ein["lane_raided"]) >= 1,
+		"raid: New Spain %d -> %d, England %d -> %d (lost %d, take %d)" % [base_t, int(rin["total"]), base_e, int(ein["total"]), int(rin["lanes_lost"]), int(ein["lane_take"])])
+	# A fleet at peace with both ends, or empty, or the flota, or off the lane, does not raid.
+	var sq := CState.copy(sr)
+	(sq["fleets"] as Array).clear()
+	(sq["fleets"] as Array).append(_lane_fleet(9502, dutch, mid))
+	(sq["fleets"] as Array).append(_lane_fleet(9503, eng, cells[0]))
+	(sq["fleets"][1] as Dictionary)["ships"] = []
+	var fl4 := _lane_fleet(9504, eng, cells[cells.size() / 3])
+	fl4["flota"] = 0
+	(sq["fleets"] as Array).append(fl4)
+	var off := -1
+	for dc in [2, 3, -2, -3, 40, -40]:
+		if CFleet.is_sea(mid + dc) and CLanes.lanes_at(mid + dc).is_empty():
+			off = mid + dc
+			break
+	(sq["fleets"] as Array).append(_lane_fleet(9505, eng, off))
+	_check(CLanes.raiders(sq).is_empty() and int(CRules.income(sq, ns)["total"]) == base_t,
+		"raid: no raid by a fleet at peace, without ships, the flota, or off the lane")
+	# The chronicle and who is told.
+	CSea.lane_events(sr)
+	var ev := {}
+	for e in sr["events"]:
+		if str(e["k"]) == "lane_raided":
+			ev = e
+	_check(not ev.is_empty() and int(ev["gold"]) == cut and int(ev["take"]) == take and int(ev["f"]) == eng and int(ev["from"]) == ns
+		and Sight.event_seen(sr, ns, ev) and Sight.event_seen(sr, eng, ev) and int(sr["stats"].get("lane_raids", 0)) == 1,
+		"raid: the chronicle row 'lane_raided' (%d gold), told to the lane's owners and the raider" % int(ev.get("gold", -1)))
+	# The take counts as plunder at the money step.
+	var sm := CState.copy(sr)
+	var pl0 := int(sm["factions"][eng].get("plunder", 0))
+	CRules.end_of_turn(sm)
+	_check(int(sm["factions"][eng].get("plunder", 0)) >= pl0 + take, "raid: the raider's take counts as plunder (%d)" % int(sm["factions"][eng].get("plunder", 0)))
+	# A blockade zeroes the port's half; a siege does too.
+	var sbk := CState.copy(st)
+	sbk["regions"][_r("veracruz")]["bk"] = eng
+	var bl := CLanes.lane_state(sbk, hv, {})
+	_check(int(bl["pb"]) == 0 and int(bl["lb"]) == 12 and int(bl["pa"]) == 12 and int(CRules.income(sbk, ns)["lanes"]) < ns0,
+		"blockade: a blockaded port's lanes pay nothing to its owner (Veracruz -12 on Havana - Veracruz)")
+	# The station orders.
+	st["fleets"] = st_fleets
+	var ef: Dictionary = CFleet.fleets_of(st, eng)[0]
+	var efid := int(ef["id"])
+	_check(CRules.apply_order(st, eng, {"t": "fraid", "fleet": efid, "lane": hv}) == "", "fraid: an English fleet may raid Havana - Veracruz")
+	_check(CRules.apply_order(st, eng, {"t": "fraid", "fleet": efid, "lane": 9999}) != "" and CRules.apply_order(st, eng, {"t": "fraid", "fleet": efid, "lane": -1}) != "",
+		"fraid: no such lane is refused")
+	var sdw := CState.copy(st)
+	CState.set_dip(sdw, eng, ns, CState.PEACE)
+	_check(CRules.apply_order(sdw, eng, {"t": "fraid", "fleet": efid, "lane": hv}) != "" and CRules.apply_order(sdw, eng, {"t": "fblockade", "fleet": efid, "r": _r("havana")}) != "",
+		"fraid / fblockade: refused when not at war with the ports' owner")
+	_check(CRules.apply_order(st, ns, {"t": "fraid", "fleet": efid, "lane": hv}) != "", "fraid: not our fleet")
+	_check(CRules.apply_order(st, eng, {"t": "fblockade", "fleet": efid, "r": _r("port_royal")}) != "" and CRules.apply_order(st, eng, {"t": "fblockade", "fleet": efid, "r": _r("tayasal")}) != "",
+		"fblockade: our own port and a town without a harbour are refused")
+	_check(CRules.apply_order(st, eng, {"t": "fblockade", "fleet": efid, "r": _r("havana")}) == "", "fblockade: an English fleet may blockade Havana")
+	var sfl := CState.copy(st)
+	var gal := _lane_fleet(9506, ns, mid)
+	gal["flota"] = 0
+	(sfl["fleets"] as Array).append(gal)
+	_check(CRules.apply_order(sfl, ns, {"t": "fraid", "fleet": 9506, "lane": hv}) != "", "the flota cannot raid (it sails by the Crown's orders)")
+	# Played through a turn: England's fleet sails to the lane and holds it; the same twice; a JSON round trip.
+	var pick := -1
+	var pd := 1 << 30
+	for id in CLanes.count():
+		if CLanes.hostile(st, eng, id):
+			var stn := CLanes.raid_station(st, eng, ef, id)
+			var d := CGrid.octile(CFleet.cell(ef), stn)
+			if stn >= 0 and stn != CFleet.cell(ef) and d < pd:
+				pd = d
+				pick = id
+	var raid_ord := {"t": "fraid", "fleet": efid, "lane": pick}
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, eng, [raid_ord])])
+	var s1b := CTurn.resolve_turn(st, [CTurn.submission(st, eng, [raid_ord])])
+	var f1 := CFleet.fleet(s1, efid)
+	_check(pick >= 0 and CState.hash_text(s1) == CState.hash_text(s1b) and (f1.is_empty() or CLanes.on_lane(pick, CFleet.cell(f1)) or f1.has("dest_x")),
+		"fraid: resolved twice gives one state; the fleet is on the lane (%s) or holds a stored voyage to it" % CLanes.lane_name(pick))
+	var s2 := s1
+	var reached := false
+	for t in 8:
+		var f2 := CFleet.fleet(s2, efid)
+		if f2.is_empty():
+			break
+		if CLanes.on_lane(pick, CFleet.cell(f2)):
+			reached = true
+			break
+		s2 = CTurn.resolve_turn(s2, [])
+	_check(reached or CFleet.fleet(s2, efid).is_empty(), "fraid: the stored voyage brings the fleet onto the lane (or it was sunk on the way)")
+	var js := CState.from_json(CState.to_json(s2))
+	_check(not js.is_empty() and CState.hash_text(js) == CState.hash_text(s2), "a state with fleets on lanes round-trips JSON")
+	var pv := CTurn.preview(st, eng, [raid_ord])
+	_check((pv["errors"] as Array).is_empty() and (pv["fmoves"] as Array).size() == 1, "fraid: the planning preview accepts it as a voyage")
+	# The AI: England, the weaker navy, with a fleet off the lanes and no army to ferry, raids the richest lane.
+	var sai := CState.new_campaign("w", 11, [], {}, [], "west")
+	var keep_a: Array = []
+	for a in sai["armies"]:
+		if int(a["f"]) != eng:
+			keep_a.append(a)
+	sai["armies"] = keep_a
+	var efl := CFleet.fleet(sai, 6)
+	var away := -1
+	for dc in [-3, 3, -5, 5, -8, 8]:
+		var c0: int = mid + dc * CGrid.width()
+		if CFleet.is_sea(c0) and CLanes.lanes_at(c0).is_empty():
+			away = c0
+			break
+	CFleet.place(efl, away)
+	var ne := 0
+	var nn := 0
+	for fl in CFleet.fleets(sai):
+		if int(fl["f"]) == eng:
+			ne += CFleet.power(fl)
+		elif CState.at_war(sai, eng, int(fl["f"])):
+			nn += CFleet.power(fl)
+	var fmv: Array = []
+	CAIFleet.act(sai, eng, [], fmv)
+	var lane_moves := 0
+	for m in fmv:
+		if int(m[0]) == 6 and int(m[1]) >= 0 and not CLanes.lanes_at(int(m[1])).is_empty():
+			lane_moves += 1
+	_check(away >= 0 and ne < nn and lane_moves == 1, "AI: England (power %d against %d) sends its fleet onto a lane to raid (%d)" % [ne, nn, lane_moves])
+	var seasy := CState.copy(sai)
+	seasy["factions"][eng]["ai_skill"] = CP.EASY
+	var fmv2: Array = []
+	CAIFleet.act(seasy, eng, [], fmv2)
+	var lane_moves2 := 0
+	for m in fmv2:
+		if int(m[0]) == 6 and int(m[1]) >= 0 and not CLanes.lanes_at(int(m[1])).is_empty():
+			lane_moves2 += 1
+	_check(lane_moves2 == 0, "AI: an Easy faction never raids")
+	# Stronger than its enemies it does not raid (it blockades or waits).
+	var sstr := CState.copy(sai)
+	for fl in CFleet.fleets(sstr):
+		if int(fl["f"]) != eng and CState.at_war(sstr, eng, int(fl["f"])):
+			fl["ships"] = []
+	var fmv3: Array = []
+	CAIFleet.act(sstr, eng, [], fmv3)
+	var lane_moves3 := 0
+	for m in fmv3:
+		if int(m[0]) == 6 and int(m[1]) >= 0 and not CLanes.lanes_at(int(m[1])).is_empty():
+			lane_moves3 += 1
+	_check(lane_moves3 == 0, "AI: a navy that outguns its enemies does not raid")
+	# It keeps off a lane with an enemy fleet within two cells.
+	var sflee := CState.copy(sai)
+	(sflee["fleets"] as Array).append(_lane_fleet(9508, ns, away + 1))
+	var fmv4: Array = []
+	CAIFleet.act(sflee, eng, [], fmv4)
+	var lane_moves4 := 0
+	for m in fmv4:
+		if int(m[0]) == 6 and int(m[1]) >= 0 and not CLanes.lanes_at(int(m[1])).is_empty():
+			lane_moves4 += 1
+	_check(lane_moves4 == 0, "AI: no raid with an enemy fleet within two cells")
+	# The flota follows its lane.
+	var sf := CState.copy(st)
+	sf["turn"] = CSea.k("FLOTA_FIRST", 4) - 1
+	CSea.flota_spawn(sf)
+	var parts: Array = []
+	for fl in sf["fleets"]:
+		if CSea.is_flota(fl):
+			parts.append(fl)
+	var lanes_ok := parts.size() == 2
+	for fl in parts:
+		lanes_ok = lanes_ok and int(fl.get("ln", -1)) >= 0
+	_check(lanes_ok, "the flota: each part knows its lane to the meeting port (%s)" % str([int(parts[0].get("ln", -1)), int(parts[1].get("ln", -1))] if parts.size() == 2 else []))
+	var mv: Array = []
+	CSea.flota_moves(sf, mv)
+	var on_lane := not mv.is_empty()
+	for m in mv:
+		on_lane = on_lane and not CLanes.lanes_at(int(m[1])).is_empty()
+	_check(on_lane, "the flota: it steers for cells of its lane")
+	# A raider on the flota's lane meets it: the voyage ends in the raider's zone (an attack), not round it.
+	var lead: Dictionary = parts[0]
+	var ln0 := int(lead["ln"])
+	var route := CLanes.cells_to(ln0, _r("havana"))
+	var ahead := CLanes.cell_ahead(route, CFleet.cell(lead), CFleet.speed(lead) / 10 + 2)
+	var sx := CState.copy(sf)
+	(sx["fleets"] as Array).append(_lane_fleet(9507, eng, ahead))
+	var mv2: Array = []
+	CSea.flota_moves(sx, mv2)
+	var hit := false
+	for m in mv2:
+		if int(m[0]) == int(lead["id"]):
+			hit = CGrid.within(int(m[1]), ahead, CFleet.FLEET_ZONE)
+	_check(hit, "the flota: a raider on its lane is met (it sails into the raider's zone instead of round it)")
+	# Rome: the lanes pay, nobody raids.
+	CData.use_pack("rome")
+	var sro := CState.new_campaign("r", 3, [])
+	var rin2 := CRules.income(sro, 0)
+	var rtot := 0
+	for f in CState.nf():
+		rtot += int(CRules.income(sro, f).get("lanes", 0))
+	_check(rtot > 0 and int(rin2.get("lane_raided", 0)) == 0 and CLanes.raiders(sro).is_empty(), "Rome: the lanes pay (%d in all) and nobody raids them" % rtot)
+
+
+func _lane_fleet(id: int, f: int, c: int) -> Dictionary:
+	return {"id": id, "f": f, "x": CGrid.cx(c), "y": CGrid.cy(c), "ships": [{"t": "frigate", "h": 100, "c": 100}], "carry": [], "moved": 0}
+
 
 
 ## Fog of war (format 8, campaign/csight.gd, docs/CAMPAIGN.md "Fog of war").

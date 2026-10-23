@@ -408,7 +408,7 @@ func rows() -> Array:
 			MapView.draw_cliff(ci, line, ticks, 1.0, tbl)])
 	if format >= 6:
 		# (the lanes are curves through the sea, both packs, both map styles)
-		var lane_text := "Sea lane: the ports' trade routes (ships sail where they like)" if CData.ships_on() else "Sea lane between ports"
+		var lane_text := "Sea lane: a trade route, its gold paid to both ports (ships sail where they like)" if CData.ships_on() else "Sea lane: a trade route, its gold paid to both ports"
 		out.append([lane_text, func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
 			var pts := PackedVector2Array()
@@ -416,6 +416,14 @@ func rows() -> Array:
 				var t := float(k) / 20.0
 				pts.append(_l(sz).lerp(_r(sz), t) + Vector2(0, -sin(t * PI) * sz.y * 0.28))
 			MapView.draw_sea_lane_line(ci, pts, 1.0)])
+		if CData.ships_on():
+			out.append(["Raided lane: an enemy fleet lies on it, the trade is cut", func(ci: Control, sz: Vector2):
+				ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)
+				var a := _l(sz)
+				var b := _r(sz)
+				var dashes := MapView.dash_polyline(PackedVector2Array([a, b]), 9.0, 6.0)
+				ci.draw_multiline(dashes, Color(0, 0, 0, 0.55), 6.0, true)
+				ci.draw_multiline(dashes, Color(1.0, 0.3, 0.22), 3.4, true)])
 	else:
 		out.append(["Sea lane between ports", func(ci: Control, sz: Vector2):
 			ci.draw_rect(Rect2(Vector2.ZERO, sz), MapView.SEA)

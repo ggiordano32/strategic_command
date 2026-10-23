@@ -38,9 +38,10 @@ generation, cover) flow back to the Mediterranean campaign for free.
    lembos: oared polars that barely care about the wind, ramming, the corvus
    for boarding, an oared-ship AI), Rome fleets / ports / transports on the
    campaign reusing the Caribbean fleet machinery, Rome sea battle maps. The
-   ocean trade lanes (drawn with the map work of 2026-10-22, rules for
-   raiding / blockading a lane as a second step) are written pack-agnostic so
-   Rome's navy uses them as the Caribbean does.
+   ocean trade lanes (drawn with the map work of 2026-10-22; their trade,
+   raids and blockades built the same day, row "Lane trade, raids and
+   blockades") are written pack-agnostic so Rome's navy uses them as the
+   Caribbean does.
 
 ## The current list
 
@@ -56,8 +57,9 @@ Thursday's list (2026-10-22), all landed on 2026-10-22 and committed except wher
 | 6 | Rome walls 1-2 | Landed (`07b9d27`): row "Rome walls 1-2 balance pass" |
 | 7 | Same day, owner requests: waypoints (`f690bdf`), reading a town battle (`4fc9b9d`), men turn to their march (`1431401`), beaches and cliffs (`bd50be8`), table sea on the bathymetry (`53da70e`), ships popping while panning (`80a4376`), ambient beds (`8e7986c`, `62e1969`) | Landed |
 | 8 | Auto-resolve refit (the formula fitted to fought sieges and field battles) | Built 2026-10-22, not committed: row "Auto-resolve refit" |
+| 9 | Lane rules: trade along the sea lanes, raiding and blockading (`fraid`, `fblockade`), the flota on its lane, the AI's raids | Built 2026-10-22, not committed: row "Lane trade, raids and blockades" |
 
-Next, in order (the open items of the list; detail in the areas below): (1) lane rules (raiding / blockading a trade lane), (2) the Rome navy (goal 5), (3) device checks on the Tab S7 / phone of the week (fog look and markers, sea top bar, Game server page, `?prof-tap=3`, waypoints, the Paths overlay, crests), (4) Hunyuan characters wired in, (5) sea balance follow-ons, (6) auto-resolve refit to pass T and the Rome walls results.
+Next, in order (the open items of the list; detail in the areas below): (1) the Rome navy (goal 5), (2) device checks on the Tab S7 / phone of the week (fog look and markers, sea top bar, Game server page, `?prof-tap=3`, waypoints, the Paths overlay, crests, the raid / blockade taps and the raided-lane look), (3) Hunyuan characters wired in, (4) sea balance follow-ons, (5) auto-resolve refit to pass T and the Rome walls results.
 
 ## Open items by area
 
@@ -65,7 +67,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 
 ### Battle sim
 - Waypoints: no keyboard key; the Orders overlay (all units) does not draw chains; three-finger group moves still replace. [row "Battle waypoints"]
-- Men turn to their march: no real strafe frames (a side / back set per rig is a Blender task); engines and routed men keep the sim's facing. [row "Men turn to their march"]
+- Men turn to their march: engines and routed men keep the sim's facing. [row "Men turn to their march"]
 - Mid-battle reinforcements: ambush stance; no cap on the number of armies in a battle; no choice of which units wait. [row "Mid-battle reinforcements"]
 - The column on the walk: the residual 1.7 : 1 exchange; yards 5 / 6 (two wall lines on one walk) still draw with no blows. [row "The column on the walk"]
 - Siege towers, field works, light artillery need tuning (tower pace and start, every field-works number, every number of both artillery rows, the AI cavalry does not avoid stakes). [rows "Siege towers", "Field works and the fortified camp", "Light artillery"]
@@ -85,10 +87,11 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 
 ### Sea
 - Sea look: other towns' forts / batteries in sea battles; the shore foam to the owner's eye. [row "Sea battle look"]
-- Flight rule: gauge / camp layouts; skill from the campaign; the ship book still advises grape before boarding; a scripted player who never flees wins 15-19 of 24 against the AI in `order` mode (the AI's flight rule is the suspect); the AI's beat to windward stays slow. [row "Sea battle AI: the flight rule", paragraph "Sea pass 4: the leeward fleet"]
+- Flight rule: gauge / camp layouts; a scripted player who never flees wins 15-19 of 24 against the AI in `order` mode (the AI's flight rule is the suspect); the AI's beat to windward stays slow. [row "Sea battle AI: the flight rule", paragraph "Sea pass 4: the leeward fleet"]
 - Sea follow-ons: drop the two `online_ui.gd` gates, head-to-head humans at sea, smoke blocking aim, shore batteries, the formula fitted to fought results, balance of the deck melee. [paragraph "Sea follow-ons built 2026-10-16"]
 - N2 / N2b: the AI sacks rarely, pirates seldom hold a haven late, flota interceptions are rare, storms rarely sink AI ships, salvage of wrecks, privateer captains for the nations. [paragraphs "N2 trade, blockades, the flota and the pirate loop", "N2b hurricanes, notorious captains and named treasure galleons"]
-- Lane rules (raiding / blockading a trade lane) and the Rome navy (goal 5): not started. ["Where we are headed", overview]
+- The Rome navy (goal 5): not started. ["Where we are headed", overview]
+- Lane rules: the lanes' sight (a port seeing its lane's cells within `CITY_R` + 1) is not in `csight.gd`, the raided lane and the chronicle row are shown to the owners whatever the fog; the AI raids with lone sloops and a junction raids every lane through it; a Skilled siege blockade is untested; no device look at the raid taps yet. [row "Lane trade, raids and blockades"]
 
 ### Campaign rules
 - Story: effects other than crew / hull / fame / infamy go to the lead only; a divided ending; the landing sends no ship; the vote dialogs on a phone. [paragraph "Story step 3 built 2026-10-16" and the story steps]
@@ -102,13 +105,13 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Beaches and cliffs: frame time re-measure idle (pan median West table 29-60 ms with the beach node, 36-51 ms without, on a loaded machine). [row "Beaches and cliffs on the overworld"]
 - Table sea: the owner's eye on `table_depth`. [row "Table map sea on the bathymetry"]
 - Mouse scheme and the fleet Deselect fix: the two-finger tap tested with synthetic events only. [row "Overworld mouse scheme and the fleet Deselect fix"]
-- Fog of war view: town models still show true buildings / culture; no toggle in the AI-less sandbox but `--all-seeing`. [row "Fog of war, view half"]
+- Fog of war view: no toggle in the AI-less sandbox but `--all-seeing`. [row "Fog of war, view half"]
 - Overworld towns: landmarks placed at `CTown.plan`'s points, ships' baked contact shadow, Rome's Alexandria is not a region; miniatures hand-check on the Tab S7; Rome miniatures have the generic roman look. [paragraphs "Overworld towns modelled into the landscape" (steps 1 and 2), "Map table and miniatures"]
 - Zoom / pan hitch and tap latency: AA polylines of the map cost ~7 ms a frame (LOD-simplify or cull); an order still redraws the whole overlay in the tap's frame; not measured on the Tab S7 (`?prof-tap=3`). [the two bullets at the end of "How we work" in the archive]
 - Characters wired in: no figure until the Brethren land an army; Hunyuan models: the captain's plume and hat, the licence before release, silhouette fit, the rest of the cast. [rows "Characters wired in", "Hunyuan3D character models"]
 
 ### UI
-- Menu pass 2: a real-touch long-press and a desktop hover pass; the Options page scrolls on a 1024x576 window; the campaign top bar and command bar tips are boxed but untitled. [row "Menu pass 2"]
+- Menu pass 2: a real-touch long-press and a desktop hover pass; the campaign top bar and command bar tips are boxed but untitled. [row "Menu pass 2"]
 - In-game UI theme: the land campaign battle has no name for the top bar; the Options cycles duplicated from `main.gd`; the 800x450 phone top row ~20 px too wide. [rows "In-game UI theme, pass 1", "In-game UI theme, pass 2"]
 - Main menu: the owner picks the background and emblem style; the owner's cleaned-up emblems to swap in; title background swipe tested with mouse events only. [rows "Main menu rebuild", "Title screen background selector"]
 - Command bar: no morale / supply in the campaign, no "..." fold on phones, Recruit / Build open the full panel, drag onto another army / Exchange is not built. [rows "Overworld command bar", "Command bar round 2"]
@@ -133,12 +136,12 @@ Pinned values to compare after a change (they move only with a stated reason; th
 
 | Pin | Value | Set |
 |---|---|---|
-| `campaign_sim` 6 x 60, West pack | `f35b6a3a 3c4807ee 40ab341c da4ecb04 7896bb0d 5bd06f73` | 2026-10-22 (row "Auto-resolve refit"; were `bc182ad5 7996ade0 26eeeeda 03d3994b b817ccec 368eb624`) |
-| `campaign_sim` 6 x 60, Rome pack | `7a4fdddc 2e06d5ab 3054d32e 658ce540 e2295baf 7f4ea2af` | 2026-10-22 (same row; were `a28e0bbe 68fcfe65 c328ee2e 9e9c3801 a42fc685 b6fe6c2e`) |
+| `campaign_sim` 6 x 60, West pack | `7f28336f e4e63bcb fc358ea5 34b7ccb6 3bb99388 87068d07` | 2026-10-22 (row "Lane trade, raids and blockades"; were `f35b6a3a 3c4807ee 40ab341c da4ecb04 7896bb0d 5bd06f73` after the row "Auto-resolve refit") |
+| `campaign_sim` 6 x 60, Rome pack | `57ebb97a 89043efa 6baf5ad8 ccaf53f8 37693c54 5bc63aab` | 2026-10-22 (same row; were `7a4fdddc 2e06d5ab 3054d32e 658ce540 e2295baf 7f4ea2af`) |
 | `campaign_sim --format=8`, Rome | `4d21f126 1c4a86e9 286a3c80 d53713d6 605c409f 77cfbf4c` | 2026-10-17 (row "Fog of war on the overworld, rules half") |
 | `campaign_sim --format=8`, West | `d8cded2d d73b8c5d e64845ba 8eea9504 7c3efd9e 679e2092` | 2026-10-17 (same row) |
-| AI goldens as format 7 (`as_format(st, 7)`) | `3007c1ab`, `bd76985b` (`tests/campaign_test.gd`) | 2026-10-17 |
-| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `3c26a0bc` (format 8); as format 7 `ROME_20_V7` `57aa56ba` | 2026-10-22 (row "Auto-resolve refit"; were `d60c218a` / `575e23d5`) |
+| AI goldens as format 7 (`as_format(st, 7)`) | `e641d961`, `1508a9cb` (`tests/campaign_test.gd`) | 2026-10-22 (row "Lane trade, raids and blockades"; were `3007c1ab`, `bd76985b`) |
+| `tests/pack_test.gd` Rome AI-only campaign, seed 4242, 20 turns | `ROME_20` `244711de` (format 8); as format 7 `ROME_20_V7` `6fd1aac2` | 2026-10-22 (row "Lane trade, raids and blockades": Rome's lanes pay; were `70843c45` / `57aa56ba` after the row "Four leftovers", `3c26a0bc` / `57aa56ba` after "Auto-resolve refit", `d60c218a` / `575e23d5` before) |
 | `tests/pack_test.gd` "pack" state hash as the server sees it (also in Go `TestStateHashPack`) | `a9a7a1e4`, `a5c588a1` | 2026-10-13 |
 
 The determinism goldens (four flat digests, every `--only=` pin) are in `tests/determinism_test.gd`; rows say "goldens unmoved" when a change keeps them.

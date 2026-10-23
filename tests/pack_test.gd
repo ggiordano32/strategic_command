@@ -19,14 +19,15 @@ const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
-const ROME_20 := "70843c45"  # format 8 (fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
+const ROME_20 := "244711de"  # format 8 (the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
 ## The same play without the fog keys (CState.as_format 7) = HEAD 1c04fbe
 ## before the pack switch existed: the fog changes no rule.
-const ROME_20_V7 := "57aa56ba"  # (575e23d5 until the auto-resolve refit, 2026-10-22)
+const ROME_20_V7 := "6fd1aac2"  # (57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
 
 var fails := 0
 
@@ -359,7 +360,9 @@ func _sea() -> void:
 			CSea.treasure(parts[0]) + (CSea.treasure(parts[1]) if parts.size() > 1 else 0)])
 	var mv: Array = []
 	CSea.flota_moves(sf, mv)
-	_check(mv.size() == 2 and int(mv[0][1]) == CSea.meet_cell(), "the flota sails for Havana")
+	_check(mv.size() == 2 and (int(mv[0][1]) == CSea.meet_cell() or not CLanes.lanes_at(int(mv[0][1])).is_empty())
+		and (int(mv[1][1]) == CSea.meet_cell() or not CLanes.lanes_at(int(mv[1][1])).is_empty()),
+		"the flota sails for Havana (along its lane's cells)")
 	var gold := CSea.treasure(parts[0])
 	var tre0 := int(sf["factions"][ns]["treasury"])
 	CFleet.place(parts[0], CSea.exit_cell())

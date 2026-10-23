@@ -61,6 +61,8 @@ const OnlineUI := preload("res://game/campaign/online_ui.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CLanes := preload("res://campaign/clanes.gd")
+const CSea := preload("res://campaign/csea.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
@@ -1860,13 +1862,13 @@ func _update_hint() -> void:
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
 	elif sel_fleet >= 0 and _g() and last_mouse:
-		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it (a left click only selects). Left-click empty sea to deselect."
+		hint.text = "Right-click the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an enemy harbour to blockade it (a left click only selects). Left-click empty sea to deselect."
 	elif sel_army >= 0 and _g() and last_mouse:
 		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect."
 	elif _g() and last_mouse:
 		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans."
 	elif sel_fleet >= 0 and _g():
-		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it. Board: select an army beside the fleet and tap the fleet."
+		hint.text = "Tap the sea to sail there (shaded: this turn; the wind blows from the east, so westward is fast), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an empty fleet on an enemy harbour to blockade it. Board: select an army beside the fleet and tap the fleet."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel."
 	elif _g():
@@ -2274,6 +2276,9 @@ func _refresh_map6() -> void:
 	else:
 		map_view.set_reach(PackedInt32Array())
 	overlay.selected_fleet = sel_fleet
+	var raid_ids := raid_lanes_of(CFleet.fleet(ps, sel_fleet)) if sel_fleet >= 0 and CFleet.on(ps) else []
+	var raid_changed := raid_ids != overlay.raid_lanes
+	overlay.raid_lanes = raid_ids
 	overlay.fleet_paths = []
 	var t_fl := ZProf.begin()
 	if CFleet.on(ps) and f >= 0:
@@ -2302,7 +2307,7 @@ func _refresh_map6() -> void:
 	# set_selected_region): the map's territories and edges are not drawn again for a tap.
 	var p_paths := fresh or paths != overlay.paths6 or zones != overlay.zones or links != overlay.links
 	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap   # (the halo is its own node)
-	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed
+	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed or raid_changed
 	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
@@ -2546,6 +2551,8 @@ func planned_voyage(id: int) -> Array:
 	for o in orders:
 		if str(o.get("t", "")) == "fmove" and int(o.get("fleet", -1)) == id:
 			return [CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(o.get("tgt", -1))]
+		if _is_station(o) and int(o.get("fleet", -1)) == id:
+			return [int(CSea.station_plan(ps, f, o).get("dest", -1)), -1]   # (lanes) the voyage to the station
 	var fl := CFleet.fleet(ps, id)
 	if not fl.is_empty() and fl.has("dest_x"):
 		return CFleet.voyage(fl)
@@ -2559,7 +2566,7 @@ func set_fmove(id: int, c: int, tgt: int = -1) -> void:
 	var had := false
 	var keep: Array = []
 	for o in orders:
-		if str(o.get("t", "")) == "fmove" and int(o.get("fleet", -1)) == id:
+		if (str(o.get("t", "")) == "fmove" or _is_station(o)) and int(o.get("fleet", -1)) == id:
 			had = true
 			continue
 		keep.append(o)
@@ -2586,6 +2593,91 @@ func set_fmove(id: int, c: int, tgt: int = -1) -> void:
 	else:
 		add_order(o)
 	_t("campaign_input", {"what": "fleet_move"})
+
+
+func _is_station(o: Dictionary) -> bool:
+	var t := str(o.get("t", ""))
+	return t == "fraid" or t == "fblockade"
+
+
+## (Sea lanes) Order fleet id to raid lane `lane` or blockade region `r`'s port (-1 the other): it sails to the
+## station and holds it. The same target again cancels; another target replaces the fleet's voyage.
+func set_station(id: int, lane: int, r: int) -> void:
+	var o := {"t": "fraid", "fleet": id, "lane": lane} if lane >= 0 else {"t": "fblockade", "fleet": id, "r": r}
+	var keep: Array = []
+	var same := false
+	var had := false
+	for q in orders:
+		if (str(q.get("t", "")) == "fmove" or _is_station(q)) and int(q.get("fleet", -1)) == id:
+			had = true
+			if str(q.get("t", "")) == str(o["t"]) and int(q.get("lane", -2)) == int(o.get("lane", -2)) and int(q.get("r", -2)) == int(o.get("r", -2)):
+				same = true
+			continue
+		keep.append(q)
+	if same:
+		set_orders(keep)
+		return
+	var why := ""
+	if had:
+		why = set_orders(keep + [o])
+	else:
+		why = add_order(o)
+	if why == "":
+		_t("campaign_input", {"what": "fleet_raid" if lane >= 0 else "fleet_blockade"})
+
+
+## The lanes the fleet (ours) could raid now: CLanes ids at war with it.
+func raid_lanes_of(fl: Dictionary) -> Array:
+	var out: Array = []
+	if fl.is_empty() or int(fl["f"]) != f or fl.has("flota") or fl.has("sto") or not CFleet.on(ps):
+		return out
+	for id in CLanes.total():
+		if CLanes.hostile(ps, f, id):
+			out.append(id)
+	return out
+
+
+## The richest lane worth raiding for fleet fl (value its enemies' ports pay, by the distance), -1 none.
+func best_raid(fl: Dictionary) -> int:
+	var best := -1
+	var bv := -1
+	for id in raid_lanes_of(fl):
+		if int(id) >= CLanes.count():
+			continue
+		var ls := CLanes.lane_state(ps, int(id), {})
+		var v := 0
+		if int(ls["oa"]) >= 0 and CState.at_war(ps, f, int(ls["oa"])):
+			v += int(ls["pa"])
+		if int(ls["ob"]) >= 0 and CState.at_war(ps, f, int(ls["ob"])):
+			v += int(ls["pb"])
+		var stn := CLanes.raid_station(ps, f, fl, int(id))
+		if v <= 0 or stn < 0:
+			continue
+		var sc := v * 100 / (1 + CGrid.octile(CFleet.cell(fl), stn) / maxi(CFleet.speed(fl) / 10, 1))
+		if sc > bv:
+			bv = sc
+			best = int(id)
+	return best
+
+
+## The richest enemy port fleet fl could blockade (sea trade by the distance), -1 none.
+func best_blockade(fl: Dictionary) -> int:
+	var best := -1
+	var bv := -1
+	if fl.is_empty() or int(fl["f"]) != f or fl.has("flota") or fl.has("sto") or not CFleet.on(ps):
+		return -1
+	for r in CData.region_count():
+		var o := CState.owner(ps, r)
+		if CFleet.harbour(r) < 0 or o < 0 or not CState.at_war(ps, f, o):
+			continue
+		var stn := CSea.blockade_station(ps, f, fl, r)
+		if stn < 0:
+			continue
+		var sc := maxi(CSea.sea_trade(ps, r), 1) * 100 / (1 + CGrid.octile(CFleet.cell(fl), stn) / maxi(CFleet.speed(fl) / 10, 1))
+		if sc > bv:
+			bv = sc
+			best = r
+	return best
 
 
 ## Our fleet id joins our fleet into: within a cell now, an immediate merge
@@ -3456,6 +3548,18 @@ func _tap_fleets(p: Vector2) -> bool:
 	if mine_f and overlay.army_at(p) < 0:
 		var c := MapOverlay.cell_of_point(_map_point(p))
 		var tsr := overlay.settlement_at(p)
+		# (Sea lanes) an enemy harbour with no troops aboard: blockade it; a lane we could raid: raid it.
+		if tsr >= 0 and (sf["carry"] as Array).is_empty() and CFleet.harbour(tsr) >= 0 and CState.owner(ps, tsr) >= 0 \
+				and CState.at_war(ps, f, CState.owner(ps, tsr)) and not sf.has("flota"):
+			set_station(sel_fleet, -1, tsr)
+			_after_station()
+			return true
+		if tsr < 0 and not sf.has("flota"):
+			var ln := overlay.lane_at(p, overlay.raid_lanes)
+			if ln >= 0:
+				set_station(sel_fleet, ln, -1)
+				_after_station()
+				return true
 		if tsr >= 0:
 			c = CGrid.site(tsr)   # anywhere on a town: its harbour
 		if c >= 0 and (CFleet.is_sea(c) or CGrid.passable(c)):
@@ -3464,6 +3568,11 @@ func _tap_fleets(p: Vector2) -> bool:
 				show_side(func(box): panels.fleet_panel(box, sel_fleet))
 			return true
 	return false
+
+
+func _after_station() -> void:
+	if sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+		show_side(func(box): panels.fleet_panel(box, sel_fleet))
 
 
 ## Real mouse, left click on the overworld (Total War): it only selects. One of our armies / fleets, a city or a

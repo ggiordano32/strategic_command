@@ -26,6 +26,12 @@ extends RefCounted
 ##     hold; pirates hunt the flota (FLOTA_PCT, within FLOTA_TURNS) and
 ##     prefer weak, rich prey; the nations hunt pirate fleets harder by
 ##     their infamy; the flota itself sails by the rules (CSea);
+##     (lanes, 2026-10-22) a free fleet weaker than the fleets of the factions
+##     at war with it RAIDS instead: the richest enemy lane in reach (the
+##     value its enemies' ports pay, by the turns to reach it), holding the
+##     lane cell it lies on; not at Easy, and never with an enemy fleet
+##     within RAID_FLEE_CELLS. At Skilled the ports under our own land siege
+##     are the blockades' first choice;
 ##  7. the rest go home to a port of ours when damaged or when a stronger
 ##     enemy fleet is near (no suicide); voyages avoid enemy fleets' zones;
 ##  8. (N2b) hurricanes: a fleet at sea in a storm's forecast cone runs for
@@ -44,6 +50,8 @@ const CFleet := preload("res://campaign/cfleet.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
+const CLanes := preload("res://campaign/clanes.gd")
+const CP := preload("res://campaign/cai_profile.gd")
 
 const ATTACK_PCT := 140      # attack an enemy fleet with this % of its power
 const LAND_PCT := 110        # land against a region whose defence the troops beat by this %
@@ -61,6 +69,8 @@ const GUARD_CELLS := 30      # defenders counted within this of the harbour (a t
 const FLOTA_PCT := 110       # attack the flota with this % of its power (pirates PIRATE_FLOTA_PCT)
 const PIRATE_FLOTA_PCT := 90
 const FLOTA_TURNS := 3       # ... within this many estimated turns (pirates; nations 2)
+const RAID_TURNS := 4        # (lanes) raid lanes whose nearest station is at most this far (estimated turns)
+const RAID_FLEE_CELLS := 2   # ... and stop raiding when an enemy fleet at war comes this near
 const PIRATE_ATTACK_PCT := 130
 const PIRATE_DAMAGED_PCT := 75  # pirates make for a haven sooner ...
 const PIRATE_DANGER_PCT := 100  # ... and shun any navy their match
@@ -181,7 +191,11 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			used[int(fl["id"])] = 1
 			fmoves.append([int(fl["id"]), -1, f, 0, tgt])
 	# Blockades (N2): the richest enemy port in reach whose guard we outgun.
+	# Raids (lanes): a weaker navy's play, the richest enemy lane in reach.
 	var taken_ports := {}
+	var taken_lanes := {}
+	var rt := CLanes.raiders(st)
+	var foe_power := _foe_power(st, f)
 	for fl in mine:
 		if used.has(int(fl["id"])) or not (fl["carry"] as Array).is_empty():
 			continue
@@ -189,6 +203,14 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			continue
 		if _stormy and CFleet.port_of(st, fl, f, true) >= 0:
 			continue  # (N2b) the season: stay in port while storms are about
+		if _power(fl) < foe_power and CP.skill(st, f) > CP.EASY:
+			var rp := _raid(st, f, fl, taken_lanes, rt)
+			if not rp.is_empty():
+				used[int(fl["id"])] = 1
+				taken_lanes[int(rp[0])] = 1
+				if int(rp[1]) != CFleet.cell(fl):
+					fmoves.append([int(fl["id"]), int(rp[1]), f, 0, -1])
+				continue
 		var bp := _blockade(st, f, fl, taken_ports)
 		if bp.is_empty():
 			continue
@@ -570,7 +592,8 @@ static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary)
 		if hb < 0 or o < 0 or taken.has(r) or not CState.at_war(st, f, o) or _storm_at(st, hb) or CAI._shield(st, f, r):
 			continue
 		var trade := CSea.sea_trade(st, r)
-		if trade <= 0:
+		var sieged := CP.skill(st, f) == CP.SKILLED and int(CState.siege_at(st, r).get("f", -1)) == f  # (lanes) Skilled: our siege
+		if trade <= 0 and not sieged:
 			continue
 		if not _gd.has(r):
 			_gd[r] = _guard(st, o, hb)
@@ -579,9 +602,9 @@ static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary)
 		if CGrid.cheb(here, hb) <= rad and CFleet.zone_owner(st, f, here) < 0:
 			return [r, here]  # we hold it
 		var tt := _turns(fl, hb)
-		if tt > BLOCKADE_TURNS:
+		if tt > BLOCKADE_TURNS + (2 if sieged else 0):
 			continue
-		var v := trade * 100 / (1 + tt)
+		var v := maxi(trade, 1) * 100 / (1 + tt) * (3 if sieged else 1)
 		if v > bv:
 			bv = v
 			best = r
@@ -593,20 +616,72 @@ static func _blockade(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary)
 	if rg >= 0 and CFleet.is_sea(rg) and CGrid.cheb(rg, hb2) <= rad and CFleet.zone_owner(st, f, rg) < 0 \
 			and not (CFleet.coastal(fl) and (CFleet.coast_dist(rg) > lim or not CFleet.coastal_link(here, rg))):
 		return [best, rg]  # (the station it was sailing for: its route is kept)
-	var sc := -1
-	var sd := 1 << 30
-	for dy in range(-rad, rad + 1):
-		for dx in range(-rad, rad + 1):
-			var j := CGrid.at(CGrid.cx(hb2) + dx, CGrid.cy(hb2) + dy)
-			if j < 0 or not CFleet.is_sea(j) or CFleet.zone_owner(st, f, j) >= 0:
-				continue
-			if CFleet.coastal(fl) and (CFleet.coast_dist(j) > lim or not CFleet.coastal_link(here, j)):
-				continue
-			var d := CGrid.octile(here, j)
-			if d < sd or (d == sd and j < sc):
-				sd = d
-				sc = j
+	var sc := CSea.blockade_station(st, f, fl, best)
 	return [best, sc] if sc >= 0 else []
+
+
+## The power of the fleets of the factions at war with f (the flota and
+## empty fleets count for nothing).
+static func _foe_power(st: Dictionary, f: int) -> int:
+	var n := 0
+	for e in CFleet.fleets(st):
+		if CState.at_war(st, f, int(e["f"])) and not CSea.is_flota(e) and not (e["ships"] as Array).is_empty():
+			n += _power(e)
+	return n
+
+
+## (lanes) The lane fleet fl should raid: [lane id, station cell] or [].
+## Keeps the lane it lies on; else the enemy lane worth most per estimated
+## turn to reach (at most RAID_TURNS) not raided by us already (`taken`: lane
+## ids this act, `rt`: CLanes.raiders), its station a free cell on the lane
+## (outside enemy zones, out of the storms' cones). Nothing with an enemy
+## fleet at war within RAID_FLEE_CELLS.
+static func _raid(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary, rt: Dictionary) -> Array:
+	var here := CFleet.cell(fl)
+	for e in CFleet.fleets(st):
+		if CState.at_war(st, f, int(e["f"])) and not (e["ships"] as Array).is_empty() \
+				and CGrid.cheb(CFleet.cell(e), here) <= RAID_FLEE_CELLS:
+			return []
+	var best := -1
+	var bv := 0
+	var bs := -1
+	for id in CLanes.lanes_at(here):  # (the lane it lies on first)
+		if int(id) < CLanes.count() and not taken.has(id) and CLanes.hostile(st, f, int(id)) \
+				and (not rt.has(id) or int((rt[id] as Dictionary)["id"]) == int(fl["id"])) and _lane_gold(st, f, int(id)) > 0:
+			return [int(id), here]
+	for id in CLanes.count():
+		if taken.has(id) or not CLanes.hostile(st, f, id):
+			continue
+		if rt.has(id) and int((rt[id] as Dictionary)["id"]) != int(fl["id"]):
+			continue  # somebody holds it already
+		var v := _lane_gold(st, f, id)
+		if v <= 0:
+			continue
+		var stn := CLanes.raid_station(st, f, fl, id)
+		if stn < 0 or CFleet.zone_owner(st, f, stn) >= 0 or _storm_at(st, stn):
+			continue
+		if stn == here:
+			return [id, here]  # we hold it
+		var tt := _turns(fl, stn)
+		if tt > RAID_TURNS:
+			continue
+		var sc := v * 100 / (1 + tt)
+		if sc > bv:
+			bv = sc
+			best = id
+			bs = stn
+	return [best, bs] if best >= 0 else []
+
+
+## What lane id pays now to the ports of its owners at war with f.
+static func _lane_gold(st: Dictionary, f: int, id: int) -> int:
+	var ls := CLanes.lane_state(st, id, {})
+	var v := 0
+	if int(ls["oa"]) >= 0 and CState.at_war(st, f, int(ls["oa"])):
+		v += int(ls["pa"])
+	if int(ls["ob"]) >= 0 and CState.at_war(st, f, int(ls["ob"])):
+		v += int(ls["pb"])
+	return v
 
 
 ## Power of the fleets on faction o's side within GUARD_CELLS of cell hb.

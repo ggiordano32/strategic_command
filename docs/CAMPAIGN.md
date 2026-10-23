@@ -1495,7 +1495,7 @@ routes to both maps". Static data and one search rule; the state format stays 8 
   adds a lane from a port to the open sea at the map's edge: the West's Florida channel, Havana out to the Atlantic.
   West `SEA_LANES` gained Havana - Portobelo, Havana - Cartagena, Havana - Santo Domingo, Port Royal - Santo Domingo and
   Cartagena - Santo Domingo (43 lanes with the exit; the West's armies still cross only on fleets, so the lanes are
-  trade-route data and `CData.adjacent` kind 1). The rules for raiding or blockading a lane are a later step and read
+  trade-route data and `CData.adjacent` kind 1). The lane rules (trade, raids, blockades) are the next section and read
   the same cells (`CLanes`), so Rome's future navy can too.
 - **The detour rule** (`CGrid.find_path`, integer, deterministic; `CGrid.detour_rule` is a static var so tests can
   measure with and without): the cheapest path is kept only if it is at most `DETOUR_PCT` (25) % longer than the direct
@@ -1513,6 +1513,74 @@ routes to both maps". Static data and one search rule; the state format stays 8 
   to the cells' own line. Key rows: Road (the style's own sample), Sea lane (also in the West, where it reads as the
   ports' trade routes).
 - **Measured**: see docs/STATUS.md (changed routes, turns before / after, the pins).
+
+### Lane trade, raids and blockades (2026-10-22, still format 6, no `CState.VERSION` bump)
+
+The second step after the lanes were drawn (owner: "this second step would also want to be used once Rome's navy is
+completed", so it is pack-agnostic). Code: `campaign/clanes.gd` (the state functions at its foot; no state is stored,
+everything is read from the fleets' cells, the ports and the blockade marks), `csea.gd` (the station orders, the
+chronicle row, the flota), `crules.gd` (`income`, the money step, `_siege_turn`), `cturn.gd` (the orders), `cai_fleet.gd`.
+
+- **Lane ids**: `0 .. n-1` are `CData.SEA_LANES`, `n .. n+m-1` the `SEA_LANE_EXITS`. Data: `CData.SEA_LANE_TRADE`
+  (optional, `[port key, port key, gold]` rows in either order; the West's Havana - Portobelo 28, Havana - Cartagena 24,
+  Havana - Veracruz 24, Havana - Santo Domingo 20, Port Royal - Portobelo / Cartagena 20) overrides the default
+  `(level_a + level_b) x LANE_BASE` (4) at the ports' levels now (village 0, town 1, city 2: 0 to 16 gold). Numbers in
+  `cdata.gd`: `LANE_BASE` 4, `LANE_RAID_PCT` 60, `LANE_RAID_TAKE` 50.
+- **Trade**: a port lane pays its value a turn, half to each end port's owner (an odd gold to the second end; one
+  owner holding both gets all of it; an unowned end is not paid); a port that is blockaded (`regions[r].bk`) or
+  besieged does not receive its half. `CRules.income` (format 6 and up, any pack with lanes: Rome's 14 lanes too) adds
+  the part: `lanes` (paid to the faction), `lanes_n` (lanes paying it), `lanes_lost` (cut by raids, unpaid for a
+  blockade or siege), `lane_take` (its raiders' share), `lane_raided` (lanes it raids now); `total` includes `lanes` and
+  `lane_take` (outside the large-realm cut, like plunder). The Realm panel's income line reads "trade lanes N (raids and
+  blockades cost M), raiding +K"; a port's panel has a "Sea lanes" note (what its lanes pay of what they are worth).
+- **Raid**: a fleet with ships (not the flota, not in a sea battle) lying on a cell of a lane at the end of the turn,
+  at war with the owner of one of its end ports (an exit lane: or with the flota's owner), raids it: every half still
+  paid is cut by 60 %, and the raider's owner takes 50 % of what was cut from owners it is at war with (prize money:
+  the take is added to its treasury by `income`, counts in `factions[f].plunder` through `CSea.lane_plunder`, in the
+  stats `lane_raids` / `lane_raid_gold`, and a pirate's infamy rises by 1 a lane-turn). The lowest fleet id on a lane is
+  its raider; a fleet on a cell several lanes share (near a port) raids all of them. Event `lane_raided` (f raider,
+  from / to the end owners, lane, ra / rb the end regions, gold, take, x / y the raider's cell), in the chronicle:
+  "Our trade on the Havana - Veracruz lane was raided by England (14 gold)." It is told to the two owners and the raider
+  by faction; anyone else sees it where they see the cell (`event_seen`). The map shows a raided lane dashed red with a
+  "raided" badge at its midpoint to the lane's owners, the raider's team and whoever sees the raider.
+- **Orders** (validated by `CSea.station_check`, planned by `station_plan`; they change no state, they are voyages):
+  `fraid {fleet, lane}`: sail to the lane's nearest sea cell (the fleet's own cell if it is on the lane already; outside
+  enemy zones, a coastal fleet where it keeps to the coast) and hold it; refused when the lane does not exist, when we
+  are not at war with a port of it, for the flota, a fleet in a sea battle or a story fleet, or when there is no way
+  there. `fblockade {fleet, r}`: sail to the free sea cell within `BLOCKADE_CELLS` (3) of the port's harbour nearest the
+  fleet and hold it; refused for a port without a harbour or not an enemy's. The voyage is stored (`persist`) like an
+  `fmove`: `cturn` plans it with the fleets' voyages in step 3 and `preview` accepts it as an fmove. A later `fmove` or
+  `fcancel` ends the station. There is no flag on the fleet: holding is lying there.
+- **Blockade** (the N2 rule unchanged: an enemy at war within `BLOCKADE_CELLS` of the harbour, stronger than the owner's
+  side there, sets `bk` at the turn's end), now also: the port's half of every lane is not paid; a besieged port that
+  is blockaded loses a second turn of supplies per turn (`_siege_turn`: no supply by sea); fleets inside the
+  blockader's zone cannot sail out without a sea battle (the zone rules, as before). Breaking a blockade is attacking
+  the blockader.
+- **The flota** follows its lane: each part carries `ln` (the lane to the meeting port, set at the spawn), steers
+  every turn for the lane cell `speed / 10 + 2` cells ahead of the lane cell nearest it (`CLanes.cell_ahead`), and
+  leaves by the meeting port's exit lane; `CSea.exit_cell()` is the end of that lane (the West's Florida channel,
+  replacing `FLOTA_EXIT` when a pack has the exit lane). A fleet at war lying on the flota's lane is met: where the
+  flota used to steer round any enemy zone (`_clear_near`) it now sails into the zone of a fleet that lies on its own
+  lane (the existing sea battle rules apply), so `fraid` on the flota's lane (an exit lane can be raided: it pays
+  nothing, it is a station) is the way to intercept it.
+- **The AI** (`cai_fleet.gd`): a free fleet with no troops aboard, in good repair, with no stronger enemy about
+  (`_danger`), whose own power is under that of the fleets of the factions at war with it, raids (`_raid`): the lane it
+  lies on if it pays, else the richest (what its enemies' halves pay, by `1 + turns to the station`) within
+  `RAID_TURNS` 4, station outside enemy zones and storm cones; never with an enemy fleet at war within 2 cells; Easy
+  never raids. A fleet stronger than its enemies blockades as before (the richest enemy port whose guard it outguns by
+  130 %); Skilled also blockades the ports under its own land siege first (value x 3, two more turns of reach).
+- **View**: with a fleet of ours selected the lanes it can raid are drawn bold; a tap or a right click on one orders
+  the raid (the same again cancels), a tap on an enemy harbour with nothing aboard orders the blockade; the fleet card
+  has Raid (the richest lane in reach) and Blockade (the richest enemy port) with tip boxes; a blockaded harbour has
+  the red ring and the dashed ring of the blockader. Key: "Raided lane".
+- **Measured** (6 x 60 AI-only campaigns, seeds 1000 + 77 n; income per turn is the sum over the factions alive, before
+  / after): Rome 15,854 / 16,577, 17,526 / 18,042, 18,060 / 19,054, 16,310 / 19,061, 17,475 / 17,598, 16,999 / 16,904; the
+  lanes pay 10,500 to 10,700 gold a campaign in all (177 a turn, 1 % of the income), `lanes_lost` 0 to 156 (sieges
+  only), no raids (no ships). West 19,907 / 19,243, 19,785 / 19,793, 19,376 / 18,150, 20,356 / 20,365, 18,021 / 19,514,
+  18,776 / 20,986; the lanes pay 33,800 to 35,400 a campaign (580 a turn, 3 %), 122 to 332 lane-turns are raided
+  (mean 205, 2 to 5 a turn), the cut is 2,150 to 3,600 gold and the raiders' take 220 to 690. Both packs play on
+  differently from the first lane gold (the AIs' money moves): the pins and the pacing table are in docs/STATUS.md and
+  the history row.
 
 ### Real geography (2026-10-10, still format 6)
 
@@ -2527,6 +2595,21 @@ counter moves: the turn the player plans), at the end of
 the 7 -> 8 migration (the memory is then what each faction sees in the
 migrated state: the same on every device). Team mates' memories match
 while they share a team.
+
+**Last-seen town (2026-10-22, no `CState.VERSION` bump):** the memory also
+holds `lvl` and `wl` (per region: the settlement level and the walls level
+as last seen, -1 never seen), written in `update_memory` beside `own` /
+`turn` and added to a memory that lacks them on its next update (the keys
+are optional, absent = unknown, like `join` elsewhere). `CSight.known_level`
+/ `known_walls` answer from them (the true values in sight). The view
+(`FogView.town_facts`, read by `game/campaign/town_layer.gd`) draws a region
+out of sight from the last-seen owner's culture, level and walls only (no
+shipyard, market, sack or siege: unknown, `CTown.facts_known`); a region
+never seen has no model, only the bare grey marker; the overlay's marker
+ring shows the remembered walls. The rules never read any of it; Rome's
+20-turn format-8 golden moved with the memory's content (`ROME_20`
+`70843c45`, the format 7 value unmoved), `campaign_sim` (format 6) did not.
+`tests/sight_mem_test.gd` covers it.
 
 **Setting:** `fog` (top-level, 1 on by default; the creation option
 `settings["fog"]` 0 turns it off and is not kept in `settings`): the

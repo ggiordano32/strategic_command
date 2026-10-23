@@ -147,6 +147,14 @@ const SEA_LANES: Array = [
 	["port_royal", "santo_domingo"], ["cartagena", "santo_domingo"],
 ]
 
+## Lane trade a turn where the Carrera de Indias beats the default ((level_a + level_b) x LANE_BASE, campaign/cdata.gd):
+## [port, port, gold] in either order. The silver lanes into Havana and the Windward Passage carry more than
+## their ports' size says.
+const SEA_LANE_TRADE: Array = [
+	["havana", "portobelo", 28], ["havana", "cartagena", 24], ["havana", "veracruz", 24],
+	["havana", "santo_domingo", 20], ["port_royal", "portobelo", 20], ["port_royal", "cartagena", 20],
+]
+
 ## Lanes from a port out to the open sea at the map's edge: [port region key,
 ## grid x, grid y] (campaign/clanes.gd). The Florida channel: Havana through the
 ## Straits and up the Gulf Stream to the Atlantic edge, the fleets' way home.

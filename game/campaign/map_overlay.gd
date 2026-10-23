@@ -39,6 +39,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
@@ -124,6 +125,10 @@ var _tips: Array = []  # intents to draw over the banners: [point, kind, colour,
 ## ([{fleet, path [cells], t [turn per cell], land, attack}]).
 var selected_fleet := -1
 var fleet_paths: Array = []
+## (Sea lanes, 2026-10-22) The lane ids the selected fleet of ours can raid (drawn thicker: a tap on one orders the raid).
+var raid_lanes: Array = []
+const LANE_HIT := 16.0   # px: a lane's tap radius
+const COL_RAID := Color(1.0, 0.3, 0.22)
 const FLEET_W := 30.0
 var sea_reach: Array = []       # the selected fleet's reach this turn: outlines in map pixels
 var _sea_reach_fill: Array = []  # ... the outer ones that triangulate
@@ -586,6 +591,21 @@ func port_side(r: int) -> float:
 	return -1.0 if dx < -1.0 else 1.0
 
 
+## The lane of `ids` (CLanes ids) whose curve passes within LANE_HIT px of screen point p, the nearest (-1 none).
+func lane_at(p: Vector2, ids: Array) -> int:
+	var best := -1
+	var bd := LANE_HIT
+	for id in ids:
+		var poly := MapView.lane_poly(int(id))
+		for i in range(poly.size() - 1):
+			var q := Geometry2D.get_closest_point_to_segment(p, xform * poly[i], xform * poly[i + 1])
+			var d := q.distance_to(p)
+			if d < bd:
+				bd = d
+				best = int(id)
+	return best
+
+
 func fleet_at(p: Vector2) -> int:
 	var pos := fleet_positions()
 	var best := -1
@@ -954,12 +974,12 @@ func _sites_body() -> void:
 		var rs: Dictionary = state["regions"][r]
 		var lvl := int(rs["level"])
 		var rad: float = _site_rad(r)
-		var w := CState.walls(state, r)
+		var w := FogView.shown_walls(state, r)   # (fog: the walls as last seen)
 		# every settlement has a marker that is its tap target: the relief style's, and over a table-style model that
 		# is small or sparse (a bare name over a hut was hard to hit); the harbour mark for a port
 		if not Minis.on_sites or Minis.weak(zoom, r):
 			var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
-			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0)
+			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
 		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
 		if not sg.is_empty():
 			var sr := siege_ring_radius(r)   # (round the ring the besiegers stand on)
@@ -1022,6 +1042,10 @@ func _fleets_body() -> void:
 			if bk >= 0 and CFleet.harbour(r) >= 0 and FogView.region_seen(r):
 				draw_blockade(_ci, to_screen(cell_point(CFleet.harbour(r))),
 					(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
+				var hp := to_screen(cell_point(CFleet.harbour(r)))   # (lanes) the blockaded harbour mark: a red ring
+				_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, Color(0, 0, 0, 0.7), 4.6 * m, true)
+				_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, COL_RAID, 2.6 * m, true)
+		_draw_lanes(m)
 		_draw_wrecks(m)
 		_draw_storms(m)
 		_flota_course(fpos)
@@ -1305,6 +1329,40 @@ static func draw_blockade(ci: CanvasItem, p: Vector2, rad: float, col: Color, m:
 	ci.draw_line(p - d, p + d, Color(0, 0, 0, 0.8), 5.0 * m, true)
 	ci.draw_line(p - d, p + d, Color(1.0, 0.35, 0.25), 2.6 * m, true)
 	ci.draw_circle(p, 3.0 * m, col.lightened(0.3))
+
+
+## (Sea lanes) The lanes the selected fleet can raid, thicker; the lanes with a raider on them, dashed red with a
+## "raided" badge at the midpoint (shown to the owners of its ports and to whoever sees the raider).
+func _draw_lanes(m: float) -> void:
+	for id in raid_lanes:
+		var poly := MapView.lane_poly(int(id))
+		if poly.size() >= 2:
+			var pl: PackedVector2Array = xform * poly
+			_ci.draw_polyline(pl, Color(0, 0, 0, 0.35), 6.0 * m, true)
+			_ci.draw_polyline(pl, Color(1.0, 0.95, 0.7, 0.8), 3.4 * m, true)
+	if CData.SEA_LANES.is_empty():
+		return
+	var rt := CLanes.raiders(state)
+	for id in CLanes.count():
+		if not rt.has(id):
+			continue
+		var ls := CLanes.lane_state(state, id, rt)
+		if int(ls["cuta"]) + int(ls["cutb"]) <= 0:
+			continue
+		var told: bool = player < 0 or CState.same_team(state, player, int(ls["oa"])) or CState.same_team(state, player, int(ls["ob"])) \
+				or CState.same_team(state, player, int(ls["rf"])) or FogView.fleet_seen(state, rt[id])
+		var poly2 := MapView.lane_poly(id)
+		if not told or poly2.size() < 2:
+			continue
+		var pl2: PackedVector2Array = xform * poly2
+		var dashes := MapView.dash_polyline(pl2, 9.0 * m, 6.0 * m)
+		_ci.draw_multiline(dashes, Color(0, 0, 0, 0.55), 6.0 * m, true)
+		_ci.draw_multiline(dashes, COL_RAID, 3.4 * m, true)
+		var mid := pl2[pl2.size() / 2]
+		var fs := int(round(12 * maxf(m, 0.8)))
+		var tw := text_w("raided", fs)
+		_ci.draw_rect(Rect2(mid - Vector2(tw * 0.5 + 5.0, fs * 0.5 + 3.0), Vector2(tw + 10.0, fs + 6.0)), Color(0.45, 0.07, 0.05, 0.9))
+		put(_ci, mid + Vector2(-tw * 0.5, fs * 0.38), "raided", fs, Color(1, 0.92, 0.85))
 
 
 ## (N2b) A hurricane at p (screen) of radius rad: a pale disc with three

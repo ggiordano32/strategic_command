@@ -108,6 +108,7 @@ const UT := preload("res://sim/unit_types.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 
 
 # --------------------------------------------------------------- orders ---
@@ -181,7 +182,7 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _set_stance(st, f, int(o.get("a", -1)), int(o.get("s", 0)))
 		"cancel_move":
 			return _cancel_move(st, f, int(o.get("army", -1)))
-		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle":
+		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle", "fraid", "fblockade":
 			return CFleet.apply_order(st, f, o)  # fleets (a pack with ships)
 		"sack_policy":
 			return CSea.set_policy(st, f, int(o.get("v", 0)))  # pirates (N2)
@@ -1813,6 +1814,8 @@ static func _siege_turn(st: Dictionary) -> void:
 		sg["held"] = int(sg["held"]) + 1
 		if int(sg["supply"]) > 0:
 			sg["supply"] = int(sg["supply"]) - 1
+			if int(sg["supply"]) > 0 and CSea.blockader(st, r) >= 0 and CSea.on(st):
+				sg["supply"] = int(sg["supply"]) - 1  # (lanes) a port blockaded by sea gets no supply by sea: stores run down twice as fast
 		else:
 			rs["gar"] = maxi(int(rs["gar"]) - CData.SIEGE_STARVE_PCT, 0)
 			for a in besieged_armies(st, r):
@@ -2773,6 +2776,16 @@ static func income(st: Dictionary, f: int) -> Dictionary:
 		out["blockaded"] = int(sea[0])
 		out["plunder"] = int(sea[1])
 		out["total"] = int(out["total"]) + int(sea[1])
+	if CState.grid_on(st) and not CData.SEA_LANES.is_empty():
+		# Sea lanes (2026-10-22): what the lanes of our ports pay (a raid cuts it, a blockaded or besieged port pays
+		# nothing), and what our raiders take.
+		var ln := CLanes.income_parts(st, f)
+		out["lanes"] = int(ln["in"])
+		out["lanes_n"] = int(ln["lanes"])
+		out["lanes_lost"] = int(ln["lost"])
+		out["lane_take"] = int(ln["take"])
+		out["lane_raided"] = int(ln["raided"])
+		out["total"] = int(out["total"]) + int(ln["in"]) + int(ln["take"])
 	return out
 
 
@@ -2864,9 +2877,12 @@ static func end_of_turn(st: Dictionary) -> void:
 		var fs: Dictionary = st["factions"][f]
 		if int(fs["alive"]) == 0:
 			continue
-		var inc := int(income(st, f)["total"])
+		var ic := income(st, f)
+		var inc := int(ic["total"])
 		var up := upkeep(st, f)
 		fs["income"] = inc
+		if int(ic.get("lane_take", 0)) > 0:
+			CSea.lane_plunder(st, f, int(ic["lane_take"]))  # (lanes) a raider's prize money is plunder
 		fs["upkeep"] = up
 		fs["treasury"] = int(fs["treasury"]) + inc - up
 		if int(fs["treasury"]) < 0:
@@ -3182,7 +3198,7 @@ const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war"
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
 	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
-	"galleon_lost", "flota_held", "story"]
+	"galleon_lost", "flota_held", "lane_raided", "story"]
 const CHRONICLE_TURNS := 60
 
 

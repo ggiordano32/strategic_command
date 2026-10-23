@@ -89,6 +89,14 @@ static func preview(st: Dictionary, f: int, orders: Array) -> Dictionary:
 					fmoves.append([int(o["fleet"]), CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(o.get("tgt", -1)),
 						int(o.get("persist", 0))])
 				continue
+			if t == "fraid" or t == "fblockade":
+				# (lanes) a voyage to the station: planned like an fmove
+				var whys := CRules.apply_order(s, f, o)
+				if whys != "":
+					errors.append([i, whys])
+				else:
+					fmoves.append([int(o["fleet"]), int(CSea.station_plan(s, f, o)["dest"]), -1, 1])
+				continue
 			if t == "move":
 				var why := CRules.apply_order(s, f, o)
 				if why != "":
@@ -139,7 +147,8 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			var f := int(s["f"])
 			for o in s["orders"]:
 				var t := str(o.get("t", ""))
-				if t == "move" or t == "propose" or t == "assault" or t == "sally" or t == "siege" or t == "fmove":
+				if t == "move" or t == "propose" or t == "assault" or t == "sally" or t == "siege" or t == "fmove" \
+						or t == "fraid" or t == "fblockade":
 					continue
 				if (t == "war" or t == "answer") != (pass_i == 0):
 					continue
@@ -170,6 +179,21 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 					fseen[int(o.get("fleet", -1))] = 1
 					fm.append([int(o.get("fleet", -1)), CGrid.at(int(o.get("x", -1)), int(o.get("y", -1))), int(s["f"]),
 						int(o.get("persist", 0)), int(o.get("tgt", -1))])
+		for s in subs:
+			for o in s["orders"]:
+				var to := str(o.get("t", ""))
+				if (to == "fraid" or to == "fblockade") and not fseen.has(int(o.get("fleet", -1))):
+					# (lanes) sail to the station and hold it: a stored voyage (nothing to sail when already there)
+					fseen[int(o.get("fleet", -1))] = 1
+					var sp := CSea.station_plan(st, int(s["f"]), o)
+					if sp.has("why"):
+						CRules.event(st, {"k": "order_failed", "f": int(s["f"]), "order": o, "why": str(sp["why"])})
+						continue
+					var sfl := CFleet.fleet(st, int(o["fleet"]))
+					if int(sp["dest"]) == CFleet.cell(sfl):
+						CFleet.apply_order(st, int(s["f"]), {"t": "fcancel", "fleet": int(o["fleet"])})
+					else:
+						fm.append([int(o["fleet"]), int(sp["dest"]), int(s["f"]), 1, -1])
 		for fl in CFleet.fleets(st):
 			if not fseen.has(int(fl["id"])) and CState.is_human(st, int(fl["f"])) and fl.has("dest_x"):
 				var vy := CFleet.voyage(fl)

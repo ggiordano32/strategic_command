@@ -155,6 +155,7 @@ static var _shade_ms := -1.0   # bake time, ms (for the record)
 static var _road_lines: Array = []
 static var _track_lines: Array = []   # the road lines cut open at the settlements (table style)
 static var _lane_lines: Array = []    # sea lanes: smoothed polylines (map px) through the sea
+static var _lane_polys := {}          # lane id -> its polyline (a lane whose curve came out empty is missing)
 static var _lane_dashes: Array = []   # ... cut into dashes for this line scale / style
 static var _lane_dash_key := ""
 static var _river_lines: Array = []
@@ -186,6 +187,7 @@ static func _sync_gen() -> void:
 	_road_lines = []
 	_track_lines = []
 	_lane_lines = []
+	_lane_polys = {}
 	_lane_dashes = []
 	_lane_dash_key = ""
 	_river_lines = []
@@ -1376,14 +1378,22 @@ static func _cut_at_towns(lines: Array) -> Array:
 ## The sea lanes (CData.SEA_LANES and SEA_LANE_EXITS) as smoothed curves through the sea (campaign/clanes.gd cells).
 static func _build_lanes() -> void:
 	_lane_lines = []
+	_lane_polys = {}
 	for i in CData.SEA_LANES.size():
 		var ln := _resample(lane_curve(CLanes.lane(i), i), 4.0)
 		if ln.size() >= 2:
 			_lane_lines.append(ln)
+			_lane_polys[i] = ln
 	for i in CData.SEA_LANE_EXITS.size():
 		var ln := _resample(lane_curve(CLanes.exit_lane(i), CData.SEA_LANES.size() + i), 4.0)
 		if ln.size() >= 2:
 			_lane_lines.append(ln)
+			_lane_polys[CData.SEA_LANES.size() + i] = ln
+
+
+## Lane id (CLanes: the port lanes, then the exits) as the smoothed curve drawn on the map, in map px ([] none).
+static func lane_poly(id: int) -> PackedVector2Array:
+	return _lane_polys.get(id, PackedVector2Array())
 
 
 static func _cell_pt(c: int) -> Vector2:

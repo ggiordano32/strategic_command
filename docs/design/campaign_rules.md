@@ -38,6 +38,13 @@ original art.
 - Each region has one settlement with a small number of building slots.
 - Buildings come in a few chains: economy, military (unlocks units), growth/order.
 - Resources: money and one growth/population value. Upkeep for armies.
+- **Trade along the sea lanes (agreed and built 2026-10-22, both packs):** every sea lane between two ports pays
+  (level_a + level_b) x 4 gold a turn (a pack row may override), half to each end port's owner, as the income's "trade
+  lanes" part. A fleet at war with a port's owner that lies on the lane at the end of a turn raids it: the lane pays 60 %
+  less and the raider's owner takes half of the cut; a blockaded or besieged port's half is not paid. Raiding and
+  blockading are voyages to a station (orders `fraid`, `fblockade`), so a navy is the weaker side's play (raids) and
+  the stronger side's (blockades); the treasure fleet sails along its lane, which is where a raider meets it. Rome's
+  lanes pay the same way and will carry its navy. As built: docs/CAMPAIGN.md "Lane trade, raids and blockades".
 - Armies recruit in owned settlements, limited by the military buildings present.
 - **Reuse:** the campaign layer is meant to carry a different game later
   (the American West). Everything specific to the Mediterranean is data:

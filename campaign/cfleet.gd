@@ -23,7 +23,9 @@ extends RefCounted
 ##   next_fleet, regions[r]["sq"] [ship keys] (ordered this turn, launched
 ##   at the end of it), stats["sea_battles"].
 ## Orders (crules.apply_order): ship {r, ship}, embark {army, fleet}, land
-## {fleet, army (-1 all), x, y}, fmove {fleet, x, y, tgt?, persist?} (a
+## {fleet, army (-1 all), x, y}, fraid {fleet, lane} / fblockade {fleet, r}
+## (lanes: a voyage to the lane's / the harbour's station, kept till it gets
+## there; campaign/csea.gd), fmove {fleet, x, y, tgt?, persist?} (a
 ## land cell: sail beside it and land everything aboard on arriving; tgt =
 ## one of the faction's own fleets: sail beside it and merge into it, kept
 ## from turn to turn until it does), fmerge {fleet, into} (at once, within
@@ -573,6 +575,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return ""
 		"scuttle":
 			return _scuttle(st, f, int(o.get("fleet", -1)), int(o.get("ship", -1)))
+		"fraid", "fblockade":
+			return _csea().station_check(st, f, o)  # (lanes) sail to a lane / a harbour and hold it
 	return "unknown order"
 
 

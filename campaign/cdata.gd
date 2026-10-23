@@ -80,6 +80,9 @@ static var SEA_LANES: Array = _ROME.SEA_LANES
 ## Sea lanes from a port out to the open sea at the map's edge: [port region key, grid x, grid y] (the sea cell
 ## nearest that cell; campaign/clanes.gd routes them). Optional in a pack (none: Rome).
 static var SEA_LANE_EXITS: Array = []
+## Trade value a turn of single lanes, [port region key, port region key, gold] rows (either order) overriding the default
+## (level_a + level_b) x LANE_BASE (campaign/clanes.gd). Optional in a pack (none: the default everywhere).
+static var SEA_LANE_TRADE: Array = []
 static var FACTIONS: Array[Dictionary] = _ROME.FACTIONS
 static var ROSTERS: Dictionary = _ROME.ROSTERS
 static var START_WARS: Array = _ROME.START_WARS
@@ -286,6 +289,12 @@ const STANCE_NAMES := {0: "Default", 2: "Forced march", 3: "Fortify", 4: "Raidin
 const FORCED_MP_PCT := 150
 const RAID_MP_PCT := 70
 const RAID_PCT := 50
+## Sea lanes (2026-10-22, campaign/clanes.gd): a lane pays (level_a + level_b) x LANE_BASE gold a turn (SEA_LANE_TRADE
+## rows override), half to each end port's owner; a fleet at war with an end port's owner lying on a lane cell at the
+## end of the turn raids it: the lane pays LANE_RAID_PCT % less, the raider's owner takes LANE_RAID_TAKE % of the cut.
+const LANE_BASE := 4
+const LANE_RAID_PCT := 60
+const LANE_RAID_TAKE := 50
 const FORTIFY_DEF_PCT := 119   # formula / odds: fortified defenders' strength (fitted 2026-10-10: an Average army in its camp beat an equal one 25 of 40 (13 / 20 on 2026-10-09, 12 / 20 on 2026-10-10 against a mirrored 10 / 20), (62.5 / 37.5)^(1/3) = 1.19; was 125)
 const FORCED_DEF_PCT := 75     # ... an army caught on a forced march
 const FORCED_MORALE_PCT := 75  # battle: its units start with this % of their morale
@@ -342,6 +351,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	ROUTES = c["ROUTES"]
 	SEA_LANES = c["SEA_LANES"]
 	SEA_LANE_EXITS = c.get("SEA_LANE_EXITS", [])
+	SEA_LANE_TRADE = c.get("SEA_LANE_TRADE", [])
 	FACTIONS = c["FACTIONS"]
 	ROSTERS = c["ROSTERS"]
 	START_WARS = c["START_WARS"]

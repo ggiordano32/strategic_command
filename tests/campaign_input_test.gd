@@ -137,7 +137,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_done, _s_done,
 	]
 
 
@@ -1909,6 +1909,108 @@ func _jm_run() -> void:
 		await process_frame
 		_check(cs.sel_army == -1 and not cs.deselect_button.visible, "after a battle: an army that is gone is deselected, no stale button")
 	FogView.all_seeing = false
+	hold = false
+
+
+## Sea lanes (2026-10-22): with a fleet of ours selected the lanes it can raid are drawn bold and a tap on one orders
+## the raid (fraid), the same again cancels; a tap on an enemy harbour with nothing aboard orders the blockade
+## (fblockade); the command bar offers Raid and Blockade; a lane with a raider on it is dashed with a badge.
+func _j_lanes() -> void:
+	hold = true
+	const MapViewL := preload("res://game/campaign/map_view.gd")
+	const CLanesL := preload("res://campaign/clanes.gd")
+	cs.no_bar = true
+	cs.details_on_select = false
+	cs.close_side()
+	cs.orders = []
+	cs._replan()
+	cs.select_fleet(900)
+	await process_frame
+	await process_frame
+	var ids: Array = cs.overlay.raid_lanes
+	_check(not ids.is_empty(), "lanes: with an English fleet selected, %d lanes at war are drawn bold" % ids.size())
+	var hv := CLanesL.lane_between(CData.region_index("havana"), CData.region_index("veracruz"))
+	_check(ids.has(hv), "lanes: Havana - Veracruz is one of them (the English are at war with New Spain)")
+	var poly := MapViewL.lane_poly(hv)
+	var mid_map: Vector2 = poly[poly.size() / 2]
+	cs.zoom = 1.1
+	cs.offset = cs._vp() * 0.5 - mid_map * cs.zoom
+	cs.offset.x -= 0.0
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	var p: Vector2 = cs.overlay.to_screen(mid_map)
+	var near: int = cs.overlay.lane_at(p, ids)
+	_tap(p)
+	await process_frame
+	await process_frame
+	var o: Dictionary = {}
+	for q in cs.orders:
+		if str(q["t"]) == "fraid":
+			o = q
+	_check(not o.is_empty() and int(o["fleet"]) == 900 and int(o["lane"]) == near and near >= 0,
+		"lanes: a tap on a lane plans the raid (fraid, lane %d = %s)" % [near, CLanesL.lane_name(near) if near >= 0 else "none"])
+	_check(cs.sel_fleet == 900 and not cs.planned_voyage(900).is_empty() and int(cs.planned_voyage(900)[0]) >= 0,
+		"lanes: the raid is a planned voyage to the lane (the card shows Cancel)")
+	_tap(p)
+	await process_frame
+	await process_frame
+	var still := false
+	for q in cs.orders:
+		if str(q["t"]) == "fraid":
+			still = true
+	_check(not still, "lanes: the same lane again cancels the raid")
+	# The command bar's buttons.
+	cs.select_fleet(900)
+	await process_frame
+	var rb := _bar_btn("act_raid")
+	var bb := _bar_btn("act_blockade")
+	_check(rb != null and bb != null, "lanes: the fleet's command bar offers Raid and Blockade")
+	if rb != null:
+		rb.pressed.emit()
+		await process_frame
+		var got := false
+		for q in cs.orders:
+			if str(q["t"]) == "fraid":
+				got = true
+		_check(got, "lanes: Raid orders the richest lane in reach")
+		cs.undo()
+		await process_frame
+	_bar_done()
+	# A tap on an enemy harbour with an empty fleet: the blockade.
+	var hr := CData.region_index("havana")
+	var hp: Vector2 = cs.overlay.site_point(hr)
+	cs.offset = cs._vp() * 0.5 - hp * cs.zoom
+	cs._refresh_map()
+	await process_frame
+	await process_frame
+	_tap(cs.overlay.to_screen(hp))
+	await process_frame
+	await process_frame
+	var bo: Dictionary = {}
+	for q in cs.orders:
+		if str(q["t"]) == "fblockade":
+			bo = q
+	_check(not bo.is_empty() and int(bo["fleet"]) == 900 and int(bo["r"]) == hr, "lanes: a tap on Havana's harbour plans the blockade (fblockade)")
+	cs.undo()
+	await process_frame
+	# A raided lane is drawn dashed with its badge (the state has a raider on it).
+	var ps2: Dictionary = cs.ps
+	var cells := CLanesL.sea_cells(hv)
+	var rid := 9990
+	for c in cells:
+		if CLanesL.lanes_at(c).size() == 1:
+			(ps2["fleets"] as Array).append({"id": rid, "f": CData.faction_index("england"), "x": CGrid.cx(c), "y": CGrid.cy(c),
+				"ships": [{"t": "sloop", "h": 100, "c": 100}], "carry": [], "moved": 0})
+			break
+	var rt := CLanesL.raiders(ps2)
+	_check(rt.has(hv), "lanes: a fleet of ours on the lane makes it raided (the overlay draws it dashed red, badge 'raided')")
+	cs.overlay.queue_redraw()
+	await process_frame
+	await process_frame
+	if rt.has(hv):
+		(ps2["fleets"] as Array).pop_back()
+	cs.deselect_all()
 	hold = false
 
 

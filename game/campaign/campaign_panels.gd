@@ -29,6 +29,7 @@ const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
 const CStory := preload("res://campaign/cstory.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 
 var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
@@ -108,6 +109,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		box.add_child(rl)
 	if CFleet.on(ps):
 		_sea_notes(box, r)
+	_lane_note(box, r)
 	if not CState.siege_at(ps, r).is_empty():
 		if CState.grid_on(ps):
 			_siege_section6(box, r)
@@ -187,6 +189,36 @@ func _unseen_region(box: VBoxContainer, r: int) -> void:
 	box.add_child(Kit.label("%s, %s ground. Send an army or a fleet near it, or take a neighbouring region, to see it again." % [
 		"Key city" if CData.KEY_CITIES.has(str(rd["key"])) else ("Capital" if CData.is_capital(r) else "Wealth %d" % int(rd["wealth"])),
 		Terrain.KIND_NAMES[int(rd["terrain"])].to_lower()], Kit.FONT_SMALL, Kit.COL_DIM, true))
+
+
+## (Sea lanes) What the lanes of port r pay its owner a turn (a raid or a blockade cuts it), in a note under the port.
+func _lane_note(box: VBoxContainer, r: int) -> void:
+	var ps: Dictionary = s.ps
+	if not CState.grid_on(ps) or CData.SEA_LANES.is_empty() or not CData.is_port(r) or CState.owner(ps, r) < 0:
+		return
+	var rt := CLanes.raiders(ps)
+	var paid := 0
+	var base := 0
+	var n := 0
+	var raided := 0
+	for id in CLanes.count():
+		var e := CLanes.ends(id)
+		if int(e[0]) != r and int(e[1]) != r:
+			continue
+		var ls := CLanes.lane_state(ps, id, rt)
+		var half := int(ls["v"]) / 2 if int(e[0]) == r else int(ls["v"]) - int(ls["v"]) / 2
+		base += half
+		paid += int(ls["pa"]) if int(e[0]) == r else int(ls["pb"])
+		n += 1
+		if int(ls["rid"]) >= 0:
+			raided += 1
+	var t := "Sea lanes: %d lane%s pay this port %d a turn" % [n, "" if n == 1 else "s", paid]
+	if paid < base:
+		t += " of %d (%s)" % [base, "a blockade or siege stops them" if raided == 0 else "%d lane%s raided" % [raided, "" if raided == 1 else "s"]]
+	t += "."
+	var ll := Kit.label(t, Kit.FONT_SMALL, Kit.COL_BAD if paid < base and CState.owner(ps, r) == s.f else Kit.COL_DIM, true)
+	ll.name = "lane_note"
+	box.add_child(ll)
 
 
 ## (N2) A port's sea trade, its blockade, a pirate haven, a recent sack.
@@ -2068,6 +2100,12 @@ func show_faction() -> void:
 	var sea_inc := ""
 	if inc.has("plunder"):
 		sea_inc = ", plunder %d, lost to blockades -%d" % [int(inc["plunder"]), int(inc["blockaded"])]
+	if inc.has("lanes"):
+		sea_inc += ", trade lanes %d" % int(inc["lanes"])
+		if int(inc["lanes_lost"]) > 0:
+			sea_inc += " (raids and blockades cost %d)" % int(inc["lanes_lost"])
+		if int(inc["lane_take"]) > 0:
+			sea_inc += ", raiding +%d" % int(inc["lane_take"])
 	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d%s, cost of a large realm -%d), upkeep %d: %+d a turn." % [
 		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), sea_inc, int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
 	if CFleet.on(ps):
@@ -2825,6 +2863,8 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD
 		"blockade", "sack":
 			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f else Kit.COL_GOLD)
+		"lane_raided":
+			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f or int(e["to"]) == f else Kit.COL_GOLD)
 		"flota", "flota_arrived", "marque", "marque_end", "blockade_end", "galleon_taken", "galleon_lost", "flota_held", "captain_rise", "captain_fame":
 			return Kit.COL_GOLD
 		"storm", "storm_hit", "storm_end":
@@ -3031,6 +3071,13 @@ func event_text(e: Dictionary, f: int) -> String:
 			return "A fleet could not sail: %s." % str(e["why"])
 		"blockade":
 			return "%s blockades %s (%s): its sea trade is cut." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["from"]))]
+		"lane_raided":
+			var lname := "%s - %s" % [city.call(e["ra"]), city.call(e["rb"])]
+			if f >= 0 and (int(e["from"]) == f or int(e["to"]) == f):
+				return "Our trade on the %s lane was raided by %s (%d gold)." % [lname, CData.faction_name(int(e["f"])), int(e["gold"])]
+			if f >= 0 and int(e["f"]) == f:
+				return "Our raiders cut the %s lane: %d gold, %d to us." % [lname, int(e["gold"]), int(e["take"])]
+			return "%s raids the %s lane (%d gold)." % [CData.faction_name(int(e["f"])), lname, int(e["gold"])]
 		"blockade_end":
 			if f >= 0 and int(e["f"]) != f and int(e["from"]) != f:
 				return ""

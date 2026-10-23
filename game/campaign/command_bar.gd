@@ -37,6 +37,7 @@ const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 
@@ -757,6 +758,17 @@ func _build_fleet(id: int) -> void:
 		else:
 			acts.append(_action("move", "Sail", "Tap the sea on the map to sail there, a lit beach to land the troops, an enemy fleet to attack it, your own fleet to join it", func():
 				s.show_toast("Tap the sea to sail, a lit beach to land the troops aboard, an enemy fleet to attack, your own fleet to join it."), "", "sail"))
+		# (Sea lanes) raid the richest enemy lane / blockade the richest enemy port in reach; a tap on a lane or a harbour
+		# chooses one.
+		var rl: int = s.best_raid(fl)
+		if rl >= 0:
+			var rls := CLanes.lane_state(ps, rl, {})
+			acts.append(_action("raid", "Raid", "Raid the %s lane (it pays %d a turn): sail onto it and hold it; at the turn's end the lane pays %d%% less and you take %d%% of the cut. Tap a lane on the map to choose another." % [
+				CLanes.lane_name(rl), int(rls["pa"]) + int(rls["pb"]), CData.LANE_RAID_PCT, CData.LANE_RAID_TAKE], func(): s.set_station(id, rl, -1), "", "raid"))
+		var bp: int = s.best_blockade(fl)
+		if bp >= 0 and (fl["carry"] as Array).is_empty():
+			acts.append(_action("siege", "Blockade", "Blockade %s: lie off its harbour, stronger than its own fleets there, and its sea trade and lanes pay nothing; a siege by land starves it sooner. Tap an enemy harbour to choose another." % CData.REGIONS[bp]["city"],
+				func(): s.set_station(id, -1, bp), "", "blockade"))
 		for a in CState.armies_of(ps, s.f):
 			if CFleet.near_fleet(a, fl):
 				var aid := int(a["id"])

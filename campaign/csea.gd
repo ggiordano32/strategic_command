@@ -21,9 +21,13 @@ extends RefCounted
 ##   fleets "held" (the flota waiting out a storm); wrecks [[x, y, turn,
 ##   gold, name], ...] (treasure ships sunk, the last WRECKS_MAX);
 ##   stats: plunder, blockade_turns, flotas, flota_arrived, flota_gold,
-##     treasure_taken, sacks, marques.
+##     treasure_taken, sacks, marques, lane_raids, lane_raid_gold;
+##   (lanes, 2026-10-22) flota fleets "ln" (the lane id they follow);
+## The lanes' trade, raids and the station orders: campaign/clanes.gd
+## (state functions) and the "Sea lanes" section below.
 ## Orders (crules.apply_order): sack_policy {v}; propose {to, what:
-## "marque"} (a nation to a pirate faction or back).
+## "marque"} (a nation to a pirate faction or back); (lanes) fraid {fleet,
+## lane}, fblockade {fleet, r}: sail to a station and hold it (stored voyages).
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -31,6 +35,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
 const CCaptain := preload("res://campaign/ccaptain.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 
@@ -235,6 +240,119 @@ static func update_blockades(st: Dictionary) -> void:
 			_rules().event(st, {"k": "blockade_end", "r": r, "f": old, "from": o})
 
 
+# -------------------------------------------------------------- sea lanes ---
+
+## A raider's prize money (`gold`, already in the treasury through income())
+## counts as plunder (the stories' chests), and its owner's infamy grows.
+static func lane_plunder(st: Dictionary, f: int, gold: int) -> void:
+	if f < 0 or gold <= 0:
+		return
+	var fs: Dictionary = st["factions"][f]
+	fs["plunder"] = int(fs.get("plunder", 0)) + gold
+	_stat(st, "plunder", gold)
+	_stat(st, "lane_raid_gold", gold)
+
+
+## End of turn, before the money: every raided lane is told in the chronicle
+## (event "lane_raided": f the raider's faction, from / to the end owners,
+## lane, ra / rb the end regions, gold the cut, take the raider's share, x / y
+## the raider's cell: seen by the owners, else by whoever sees that cell) and
+## a pirate raider's infamy grows.
+static func lane_events(st: Dictionary) -> void:
+	if CData.SEA_LANES.is_empty():
+		return
+	var rt := CLanes.raiders(st)
+	for id in CLanes.count():
+		if not rt.has(id):
+			continue
+		var ls := CLanes.lane_state(st, id, rt)
+		var cut := int(ls["cuta"]) + int(ls["cutb"])
+		if cut <= 0:
+			continue
+		var e := CLanes.ends(id)
+		_stat(st, "lane_raids", 1)
+		add_infamy(st, int(ls["rf"]), 1)
+		var rc := CFleet.cell(CFleet.fleet(st, int(ls["rid"])))
+		_rules().event(st, {"k": "lane_raided", "f": int(ls["rf"]), "from": int(ls["oa"]), "to": int(ls["ob"]), "lane": id,
+			"ra": int(e[0]), "rb": int(e[1]), "gold": cut, "take": int(ls["take"]), "x": CGrid.cx(rc), "y": CGrid.cy(rc)})
+
+
+## "" if the station order o (fraid {fleet, lane} or fblockade {fleet, r})
+## of faction f is valid now, else why not. Nothing changes: the order is a
+## voyage to the station, planned and sailed with the fleets' moves (cturn).
+static func station_check(st: Dictionary, f: int, o: Dictionary) -> String:
+	return str(station_plan(st, f, o).get("why", ""))
+
+
+## The station order's plan: {dest (the cell to sail to; the fleet's own when
+## it is there already)} or {why}.
+static func station_plan(st: Dictionary, f: int, o: Dictionary) -> Dictionary:
+	var fl := CFleet.fleet(st, int(o.get("fleet", -1)))
+	if fl.is_empty() or int(fl["f"]) != f:
+		return {"why": "no such fleet"}
+	if (fl["ships"] as Array).is_empty():
+		return {"why": "no ships"}
+	if fl.has("sto") or fl.has("flota"):
+		return {"why": "sails by the story" if fl.has("sto") else "the flota sails by the Crown's orders"}
+	if fl.has("busy"):
+		return {"why": "in a sea battle"}
+	var dest := -1
+	if str(o.get("t", "")) == "fraid":
+		var id := int(o.get("lane", -1))
+		if id < 0 or id >= CLanes.total():
+			return {"why": "no lane here"}
+		if not CLanes.hostile(st, f, id):
+			return {"why": "not at war with this lane's ports"}
+		dest = CLanes.raid_station(st, f, fl, id)
+		if dest < 0:
+			return {"why": "no way to this lane by sea"}
+	else:
+		var r := int(o.get("r", -1))
+		if r < 0 or r >= CData.region_count() or CFleet.harbour(r) < 0:
+			return {"why": "no harbour there"}
+		var ow := CState.owner(st, r)
+		if ow < 0 or not CState.at_war(st, f, ow):
+			return {"why": "not at war with the port's owner"}
+		dest = blockade_station(st, f, fl, r)
+		if dest < 0:
+			return {"why": "no station off this harbour"}
+	if dest != CFleet.cell(fl):
+		var why := CFleet.move_check(st, f, int(fl["id"]), dest)
+		if why != "":
+			return {"why": why}
+	return {"dest": dest}
+
+
+## The sea cell fleet fl of faction f lies on to blockade region r's port: its
+## own cell when it is within BLOCKADE_CELLS of the harbour already (outside
+## enemy zones), else the free sea cell within that of the harbour nearest it
+## (outside enemy zones, a coastal fleet only where it keeps to the coast;
+## ties by cell index). -1 none.
+static func blockade_station(st: Dictionary, f: int, fl: Dictionary, r: int) -> int:
+	var hb := CFleet.harbour(r)
+	if hb < 0:
+		return -1
+	var rad := k("BLOCKADE_CELLS", 3)
+	var here := CFleet.cell(fl)
+	if CGrid.cheb(here, hb) <= rad and CFleet.zone_owner(st, f, here) < 0:
+		return here
+	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
+	var sc := -1
+	var sd := 1 << 30
+	for dy in range(-rad, rad + 1):
+		for dx in range(-rad, rad + 1):
+			var j := CGrid.at(CGrid.cx(hb) + dx, CGrid.cy(hb) + dy)
+			if j < 0 or not CFleet.is_sea(j) or CFleet.zone_owner(st, f, j) >= 0:
+				continue
+			if CFleet.coastal(fl) and (CFleet.coast_dist(j) > lim or not CFleet.coastal_link(here, j)):
+				continue
+			var d := CGrid.octile(here, j)
+			if d < sd or (d == sd and j < sc):
+				sd = d
+				sc = j
+	return sc
+
+
 # ------------------------------------------------------------------ flota ---
 
 static func is_flota(fl: Dictionary) -> bool:
@@ -265,6 +383,12 @@ static func flota_owner(st: Dictionary) -> int:
 
 ## The sea cell where the flota leaves the map (-1 none).
 static func exit_cell() -> int:
+	# (lanes) the end of the meeting port's exit lane when the pack has one (the flota follows it home)
+	var xl := CLanes.exit_of(CData.region_index(str(CData.ship_const("FLOTA_MEET", ""))))
+	if xl >= 0:
+		var lc := CLanes.sea_cells(xl)
+		if not lc.is_empty():
+			return lc[lc.size() - 1]
 	var e: Array = CData.ship_const("FLOTA_EXIT", [])
 	if e.size() < 2:
 		return -1
@@ -343,6 +467,9 @@ static func flota_spawn(st: Dictionary) -> void:
 		var fl := CFleet._new_fleet(st, fo, CFleet.dock(r), ships)
 		fl["flota"] = 0
 		fl["wait"] = 0
+		var ln := CLanes.lane_between(r, CData.region_index(str(CData.ship_const("FLOTA_MEET", ""))))
+		if ln >= 0:
+			fl["ln"] = ln  # (lanes) it sails to the meeting port along this lane
 		made.append([r, n, pay, names, escorts])
 	if made.is_empty():
 		return
@@ -461,8 +588,18 @@ static func flota_moves(st: Dictionary, out: Array) -> void:
 			continue  # (N2b) in port till the storm has passed
 		fl.erase("held")
 		var dest := meet if leg == 0 else (ex if leg == 2 else -1)
-		if dest >= 0 and CFleet.zone_owner(st, int(fl["f"]), dest) >= 0:
-			dest = _clear_near(st, int(fl["f"]), dest)  # an enemy lies there: as near as is clear
+		# (lanes) The flota follows its lane's cells (to the meeting port, then out by the exit lane), so a raider
+		# lying on the lane meets it.
+		var lane := int(fl.get("ln", -1)) if leg == 0 else (CLanes.exit_of(mr) if leg == 2 else -1)
+		if dest >= 0 and lane >= 0:
+			var route := CLanes.cells_to(lane, mr) if leg == 0 else CLanes.cells_of(lane)
+			var ah := CLanes.cell_ahead(route, CFleet.cell(fl), CFleet.speed(fl) / 10 + 2)
+			if ah >= 0 and ah != CFleet.cell(fl):
+				dest = ah
+		if dest >= 0:
+			var zo := CFleet.zone_owner(st, int(fl["f"]), dest)
+			if zo >= 0 and not (lane >= 0 and CLanes.on_lane(lane, CFleet.cell(CFleet.fleet(st, zo)))):
+				dest = _clear_near(st, int(fl["f"]), dest)  # an enemy lies there: as near as is clear
 		if dest < 0 or CFleet.cell(fl) == dest:
 			continue
 		out.append([int(fl["id"]), dest, int(fl["f"]), 0, -1])
@@ -790,6 +927,7 @@ static func before_money(st: Dictionary) -> void:
 		return
 	flota_arrivals(st)
 	update_blockades(st)
+	lane_events(st)
 
 
 ## crules.end_of_turn, last: infamy fades, letters lapse, the hurricanes
