@@ -344,7 +344,18 @@ const CH_PARLEY_R := 271       # the diplomat parleys a routing enemy unit this 
 const CH_BACK := 272           # heroes keep this far behind the unit they go with (the champion: the line's centre)
 const CH_SAB_R := 273          # the assassin (not acted yet) sabotages the nearest enemy battery this near him (0: never; Skilled)
 const CH_SAB_GUARD := 274      # ... one with no enemy foot this near its engines (unescorted)
-const N_KNOBS := 275
+# Destruction AI (docs/AI.md 35, 2026-10-23): battering the walls, the
+# assault through a breach, the defenders off a battered stretch and out of
+# a failing building, the reserve's plug.
+const S_BATTER := 275          # 1: attacking batteries batter a wall stretch by the attacked gate until it is breached (0 never: Easy)
+const S_BATTER_DMG := 276      # ... only engines doing at least this to a wall a shot (gate hit points; bolts 80 never)
+const S_BATTER_PCT := 277      # ... this % of the side's battering batteries (by unit index; the rest shoot the gate)
+const S_BATTER_T := 278        # ... at most this long into the approach (ticks), then the gate again
+const S_BREACH_UNITS := 279    # the foot units nearest a breach (outside the walls) that go in through it first
+const S_WALL_LEAVE_PCT := 280  # defenders leave a stretch battered (hit in the last 10 s) below this % of its hit points (0 never)
+const S_RUIN_LEAVE_PCT := 281  # ... and a building held below this % of its hit points, for the nearest cover (0 never)
+const S_PLUG := 282            # this many reserve foot units (or the stack's, at a gate still shut) hold each breach's inside edge (0 never)
+const N_KNOBS := 283
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -598,6 +609,15 @@ const KNOBS: Array = [
 	[CH_BACK, 15 * M, 15 * M, 15 * M],
 	[CH_SAB_R, 0, 0, 120 * M],
 	[CH_SAB_GUARD, 20 * M, 20 * M, 20 * M],
+	# Destruction AI (docs/AI.md 35).
+	[S_BATTER, 0, 1, 1],
+	[S_BATTER_DMG, 150, 150, 150],
+	[S_BATTER_PCT, 0, 100, 100],
+	[S_BATTER_T, 0, 4800, 4800],
+	[S_BREACH_UNITS, 2, 3, 4],
+	[S_WALL_LEAVE_PCT, 0, 33, 33],
+	[S_RUIN_LEAVE_PCT, 0, 33, 33],
+	[S_PLUG, 0, 4, 4],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

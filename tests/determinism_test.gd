@@ -342,6 +342,12 @@ func _init() -> void:
 		return
 	if "--only=destr" in OS.get_cmdline_user_args():
 		_check_destr()
+		_check_destr_ai()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=destr_ai" in OS.get_cmdline_user_args():
+		_check_destr_ai()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -411,6 +417,7 @@ func _init() -> void:
 	_check_fort()
 	_check_occupy()
 	_check_destr()
+	_check_destr_ai()
 	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
@@ -927,7 +934,10 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 		"siege_village@ai":
 			need = ["paths", "clamp", "squeeze", "veg_slow"]
 		"siege_city@ai":
-			need = ["paths", "clamp", "squeeze", "gate_art", "gate_broken", "obs_lof", "wall_cover", "layout"]
+			# (Since the destruction AI, 2026-10-23: the stone throwers batter the
+			# wall by the gate and breach it before the gate falls; the gate's
+			# breaking is gate_ops', cit_ops', punic's and oppidum's.)
+			need = ["paths", "clamp", "squeeze", "wall_shots", "breaches", "obs_lof", "wall_cover", "layout"]
 		"siege_hill@ai":
 			# (Walls 3 since the tower engines: the batteries batter the towers
 			# by the gate first, so the gate stands past the run, and the
@@ -946,7 +956,8 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (Part 2c: the defenders hold the gate's mouth and their wall
 			# units stay up, nobody falls back to the acropolis within the
 			# run: stair moves and the shut gate are cit_ops' and punic's.)
-			need = ["paths", "gate_broken", "obs_lof", "layout"]
+			# (Destruction AI: the way in is a breach by the gate.)
+			need = ["paths", "breaches", "obs_lof", "layout"]
 		"siege_punic@ai":
 			# (No gate_close since 2026-10-09, ranks holding together: the
 			# defenders are not yet back in the citadel within the run; the
@@ -957,7 +968,8 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			need = ["paths", "gate_broken", "gate_art"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
-			need = ["paths", "gate_broken", "gate_art", "layout"]
+			# (Destruction AI: the stones breach the wall by the gate first.)
+			need = ["paths", "breaches", "wall_shots", "layout"]
 		"cit_ops":
 			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
 		"bench_2000~ee", "bench_2000@4~ea", "siege_city@ai~ea", "siege_city@ai~ae":
@@ -976,9 +988,12 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# the ram is burnt at tick 1772 at seed 12345 and the gate falls
 			# to the battery at 5446 (the ram broke it at 2503 before). Battle
 			# seeds 1-4: the gate falls at 2499-3493, was 2440-2753.)
-			need = ["pickups", "tower_hits", "bolts", "stones", "wall_cover", "gate_broken"]
+			# (Destruction AI, 2026-10-23: the stones breach the wall by the gate
+			# early, the assault begins and the bolts shoot men, not the towers:
+			# tower hits are siege_hill's.)
+			need = ["pickups", "bolts", "stones", "wall_cover", "breaches"]
 		"siege_eq_polis2~sa":
-			need = ["pickups", "tower_hits", "bolts", "skilled", "gate_broken"]
+			need = ["pickups", "tower_hits", "bolts", "skilled", "breaches"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -1241,7 +1256,8 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"ditch": sim.stat_ditch, "sea_exit": sim.stat_sea_exit, "mistakes": _mistakes(sim),
 		"ladder_up": sim.stat_ladder_up, "ram_blows": sim.stat_ram_blows, "tower_hits": sim.stat_tower_hits,
 		"unbar": sim.stat_unbar, "pickups": sim.stat_pickups, "planted": sim.stat_planted, "drops": sim.stat_drops,
-		"layout": sim.stat_ai[SiegeAI.A_MOUTH] + sim.stat_ai[SiegeAI.A_PLAZA]}
+		"layout": sim.stat_ai[SiegeAI.A_MOUTH] + sim.stat_ai[SiegeAI.A_PLAZA],
+		"breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots}
 	if not sim.ai_mem.is_empty():
 		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
@@ -3272,8 +3288,8 @@ func _layout_run(snap_check: bool) -> Dictionary:
 			if ag < 0:
 				continue
 		var kn: PackedInt32Array = AIP.of(sim, 1)
-		if fall_t < 0 and sim.g_state[ag] != BattleSim.GATE_CLOSED:
-			fall_t = sim.tick
+		if fall_t < 0 and (sim.g_state[ag] != BattleSim.GATE_CLOSED or sim.stat_breaches > 0):
+			fall_t = sim.tick  # (the gate falls, or since the destruction AI the wall by it is breached first)
 		if fall_t < 0 and mouth_t < 0:
 			var fp: Vector3i = SiegeAI._mouth_front(sim, ag, kn, 0)
 			for u in sim.n_units:
@@ -3288,7 +3304,7 @@ func _layout_run(snap_check: bool) -> Dictionary:
 				arrived[u] = sim.tick
 		if plaza_t < 0:
 			for u in sim.n_units:
-				if sim.u_side[u] == 1 and sim.u_state[u] == 0 and sim.u_ai[u] == SiegeAI.A_PLAZA \
+				if sim.u_side[u] == 1 and sim.u_state[u] == 0 and (sim.u_ai[u] == SiegeAI.A_PLAZA or sim.u_ai[u] == SiegeAI.A_PLUG) \
 						and sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] >= 0 and sim.u_side[sim.u_target[u]] == 0:
 					plaza_t = sim.tick
 	return {"hashes": hashes, "ag": ag, "mouth": mouth_t, "fall": fall_t, "arrived": arrived.size(),
@@ -7419,6 +7435,92 @@ func _check_destr() -> void:
 		print("PASS destruction: stretches breached after %s hits (walls 1 / 2 / 3, three seeds each), %d of %d men on them lost (%d%%), an attacker in through a breach at tick %d with the gates shut, stones at a wall unit took %d off its stretch; houses fell after %s hits, %d of %d men inside lost (%d%%), the rest out; rubble stopped %d%% of arrows at a man without cover (open %d%%), %d%% at a cover man (rocks %d%%); identical on repeat and across snapshot / restore" % [
 			"/".join(hits_txt), lost, men_on, pct, passed, stone_dmg, col["hits"], int(col["lost"]), int(col["men"]), int(col["pct"]),
 			int(cov["rub"]), int(cov["open"]), int(cov["cov"]), BattleSim.COVER_STOP[BattleSim.COV_ROCK]])
+	else:
+		for b in bad:
+			_fail(str(b))
+
+
+## The destruction AI (docs/AI.md 35): AI against AI, a walls-1 fair siege with no siege kit (the gate falls
+## only to the engines and the hackers), three seeds. The attackers' stone throwers batter a stretch by the
+## attacked gate and breach it within DAI_BREACH_T; an attacking soldier then stands on the breach's rubble
+## within DAI_ENTER_T (in through it); no defender unit is left on the stretch when it falls once one stood on it
+## while it was battered (it went off below a third of its hit points).
+const DAI_BREACH_T := 4200
+const DAI_ENTER_T := 1800
+
+
+func _check_destr_ai() -> void:
+	var bad: Array = []
+	var txt: Array[String] = []
+	var off_n := 0
+	for cs in [41, 42, 43]:
+		var sc := Scenarios.fair_siege(cs, 1, MapGen.PLAN_RING, {})
+		sc["ai_sides"] = [0, 1]
+		var sim := BattleSim.new()
+		sim.setup(sc, 4100 + cs)
+		var att: int = 1 - sim.city_def
+		var b_tick := -1
+		var e_tick := -1
+		var sg := -1
+		var seen := PackedInt32Array()
+		var stayed := 0
+		while sim.tick < DAI_BREACH_T + DAI_ENTER_T and e_tick < 0:
+			sim.step()
+			if b_tick < 0:
+				for k in sim.ws_hp.size():
+					if sim.ws_state[k] != BattleSim.WS_STANDING:
+						sg = k
+						b_tick = sim.tick
+						break
+				# Defender units on a stretch while it is below two thirds and battered.
+				for k in sim.ws_hp.size():
+					if sim.ws_hp[k] * 3 < sim.ws_hp0[k] * 2 and sim.ws_state[k] == BattleSim.WS_STANDING:
+						for u in sim.n_units:
+							if sim.u_side[u] == sim.city_def and sim.u_wall[u] == k + 1 and not sim.is_tower(u) \
+									and sim.u_alive[u] > 0 and not ((k * 64 + u) in seen):
+								seen.append(k * 64 + u)
+				if b_tick >= 0:
+					for q in seen:
+						if q / 64 == sg:
+							var u2: int = q % 64
+							if sim.u_wall[u2] == sg + 1:
+								stayed += 1
+				if b_tick < 0 and sim.tick > DAI_BREACH_T:
+					break
+				continue
+			if sim.tick % 5 != 0:
+				continue
+			for u in sim.n_units:
+				if sim.u_side[u] != att or sim.u_alive[u] <= 0:
+					continue
+				var base: int = sim.u_slot_base[u]
+				for sl in sim.u_alive[u]:
+					var i: int = sim.slot_soldier[base + sl]
+					var c: int = (sim.pos_y[i] >> 11) * sim.ob_w + (sim.pos_x[i] >> 11)
+					if c >= 0 and c < sim.ws_cell.size() and sim.ws_cell[c] == sg + 1:
+						e_tick = sim.tick
+						break
+				if e_tick >= 0:
+					break
+		var on_sg := 0
+		for q in seen:
+			if q / 64 == sg:
+				on_sg += 1
+		off_n += on_sg - stayed
+		txt.append("seed %d: breach %d, in %d, %d units off" % [cs, b_tick, e_tick, on_sg - stayed])
+		if b_tick < 0:
+			bad.append("destr ai: seed %d: no stretch breached by tick %d (wall shots %d, damage %d)" % [cs, DAI_BREACH_T, sim.stat_wall_shots, sim.stat_wall_dmg])
+			continue
+		if sim.stat_wall_shots == 0:
+			bad.append("destr ai: seed %d: the breach came with no battering order (shots 0)" % cs)
+		if e_tick < 0:
+			bad.append("destr ai: seed %d: no attacker on the breach's rubble within %d ticks of it" % [cs, DAI_ENTER_T])
+		if stayed > 0:
+			bad.append("destr ai: seed %d: %d defender unit(s) still on the stretch when it fell" % [cs, stayed])
+	if off_n == 0:
+		bad.append("destr ai: no defender unit stood on a battered stretch in any seed (the leave rule untested): %s" % "; ".join(txt))
+	if bad.is_empty():
+		print("PASS destruction AI: walls 1, stone throwers batter and breach, an attacker in through the breach, defenders off the battered stretch (%s)" % "; ".join(txt))
 	else:
 		for b in bad:
 			_fail(str(b))

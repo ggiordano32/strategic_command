@@ -311,6 +311,8 @@ static func _army(sim, side: int) -> void:
 			_layout(sim, side, kn)  # (in the citadel: the town is lost)
 		if kn[AP.SK_MEM] != 0:
 			_sk_defend(sim, side, kn)
+		if sim.ai_cit[side] == 0:
+			_plug_breaches(sim, side, kn)
 		return
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
@@ -342,6 +344,8 @@ static func _army(sim, side: int) -> void:
 			prog += sim.u_killed[u]
 	for g in sim.n_gates:
 		prog += (sim.g_hp0[g] - sim.g_hp[g]) / 10000
+	for sg in sim.ws_hp.size():
+		prog += (sim.ws_hp0[sg] - sim.ws_hp[sg]) / 10000  # (battering the walls is progress too)
 	var stall: int = kn[AP.S_STALL_TICKS]
 	if prog >= sim.ai_prog[0] + kn[AP.S_STALL_PROG] or (phase == SP_APPROACH and sim.tick - sim.ai_t[side] < 2 * kn[AP.S_HACK_AFTER]):
 		# (The first four minutes of the approach - the batteries setting up
@@ -376,6 +380,11 @@ static func _army(sim, side: int) -> void:
 			phase = SP_ASSAULT
 			sim.ai_t[side] = sim.tick
 			sim.ai_gate[side] = br
+		elif _wall_breach(sim, side) >= 0:
+			# A breach in the walls: an entry like a broken gate (the
+			# attacked gate stays the plan's; docs/AI.md 35).
+			phase = SP_ASSAULT
+			sim.ai_t[side] = sim.tick
 		else:
 			var g: int = sim.ai_gate[side]
 			if g < 0 or sim.g_state[g] != GATE_CLOSED:
@@ -656,6 +665,9 @@ static func _strongpoint(sim, u: int) -> void:
 		# (Slice 2c: a musket line holds the building nearest its post: its
 		# men at the windows and on the roof, the door held.)
 		var b: int = sim.occupy_near(u, p.x, p.y, SP_OCC_R)
+		var kno := AP.of(sim, side)
+		if b >= 0 and b < sim.ob_hp.size() and sim.ob_hp[b] * 100 < sim.ob_hp0[b] * kno[AP.S_RUIN_LEAVE_PCT]:
+			b = -1  # (about to fall: not held; docs/AI.md 35)
 		if b >= 0 and sim.ob_sn[b] >= SP_OCC_MIN and sim.occupy_refusal(sim, u, b) == "":
 			sim.u_ai_x[u] = sim.ob_dx[b]
 			sim.u_ai_y[u] = sim.ob_dy[b]
@@ -863,6 +875,11 @@ static func _defender(sim, u: int) -> void:
 	var kn := AP.of(sim, sim.u_side[u])
 	if mode == A_ESC:
 		_esc_unit(sim, u)
+		return
+	if _leave_ruin(sim, u, kn):
+		return  # (off a stretch being battered down, out of a building about to fall)
+	if mode == A_PLUG:
+		_plug_unit(sim, u)
 		return
 	if kn[AP.SK_MEM] != 0 and _sk_defender(sim, u, kn):
 		return
@@ -2160,7 +2177,20 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		if carried:
 			out = mini(out, UT.stat(ty, "m_range") * kn[AP.S_LART_PCT] / 100)
 		var spot := _gate_point(sim, g, out, lat)
-		if UT.stat(ty, "m_kind") == 1:
+		# Battering the wall by the gate (docs/AI.md 35): before the stretch.
+		var bsg := _batter_for(sim, u, g, kn, false)
+		var aim: Vector2i = sim.ws_aim(bsg, UT.stat(ty, "m_kind") != 1) if bsg >= 0 else Vector2i(sim.g_x[g], sim.g_y[g])
+		if bsg >= 0:
+			# (From the gate's firing line when it reaches: a lobbing engine
+			# always, a flat gun with a clear line from there; else before
+			# the stretch. Moving across the walls' front cost a polis stone
+			# battery its crew to the towers' engines.)
+			var lob := UT.stat(ty, "m_kind") != 1
+			var gd := BattleAI._d(aim.x - spot.x, aim.y - spot.y)
+			if gd > UT.stat(ty, "m_range") * 85 / 100 or (not lob and sim.lof_block(spot.x, spot.y,
+					sim.height_at(spot.x, spot.y) + 1536, aim.x, aim.y, sim.height_at(aim.x, aim.y) + 1024, 0, 0, 8192) >= 0):
+				spot = _batter_spot(sim, u, bsg, mini(out, UT.stat(ty, "m_range") * 85 / 100), lat)
+		elif UT.stat(ty, "m_kind") == 1:
 			# Bolts need a clear flat line to the gate: try further aside.
 			var f: Vector2i = sim.gate_face(g)
 			for off in [0, 20, -20, 40, -40]:
@@ -2171,7 +2201,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 					break
 		if BattleAI._d(sim.u_ax[u] - spot.x, sim.u_ay[u] - spot.y) > 12 * M:
 			if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 6 * M:
-				var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
+				var face := FM.atan2_a(aim.y - spot.y, aim.x - spot.x)
 				BattleAI._move(sim, u, spot.x, spot.y, face, BattleAI._width(sim, u), 0, 6)
 			return
 		if carried and _lart_wall_target(sim, u, g, kn):
@@ -2184,18 +2214,40 @@ static func _att_art(sim, u: int, phase: int) -> void:
 				if sim.u_order[u] != O_ATTACK or sim.u_target[u] != tw:
 					BattleAI._attack(sim, u, tw, 0)
 				return
+		if bsg >= 0:
+			if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != -2 - bsg:
+				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "wall": bsg, "run": 0}, 0)
+				BattleAI._count(sim, side, AP.C_SIEGE)
+			return
 		if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != g:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": g, "run": 0}, 0)
 		return
+	if phase == SP_ASSAULT and g >= 0 and sim.u_ammo[u] > 0 and not left and _wall_breach(sim, side) < 0:
+		# The gate fell first: a stretch already battered is finished off
+		# (a second way in), from where the battery stands (docs/AI.md 35).
+		var asg := _batter_for(sim, u, g, kn, false)
+		if asg >= 0 and sim.ws_hp[asg] < sim.ws_hp0[asg]:
+			var aa: Vector2i = sim.ws_aim(asg, UT.stat(ty, "m_kind") != 1)
+			if BattleAI._d(aa.x - sim.u_cx[u], aa.y - sim.u_cy[u]) < UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100:
+				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != -2 - asg:
+					BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "wall": asg, "run": 0}, 0)
+				return
 	var cg: int = sim.cit_gate
 	if sim.fort_on != 0 and sim.ai_fort[side] != 2:
 		cg = -1  # (taking the town round the fort: the guns are for the town's defenders)
 	if phase == SP_ASSAULT and cg >= 0 and sim.g_state[cg] == GATE_CLOSED and sim.u_ammo[u] > 0 and not left:
-		# The citadel's gate, if it is within reach from here.
-		var f: Vector2i = sim.gate_face(cg)
+		# The citadel's gate, if it is within reach from here (or the
+		# citadel's or the fort's wall beside it: battering, docs/AI.md 35).
+		var csg := _batter_for(sim, u, cg, kn, true)
+		var f: Vector2i = sim.ws_aim(csg, UT.stat(ty, "m_kind") != 1) if csg >= 0 else sim.gate_face(cg)
 		var dcg := BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u])
 		var reach: int = UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100
 		if dcg < reach:
+			if csg >= 0:
+				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != -2 - csg:
+					BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "wall": csg, "run": 0}, 0)
+					BattleAI._count(sim, side, AP.C_SIEGE)
+				return
 			if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != cg:
 				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": cg, "run": 0}, 0)
 			return
@@ -2210,7 +2262,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 	if sim.fort_on != 0 and sim.ai_fort[side] == 1 and not left and sim.u_gtarget[u] < 0 and _town_gun(sim, u):
 		return
 	# No gate to shoot: fire at will from where it stands.
-	if sim.u_order[u] == O_ATTACK and sim.u_gtarget[u] >= 0:
+	if sim.u_order[u] == O_ATTACK and sim.u_gtarget[u] != -1:
 		BattleAI._order(sim, u, {"type": 3}, 22)  # halt
 	if sim.u_fire[u] == 0:
 		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
@@ -2430,6 +2482,8 @@ static func _storm(sim, u: int) -> void:
 		return
 	if _at_hand(sim, u) or _engaged(sim, u):
 		return
+	if _breach_go(sim, u, AP.of(sim, sim.u_side[u])):
+		return  # (in through the breach first: docs/AI.md 35)
 	if _street_ai(sim, sim.u_side[u]) and _street_row(sim, u) and sim.t_cover[sim.u_otype[u]] == 0 \
 			and sim.u_cls[u] != UT.CLS_CAV and _sp_wait(sim, u):
 		return  # (a strongpoint ahead: the skirmishers wear it down first, C7)
@@ -2460,7 +2514,7 @@ static func _storm(sim, u: int) -> void:
 			and sim.cap_t == 0:
 		best_d = 1 << 30
 	var cg: int = sim.cit_gate
-	var cit_shut: bool = cg >= 0 and sim.g_state[cg] == GATE_CLOSED
+	var cit_shut: bool = cg >= 0 and sim.g_state[cg] == GATE_CLOSED and not _cit_breached(sim)
 	var fort_skip: bool = sim.fort_on != 0 and sim.ai_fort[sim.u_side[u]] != 2
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
@@ -2815,7 +2869,8 @@ static func _wall_shift(sim, side: int, ag: int) -> void:
 		var bd := 0
 		var d0: int = sim._seg_off(sg0, gx, gy)
 		for sg in nseg:
-			if (sim.ws_fl[sg] & MapGen.SEG_CIT) != 0 or sg == sg0 or occ[sg] >= 2:
+			if (sim.ws_fl[sg] & MapGen.SEG_CIT) != 0 or sg == sg0 or occ[sg] >= 2 \
+					or (sg < sim.ws_state.size() and sim.ws_state[sg] != WS_STANDING) or _battered(sim, sg, AP.of(sim, side)):
 				continue
 			var d: int = sim._seg_off(sg, gx, gy)
 			if d >= d0:
@@ -3728,3 +3783,402 @@ static func _att_mantlet(sim, u: int, phase: int) -> bool:
 		return true
 	_go_home(sim, u, spot.x, spot.y, FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x), 2)
 	return true
+
+
+# ---------------------------------------------------- destruction AI ---
+# docs/AI.md 35 (2026-10-23): attacking batteries batter a wall stretch by
+# the attacked gate (S_BATTER), a breach is an entry like a broken gate
+# (the assault begins; the S_BREACH_UNITS foot nearest it go in through it
+# first), defenders leave a stretch being battered down and a building
+# about to fall, and the reserve holds a breach's inside edge (S_PLUG).
+# Stateless: every choice is made again each think from the hashed state
+# (ws_hp / ws_state / ws_hit_t, ob_hp, the units), so nothing new is kept.
+
+const WS_STANDING := 0           # (BattleSim.WS_STANDING)
+const A_PLUG := 38               # defender holding a breach's inside edge (u_ai_x = the stretch + 1)
+const WALL_BOLT := 80            # (BattleSim.GATE_BOLT: a flat shot's wall damage, x m_obj %)
+const WALL_STONE := 360          # (BattleSim.GATE_STONE: a lobbed shot's)
+const WALL_BLAST_K := 60         # (BattleSim.DESTR_BLAST_K: + this per metre of a bursting shell's blast)
+const BATTER_HEAVY := 400        # a flat gun doing this to a wall a shot is a wall breaker (heavy guns 560); lighter flat guns (culverins 360, falconets 160) batter only when the side has no breaker nor a lobbing engine
+const BATTER_GATE_R := 100 * M   # the stretch battered: its middle within this of the attacked gate
+const BATTER_HIT_PCT := 40       # a battery batters only if its shots left at this % hits would breach the stretch
+const WALL_HIT_RECENT := 100     # a stretch hit within this many ticks is under battering
+const PLUG_REACT := 25 * M       # the plug fights attackers this near the breach's inside edge
+const PLUG_GAP := 14 * M         # several plugs stand this far apart along it
+const RUIN_COVER_R := 24 * M     # a unit leaving a failing building takes cover within this of its door
+
+
+## Wall damage a shot of type ty's standard ammunition does (the
+## destruction rule's: 0 for what never hurts a wall).
+static func _wall_dmg(sim, ty: int) -> int:
+	var k := UT.stat(ty, "m_ak")
+	var ob: int = sim.t_k_obj[k] if k >= 0 and k < sim.t_k_obj.size() else 100
+	var mk := UT.stat(ty, "m_kind")
+	if mk == 1:
+		return WALL_BOLT * ob / 100 * UT.stat(ty, "m_obj") / 100
+	if mk == 2:
+		var d := WALL_STONE * ob / 100
+		if k >= 0 and k < sim.t_k_aoe.size() and sim.t_k_aoe[k] != 0:
+			d += (UT.stat(ty, "m_blast") + sim.t_k_blast[k]) * WALL_BLAST_K / M
+		return d
+	return 0
+
+
+## Battery o can batter walls (by its type: S_BATTER_DMG a shot, a working
+## engine; not a tower's engine). `heavy`: a lobbing engine or a flat gun of
+## BATTER_HEAVY or more.
+static func _can_batter(sim, o: int, kn: PackedInt32Array, heavy: bool) -> bool:
+	if sim.u_cls[o] != UT.CLS_ART or sim.u_state[o] != U_READY or sim.is_tower(o):
+		return false
+	var ty: int = sim.u_type[o]
+	var d := _wall_dmg(sim, ty)
+	if d < kn[AP.S_BATTER_DMG]:
+		return false
+	if heavy and UT.stat(ty, "m_kind") != 2 and d < BATTER_HEAVY:
+		return false
+	if sim.u_ammo[o] <= 0 and sim.u_reserve[o] <= 0:
+		return false
+	for k in sim.u_neng[o]:
+		if sim.e_state[sim.u_eng0[o] + k] == 0:
+			return true
+	return false
+
+
+## The stretch the side batters by gate g: standing, with a way through it
+## once breached, not facing the sea, the citadel's only at the citadel's
+## gate (`cit`; a West fort's walls at its gate), its middle within
+## BATTER_GATE_R of the gate; nearest the gate, a stretch already hurt
+## counting nearer (1 m per 10 hit points off: the batteries finish it).
+## The same for every battery of the side (they focus). -1 none.
+static func _batter_stretch(sim, side: int, g: int, cit: bool) -> int:
+	if sim.ws_hp.is_empty() or g < 0:
+		return -1
+	if sim.fort_on != 0 and sim.ai_fort[side] != 2:
+		return -1  # (the fort left be: no walls to break)
+	var f: Vector2i = sim.gate_face(g)
+	var best := -1
+	var bs := 0
+	for sg in sim.ws_hp.size():
+		if sim.ws_state[sg] != WS_STANDING or sim.ws_hp0[sg] <= 0 or (sim.ws_fl[sg] & MapGen.SEG_SEA) != 0:
+			continue
+		if ((sim.ws_fl[sg] & MapGen.SEG_CIT) != 0) != (cit and sim.fort_on == 0):
+			continue  # (the citadel's wall only at its gate; a West fort's walls are its only ones)
+		var mp: Vector2i = sim.seg_pt(sim, sg, sim.seg_len(sim, sg) / 2)
+		var d := BattleAI._d(mp.x - f.x, mp.y - f.y)
+		if d > BATTER_GATE_R or not sim.ws_way(sg):
+			continue
+		var s: int = d / M - (sim.ws_hp0[sg] - sim.ws_hp[sg]) / 1000
+		if best < 0 or s < bs:
+			best = sg
+			bs = s
+	return best
+
+
+## The stretch attacking battery u batters now (gate g still shut: the
+## approach, or the citadel's or the fort's gate in the assault, `cit`), -1
+## none: S_BATTER on, within S_BATTER_T of the approach, an
+## engine that breaks walls (lighter flat guns only when the side has no
+## heavier), within the side's S_BATTER_PCT share (by unit index), and with
+## shots enough left to breach it (BATTER_HIT_PCT of them hitting).
+static func _batter_for(sim, u: int, g: int, kn: PackedInt32Array, cit: bool) -> int:
+	var side: int = sim.u_side[u]
+	if kn[AP.S_BATTER] == 0 or sim.tick - sim.ai_t[side] > kn[AP.S_BATTER_T]:
+		return -1
+	var heavy := false
+	for o in sim.n_units:
+		if sim.u_side[o] == side and _can_batter(sim, o, kn, true):
+			heavy = true
+			break
+	if not _can_batter(sim, u, kn, heavy):
+		return -1
+	var k := 0
+	var n := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side and _can_batter(sim, o, kn, heavy):
+			if o < u:
+				k += 1
+			n += 1
+	if k >= (n * kn[AP.S_BATTER_PCT] + 99) / 100:
+		return -1
+	var sg := _batter_stretch(sim, side, g, cit)
+	if sg < 0:
+		return -1
+	var shots: int = sim.u_ammo[u] + sim.u_reserve[u]
+	if shots * _wall_dmg(sim, sim.u_type[u]) * BATTER_HIT_PCT / 100 < sim.ws_hp[sg] / 100:
+		return -1  # (too weak to breach it in the battle's time: it shoots men)
+	return sg
+
+
+## Where battery u stands to batter stretch sg: `out` before its aim point
+## along the wall's outward line, `lat` aside (a flat gun: further aside
+## until it has a clear line to the aim point).
+static func _batter_spot(sim, u: int, sg: int, out: int, lat: int) -> Vector2i:
+	var lob := UT.stat(sim.u_type[u], "m_kind") != 1
+	var a: Vector2i = sim.ws_aim(sg, lob)
+	var c := FM.cos_a(sim.ws_dir[sg])
+	var s := FM.sin_a(sim.ws_dir[sg])
+	var best := Vector2i(-1, -1)
+	for off in [0, 20, -20, 40, -40]:
+		var l: int = lat + off * M
+		var x: int = clampi(a.x + (c * out - s * l) / FM.TRIG_ONE, 8 * M, sim.field_w - 8 * M)
+		var y: int = clampi(a.y + (s * out + c * l) / FM.TRIG_ONE, 8 * M, sim.field_h - 8 * M)
+		if best.x < 0:
+			best = Vector2i(x, y)
+		if lob:
+			break
+		if sim.lof_block(x, y, sim.height_at(x, y) + 1536, a.x, a.y, sim.height_at(a.x, a.y) + 1024, 0, 0, 8192) < 0:
+			return Vector2i(x, y)
+	return best
+
+
+## The breach the attackers of `side` go in by: a breached stretch with a
+## way through (not the citadel's, not facing the sea; not the fort's
+## while it is left be), nearest the army. -1 none.
+static func _wall_breach(sim, side: int) -> int:
+	if sim.rub_n == 0 or sim.ws_state.is_empty():
+		return -1
+	if sim.fort_on != 0 and sim.ai_fort[side] != 2:
+		return -1
+	var c := _army_centre(sim, side)
+	var best := -1
+	var bd := 0
+	for sg in sim.ws_state.size():
+		if sim.ws_state[sg] == WS_STANDING or (sim.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+			continue
+		if not sim.ws_way(sg):
+			continue
+		var p: Vector2i = sim.ws_side_pt(sg, false)
+		var d := BattleAI._d(p.x - c.x, p.y - c.y)
+		if best < 0 or d < bd:
+			best = sg
+			bd = d
+	return best
+
+
+## Storming foot unit u outside the walls, among the S_BREACH_UNITS of its
+## side nearest the breach (foot outside the town, by distance to its
+## outside point, ties by index): it goes in through the breach at the run
+## (to the rubble's inside edge; then it storms as any). True while it does.
+static func _breach_go(sim, u: int, kn: PackedInt32Array) -> bool:
+	var n: int = kn[AP.S_BREACH_UNITS]
+	var c: int = sim.u_cls[u]
+	if n <= 0 or (c != UT.CLS_INF and c != UT.CLS_PIKE):
+		return false
+	var side: int = sim.u_side[u]
+	var sg := _wall_breach(sim, side)
+	if sg < 0 or (sim.veg_bits(sim.u_cx[u], sim.u_cy[u]) & MapGen.V_URBAN) != 0:
+		return false
+	var ip: Vector2i = sim.ws_side_pt(sg, true)
+	var op: Vector2i = sim.ws_side_pt(sg, false)
+	if BattleAI._d(sim.u_ax[u] - ip.x, sim.u_ay[u] - ip.y) < 8 * M:
+		return false
+	var du := BattleAI._d(sim.u_cx[u] - op.x, sim.u_cy[u] - op.y)
+	var k := 0
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY:
+			continue
+		var co: int = sim.u_cls[o]
+		if (co != UT.CLS_INF and co != UT.CLS_PIKE) or BattleAI.is_char(sim, o) \
+				or (sim.veg_bits(sim.u_cx[o], sim.u_cy[o]) & MapGen.V_URBAN) != 0:
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - op.x, sim.u_cy[o] - op.y)
+		if d < du or (d == du and o < u):
+			k += 1
+			if k >= n:
+				return false
+	var face: int = (sim.ws_dir[sg] + 512) & FM.ANGLE_MASK
+	if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - ip.x, sim.u_dy[u] - ip.y) > 4 * M:
+		BattleAI._move(sim, u, ip.x, ip.y, face, BattleAI._width(sim, u), 1 if c != UT.CLS_PIKE else 0, 3)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+	return true
+
+
+## Stretch sg is being battered down: under kn's S_WALL_LEAVE_PCT of its
+## hit points and hit within WALL_HIT_RECENT.
+static func _battered(sim, sg: int, kn: PackedInt32Array) -> bool:
+	var pct: int = kn[AP.S_WALL_LEAVE_PCT]
+	if pct <= 0 or sg < 0 or sg >= sim.ws_hp.size() or sim.ws_state[sg] != WS_STANDING:
+		return false
+	return sim.ws_hp[sg] * 100 < sim.ws_hp0[sg] * pct and sim.tick - sim.ws_hit_t[sg] <= WALL_HIT_RECENT
+
+
+## A defender on a stretch being battered down (S_WALL_LEAVE_PCT) goes to
+## a stretch joined to it through a tower that stands unbattered (fewer than
+## two units of ours on it), else down to the ground behind it; one holding
+## a building under S_RUIN_LEAVE_PCT of its hit points comes out to the
+## nearest cover. True when it was ordered.
+static func _leave_ruin(sim, u: int, kn: PackedInt32Array) -> bool:
+	if sim.ws_hp.is_empty() and sim.ob_hp.is_empty():
+		return false
+	var side: int = sim.u_side[u]
+	if sim.u_wall[u] > 0 and sim.u_stair[u] == 0 and sim.u_order[u] != O_MOVE and sim.t_fixed[sim.u_type[u]] == 0:
+		var sg: int = sim.u_wall[u] - 1
+		if not _battered(sim, sg, kn):
+			return false
+		var best := -1
+		for e in 2:
+			var nb: int = sim.ws_nb[sg * 2 + e]
+			if nb < 0:
+				continue
+			var s2: int = nb / 2
+			if s2 == sg or sim.ws_state[s2] != WS_STANDING or _battered(sim, s2, kn) \
+					or sim.ws_hp[s2] * 3 < sim.ws_hp0[s2]:
+				continue
+			var occ := 0
+			for o in sim.n_units:
+				if o != u and sim.u_side[o] == side and sim.u_state[o] == U_READY and sim.u_wall[o] == s2 + 1:
+					occ += 1
+			if occ < 2:
+				best = s2
+				break
+		if best >= 0:
+			var p: Vector2i = sim.seg_pt(sim, best, sim.seg_len(sim, best) / 2)
+			BattleAI._set_mode(sim, u, A_WALLU)
+			sim.u_ai_x[u] = best + 1
+			BattleAI._order(sim, u, {"type": 1, "x": p.x, "y": p.y, "facing": sim.ws_dir[best],
+				"width": BattleAI._width(sim, u), "run": 1}, 2)
+		else:
+			var t: int = sim.seg_t(sim, sg, sim.u_ax[u], sim.u_ay[u])
+			var wp: Vector2i = sim.seg_pt(sim, sg, t)
+			var din: int = (sim.ws_in[sg] if sim.ws_in[sg] >= 0 else sim.wall_t) + 8 * M
+			var gp: Vector2i = sim.open_snap(sim, wp.x - FM.cos_a(sim.ws_dir[sg]) * din / FM.TRIG_ONE,
+				wp.y - FM.sin_a(sim.ws_dir[sg]) * din / FM.TRIG_ONE, MapGen.NAV_GROUND)
+			BattleAI._order(sim, u, {"type": 1, "x": gp.x, "y": gp.y, "facing": sim.ws_dir[sg],
+				"width": BattleAI._width(sim, u), "run": 1}, 2)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		return true
+	if sim.occ_on != 0 and sim.u_occ[u] > 0 and kn[AP.S_RUIN_LEAVE_PCT] > 0:
+		var b: int = sim.u_occ[u] - 1
+		if b >= sim.ob_hp.size() or sim.ob_hp[b] * 100 >= sim.ob_hp0[b] * kn[AP.S_RUIN_LEAVE_PCT]:
+			return false
+		var cp := _cover_near(sim, u, sim.ob_dx[b], sim.ob_dy[b], b)
+		BattleAI._set_mode(sim, u, A_RESERVE)
+		sim.u_ai_x[u] = cp.x
+		sim.u_ai_y[u] = cp.y
+		BattleAI._order(sim, u, {"type": 1, "x": cp.x, "y": cp.y, "facing": sim.ob_face[b],
+			"width": BattleAI._width(sim, u), "run": 1}, 2)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		return true
+	return false
+
+
+## Cover near (x, y) for unit u leaving building b: on rings of 8 / 16 / 24 m
+## in 8 directions, the ground point with the most cover cells round it
+## (_cover_score; not in building b's footprint), less 2 a ring out; ties:
+## the first in that order. (x, y) itself (snapped to the ground) if none.
+static func _cover_near(sim, u: int, x: int, y: int, b: int) -> Vector2i:
+	var mask: int = sim._ground_mask(u)
+	var best: Vector2i = sim.open_snap(sim, x, y, mask)
+	var bs := -1
+	var r := 8 * M
+	var ring := 0
+	while r <= RUIN_COVER_R:
+		for k in 8:
+			var a := k * 128
+			var px: int = x + FM.cos_a(a) * r / FM.TRIG_ONE
+			var py: int = y + FM.sin_a(a) * r / FM.TRIG_ONE
+			if px < 8 * M or py < 8 * M or px > sim.field_w - 8 * M or py > sim.field_h - 8 * M:
+				continue
+			if (sim.nav_at(px, py) & MapGen.NAV_GROUND) == 0:
+				continue
+			var c: int = (py >> 11) * sim.ob_w + (px >> 11)
+			if c >= 0 and c < sim.ob_cell.size() and sim.ob_cell[c] == b + 1:
+				continue
+			var s := _cover_score(sim, px, py) - 2 * ring
+			if s > bs:
+				bs = s
+				best = Vector2i(px, py)
+		r += 8 * M
+		ring += 1
+	return best
+
+
+## The defenders' plug (S_PLUG, army level): each breach of the walls with a
+## way through gets S_PLUG units of ours (the nearest first): reserve foot
+## (A_RESERVE, A_PLAZA) or foot of the stack at a gate still shut (A_MOUTH:
+## the stack waits for a gate nobody is breaking), not fighting, not in a
+## building, not on a wall.
+static func _plug_breaches(sim, side: int, kn: PackedInt32Array) -> void:
+	var want: int = kn[AP.S_PLUG]
+	if want <= 0 or sim.rub_n == 0 or sim.ws_state.is_empty():
+		return
+	for sg in sim.ws_state.size():
+		if sim.ws_state[sg] == WS_STANDING or (sim.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0 \
+				or not sim.ws_way(sg):
+			continue
+		var have := 0
+		for o in sim.n_units:
+			if sim.u_side[o] == side and sim.u_state[o] != U_DESTROYED and sim.u_ai[o] == A_PLUG and sim.u_ai_x[o] == sg + 1:
+				have += 1
+		var ip: Vector2i = sim.ws_side_pt(sg, true)
+		while have < want:
+			var best := -1
+			var bd := 0
+			for o in sim.n_units:
+				if sim.u_side[o] != side or sim.u_state[o] != U_READY or BattleAI.is_char(sim, o):
+					continue
+				var m: int = sim.u_ai[o]
+				if m != A_RESERVE and m != A_PLAZA and not (m == A_MOUTH and sim.u_ai_x[o] >= 0 \
+						and sim.u_ai_x[o] < sim.n_gates and sim.g_state[sim.u_ai_x[o]] == GATE_CLOSED):
+					continue
+				var c: int = sim.u_cls[o]
+				if (c != UT.CLS_INF and c != UT.CLS_PIKE) or sim.u_wall[o] > 0 or sim.u_fighting[o] > 0:
+					continue
+				if sim.occ_on != 0 and (sim.u_occ[o] > 0 or sim.u_ocg[o] > 0):
+					continue
+				var d := BattleAI._d(sim.u_cx[o] - ip.x, sim.u_cy[o] - ip.y)
+				if best < 0 or d < bd:
+					best = o
+					bd = d
+			if best < 0:
+				break
+			BattleAI._set_mode(sim, best, A_PLUG)
+			sim.u_ai_x[best] = sg + 1
+			BattleAI._count(sim, side, AP.C_SIEGE)
+			have += 1
+
+
+## The plug: attackers within PLUG_REACT of the breach's inside edge are
+## fought, else it holds that edge facing out.
+static func _plug_unit(sim, u: int) -> void:
+	var sg: int = sim.u_ai_x[u] - 1
+	if sg < 0 or sg >= sim.ws_state.size():
+		BattleAI._set_mode(sim, u, A_RESERVE)
+		sim.u_ai_x[u] = sim.u_ax[u]
+		sim.u_ai_y[u] = sim.u_ay[u]
+		return
+	var ip: Vector2i = sim.ws_side_pt(sg, true)
+	if BattleAI._d(sim.u_ax[u] - ip.x, sim.u_ay[u] - ip.y) > 3 * PLUG_REACT and sim.u_fighting[u] == 0:
+		var p0: Vector2i = sim.open_snap(sim, ip.x, ip.y, sim._ground_mask(u))
+		_go_run(sim, u, p0.x, p0.y, sim.ws_dir[sg], 5, 1)
+		return  # (led off chasing: back to the breach)
+	if _engaged(sim, u):
+		return
+	var t := _nearest_attacker(sim, u, ip.x, ip.y, PLUG_REACT, false)
+	if t >= 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
+			BattleAI._attack(sim, u, t, 0)
+		return
+	# (Several plugs: side by side along the rubble's inner edge.)
+	var k := 0
+	var n := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] and sim.u_state[o] == U_READY and sim.u_ai[o] == A_PLUG and sim.u_ai_x[o] == sg + 1:
+			if o < u:
+				k += 1
+			n += 1
+	var lat := _spread(k, maxi(n, 1), PLUG_GAP)
+	var d: int = sim.ws_dir[sg]
+	var p: Vector2i = sim.open_snap(sim, ip.x - FM.sin_a(d) * lat / FM.TRIG_ONE, ip.y + FM.cos_a(d) * lat / FM.TRIG_ONE, sim._ground_mask(u))
+	_go_run(sim, u, p.x, p.y, d, 5, 1)
+
+
+## The citadel's wall (SEG_CIT) is breached somewhere with a way through:
+## its gate shut no longer keeps the attackers out (docs/AI.md 35).
+static func _cit_breached(sim) -> bool:
+	if sim.rub_n == 0 or sim.fort_on != 0:
+		return false
+	for sg in sim.ws_state.size():
+		if sim.ws_state[sg] != WS_STANDING and (sim.ws_fl[sg] & MapGen.SEG_CIT) != 0 and sim.ws_way(sg):
+			return true
+	return false

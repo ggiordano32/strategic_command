@@ -447,6 +447,7 @@ const COLLAPSE_KILL_PCT := 70    # a held building falls: each man of the unit i
 const DESTR_MORALE := 150        # ... and the survivors take this morale blow (shaken)
 const RUBBLE_SPEED := 600        # per mille of the pace with the anchor in rubble (slow going)
 const RUBBLE_COVER_PCT := 35     # men without the cover trait in rubble: this % of the cover trait's stop (COVER_STOP[COV_RUBBLE]); riders none
+const WS_AIM_OUT := 2 * M        # a flat gun battering a stretch aims this far outside its outer face (ws_aim)
 const WS_STANDING := 0           # ws_state / ob_state
 const WS_BREACHED := 1           # (a building: fallen)
 const EV_BREACH := 0             # the destruction events ring (view): a stretch breached (ev_a: the stretch)
@@ -1096,6 +1097,7 @@ var stat_collapse_kill: int = 0   # ... with a building
 var stat_wall_dmg: int = 0        # hit points shot off wall stretches
 var stat_bld_dmg: int = 0         # ... off buildings
 var stat_rubble_stop: int = 0     # missiles stopped by rubble (men without the cover trait)
+var stat_wall_shots: int = 0      # shots fired at wall stretches (the destruction AI's battering)
 var ng_x := PackedInt32Array()    # street graph: nodes, gate of a gate node (-1), CSR edges
 var ng_y := PackedInt32Array()
 var ng_gate := PackedInt32Array()
@@ -1533,7 +1535,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -5433,6 +5435,7 @@ func _setup_destr() -> void:
 	stat_wall_dmg = 0
 	stat_bld_dmg = 0
 	stat_rubble_stop = 0
+	stat_wall_shots = 0
 	if city_on == 0 or obs_on == 0 or not map_info.has("city"):
 		return
 	obs0 = obs.duplicate()
@@ -5751,6 +5754,49 @@ func _destr_hit(x: int, y: int, dmg: int, by: int, arc_pct: int) -> bool:
 	if ob_hp[b] <= 0:
 		_collapse(b, by)
 	return true
+
+
+## Battery u's wall stretch target (an attack order at a stretch: u_gtarget
+## -2 - stretch), -1 none or no longer standing.
+func wall_tgt(u: int) -> int:
+	var gt := u_gtarget[u]
+	if gt > -2:
+		return -1
+	var sg := -2 - gt
+	return sg if sg < ws_state.size() and ws_state[sg] == WS_STANDING else -1
+
+
+## Where a battery aims to batter stretch sg: its middle, a lobbed shot on
+## the walkway's centre line, a flat one WS_AIM_OUT outside the wall's outer
+## face at body height (the line runs on into the masonry and is stopped
+## there: _land_bolt).
+func ws_aim(sg: int, lob: bool) -> Vector2i:
+	var mp := seg_pt(self, sg, seg_len(self, sg) / 2)
+	if lob:
+		return mp
+	var out := wall_t / 2 + WS_AIM_OUT
+	return Vector2i(mp.x + FM.cos_a(ws_dir[sg]) * out / FM.TRIG_ONE, mp.y + FM.sin_a(ws_dir[sg]) * out / FM.TRIG_ONE)
+
+
+## Stretch sg has a way through it once breached (its pair of street graph
+## nodes: _destr_graph).
+func ws_way(sg: int) -> bool:
+	var tag := -2 - sg
+	for k in ng_gate.size():
+		if ng_gate[k] == tag:
+			return true
+	return false
+
+
+## The point just inside / outside the middle of stretch sg (where its
+## breach's graph nodes stand; inside: the rubble's inner edge).
+func ws_side_pt(sg: int, inside: bool) -> Vector2i:
+	var mp := seg_pt(self, sg, seg_len(self, sg) / 2)
+	var a := (ws_in[sg] if ws_in[sg] >= 0 else wall_t) + M
+	if not inside:
+		a = wall_t / 2 + 3 * M
+	var sgn := -1 if inside else 1
+	return Vector2i(mp.x + sgn * FM.cos_a(ws_dir[sg]) * a / FM.TRIG_ONE, mp.y + sgn * FM.sin_a(ws_dir[sg]) * a / FM.TRIG_ONE)
 
 
 func _destr_event(k: int, a: int) -> void:
@@ -7942,6 +7988,18 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["dy"] = y
 		d["dface"] = face
 	elif typ == ORDER_ATTACK:
+		var wt := int(o.get("wall", -1))
+		if wt >= 0:
+			# At a wall stretch (the destruction AI, 2026-10-23): an attacking
+			# battery shoots it until it is breached (gtarget -2 - stretch).
+			if not art or sim.city_on == 0 or wt >= sim.ws_state.size() or sim.u_side[u] == sim.city_def \
+					or sim.ws_state[wt] != WS_STANDING or sim.ws_hp0[wt] <= 0:
+				return
+			d["order"] = O_ATTACK
+			d["target"] = -1
+			d["gtarget"] = -2 - wt
+			d["run"] = 0
+			return
 		var gt := int(o.get("gate", -1))
 		if gt >= 0:
 			# At a gate: batteries shoot it, foot go to its face and hack at
@@ -9093,6 +9151,19 @@ func _update_units() -> void:
 					if absi(FM.angle_diff(u_face[u], gbear)) > t_arc[ty]:
 						want_face = gbear
 						u_dface[u] = gbear
+			elif gt <= -2:
+				# Shooting at a wall stretch: the same; done once it is breached.
+				at = -1
+				var wsg := wall_tgt(u)
+				if wsg < 0:
+					u_order[u] = O_NONE
+					u_gtarget[u] = -1
+				else:
+					var wa := ws_aim(wsg, t_m_kind[ty] != 1)
+					var wbear := FM.atan2_a(wa.y - u_cy[u], wa.x - u_cx[u])
+					if absi(FM.angle_diff(u_face[u], wbear)) > t_arc[ty]:
+						want_face = wbear
+						u_dface[u] = wbear
 			elif order == O_ATTACK and (at < 0 or u_state[at] >= U_DESTROYED):
 				u_order[u] = O_NONE
 				u_target[u] = -1
@@ -13008,8 +13079,8 @@ func _art_think(u: int) -> void:
 	if u_ammo[u] > 0 and order != O_MOVE and order != O_WITHDRAW and u_rprog[u] == 0:
 		var rng := mrange(u)
 		var mn := t_m_min[ty]
-		if order == O_ATTACK and u_gtarget[u] >= 0:
-			pass  # shooting at a gate (_update_artillery)
+		if order == O_ATTACK and u_gtarget[u] != -1:
+			pass  # shooting at a gate or a wall stretch (_update_artillery)
 		elif order == O_ATTACK:
 			var t := u_target[u]
 			if t >= 0 and u_state[t] < U_DESTROYED and _art_in_range(u, t, mn, rng) \
@@ -13135,13 +13206,20 @@ func _update_artillery() -> void:
 		var gt := u_gtarget[u] if u_order[u] == O_ATTACK else -1
 		if gt >= 0 and (gt >= n_gates or g_state[gt] != GATE_CLOSED):
 			gt = -1
-		var aim := gt >= 0 or ft >= 0
+		var wsg := wall_tgt(u) if gt <= -2 else -1
+		if gt <= -2:
+			gt = -1
+		var aim := gt >= 0 or ft >= 0 or wsg >= 0
 		var tx := 0
 		var tyy := 0
 		if gt >= 0:
 			var gf := gate_face(gt)
 			tx = gf.x
 			tyy = gf.y
+		elif wsg >= 0:
+			var wa := ws_aim(wsg, t_m_kind[ty] != 1)
+			tx = wa.x
+			tyy = wa.y
 		elif ft >= 0:
 			tx = u_cx[ft]
 			tyy = u_cy[ft]
@@ -13238,7 +13316,13 @@ func _update_artillery() -> void:
 			var bear := FM.atan2_a(tyy - e_y[e], tx - e_x[e])
 			if absi(FM.angle_diff(e_face[e], bear)) > ALIGN:
 				continue
-			var fired := _art_fire_gate(e, u, gt, ty) if gt >= 0 else _art_fire(e, u, ft, ty)
+			var fired := false
+			if gt >= 0:
+				fired = _art_fire_gate(e, u, gt, ty)
+			elif wsg >= 0:
+				fired = _art_fire_wall(e, u, wsg, ty)
+			else:
+				fired = _art_fire(e, u, ft, ty)
 			if fired:
 				e_reload[e] = 0
 
@@ -13707,6 +13791,58 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	pr_unit[p] = u
 	pr_ty[p] = ty
 	pr_tu[p] = -2 - g
+	pr_ak[p] = k
+	var b := (tick + flight) % PR_BUCKETS
+	pr_next[p] = pr_bucket[b]
+	pr_bucket[b] = p
+	return true
+
+
+## Engine e of battery u shoots at wall stretch sg (the destruction AI,
+## 2026-10-23): as at a gate, at the stretch's aim point (ws_aim); the shot
+## does its work where it lands (_land_bolt: stopped by the wall's cells;
+## _land_stone: landing on them). No unit is aimed at (pr_tu -1).
+func _art_fire_wall(e: int, u: int, sg: int, ty: int) -> bool:
+	if pr_free < 0:
+		return false
+	var sx := e_x[e]
+	var sy := e_y[e]
+	var wa := ws_aim(sg, t_m_kind[ty] != 1)
+	var dx := wa.x - sx
+	var dy := wa.y - sy
+	var dist := FM.approx_len(dx, dy)
+	var k := _eng_kind(e, u)
+	var rp := t_k_range[k] if k >= 0 else 100
+	if dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, wa.x, wa.y, dist, ty, _skip0(u), LOF_SKIP, 0, rp):
+		return false
+	var p := pr_free
+	pr_free = pr_next[p]
+	pr_count += 1
+	_eng_spend(e, u, k)
+	if t_m_kind[ty] == 1:
+		stat_bolts += 1
+	else:
+		stat_stones += 1
+	if t_m_gun[ty] != 0:
+		stat_cannon += 1
+	stat_wall_shots += 1
+	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
+	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
+	if lon > 0:
+		lon = lon * t_m_long[ty] / 100
+	var ux := dx * FM.TRIG_ONE / dist
+	var uy := dy * FM.TRIG_ONE / dist
+	var flight := clampi(dist / t_m_speed[ty] + 3, 3, PR_BUCKETS - 1)
+	pr_sx[p] = sx
+	pr_sy[p] = sy
+	pr_x[p] = clampi(wa.x + ((ux * lon - uy * lat) / FM.TRIG_ONE), 0, field_w)
+	pr_y[p] = clampi(wa.y + ((uy * lon + ux * lat) / FM.TRIG_ONE), 0, field_h)
+	pr_t0[p] = tick
+	pr_t1[p] = tick + flight
+	pr_unit[p] = u
+	pr_ty[p] = ty
+	pr_tu[p] = -1
 	pr_ak[p] = k
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]

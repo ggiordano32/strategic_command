@@ -2589,3 +2589,94 @@ siege_eq_ring3; not pinned constants, so nothing re-pinned).
 38 -> 39, 31 -> 34 (none beyond its interval). The aim (walls 2-3 up a few points) is not met in Rome and only
 just in the West: the AI does not aim at walls yet, so breaches come only from shots at men on them. It is the AI
 follow-up's to deliver.
+
+### Destruction AI (as built, 2026-10-23)
+
+The follow-up of "Destruction (as built)": the battle AI uses breaches. Code: `sim/siege_ai.gd` section
+"destruction AI" (`_wall_dmg`, `_can_batter`, `_batter_stretch`, `_batter_for`, `_batter_spot`, `_wall_breach`,
+`_breach_go`, `_battered`, `_leave_ruin`, `_cover_near`, `_plug_breaches`, `_plug_unit`, `_cit_breached`; hooks in
+`_army`, `_att_art`, `_storm`, `_defender`, `_strongpoint`, `_wall_shift`), `sim/battle_sim.gd` (the wall target
+order and its fire path: `wall_tgt`, `ws_aim`, `ws_way`, `ws_side_pt`, `_art_fire_wall`, WS_AIM_OUT,
+`stat_wall_shots`), knobs `sim/ai_profile.gd` 275-282 (docs/AI.md 35). Stateless: every choice is made again each
+think from hashed state (the stretches' and buildings' hit points and hit ticks, the units), so no new AI memory.
+
+**The order.** An attack order with `"wall": stretch` (artillery of the attackers only, a standing stretch, a town
+map) sets the battery on the stretch: `u_gtarget` = -2 - stretch (the breach graph nodes' convention; -1 none, a
+gate >= 0, so every place that clears or tests a gate target is unchanged). The battery turns to it and its engines
+shoot its aim point (`ws_aim`: the stretch's middle; a lobbed shot on the walkway's centre line, a flat one WS_AIM_OUT
+2 m outside the outer face at body height, its line running on into the masonry), with the gate shot's spread and
+range rules (`_art_fire_wall`); the shot does its work where it lands as any (`_land_bolt` / `_land_stone`). The
+order ends when the stretch is breached. A player could give the same order; no UI for it yet.
+
+**Batter the wall.** In the approach, with the attacked gate shut, a battery batters (`_batter_for`) when
+`S_BATTER` is on, it is within `S_BATTER_T` of the approach's start, its standard shot does `S_BATTER_DMG` or more
+to a wall (a bolt 80 never; falconets 160, culverins 360, stones 360, heavy guns 560, a bursting shell 360 + its
+blast), it is a breaker (a lobbing engine or a flat gun of BATTER_HEAVY 400 or more) or the side has no breaker
+(lighter flat guns only then), it is within the side's `S_BATTER_PCT` share (by unit index), and its shots left at
+BATTER_HIT_PCT 40 % hits would breach the stretch (else it shoots men as before). The stretch (`_batter_stretch`,
+the same for every battery so they focus): standing, with a way through it (`ws_way`), not facing the sea, not the
+citadel's, its middle within BATTER_GATE_R 100 m of the attacked gate's face; nearest the gate, a stretch already
+hurt counting 1 m nearer per 10 hit points off. The battery shoots from its place on the gate's firing line when
+the aim point is within 85 % of its range from there (a lobbing engine) and, for a flat gun, in clear line; else it
+stands `S_ART_OUT` (at most 85 % of its range) out from the aim point along the wall's outward line, spread as
+before, a flat gun stepping up to 40 m aside for a clear line (a first build always moved there: a polis stone
+battery crossing the walls' front lost its crew to the towers' engines).
+Counter-battery fire at the towers by the gate comes first, as before. If the gate falls first, a battery whose
+stretch is already hurt finishes it from where it stands while no breach is open (a second way in). In the assault,
+with the citadel's gate (or a stormed West fort's gate) shut, the same rule batters the citadel's wall (SEG_CIT) or
+the fort's beside that gate. Battering counts as the attack's progress for the stall watch (as gate damage).
+
+**Assault through the breach.** A breached stretch with a way through (not the citadel's, not facing the sea; a
+West fort's only when it is stormed) is an entry like a broken gate: the approach turns to the assault
+(`ai_gate` stays the plan's gate). The `S_BREACH_UNITS` foot units of the side outside the town nearest the
+breach's outside point (no shock role exists yet: the nearest foot, ties by index) go in through it at the run to
+the rubble's inside edge, then storm as any (`_breach_go`); as they get in the next nearest follow, the rest storm
+by the streets as before (their paths use the breach once open). Ladders are not used there. A new breach in a
+running assault is picked up on the next think (the choice is stateless). A breach in the citadel's wall makes its
+shut gate no longer keep the storm out (`_cit_breached`).
+
+**Defenders.** A defender wall unit (not a tower's crew) on a stretch under `S_WALL_LEAVE_PCT` of its hit points and
+hit within 10 s goes to a stretch joined to it through a tower that stands unbattered with fewer than two units of
+ours on it, else down to the ground 8 m behind its place (then a reserve there); wall shifts skip a battered or
+breached stretch. A unit holding a building under `S_RUIN_LEAVE_PCT` of its hit points comes out to the best cover
+within 24 m of its door (`_cover_near`, the strongpoint score) and holds it; such a building is not taken up again
+(`_strongpoint`). The plug (`S_PLUG`, army level): each breach of the walls with a way through gets `S_PLUG` units
+of ours, the nearest first: reserve foot (A_RESERVE, A_PLAZA) or foot of the stack at a gate still shut (A_MOUTH:
+it waits for a gate nobody breaks), not fighting, not in a building, not on a wall; they become A_PLUG 38 and stand
+side by side PLUG_GAP 14 m apart along the rubble's inside edge facing out, fight attackers within 25 m of it, and
+go back to it when led more than 75 m off.
+
+**Knobs** (`ai_profile.gd` 275-282, Easy / Average / Skilled): `S_BATTER` 0 / 1 / 1, `S_BATTER_DMG` 150, `S_BATTER_PCT`
+0 / 100 / 100, `S_BATTER_T` 0 / 4,800 / 4,800 ticks, `S_BREACH_UNITS` 2 / 3 / 4, `S_WALL_LEAVE_PCT` 0 / 33 / 33,
+`S_RUIN_LEAVE_PCT` 0 / 33 / 33, `S_PLUG` 0 / 4 / 4. Easy never batters, never leaves a stretch or a building and
+never plugs; it does send its two nearest foot through a breach that opens.
+
+**Measured and tuned** (`tools/balance`, attacker wins % pooled by walls level; before `c53664c3b6`). Build 1
+(batteries moved before the stretch, one plug): rome_walls 58 / 32 / 24 -> 70 / 52 / 26. Build 2 (from the gate's
+firing line when it reaches: the polis stone battery no longer crosses the towers' front, one plug): 88 / 65 / 47, a
+breach in 95 of 96 battles a level, 0.5-1 min before the gate used to fall: the breach beats the defenders' stack
+waiting at the gate mouth. Tuned (two knobs): `S_BATTER_T` 4,800 -> 2,400 (8 seeds, build 1) cut walls 3 (the
+latest breaches) far more than walls 2 and went back to 4,800; `S_PLUG` 1 -> 3 / 4 / 5 (8 seeds) 92 / 44 / 38, 81 / 52 /
+23, 60 / 29 / 19; kept 4. `S_BATTER_PCT` does not bite in Rome (one stone-thrower unit a side; the share is by unit).
+Final (16 seeds, `a6c41d737a`): rome_walls walls 1 / 2 / 3 58 -> 74 (beyond its interval), 32 -> 44, 24 -> 20; by
+town the swings are large both ways (Latium walls 2 6 -> 75, Sicilia 38 -> 75, Zeugitana walls 1 25 -> 69; Arverni
+walls 2 81 -> 12, walls 1 62 -> 31). A stretch was breached in 96 / 95 / 95 of 96 battles a level, before the gate in 95 / 94 / 86 (median 1.3 / 2.5 / 3.2
+min). west_walls walls 0 / 1 / 2: 54 -> 51, 39 -> 38, 34 -> 34 (Port Royal walls 0 75 -> 44 the one cell beyond its
+interval: the building rules); no West battery battered in 768 battles: the West plan towns have no outer wall
+(`n_outer` 0) and the fort is left be (`ai_fort` 1) in these sets, so the 1 / 5 breaches at walls 1 / 2 came from
+shots at men. The aim (walls 2-3 up 5-10, not flipped): walls 2 +11,
+walls 3 missed (-4), walls 1 over (+16).
+
+**Tests.** `tests/determinism_test.gd --only=destr_ai` (also in `--only=destr` and the full run), `_check_destr_ai`:
+AI against AI, walls-1 fair sieges with no kit (seeds 41-43): the stone throwers breach a stretch within
+DAI_BREACH_T 4,200 ticks, an attacker is on the breach's rubble within DAI_ENTER_T 1,800 of it, and the defender unit
+on the battered stretch was off it when it fell (one a seed at least). The fortified runs' final hashes moved;
+coverage needs updated where the way in is now a breach (siege_city@ai and siege_oppidum@ai: `wall_shots`,
+`breaches` for `gate_art`, `gate_broken`; siege_polis@ai and siege_eq_polis2~sa: `breaches` for `gate_broken`;
+siege_eq_ring3: `breaches` for `gate_broken` and no `tower_hits`, the early breach starts the assault and the bolts
+shoot men); the layout check counts a breach as the gate's fall and a plug's counter-attack as the plaza reserve's.
+Final hashes (before -> after): siege_city@ai e64e86f4 -> 7799cda0, siege_castrum@ai a8819f1e -> 68824802,
+siege_polis@ai 1a227d83 -> 440bd398, siege_punic@ai b321be2e -> 19c6aebe, siege_oppidum@ai 5eed0f81 -> 90f45c33,
+siege_city@ai~ea 3e1f6181 -> 055dd17d, ~ae 3a92750b -> 624a7a33, ~sa 3a5fb759 -> f9166c03, ~as 60cd3d58 -> 2d3e366c,
+siege_eq_ring3 2463e9e1 -> 9edb502b, siege_eq_polis2~sa c8c13afd -> 652dfe0e; the goldens, every open-field run,
+gate_ops, cit_ops, siege_village@ai and siege_hill@ai unmoved.

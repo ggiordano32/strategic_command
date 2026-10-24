@@ -2553,3 +2553,36 @@ Open: England reaches Barracks 3 almost never (best Barracks 1.8; no grenadier i
 `SPECIALIST_PCT` 50: 5 regions and the Workshop goals first), the mortar's 2-3 % mix share gives a piece or none; the bands mostly sit in the Miskito
 capital, held there by the landing threat (`_hold`, section 12.2), and take a town from the water once in 24
 campaigns; the 0.3 s water-field build is a one-off on the web too (not measured there).
+
+## 35. Destruction AI: battering the walls, the breach, the defenders (2026-10-23)
+
+The battle AI's follow-up of the destruction sim (docs/design/siege_and_towns.md "Destruction AI (as built)", the
+rules in full). `sim/siege_ai.gd` section "destruction AI", the wall target order in `sim/battle_sim.gd`; no new AI
+memory (each choice is made again every think from the hashed hit points and units). Moves counted in `C_SIEGE`.
+
+- **Batter the wall**: attacking batteries that break walls (lobbing engines, flat guns of 400 a shot; lighter flat
+  guns only when the side has none; bolts never) shoot the stretch nearest the attacked gate (within 100 m, with a
+  way through it once breached) until it is breached, from before that stretch; they finish a hurt stretch if the
+  gate fell first, and batter the citadel's or a stormed fort's wall by its shut gate.
+- **The breach is an entry**: the assault begins; the `S_BREACH_UNITS` foot nearest the breach go in through it.
+- **Defenders**: off a stretch being battered down (under `S_WALL_LEAVE_PCT`, hit in the last 10 s) to a joined
+  stretch or the ground behind; out of a building under `S_RUIN_LEAVE_PCT` to the nearest cover; `S_PLUG` reserve (or waiting
+  stack) foot units plug each breach.
+
+| Knob (`ai_profile.gd`, ids 275-282) | Easy | Average | Skilled |
+|---|---|---|---|
+| `S_BATTER` | 0 | 1 | 1 |
+| `S_BATTER_DMG` | 150 | 150 | 150 |
+| `S_BATTER_PCT` | 0 | 100 | 100 |
+| `S_BATTER_T` (ticks) | 0 | 4800 | 4800 |
+| `S_BREACH_UNITS` | 2 | 3 | 4 |
+| `S_WALL_LEAVE_PCT` | 0 | 33 | 33 |
+| `S_RUIN_LEAVE_PCT` | 0 | 33 | 33 |
+| `S_PLUG` | 0 | 4 | 4 |
+
+Measured (16 seeds, attacker wins %): rome_walls walls 1 / 2 / 3 58 / 32 / 24 -> 74 / 44 / 20 (a breach in 95 % of the
+battles, nearly always before the gate); west_walls walls 0 / 1 / 2 54 / 39 / 34 -> 51 / 38 / 34 (no West battery
+battered: the plan towns have no outer wall and the fort was left be). Tuned: `S_PLUG` 1 -> 4 (with one plug the
+breach beat the stack waiting at the shut gate: 88 / 65 / 47; 3 / 4 / 5 plugs at 8 seeds 92 / 44 / 38, 81 / 52 / 23,
+60 / 29 / 19); `S_BATTER_T` 2,400 tried and reverted (it cut walls 3 more than walls 2). Open: walls 3 not up, walls 1
+up 16, large per-town swings (Arverni down), the West fort stormed with guns, a shock role for the breach party.

@@ -67,10 +67,13 @@ func _initialize() -> void:
 			if int((sim.map_info.get("city", {}) as Dictionary).get("tp", 0)) == 1:
 				builds += 1
 			var gate_tick := -1
+			var breach_tick := -1
 			while sim.tick < sim.time_limit + 10 and sim.winner < 0:
 				sim.step()
 				if gate_tick < 0 and sim.stat_gate_broken > 0:
 					gate_tick = sim.tick
+				if breach_tick < 0 and sim.stat_breaches > 0:
+					breach_tick = sim.tick
 			var dt: float = (sim.decided_tick if sim.decided_tick >= 0 else sim.tick) / 600.0
 			if sim.winner == 0:
 				aw += 1
@@ -86,7 +89,9 @@ func _initialize() -> void:
 					"killed_att": int(res["sides"][0]["killed"]), "killed_def": int(res["sides"][1]["killed"]),
 					"started_att": int(res["sides"][0]["started"]), "started_def": int(res["sides"][1]["started"]),
 					"remaining_att": int(res["sides"][0]["remaining"]), "remaining_def": int(res["sides"][1]["remaining"]),
-					"gate_tick": gate_tick, "gates_broken": sim.stat_gate_broken}))
+					"gate_tick": gate_tick, "gates_broken": sim.stat_gate_broken,
+					"breach_tick": breach_tick, "breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots,
+					"wall_dmg": sim.stat_wall_dmg}))
 		print("TOWNBAL %s %s walls %d: attacker %d / %d (%d %%), draws %d, %.1f min, killed att %.0f def %.0f (plan maps %d)" % [
 			set_name, "old" if old else "plan", walls, aw, seeds, aw * 100 / maxi(seeds, 1), dr, t_sum / maxi(seeds, 1),
 			float(k_att) / maxi(seeds, 1), float(k_def) / maxi(seeds, 1), builds])
