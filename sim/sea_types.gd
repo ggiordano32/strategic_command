@@ -125,7 +125,9 @@ const DECK_TROOPS := {"atk": 26, "def": 24, "shot": 24, "rng": 6, "shots": 2, "r
 ## (attack; defence + armour + shield / 2).
 const DECK_LINE_SHOT := {"musket": [26, 7, 2, 120], "buccaneer": [34, 8, 2, 140], "pistol": [30, 3, 2, 0],
 	"archer": [12, 6, 3, 25], "javelin": [16, 3, 1, 0], "sling": [10, 5, 2, 20],
-	"grenadier": [30, 3, 2, 0], "dragoon": [26, 7, 2, 240]}
+	"grenadier": [30, 3, 2, 0], "dragoon": [26, 7, 2, 240],
+	# (batch 2) the marines' deck volley: a better shot than the line's; the militia's a worse one
+	"marine": [30, 7, 2, 100], "militia": [20, 7, 2, 160]}
 ## Per unit key where the line cannot tell them apart (the boarding grenadiers are of the cutlass men's "heavy"
 ## line): the same four numbers. Two grenades at deck range, no reload.
 const DECK_UNIT_SHOT := {"boarding_grenadiers": [30, 3, 2, 0]}

@@ -2066,7 +2066,7 @@ static func garrison(st: Dictionary, r: int) -> Array:
 
 static func _garrison_type(f: int, kind: String, tier: int) -> String:
 	var lines: Array = {"spear": ["spear", "pike", "heavy", "light"],
-		"missile": ["archer", "javelin", "musket", "buccaneer", "light"], "melee": ["heavy", "light", "spear", "pike"]}[kind]
+		"missile": ["archer", "javelin", "militia", "musket", "buccaneer", "light"], "melee": ["heavy", "light", "spear", "pike"]}[kind]
 	for t in range(tier, 0, -1):
 		for line in lines:
 			var key := CState.roster_type(f, line, t)

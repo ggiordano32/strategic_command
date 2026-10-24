@@ -2240,6 +2240,92 @@ with the Spanish army given mounted arquebusiers and the natives slingers and at
   siege_eq_polis2~sa 83ff7f7b -> 708664df; every coverage line equal). West campaign pins moved on the seeds
   where Miskito raise bowmen at a Range 2 (the unit entries now store `"ak": "poison_arrows"`; docs/STATUS.md).
 
+### The Caribbean roster, batch 2 (as built, 2026-10-24)
+
+Seven rows after the mortar in `UnitTypes.WEST_LATE` (every earlier index unchanged; `pack_test _batch2`), sprite sets
+34-40 of `art_pipeline.md` (the naval gun draws its crew from set 25 and its engine from set 36). Every row has a
+`role`. The poisoned arrows of the same batch are built (above). Derivations, relative to the rows named:
+
+| Row (key) | Line, role | Buildings (`UNIT_NEEDS`) | Who | Men, cost | Melee | Missile |
+|---|---|---|---|---|---|---|
+| Mounted Arquebusiers (`mounted_arquebusiers`) | `dragoon` (tier 1), `horse_skirmish` | Stables 1 + Range 1 | New Spain, Tierra Firme | 40, 11 (440) | cls cav; attack 28, defence 25, armour 5, damage 30, hp 135, morale 680, charge 30, lancers' walk 2.2 / run 8.6; `pistols` 2 | the dragoons' musket exactly (120 m, 120, 20 rounds, reload 24 s) |
+| Marines (`marines`) | `marine`, `line` | Barracks 2 + Shipyard 1 | England, the Dutch | 80, 7 (560) | attack 28, defence 22, damage 32, armour 5, hp 90, morale 740 | the musketeers' musket, 16 rounds |
+| Landed Naval Guns (`naval_gun`) | `naval_gun`, `guns_field` | Workshop 1 + Shipyard 1 | the Brethren, the Dutch | 12 (3 pieces of 4), 50 (600) | crews as the heavy gun's | roundshot: 450 m, damage 400, 8 rounds, reload 48 s, `m_obj` 550, walk 0.3, deploy 20 s, `e_hp` 360 |
+| Colonial Militia (`colonial_militia`) | `militia`, `line` | Barracks 1 | all five nations | 140, 3 (420) | attack 16, defence 14, armour 0, damage 22, hp 75, morale 380 | fowling piece: 100 m, damage 110, 12 rounds, reload 18 s, `m_spread2` 175; `upkeep_pct` 70 |
+| Maroons (`maroon` line: `maroons`) | `maroon`, `skirmish` | Barracks 1 | the Brethren, the Miskito | 60, 5 (300) | attack 38, defence 24, damage 38, armour 0, hp 90, morale 660, `cover`, `woods_pct` 45 | short musket: 84 m, 130, 10 rounds, reload 20 s, the buccaneers' accuracy |
+| Atlatl Dart Throwers (`atlatl`) | `javelin` (tier 1), `skirmish` | Range 1 | Itza | 60, 4 (240) | attack 32, defence 22, damage 30, armour 1, hp 80, morale 600, `cover`, `woods_pct` 60 | dart: 45 m, damage 40, `m_ap` 80, 8 darts, reload 2.4 s |
+| Slingers (`w_slingers`) | `sling` (tier 1), `skirmish` | Barracks 1 | Itza, Miskito | 70, 3 (210) | Rome's slingers' (18 / 16, damage 22, hp 75), `cover`, `woods_pct` 60 | Rome's sling (stone `m_ak` 9, damage 28, 40 stones, reload 3 s) at 80 m, `m_fear` 20 |
+
+**Derivations.**
+- **Mounted arquebusiers.** Melee between dragoons (26 / 24, damage 28, hp 130, morale 660, charge 25) and lancers (36 / 26,
+  34, 140, 740, 75): 28 / 25, 30, 135, 680, charge 30; armour 5 (dragoons 4, lancers 6). Missile: the dragoons' musket
+  and reload unchanged (the plan: musket range, the dragoons' reload); the `pistols` 2 key is what gives the
+  pistol brace (`AB_PISTOL`) and, with `horse_skirmish` and a firearm in the cavalry class, the caracole (`AB_CARACOLE`),
+  exactly as the dragoons are tagged. Cost 11 a man, a tenth above the dragoons' 10 (440 a unit against 400).
+- **Marines.** Melee the musketeers' (22 / 18, damage 26) plus a quarter: 28 / 22, damage 32; armour 5 (musketeers 4); hp
+  90 (85); morale 740, a step above the musketeers' 640 and a little under the cutlass men's 700-plus rows (the boarding
+  grenadiers 700; the step is 100). The musket is the musketeers' (range, damage, reload 12 s, accuracy), rounds 16 (20).
+  Cost 7 a man in a unit of 80 = 560, between the musketeers (6 a man, 600 a unit) and the grenadiers (8 a man, 480 a
+  unit) on both measures. The deck bonus of `DECK_CREWS`: a marine kit in `ST.DECK_LINE_SHOT` (`marine`: 30 % hits, 7
+  cells, 2 volleys, reload 100 ticks, against the musket line's 26 / 7 / 2 / 120); the militia's (`militia`: 20 / 7 / 2 /
+  160) is worse. (The Brethren's / nations' `DECK_CREWS` sailors' kits are unchanged: the bonus belongs to the troops'
+  per-line volley, as batch 1's grenadier and dragoon lines.)
+- **Landed naval guns.** The heavy gun's shot (420, `m_ap` 100) a little under, 400, so the destruction AI counts it a wall
+  breaker: the AI's `BATTER_HEAVY` is a wall damage of 400 (`80 % x m_obj`), so `m_obj` 550 gives 440 (the heavy gun's 700
+  gives 560, culverins 450 gives 360). Range the culverins' 450 m (heavy guns 520); reload 48 s (culverins 40, heavy 52);
+  walk 0.3 m/s, half the culverins' 0.6 (heavy 0.4); crew 4, `crew_min` 2 as the heavy gun; 8 rounds (10) for what the
+  boats carried; deploy 20 s (culverins 18, heavy 24); `e_hp` 360 (320 / 400). Cost 50 a crew man = 600 a unit (heavy
+  720, culverins 480). `ART_LEVEL["naval_gun"]` = 1 (the unit book's "Workshop 1").
+- **Colonial militia.** Size 140, the largest West foot unit (pikemen 120). Melee a step and more below the
+  musketeers: 16 / 14 (22 / 18), damage 22, armour 0, hp 75, morale 380 (640). A poor musket: range 100 m (120), damage
+  110, 12 rounds (20), reload 18 s (12 s, "slow"), `m_spread2` 175 (135, "poor accuracy"). Cost 3 a man = 420 a unit
+  (musketeers 600). Upkeep half the musketeers': the campaign upkeep is `price x 15 % x upkeep_pct`, so 420 x 15 % = 63
+  x 70 % = 44 a turn against the musketeers' 90 (49 %).
+- **Maroons.** The skirmisher with the best blade: 38 / 24, damage 38 (cutlass men 40 / 26, buccaneers 28 / 22), hp 90,
+  armour 0, `cover` 1 (ambush and the cover bonus to morale; row morale 660 to sit under the coureurs' 680). Woods pace
+  45, the coureurs' (`pack_test` now asserts both are 15 points better than any other row). Musket the buccaneers'
+  accuracy (`m_spread2` 100, damage 130) at 84 m (60 % of 140), 10 rounds, reload 20 s. Cost 5 a man (the cutlass men's).
+- **Atlatl.** Melee the native warriors' (38 / 24, damage 36, hp 85, morale 620) a step down: 32 / 22, damage 30, hp 80,
+  600, armour 1. The dart is the Rome javelin's row (40 m, damage 42, `m_ap` 60, 6 a man, `m_spen` 15, reload 2.8 s)
+  with range 45 m, damage 40, `m_ap` 80 ("ignores light armour": the armour-piercing percentage, as the javelin's is 60),
+  8 darts, reload 2.4 s. Cost 4 a man = 240 (the warriors').
+- **Slingers.** Rome's slinger row (`slinger`: 18 / 16, armour 2, damage 22, hp 75, morale 560, 40 stones, reload 3 s,
+  accuracy 50 / 1024, stone ammunition 9, `m_arc` 1, skirm, cover) with the plan's West range of 80 m (Rome 150 m),
+  `m_fear` 20 for the stone's morale bite, woods pace 60 (the natives') and a cost of 3 a man in a unit of 70 = 210
+  (Rome's 4 a man, 80 = 320): the cheapest West row (canoe raiders and the atlatl 240).
+
+**Lines, slots and chains (where the plan was silent).**
+- **Four new lines**, `marine`, `naval_gun`, `militia`, `maroon` (so each is its own mix key; none could share a place in
+  a main line without hiding batch 1's specialists, because `_mix_type` falls to the line's main unit and a second
+  specialist in the same line would hide the first); `CData.LINE_CHAIN` Barracks, Workshop, Barracks, Barracks;
+  `LINE_ORDER` after the musketeers (marine, militia), the buccaneers (maroon) and the field guns (naval_gun);
+  `ART_LEVEL` naval_gun 1; the unit book's building table and the custom picker's `WEST_LINES` likewise (the picker also
+  gains `javelin` and `sling`, which now hold West rows). The mounted arquebusiers take the dragoon line, the atlatl the
+  javelin line and the slingers the sling line (Rome's, a Range line: their Barracks 1 comes from `UNIT_NEEDS`).
+- **Port.** There is no "Port" building: the pack's Shipyard (`CData.SHIPYARD`, built at harbour regions only, level 1
+  = the smaller hulls) is the port requirement. A marine or a naval gun can only be raised in a harbour with a Shipyard.
+  The AI's build-up (`AI_BUILDUP_LINES`) raises only the line's first requirement (Barracks 2 / Workshop 1); the Shipyard
+  comes from the fleet AI's own yard-building (`cai_fleet`), which builds one at its best port. If the military centre
+  is inland, the AI's marines wait.
+- **Rosters.** New Spain and Tierra Firme: `dragoon` ["mounted_arquebusiers"], `militia`; England: `marine`, `militia`;
+  France: `militia`; the Dutch: `marine`, `naval_gun`, `militia`; the Brethren: `naval_gun`, `maroon`; the Itza: `javelin`
+  ["atlatl"], `sling`; the Miskito: `maroon`, `sling`.
+- **AI mixes** (sums as before; the share comes from the nearest line): New Spain cav 12 -> 9 + dragoon 3; Tierra Firme cav
+  25 -> 21 + dragoon 4; England musket 37 -> 34 + marine 3; the Dutch musket 40 -> 35 + marine 5 and field_gun 7 -> 5 +
+  naval_gun 2; the Brethren buccaneer 35 -> 31 + maroon 4, light_gun 5 -> 2 + naval_gun 3; the Itza light 52 -> 45 +
+  sling 7, archer 35 -> 27 + javelin 8; the Miskito light 50 -> 44 + sling 6, musket 15 -> 10 + maroon 5. The plan named no
+  shares; these are small, from the nearest line. `AI_SPECIALISTS` += maroons, atlatl, w_slingers, mounted_arquebusiers
+  (no effect for now: none shares a line with a main unit, so `_mix_type` returns each at once and the mix share is the
+  limit); `AI_BUILDUP_LINES` += marine, naval_gun.
+- **Colonial militia in the garrison only.** The AI's recruiting works through the mix and the militia are in no mix, so
+  the field armies never raise them; the campaign garrison (`CRules.garrison`) is a rule of its own, and its
+  `missile` place now tries the `militia` line before `musket` (`_garrison_type`: at a tier-1 garrison, an unwalled
+  village or town; cities and walls 2+ keep the veterans). Rome has no `militia` line, so its garrisons are unchanged.
+  The player may recruit them (Barracks 1).
+- **Chains' texts**: the West Barracks, Range, Stables and Workshop descriptions name the new units.
+- **Tests.** `pack_test _batch2` (rosters, exact buildings, indices, sets, the gun's wall damage, costs, ability bits,
+  garrison, picker, mixes), `roles_test` (the seven roles).
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus

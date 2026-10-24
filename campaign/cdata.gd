@@ -110,9 +110,9 @@ const INDEPENDENT_COLOR := "8c8c84"
 ## Display order of lines in recruitment lists.
 ## (The West pack's lines: musket after the pikes, buccaneer after the
 ## javelins, pistol after the cavalry, its guns before the bolt throwers.)
-const LINE_ORDER: Array[String] = ["heavy", "grenadier", "light", "spear", "pike", "musket", "archer", "belly_bow", "sling", "javelin",
-	"buccaneer", "dogs", "cav", "pistol", "dragoon", "cav_missile", "camel", "camel_archer", "elephant", "general", "light_art",
-	"light_gun", "field_gun", "mortar", "bolt", "stone", "siege"]
+const LINE_ORDER: Array[String] = ["heavy", "grenadier", "light", "spear", "pike", "musket", "marine", "militia", "archer", "belly_bow", "sling", "javelin",
+	"buccaneer", "maroon", "dogs", "cav", "pistol", "dragoon", "cav_missile", "camel", "camel_archer", "elephant", "general", "light_art",
+	"light_gun", "field_gun", "naval_gun", "mortar", "bolt", "stone", "siege"]
 
 ## Buildings: key, name, max level, cost and build turns per level, and what
 ## each level does (text for the panel; the numbers are in the rules).
@@ -158,7 +158,8 @@ const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "p
 	"camel": STABLES, "camel_archer": STABLES, "elephant": STABLES, "cav_missile": STABLES, "sling": RANGE,
 	"general": BARRACKS, "dogs": BARRACKS, "light_art": WORKSHOP, "belly_bow": RANGE,
 	"musket": RANGE, "buccaneer": RANGE, "pistol": STABLES, "light_gun": WORKSHOP, "field_gun": WORKSHOP,
-	"grenadier": BARRACKS, "dragoon": STABLES, "mortar": WORKSHOP}
+	"grenadier": BARRACKS, "dragoon": STABLES, "mortar": WORKSHOP,
+	"marine": BARRACKS, "naval_gun": WORKSHOP, "militia": BARRACKS, "maroon": BARRACKS}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
@@ -182,9 +183,16 @@ const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLE
 	# Caribbean batch 1 (2026-10-23): the grenadiers a Barracks 3; dragoons horse and a musket (Stables 2, Range 1);
 	# the canoe raiders a Barracks 1 though they sit in the light line's second place (the Miskito's warriors keep
 	# the first); coureurs, boarding grenadiers and holcan need their line's tier-2 building by default.
-	"grenadiers": [[BARRACKS, 3]], "dragoons": [[STABLES, 2], [RANGE, 1]], "canoe_raiders": [[BARRACKS, 1]]}
+	"grenadiers": [[BARRACKS, 3]], "dragoons": [[STABLES, 2], [RANGE, 1]], "canoe_raiders": [[BARRACKS, 1]],
+	# Caribbean batch 2 (2026-10-24): the mounted arquebusiers horse and a musket (Stables 1, Range 1); the marines a
+	# Barracks 2 and a port (Shipyard 1: the Shipyard is built at harbours only); the landed naval guns a Workshop 1
+	# and a port; militia, maroons and the natives' slingers a Barracks 1 (the slingers sit in the sling line, a Range
+	# line); the atlatl a Range 1 (their line's own).
+	"mounted_arquebusiers": [[STABLES, 1], [RANGE, 1]], "marines": [[BARRACKS, 2], [SHIPYARD, 1]],
+	"naval_gun": [[WORKSHOP, 1], [SHIPYARD, 1]], "colonial_militia": [[BARRACKS, 1]], "maroons": [[BARRACKS, 1]],
+	"atlatl": [[RANGE, 1]], "w_slingers": [[BARRACKS, 1]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
-const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2, "mortar": 3}
+const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2, "mortar": 3, "naval_gun": 1}
 ## Buildings standing at the start: capitals and the other regions per level.
 const START_CAPITAL_CITY := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1], [MARKET, 1]]
 const START_CAPITAL_TOWN := [[FARM, 1], [BARRACKS, 1], [RANGE, 1], [STABLES, 1]]

@@ -1963,6 +1963,223 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 50,
 		"m_hgain": 150, "m_ak": 12,
 	},
+	# ---- The Caribbean roster, batch 2 (owner 2026-10-24; docs/design/battle_sim.md "The Caribbean roster, batch 2"):
+	# seven rows after the mortar, so every earlier index is unchanged. Sprite sets 34-40 (engine set 36 for the naval
+	# gun). Four new lines (marine, naval_gun, militia, maroon); the rest sit in existing lines (dragoon, javelin, sling).
+	{
+		"key": "mounted_arquebusiers", "role": "horse_skirmish", "line": "dragoon", "pack": "west", "tier": 1, "name": "Mounted Arquebusiers", "short": "Arquebus",
+		"icon": 28, "sprite": 5, "sprite_set": 34,
+		"size": 40, "files0": 10,
+		"what": "Spanish horse shot",
+		"desc": "Spain's answer to the open field: gentlemen-troopers in morion and buff coat with an arquebus across the saddle and a brace of pistols. They ride to a flank, loose a volley, wheel out of reach and come again, and shoot a party in the open out of the cover it was counting on; at close quarters the pistols and a sword, better than a dragoon's, worse than a lancer's.",
+		"good_vs": "Native parties and skirmishers caught in the open, gun crews and batteries, a flank no foot can cover, routers.",
+		"weak_vs": "Lancers and cavalry that close, volleys from a steady line, anything in the trees where a horse cannot go.",
+		"cls": CLS_CAV, "mount": MOUNT_HORSE,
+		"attack": 28, "defence": 25,  # dragoons 26 / 24, lancers 36 / 26
+		"armour": 5, "shield": 0, "mshield": 0,  # a buff coat and a morion (dragoons 4, lancers 6)
+		"damage": 30, "reach": 1331, "mass": 370,
+		"walk": 220, "run": 860,  # lancers'
+		"hp": 135, "cooldown": 10,
+		"morale": 680,      # dragoons 660, lancers 740
+		"file_sp": 2048, "rank_sp": 3072,
+		"charge": 30,       # dragoons 25, pistoleers 55
+		"turn": 18,
+		"m_vuln": 120, "m_down": 9,
+		"m_gun": 1,
+		"m_range": 120 * 1024,  # the dragoons' musket
+		"m_damage": 120, "m_ap": 85, "m_spen": 60,
+		"m_ammo": 20,
+		"m_reload": 240,    # the dragoons': twice the musketeers'
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 135,
+		"m_speed": 20480, "m_arc": 0, "m_apex": 3,
+		"m_fear": 60,
+		"m_hgain": 50,
+		"cost": 11,         # 440 a unit: dragoons 10 + a tenth
+		"climb": 24,
+		"pistols": 2,       # the dragoons' brace (AB_PISTOL); the caracole follows from role + firearm (AB_CARACOLE)
+	},
+	{
+		"key": "marines", "role": "line", "line": "marine", "pack": "west", "tier": 1, "name": "Marines", "short": "Marines",
+		"icon": 23, "sprite": 3, "sprite_set": 35,
+		"size": 80, "files0": 20,
+		"what": "Naval infantry",
+		"desc": "Sea soldiers in short coats and tarred hats, disciplined shot who learned their trade on a deck: a musketeer's volley, a firmer stand and a cutlass that does more than a musket butt. A landing party that holds a beach or a quay, and the nations' answer to pirate boarders; fewer rounds in the pouch than a line regiment.",
+		"good_vs": "Boarders and shock foot that reach them, a beach or a quay to hold, anything standing in musket range.",
+		"weak_vs": "Cavalry and swordsmen that outflank them, cannon, a long fight (sixteen rounds).",
+		"cls": CLS_MISSILE,
+		"attack": 28, "defence": 22,  # musketeers 22 / 18, plus a quarter
+		"armour": 5, "shield": 0, "mshield": 0,
+		"damage": 32, "reach": 1126, "mass": 72,  # musketeers 26
+		"walk": 140, "run": 390,
+		"hp": 90, "cooldown": 10,
+		"morale": 740,      # musketeers 640: a step above
+		"file_sp": 1126, "rank_sp": 1434,
+		"m_gun": 1,
+		"m_range": 120 * 1024,
+		"m_damage": 120, "m_ap": 85, "m_spen": 60,
+		"m_ammo": 16,       # musketeers 20
+		"m_reload": 120,    # the musketeers'
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 135,
+		"m_speed": 20480, "m_arc": 0, "m_apex": 3,
+		"m_fear": 60,
+		"m_hgain": 50,
+		"cost": 7,          # 560 a unit: between the musketeers (6 a man, 600) and the grenadiers (8, 480)
+		"climb": 14,
+	},
+	{
+		"key": "naval_gun", "role": "guns_field", "line": "naval_gun", "pack": "west", "tier": 1, "name": "Landed Naval Guns", "short": "Ship's Guns",
+		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 36,
+		"size": 12, "files0": 3,
+		"what": "Landed ship's guns",
+		"desc": "Three demi-cannon unshipped from their decks and lashed on sledges, four seamen to each. A roundshot as heavy as the 24-pounders' carries as far as a culverin's, and splinters a gate or a wall in a few hits; but the sledges are hauled by hand at half the culverins' pace and the sailors reload slowly. The pirates' siege answer, and the Dutch company's.",
+		"good_vs": "Gates, walls and bastions in reach of the shore, packed blocks and batteries standing still.",
+		"weak_vs": "Cavalry and foot that reach it, anything that moves, being counter-battered.",
+		"cls": CLS_ART,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1024, "mass": 70,
+		"walk": 30,         # half the culverins' 60
+		"run": 400,
+		"hp": 75, "cooldown": 12, "morale": 450,
+		"file_sp": 9 * 1024, "rank_sp": 1229,
+		"turn": 2,
+		"crew": 4, "crew_min": 2,
+		"m_gun": 1,
+		"m_kind": 1,
+		"m_range": 450 * 1024,  # the culverins'
+		"m_min": 15 * 1024,
+		"m_damage": 400,    # the heavy guns' 420, a little under
+		"m_ap": 100,
+		"m_ammo": 8, "m_reserve": 8, "m_refill": 80,  # what the boats carried
+		"m_reload": 480,    # 48 s: culverins 40, heavy guns 52
+		"m_spread": 12, "m_spread0": 500,
+		"m_speed": 30720,
+		"m_arc": 0, "m_apex": 2,
+		"m_pierce": 9,
+		"m_plough": 55 * 1024,
+		"m_fear": 85,
+		"m_obj": 550,       # 440 a hit: past the destruction AI's wall-breaker line of 400 (heavy guns 700)
+		"arc": 57, "traverse": 2,
+		"deploy": 200,      # 20 s to plant (culverins 18, heavy guns 24)
+		"e_hp": 360,
+		"cost": 50,         # 600 a unit: heavy guns 720, culverins 480
+		"climb": 50,
+		"m_hgain": 80,
+	},
+	{
+		"key": "colonial_militia", "role": "line", "line": "militia", "pack": "west", "tier": 1, "name": "Colonial Militia", "short": "Militia",
+		"icon": 23, "sprite": 3, "sprite_set": 37,
+		"size": 140, "files0": 28,
+		"what": "Town militia",
+		"desc": "Planters, clerks and shopkeepers with an old fowling piece apiece, called out when the alarm bell rings. A great many men for the price, who load slowly and shoot wide: they hold a wall and a gate well enough, but in the open they fire one volley and run.",
+		"good_vs": "A wall or a gate to hold, raiders landing in numbers, anything that does not close at once.",
+		"weak_vs": "Swordsmen, cavalry and any volley returned: they have no armour and little nerve.",
+		"cls": CLS_MISSILE,
+		"attack": 16, "defence": 14,  # musketeers 22 / 18
+		"armour": 0, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1126, "mass": 68,
+		"walk": 140, "run": 380,
+		"hp": 75, "cooldown": 12,
+		"morale": 380,      # musketeers 640
+		"file_sp": 1126, "rank_sp": 1434,
+		"m_gun": 1,
+		"m_range": 100 * 1024,  # fowling pieces: musketeers 120
+		"m_damage": 110, "m_ap": 85, "m_spen": 60,
+		"m_ammo": 12,
+		"m_reload": 180,    # 18 s: musketeers 12
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 175,  # musketeers 135
+		"m_speed": 20480, "m_arc": 0, "m_apex": 3,
+		"m_fear": 50,
+		"m_hgain": 50,
+		"cost": 3,          # 420 a unit: musketeers 600
+		"upkeep_pct": 70,   # 294 a turn at the rate: 49 % of the musketeers' 600 x 100 %
+		"climb": 14,
+	},
+	{
+		"key": "maroons", "role": "skirmish", "line": "maroon", "pack": "west", "tier": 1, "name": "Maroons", "short": "Maroons",
+		"icon": 26, "sprite": 4, "sprite_set": 38,
+		"size": 60, "files0": 15,
+		"what": "Free-community woodsmen",
+		"desc": "Men and women of the escaped communities of the hills, with machetes and a few good muskets. They know every trail, move through scrub and forest nearly as if it were open ground, lie in ambush and come out of the trees with the machete: the best fighters of any skirmishers, and useless in a line in the open.",
+		"good_vs": "Columns and flanks reached through the woods, gun crews and officers, any skirmisher.",
+		"weak_vs": "Cavalry in the open, a long fight at range (ten rounds, a short musket), volleys from a steady line.",
+		"cls": CLS_MISSILE,
+		"attack": 38, "defence": 24,  # cutlass men 40 / 26, buccaneers 28 / 22
+		"armour": 0, "shield": 0, "mshield": 0,
+		"damage": 38, "reach": 1126, "mass": 68,
+		"walk": 160, "run": 440,
+		"hp": 90, "cooldown": 9,
+		"morale": 660,      # the cover trait's bonus lifts it in woods
+		"file_sp": 1843, "rank_sp": 2048,
+		"skirm": 1,
+		"cover": 1,
+		"woods_pct": 45,    # the coureurs' woods pace
+		"m_gun": 1,
+		"m_range": 84 * 1024,  # 60 % of the buccaneers' 140 m
+		"m_damage": 130,
+		"m_ap": 85, "m_spen": 60,
+		"m_ammo": 10,
+		"m_reload": 200,
+		"m_spread": 10, "m_spread0": 512, "m_spread2": 100,  # the buccaneers' accuracy
+		"m_speed": 20480,
+		"m_arc": 0, "m_apex": 3,
+		"m_fear": 30,
+		"m_hgain": 60,
+		"cost": 5,          # 300 a unit: cutlass men's price a man
+		"climb": 13,
+	},
+	{
+		"key": "atlatl", "role": "skirmish", "line": "javelin", "pack": "west", "tier": 1, "name": "Atlatl Dart Throwers", "short": "Atlatl",
+		"icon": 32, "sprite": 4, "sprite_set": 39,
+		"size": 60, "files0": 15,
+		"what": "Dart throwers",
+		"desc": "Itza hunters who hurl feathered darts from a notched throwing-board. A dart carries further than a javelin, comes faster and slips through quilted cloth and light armour; eight to a man and thrown quickly. They shoot from the tree line at a column's flank and fall back into the trees.",
+		"good_vs": "Lightly armoured men, gun crews and flanks of a column, anything that cannot follow into the trees.",
+		"weak_vs": "Volleys in the open, cavalry, a sustained melee.",
+		"cls": CLS_MISSILE,
+		"attack": 32, "defence": 22,  # native warriors 38 / 24: a step down
+		"armour": 1, "shield": 5, "mshield": 10,
+		"damage": 30, "reach": 1126, "mass": 62,  # warriors 36
+		"walk": 175, "run": 470,
+		"hp": 80, "cooldown": 9,
+		"morale": 600,      # warriors 620
+		"file_sp": 1843, "rank_sp": 2048,
+		"cover": 1,
+		"woods_pct": 60,
+		"m_range": 45 * 1024,  # javelins 40 m
+		"m_damage": 40, "m_ap": 80, "m_ammo": 8, "m_spen": 20, "m_reload": 24,  # javelin: 42, ap 60, 6, 15, 28
+		"m_spread": 40, "m_spread0": 717, "m_speed": 2560, "m_arc": 0, "m_apex": 10, "m_hgain": 100, "m_ak": 1,
+		"cost": 4,          # 240 a unit: the native warriors' price a man
+		"climb": 11,
+	},
+	{
+		"key": "w_slingers", "role": "skirmish", "line": "sling", "pack": "west", "tier": 1, "name": "Slingers", "short": "Slingers",
+		"icon": 14, "sprite": 3, "sprite_set": 40,
+		"size": 70, "files0": 14,
+		"what": "Missile infantry",
+		"desc": "Native youths with plaited slings and a bag of river stones. A stone hurts the unarmoured and the stinging volley makes a Spanish column halt and deploy; they are gone into the trees before it has finished. Weak in melee, and the cheapest men in the Indies.",
+		"good_vs": "Unarmoured men, columns on the march, skirmishers and gun crews.",
+		"weak_vs": "Armoured and big-shielded foot, cavalry, any melee unit that closes.",
+		"cls": CLS_MISSILE,
+		"attack": 18, "defence": 16,
+		"armour": 2, "shield": 0, "mshield": 0,
+		"damage": 22, "reach": 1024, "mass": 65,
+		"walk": 160, "run": 430,
+		"hp": 75, "cooldown": 11,
+		"morale": 560,
+		"file_sp": 1638, "rank_sp": 1843,
+		"m_range": 80 * 1024,  # Rome's slingers 150 m: a column must close to musket range to answer
+		"m_damage": 28, "m_ap": 0,
+		"m_ammo": 40, "m_reload": 30,
+		"m_spread": 50, "m_spread0": 1024,
+		"m_speed": 4096, "m_arc": 1,
+		"skirm": 1,
+		"cover": 1,
+		"woods_pct": 60,
+		"m_fear": 20,       # a stone's morale bite
+		"m_hgain": 150, "m_ak": 9,
+		"cost": 3,          # 210 a unit: the cheapest West row (Rome's slingers 4 a man, 320)
+		"climb": 13,
+	},
 ]
 
 

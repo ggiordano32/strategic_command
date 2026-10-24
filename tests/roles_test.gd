@@ -47,6 +47,10 @@ func _init() -> void:
 	_check(UT.role(UT.index_of("war_dogs")) == "shock" and UT.role(UT.index_of("camel")) == "beast"
 		and UT.role(UT.index_of("camel_archer")) == "horse_skirmish" and UT.role(UT.index_of("fort_gun")) == "guns_field"
 		and UT.role(UT.index_of("mortar")) == "guns_siege" and UT.role(UT.index_of("bodyguard")) == "horse_shock", "judgement calls")
+	_check(UT.role(UT.index_of("mounted_arquebusiers")) == "horse_skirmish" and UT.role(UT.index_of("marines")) == "line"
+		and UT.role(UT.index_of("naval_gun")) == "guns_field" and UT.role(UT.index_of("colonial_militia")) == "line"
+		and UT.role(UT.index_of("maroons")) == "skirmish" and UT.role(UT.index_of("atlatl")) == "skirmish"
+		and UT.role(UT.index_of("w_slingers")) == "skirmish", "batch 2 roles")
 	_check(UT.filter_group(UT.index_of("general")) == "horse" and UT.filter_group(UT.index_of("hero_foot")) == "line"
 		and UT.filter_group(UT.index_of("elephant")) == "horse" and UT.filter_group(UT.index_of("archer")) == "skirmish", "filter groups")
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
