@@ -2586,3 +2586,30 @@ battered: the plan towns have no outer wall and the fort was left be). Tuned: `S
 breach beat the stack waiting at the shut gate: 88 / 65 / 47; 3 / 4 / 5 plugs at 8 seeds 92 / 44 / 38, 81 / 52 / 23,
 60 / 29 / 19); `S_BATTER_T` 2,400 tried and reverted (it cut walls 3 more than walls 2). Open: walls 3 not up, walls 1
 up 16, large per-town swings (Arverni down), the West fort stormed with guns, a shock role for the breach party.
+
+## 36. Roles, step 2: the AI and the role behaviours (2026-10-23)
+
+The battle AI's part of docs/design/battle_sim.md "Roles, step 2 (as built)" (the rules in full there). Most of the
+behaviours are the sim's own triggers on Auto (every unit's default), so the AI gets them by giving the orders it
+gave before; two knobs decide where a level keeps the old play. No new AI memory.
+
+- **Skirmishers** seek cover and skirmish: the sim's drift draws a standing skirmish unit's men in the Cover stance
+  into the woods within 8 m (`R_SK_DRIFT`; the existing `_cover_spot` and skirmish fall-back are unchanged).
+- **Horse_skirmish caracoles**: the AI's attack orders by pistoleers, cuirassiers and dragoons are caracoles (close,
+  fire, ride back, reload, again); a target that breaks or is locked in a melee with ours is charged by the sim's
+  rule, so the AI's flank attacks on engaged units still go home. Easy (`R_CARACOLE` 0) sends `"charge": 1` on every
+  attack by them (the old charge). Re-ordering the same target each second does not reset a pass.
+- **Grenades Auto**: thrown at blocks, held buildings and a shut gate in reach (the sim's trigger); no knob.
+- **Pistols**: always Auto (the rotation is the sim's).
+- **Batter** as already built (section 35, `S_BATTER`); the player's batter order reuses its stretch choice.
+
+| Knob (`ai_profile.gd`, ids 283-284) | Easy | Average | Skilled |
+|---|---|---|---|
+| `R_CARACOLE` | 0 | 1 | 1 |
+| `R_SK_DRIFT` | 0 | 1 | 1 |
+
+Measured with the sim rules (16 seeds, attacker wins %): rome_walls 74 / 44 / 20 -> 74 / 41 / 19, west_named walls
+0 / 1 / 2 49 / 36 / 14 -> 54 / 33 / 12 (none beyond its interval); the asymmetry probe (Spanish wins of 16) woods 0 -> 0,
+field 14 -> 11. Open: the AI's skirmishers rarely stand still long enough to drift in a field battle (`stat_skd_men` 0
+in the probe); the AI never uses Hold or Use now (the grenades' Use now at a gate, the batter at buildings) nor
+the caracole's charge flag above Easy.

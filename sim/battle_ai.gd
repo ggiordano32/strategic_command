@@ -3344,7 +3344,11 @@ static func _order(sim, u: int, o: Dictionary, k: int) -> void:
 
 static func _attack(sim, u: int, t: int, run: int) -> void:
 	# ("ground": attackers are not sent up a town's inner stairs by the AI.)
-	_order(sim, u, {"type": ORDER_ATTACK, "target": t, "run": run, "ground": 1}, 0)
+	var o := {"type": ORDER_ATTACK, "target": t, "run": run, "ground": 1}
+	if sim.car_on != 0 and (sim.t_abil[sim.u_type[u]] & (1 << UT.AB_CARACOLE)) != 0 \
+			and AP.of(sim, sim.u_side[u])[AP.R_CARACOLE] == 0:
+		o["charge"] = 1  # (roles step 2: Easy charges home with its caracole riders, as before)
+	_order(sim, u, o, 0)
 
 
 ## Move, skipped when the unit is already headed there.

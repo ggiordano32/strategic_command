@@ -355,7 +355,10 @@ const S_BREACH_UNITS := 279    # the foot units nearest a breach (outside the wa
 const S_WALL_LEAVE_PCT := 280  # defenders leave a stretch battered (hit in the last 10 s) below this % of its hit points (0 never)
 const S_RUIN_LEAVE_PCT := 281  # ... and a building held below this % of its hit points, for the nearest cover (0 never)
 const S_PLUG := 282            # this many reserve foot units (or the stack's, at a gate still shut) hold each breach's inside edge (0 never)
-const N_KNOBS := 283
+# Roles step 2 (docs/AI.md 36, 2026-10-23): the AI's use of the role behaviours.
+const R_CARACOLE := 283        # 1: the side's caracole riders (pistoleers, cuirassiers, dragoons) caracole on its attack orders; 0: they charge home ("charge" 1)
+const R_SK_DRIFT := 284        # 1: the side's skirmishers standing in the Cover stance drift into the trees (BattleSim _skd_ok); 0 never
+const N_KNOBS := 285
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -618,6 +621,9 @@ const KNOBS: Array = [
 	[S_WALL_LEAVE_PCT, 0, 33, 33],
 	[S_RUIN_LEAVE_PCT, 0, 33, 33],
 	[S_PLUG, 0, 4, 4],
+	# Roles step 2 (docs/AI.md 36).
+	[R_CARACOLE, 0, 1, 1],
+	[R_SK_DRIFT, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

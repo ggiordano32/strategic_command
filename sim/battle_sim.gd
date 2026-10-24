@@ -84,7 +84,8 @@ const ORDER_STANCE := 24        # unit, stance (STANCE_LINE / STANCE_COVER / STA
 const ORDER_OCCUPY := 25        # unit, building (a West town's house, tavern, store...: its men go in to the windows, the roof and the door)
 const ORDER_PURSUE := 26        # side (a human side, after the decision: the pursuit runs on to END_PURSUIT_MAX)
 const ORDER_END := 27           # side (a human side, after the decision: the battle ends at once)
-const ORDER_LAST := 27
+const ORDER_ABILITY := 28       # unit, ability (UT.AB_*), state (UT.AB_AUTO / AB_HOLD / AB_NOW), target (Use now; roles step 2)
+const ORDER_LAST := 28
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -178,6 +179,25 @@ const HIT_R_INF := 600           # landing within 0.6 m of a soldier hits him
 const HIT_R_CAV := 1100
 const MISSILE_HIT := 85          # % of landings on a soldier that strike
 const FIRE_THINK := 5            # ticks between fire-target choices
+# Roles step 2 (docs/design/battle_sim.md "Roles, step 2 (as built)").
+const PIS_HIT := 70              # pistols at contact: a point-blank shot hits this % (no to-hit roll, no shield)
+const PIS_DMG := 90              # ... for this damage (the pistoleers' ball; armour counts half)
+const PIS_MOR := 4               # ... and its bang costs the struck man's unit this much morale, hit or miss
+const PIS_RELOAD := 300          # a man with his brace spent, stepped back a rank, reloads it in 30 s
+const PIS_THINK := 10            # the reload rotation looks every this many ticks (staggered by unit index)
+const GREN_BLOCK := 30           # grenades on Auto: a "formed block" is a ready unit of this many men or more (or one holding a building)
+const CAR_STOP_PCT := 75         # caracole: the riders close to this % of their range from the target ...
+const CAR_BACK := 40 * M         # ... and after the volley ride back to this far from it
+const CAR_RETIRE_T := 200        # ... for at most this long
+const CAR_RELOAD := 300          # riders with pistols (range <= CAR_PISTOL_R) reload their brace this long before the next pass
+const CAR_PISTOL_R := 30 * M
+const CAR_WAIT_MIN := 30         # every rider waits at least this long back from a pass
+const SKD_R := 8 * M             # skirmishers standing in the Cover stance: each man takes a woods cell this near his place
+const BLD_TGT := -100000         # u_gtarget at or below this: a building (BLD_TGT - b; the batter order)
+const R_LINE := 0                # t_role: indices of UT.ROLE_ORDER
+const R_SKIRMISH := 1
+const R_HORSE_SKIRMISH := 5
+const R_GUNS_SIEGE := 7
 const SKIRM_INF := 30 * M        # skirmishers fall back from infantry this close
 const SKIRM_CAV := 55 * M
 const SKIRM_BACK := 35 * M
@@ -1403,6 +1423,9 @@ var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on
 var vis_on: int = 0                   # some sight blockers on the map, scenario "los" not 0 (static)
 var cov_on: int = 0                   # ... and a unit with the cover trait (static)
 var t_cover := PackedInt32Array()
+var t_pis := PackedInt32Array()       # roles step 2: pistols a man carries (row "pistols")
+var t_abil := PackedInt32Array()      # ... the abilities (UT.abilities: a bit per UT.AB_*)
+var t_role := PackedInt32Array()      # ... the role (its index in UT.ROLE_ORDER)
 var vs_tw := PackedByteArray()        # 4 m cells (the veg grid): tree weight along a sight line (static)
 var vs_top := PackedInt32Array()      # ... how far a sight blocker rises above the ground (buildings; negative: rocks, cliffs; static)
 var vs_sat := PackedInt32Array()      # ... summed-area table of the cells with either ((veg_w + 1) x (veg_h + 1); static)
@@ -1454,6 +1477,36 @@ var stat_street_hold: int = 0         # rear-rank searches skipped in a lane (me
 var stat_flat_traced: int = 0         # flat missiles traced to the man they strike
 var stat_flat_block: int = 0          # ... stopped by a wall, house, gate, rock or cliff on the way
 var stat_cs_men: int = 0              # men given a cover spot (layouts summed)
+# Roles step 2 (docs/design/battle_sim.md "Roles, step 2 (as built)"): the
+# ability table, pistols at contact, the caracole, the skirmishers' drift.
+var ab_on: int = 0                    # an ability order was applied: u_abs, u_abt hashed from then on
+var u_abs := PackedInt32Array()       # per unit: 2 bits per ability (UT.AB_*): UT.AB_AUTO 0 (default), AB_HOLD 1, AB_NOW 2
+var u_abt := PackedInt32Array()       # ... the Use now target (-1 none)
+var pis_on: int = 0                   # a unit with pistols in the battle: s_pis, s_prl, u_pptr hashed (static)
+var s_pis := PackedInt32Array()       # per man: pistols loaded
+var s_prl := PackedInt32Array()       # per man: reloading his brace until this tick (0: not)
+var u_pptr := PackedInt32Array()      # per unit: the reload rotation's pointer into its rear ranks
+var car_on: int = 0                   # a caracole unit in the battle: u_car, u_crt, u_crk, u_crv hashed (static)
+var u_car := PackedInt32Array()       # caracole: 0 none, 1 closing to fire, 2 riding back, 3 back, reloading
+var u_crt := PackedInt32Array()       # ... its target
+var u_crk := PackedInt32Array()       # ... the tick its phase began
+var u_crv := PackedInt32Array()       # ... the tick of its last volley
+var skd_on: int = 0                   # skirmishers' drift: woods on the map and a skirmish unit (static); u_skc hashed
+var u_skc := PackedInt32Array()       # 1: its places are drawn into the trees (laid out again when it changes)
+var _ob_ax := PackedInt32Array()      # buildings' aim points (from the static cells, built on first use)
+var _ob_ay := PackedInt32Array()
+var stat_ab_orders: int = 0           # ability orders applied
+var stat_pis_shots: int = 0           # pistol shots at contact
+var stat_pis_hits: int = 0
+var stat_pis_kills: int = 0
+var stat_pis_swaps: int = 0           # spent men stepped back for a loaded man
+var stat_pis_reloads: int = 0         # braces reloaded
+var stat_gren_held: int = 0           # grenade throws held (Hold, or Auto at no block)
+var stat_gren_gate: int = 0           # Auto: a gate in range taken as the target
+var stat_car_volleys: int = 0         # caracole passes fired
+var stat_car_back: int = 0            # ... and ridden back
+var stat_skd_men: int = 0             # skirmishers' places drawn into the trees (layouts summed)
+var stat_bld_shots: int = 0           # shots at buildings (the batter order)
 var stat_lean: int = 0                # shots fired leaning out round a cover spot
 var bk_x := PackedInt32Array()        # view: where the last BK_N blocked shots stopped (ring; diagnostics, not hashed)
 var bk_y := PackedInt32Array()
@@ -2383,6 +2436,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_xb_done = 1
 	if obs_on != 0 and land_only == 0:
 		_xf_restart()
+	_setup_roles()
 
 
 func _soldier_arrays() -> Array:
@@ -2625,6 +2679,14 @@ func _load_types() -> void:
 	for t in nt:
 		if t_m_volley[t] <= 0:
 			t_m_volley[t] = t_m_range[t] * 70 / 100
+	# Roles step 2: pistols, abilities, role.
+	t_pis.resize(nt)
+	t_abil.resize(nt)
+	t_role.resize(nt)
+	for t in nt:
+		t_pis[t] = UT.stat(t, "pistols")
+		t_abil[t] = UT.abilities(t)
+		t_role[t] = UT.ROLE_ORDER.find(UT.role(t))
 	# Riders: cavalry, and any mounted row with a charge (light horse): they
 	# build momentum at the run and charge (the cavalry code path).
 	t_rider.resize(nt)
@@ -7544,6 +7606,9 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase != PHASE_DEPLOY:
 				_gate_order(o)
 			continue
+		if int(o["type"]) == ORDER_ABILITY:
+			_ability_order(o)  # (roles step 2: Auto / Hold / Use now; not through the unit order rules)
+			continue
 		if int(o["type"]) == ORDER_WORKS:
 			if phase == PHASE_DEPLOY:
 				_works_order(o)
@@ -7579,6 +7644,9 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 ## One unit's part of order o (_apply_orders; _wp_pass with keep_wp: the
 ## next waypoint, the rest of the queue kept).
 func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
+	if car_on != 0 and u_car[u] >= 2 and int(o["type"]) == ORDER_ATTACK and int(o.get("target", -1)) == u_crt[u] \
+			and int(o.get("charge", 0)) == 0 and int(o.get("gate", -1)) < 0 and int(o.get("wall", -1)) < 0:
+		return  # (caracoling at it already: riding back or reloading for the next pass)
 	var d := order_fields(self, u)
 	var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
 	var wq0: PackedInt32Array = d["wp"]
@@ -7655,6 +7723,8 @@ func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
 		# street graph's entry node behind it, and never get on.)
 	if city_on != 0 and ws_e.size() > 0:
 		_wall_order(u, int(o["type"]), int(o.get("ground", 0)) != 0)
+	if car_on != 0 and (t_abil[u_type[u]] & (1 << UT.AB_CARACOLE)) != 0:
+		_car_order(u, o)
 
 
 ## The ORDER_KEYS fields of unit u as a Dictionary.
@@ -7720,7 +7790,7 @@ static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
 	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
 			or int(o["type"]) == ORDER_WORKS or (int(o["type"]) >= ORDER_SABOTAGE and int(o["type"]) <= ORDER_PARLEY) \
-			or int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END:
+			or int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END or int(o["type"]) == ORDER_ABILITY:
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -7988,6 +8058,18 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["dy"] = y
 		d["dface"] = face
 	elif typ == ORDER_ATTACK:
+		var bt := int(o.get("bld", -1))
+		if bt >= 0:
+			# At a building (the batter order, roles step 2): an attacking
+			# battery shoots it until it falls (gtarget BLD_TGT - building).
+			if not art or sim.city_on == 0 or bt >= sim.ob_state.size() or sim.u_side[u] == sim.city_def \
+					or sim.ob_state[bt] != WS_STANDING or sim.ob_hp0[bt] <= 0:
+				return
+			d["order"] = O_ATTACK
+			d["target"] = -1
+			d["gtarget"] = BLD_TGT - bt
+			d["run"] = 0
+			return
 		var wt := int(o.get("wall", -1))
 		if wt >= 0:
 			# At a wall stretch (the destruction AI, 2026-10-23): an attacking
@@ -8233,6 +8315,8 @@ func _compute_offsets(u: int) -> void:
 		_slots_off_enemy(u)
 	if cs_on != 0 and u_cvb[u] >= 0 and _cs_ok(u):
 		_cover_places(u)  # (men into cover: phase C0)
+	if skd_on != 0 and u_skc[u] != 0 and u_cvb[u] < 0:
+		_skd_places(u)  # (skirmishers into the trees: roles step 2)
 	u_dirty[u] = 0
 
 
@@ -8578,6 +8662,13 @@ func step() -> void:
 					_cover_snap(u)
 			elif (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2):
 				_cover_seek(u)  # (men into cover: phases C0, C2)
+	if skd_on != 0:
+		for u in n_units:
+			if (u + tick) % VIS_T == 0 and t_role[u_otype[u]] == R_SKIRMISH:
+				var kd := 1 if _skd_ok(u) else 0
+				if kd != u_skc[u]:
+					u_skc[u] = kd  # (roles step 2: into the trees, or back to its places)
+					u_dirty[u] = 1
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -8605,6 +8696,8 @@ func step() -> void:
 	if veg_on != 0 or sg_on != 0:
 		_update_supply()
 	_update_missiles()
+	if pis_on != 0:
+		_pistol_pass()
 	if fire_on != 0:
 		_update_fire()
 	_refresh_offsets()
@@ -9151,6 +9244,19 @@ func _update_units() -> void:
 					if absi(FM.angle_diff(u_face[u], gbear)) > t_arc[ty]:
 						want_face = gbear
 						u_dface[u] = gbear
+			elif gt <= BLD_TGT:
+				# At a building (the batter order, roles step 2): the same; done once it falls.
+				at = -1
+				var bb := bld_tgt(u)
+				if bb < 0:
+					u_order[u] = O_NONE
+					u_gtarget[u] = -1
+				else:
+					var ba := ob_aim(bb)
+					var bbear := FM.atan2_a(ba.y - u_cy[u], ba.x - u_cx[u])
+					if absi(FM.angle_diff(u_face[u], bbear)) > t_arc[ty]:
+						want_face = bbear
+						u_dface[u] = bbear
 			elif gt <= -2:
 				# Shooting at a wall stretch: the same; done once it is breached.
 				at = -1
@@ -9262,7 +9368,7 @@ func _update_units() -> void:
 				# fire (houses between), they go round by the streets too
 				# (fight jitter pass, 2026-10-16: they closed straight into
 				# a house and stood there for minutes).
-				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0
+				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u)
 				var mlof := true
 				if mis and (ton or mon):
 					mlof = lof_units(u, t)
@@ -9332,15 +9438,17 @@ func _update_units() -> void:
 							var np := seg_pt(self, sgc, at + mvc if gt > at else at - mvc)
 							u_ax[u] = np.x
 							u_ay[u] = np.y
-				elif cls == UT.CLS_MISSILE and u_ammo[u] > 0:
+				elif mis or (car_on != 0 and u_car[u] == 1):
 					# Shoot it: close to most of the range, then stand. On
 					# hilly ground the range is the height-adjusted one, and a
 					# flat thrower with a crest in the way keeps closing.
+					# (Caracole, roles step 2: riders to CAR_STOP_PCT of theirs.)
 					if d > 0:
 						want_face = FM.atan2_a(dy, dx)
-					var stop := mrange(u) * 17 / 20
+					var car := not mis
+					var stop := mrange(u) * CAR_STOP_PCT / 100 if car else mrange(u) * 17 / 20
 					if ton or mon:
-						stop = range_vs(u, t) * 17 / 20
+						stop = range_vs(u, t) * CAR_STOP_PCT / 100 if car else range_vs(u, t) * 17 / 20
 						if not mlof:
 							stop = mrange(u) / 4
 						if d > stop and ton:
@@ -9505,6 +9613,8 @@ func _update_units() -> void:
 			else:
 				u_mom[u] = maxi(u_mom[u] - MOM_LOSS, 0)
 			_charge_state(u)
+			if car_on != 0 and u_car[u] != 0 and (u + tick) % FIRE_THINK == 0:
+				_caracole(u)  # (roles step 2: fire, ride back, reload, again)
 			if t_m_ammo[ty] > 0 and (u + tick) % FIRE_THINK == 0:
 				_missile_think(u)  # (an elephant's crew shoots from its back; light horse)
 		elif cls == UT.CLS_MISSILE:
@@ -9823,7 +9933,7 @@ func _charge_state(u: int) -> void:
 			u_dirty[u] = 1
 			_compute_offsets(u)
 		return
-	if u_order[u] == O_ATTACK and u_mom[u] >= CHARGE_MIN and u_contact[u] != 0:
+	if u_order[u] == O_ATTACK and u_mom[u] >= CHARGE_MIN and u_contact[u] != 0 and not (car_on != 0 and u_car[u] == 1):
 		u_charge[u] = 1
 		u_charge_t[u] = tick
 		u_charge_left[u] = 1
@@ -9946,6 +10056,16 @@ func _missile_think(u: int) -> void:
 	if u_refill[u] != 0 or u_rprog[u] > 0 or u_forage[u] != 0:
 		u_ftarget[u] = -1  # refilling at a wagon or foraging: no shooting
 		return
+	# Grenades (roles step 2): Hold saves them; Auto throws only at a formed
+	# block, a held building or a gate; Use now at anything in range.
+	var gab := -1
+	if (t_abil[ty] & (1 << UT.AB_GRENADE)) != 0:
+		gab = (u_abs[u] >> (UT.AB_GRENADE * 2)) & 3
+		if gab == UT.AB_HOLD:
+			if u_ftarget[u] >= 0 or (u_gtarget[u] >= 0 and order == O_NONE):
+				stat_gren_held += 1
+			u_ftarget[u] = -1
+			return
 	# Fire target.
 	var ft := -1
 	var gt := u_gtarget[u]
@@ -9971,7 +10091,8 @@ func _missile_think(u: int) -> void:
 			# not locked in melee with our own side.
 			var cur := u_ftarget[u]
 			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and not _unseen(cur) \
-					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)):
+					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)) \
+					and (gab != UT.AB_AUTO or _gren_block(cur)):
 				u_ftarget[u] = cur if t_m_arc[ty] != 0 or (_clear_line(u, cur) and lof_units(u, cur)) else -1
 				return
 			var best := 0
@@ -9983,6 +10104,8 @@ func _missile_think(u: int) -> void:
 					continue
 				if _unseen(o):
 					continue  # (a hidden man, a unit nobody sees)
+				if gab == UT.AB_AUTO and not _gren_block(o):
+					continue  # (grenades on Auto: a formed block or a held building only)
 				var d := _unit_dist(u, o)
 				if d > rng and (not hgt or d > range_vs(u, o)):
 					continue
@@ -9999,6 +10122,12 @@ func _missile_think(u: int) -> void:
 		if ft >= 0 and not lof_units(u, ft):
 			stat_lof_blocked += 1
 			ft = -1
+	if ft < 0 and gab == UT.AB_AUTO and city_on != 0 and n_gates > 0 and order == O_NONE and u_gtarget[u] < 0 \
+			and u_ammo[u] > 0 and u_side[u] != city_def:
+		var gg := _gren_gate(u)
+		if gg >= 0:
+			u_gtarget[u] = gg  # (a shut gate in reach: thrown at it, _gate_volleys)
+			stat_gren_gate += 1
 	u_ftarget[u] = ft
 
 
@@ -10540,6 +10669,8 @@ func _update_soldiers() -> void:
 		var tg := target
 		var cd := cooldown
 		var gnext := grid_next
+		# (Roles step 2: pistols at contact, unless held.)
+		var pis_u := pis_on != 0 and t_pis[u_otype[u]] > 0 and ((u_abs[u] >> (UT.AB_PISTOL * 2)) & 3) != UT.AB_HOLD
 		var gs := GRID_SHIFT
 		var gw := grid_w
 		var gmax := grid_w * grid_h - 1
@@ -10556,7 +10687,7 @@ func _update_soldiers() -> void:
 		var keep_front := (SEARCH_FRONT + TARGET_KEEP_EXTRA) * (SEARCH_FRONT + TARGET_KEEP_EXTRA)
 		# Missile troops with ammunition, and gun crews, only defend
 		# themselves at close range.
-		var shy := (u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0) or u_cls[u] == UT.CLS_ART
+		var shy := (u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u)) or u_cls[u] == UT.CLS_ART
 		var rear_r := SEARCH_REAR
 		if u_fighting[u] > 0 and not shy and tick - u_charged_t[u] < ENGAGED_AFTER_CHARGE:
 			rear_r = SEARCH_ENGAGED
@@ -10825,6 +10956,11 @@ func _update_soldiers() -> void:
 						else:
 							t = _find_target_obs(x, y, rear_r, 2, enemy_head) if obr \
 								else _find_target(x, y, rear_r, 2, enemy_head)
+			if pis_u and t >= 0 and s_prl[i] > 0 and slot >= files:
+				var rdx := px[t] - x
+				var rdy := py[t] - y
+				if rdx * rdx + rdy * rdy > reach_in * reach_in:
+					t = -1  # (stepped back a rank reloading his pistols: only a man at him)
 			tg[i] = t
 
 			if t >= 0 and not pike_formed:
@@ -10933,7 +11069,10 @@ func _update_soldiers() -> void:
 					tg[i] = -1  # the impact killed it
 				elif c2 <= 0:
 					if d <= reach and st[i] == S_FIGHTING and not barred:
-						_melee(i, t, 0)
+						if pis_u and s_pis[i] > 0 and s_prl[i] == 0:
+							_pistol(i, t)  # (his first melee rounds: a pistol at point-blank)
+						else:
+							_melee(i, t, 0)
 						c2 = cool + _rand() % 4
 					elif nwalls > 0 and d <= reach + PIKE_PRESS and st[i] == S_FIGHTING and not barred:
 						# Pressed against the points: grab a pike shaft, lunge.
@@ -11043,7 +11182,10 @@ func _update_soldiers() -> void:
 					var c3 := cd[i] - 1
 					if c3 <= 0:
 						if in_reach:
-							_melee(i, t, 0)
+							if pis_u and s_pis[i] > 0 and s_prl[i] == 0:
+								_pistol(i, t)
+							else:
+								_melee(i, t, 0)
 							c3 = cool + _rand() % 4
 						else:
 							c3 = 1 + ((tk + i) & 3)
@@ -12240,6 +12382,8 @@ func _gun_unit(u: int) -> void:
 	if stat_shots != shots0:
 		u_fire_acc[u] = 0
 		stat_volleys += 1
+		if car_on != 0:
+			u_crv[u] = tick  # (a caracole's pass: fired)
 
 
 ## Unit t is coming on toward unit u: ordered to attack it, or its men
@@ -12811,7 +12955,7 @@ func _gate_shot_ok(u: int, g: int) -> bool:
 func _gate_volleys() -> void:
 	for u in n_units:
 		var g := u_gtarget[u]
-		if g < 0 or u_cls[u] != UT.CLS_MISSILE or u_order[u] != O_NONE or u_state[u] != U_READY:
+		if g < 0 or u_cls[u] != UT.CLS_MISSILE or u_order[u] != O_NONE or u_state[u] != U_READY or _gren_hold(u):
 			continue
 		if u_moved[u] != 0 or u_ftarget[u] >= 0 or not _gate_shot_ok(u, g):
 			continue
@@ -13207,9 +13351,10 @@ func _update_artillery() -> void:
 		if gt >= 0 and (gt >= n_gates or g_state[gt] != GATE_CLOSED):
 			gt = -1
 		var wsg := wall_tgt(u) if gt <= -2 else -1
+		var bsg := bld_tgt(u) if gt <= BLD_TGT else -1
 		if gt <= -2:
 			gt = -1
-		var aim := gt >= 0 or ft >= 0 or wsg >= 0
+		var aim := gt >= 0 or ft >= 0 or wsg >= 0 or bsg >= 0
 		var tx := 0
 		var tyy := 0
 		if gt >= 0:
@@ -13220,6 +13365,10 @@ func _update_artillery() -> void:
 			var wa := ws_aim(wsg, t_m_kind[ty] != 1)
 			tx = wa.x
 			tyy = wa.y
+		elif bsg >= 0:
+			var ba := ob_aim(bsg)
+			tx = ba.x
+			tyy = ba.y
 		elif ft >= 0:
 			tx = u_cx[ft]
 			tyy = u_cy[ft]
@@ -13321,6 +13470,10 @@ func _update_artillery() -> void:
 				fired = _art_fire_gate(e, u, gt, ty)
 			elif wsg >= 0:
 				fired = _art_fire_wall(e, u, wsg, ty)
+			elif bsg >= 0:
+				fired = _art_fire_at(e, u, ob_aim(bsg), ty)
+				if fired:
+					stat_bld_shots += 1
 			else:
 				fired = _art_fire(e, u, ft, ty)
 			if fired:
@@ -13803,11 +13956,19 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 ## does its work where it lands (_land_bolt: stopped by the wall's cells;
 ## _land_stone: landing on them). No unit is aimed at (pr_tu -1).
 func _art_fire_wall(e: int, u: int, sg: int, ty: int) -> bool:
+	if _art_fire_at(e, u, ws_aim(sg, t_m_kind[ty] != 1), ty):
+		stat_wall_shots += 1
+		return true
+	return false
+
+
+## Engine e of battery u shoots at the point wa (a stretch's aim point, a
+## building's: the batter order); the shot does its work where it lands.
+func _art_fire_at(e: int, u: int, wa: Vector2i, ty: int) -> bool:
 	if pr_free < 0:
 		return false
 	var sx := e_x[e]
 	var sy := e_y[e]
-	var wa := ws_aim(sg, t_m_kind[ty] != 1)
 	var dx := wa.x - sx
 	var dy := wa.y - sy
 	var dist := FM.approx_len(dx, dy)
@@ -13825,7 +13986,6 @@ func _art_fire_wall(e: int, u: int, sg: int, ty: int) -> bool:
 		stat_stones += 1
 	if t_m_gun[ty] != 0:
 		stat_cannon += 1
-	stat_wall_shots += 1
 	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
@@ -17709,6 +17869,19 @@ func state_hash() -> int:
 		# Waypoints (a battle where no order queued one hashes as before).
 		ctx.update(u_wpn.to_byte_array())
 		ctx.update(wp_q.to_byte_array())
+	# Roles step 2 (battles without the pieces hash as before).
+	if ab_on != 0:
+		ctx.update(u_abs.to_byte_array())
+		ctx.update(u_abt.to_byte_array())
+	if pis_on != 0:
+		ctx.update(s_pis.to_byte_array())
+		ctx.update(s_prl.to_byte_array())
+		ctx.update(u_pptr.to_byte_array())
+	if car_on != 0:
+		for arr in [u_car, u_crt, u_crk, u_crv]:
+			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if skd_on != 0:
+		ctx.update(u_skc.to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -19675,3 +19848,556 @@ func _update_ford() -> void:
 				chg[i] = 0
 				u_mom[u] = 0
 				stat_ford_stop += 1
+
+
+# ------------------------------------------------ roles, step 2 (abilities) ---
+# docs/design/battle_sim.md "Roles, step 2 (as built)" (2026-10-23). The
+# ability table (UT.abilities: pistols, grenades, caracole, batter) with a
+# state per unit (Auto, the default with its trigger; Hold; Use now with a
+# target), changed only by ORDER_ABILITY through the order path; pistols at
+# contact and their reload rotation; the caracole of horse_skirmish riders;
+# the skirmishers' drift into the trees; the batter order of guns_siege.
+
+const SKD_Q: Array[int] = [-1024, -1024, 1024, -1024, -1024, 1024, 1024, 1024]  # four men a 4 m woods cell, 1 m off its middle
+
+
+## The roles step 2 state (setup, last).
+func _setup_roles() -> void:
+	ab_on = 0
+	pis_on = 0
+	car_on = 0
+	skd_on = 0
+	for arr in [u_abs, u_pptr, u_car, u_crk, u_skc]:
+		arr.resize(n_units)
+		arr.fill(0)
+	u_abt.resize(n_units)
+	u_abt.fill(-1)
+	u_crt.resize(n_units)
+	u_crt.fill(-1)
+	u_crv.resize(n_units)
+	u_crv.fill(-1000)
+	s_pis.resize(n)
+	s_pis.fill(0)
+	s_prl.resize(n)
+	s_prl.fill(0)
+	_ob_ax = PackedInt32Array()
+	_ob_ay = PackedInt32Array()
+	stat_ab_orders = 0
+	stat_pis_shots = 0
+	stat_pis_hits = 0
+	stat_pis_kills = 0
+	stat_pis_swaps = 0
+	stat_pis_reloads = 0
+	stat_gren_held = 0
+	stat_gren_gate = 0
+	stat_car_volleys = 0
+	stat_car_back = 0
+	stat_skd_men = 0
+	stat_bld_shots = 0
+	var sk := false
+	for u in n_units:
+		var ty := u_otype[u]
+		if t_pis[ty] > 0:
+			pis_on = 1
+			var base := u_slot_base[u]
+			for s in u_count0[u]:
+				s_pis[base + s] = t_pis[ty]
+		if (t_abil[ty] & (1 << UT.AB_CARACOLE)) != 0:
+			car_on = 1
+		if t_role[ty] == R_SKIRMISH and stance_ok(ty):
+			sk = true
+	if sk and veg_on != 0:
+		skd_on = 1
+
+
+## An ability order (Auto / Hold / Use now; docs/design/battle_sim.md "Roles,
+## step 2"). target (Use now): grenades a unit or a gate (-2 - g); caracole
+## a unit; batter a wall stretch (-1: the stretch the destruction AI would
+## batter by the shut gate nearest the battery) or a building (-2 - b).
+static func make_ability_order(p_tick: int, unit: int, ability: int, st: int, tgt: int = -1) -> Dictionary:
+	return {"tick": p_tick, "type": ORDER_ABILITY, "unit": unit, "ability": ability, "state": st, "target": tgt}
+
+
+## Why unit u cannot take this ability order ("" if it can).
+static func ability_refusal(sim, u: int, ab: int, st: int) -> String:
+	if u < 0 or u >= sim.n_units or sim.u_state[u] != U_READY:
+		return "no such unit"
+	if ab < 0 or ab >= UT.AB_N or st < UT.AB_AUTO or st > UT.AB_NOW:
+		return "no such ability"
+	if (sim.t_abil[sim.u_type[u]] & (1 << ab)) == 0:
+		return "it has no such ability"
+	if ab == UT.AB_BATTER and sim.t_fixed[sim.u_type[u]] != 0:
+		return "a tower's engine"
+	return ""
+
+
+## Unit u's state of ability ab (UT.AB_AUTO / AB_HOLD / AB_NOW).
+func ability_state(u: int, ab: int) -> int:
+	if u < 0 or u >= u_abs.size():
+		return UT.AB_AUTO
+	return (u_abs[u] >> (ab * 2)) & 3
+
+
+func _ability_order(o: Dictionary) -> void:
+	var u := int(o.get("unit", -1))
+	var ab := int(o.get("ability", -1))
+	var st := int(o.get("state", -1))
+	if ability_refusal(self, u, ab, st) != "":
+		return
+	if phase == PHASE_DEPLOY and st == UT.AB_NOW:
+		return  # (Use now in the battle only; Auto and Hold may be set while deploying)
+	ab_on = 1  # (the ability table hashed from here on)
+	stat_ab_orders += 1
+	var tg := int(o.get("target", -1))
+	u_abs[u] = (u_abs[u] & ~(3 << (ab * 2))) | (st << (ab * 2))
+	if st == UT.AB_NOW:
+		u_abt[u] = tg
+	var o2 := {"tick": tick, "unit": u, "player": int(o.get("player", 0)), "seq": int(o.get("seq", 0)), "run": 0}
+	if ab == UT.AB_GRENADE and st == UT.AB_NOW:
+		# Use now: thrown at the unit (or the gate) armed, by the attack order.
+		if tg >= 0 and tg < n_units and u_side[tg] != u_side[u] and u_state[tg] < U_DESTROYED:
+			o2["type"] = ORDER_ATTACK
+			o2["target"] = tg
+			_apply_unit(u, o2)
+		elif tg <= -2 and -2 - tg < n_gates:
+			o2["type"] = ORDER_ATTACK
+			o2["target"] = -1
+			o2["gate"] = -2 - tg
+			_apply_unit(u, o2)
+	elif ab == UT.AB_CARACOLE:
+		if st == UT.AB_HOLD:
+			u_car[u] = 0  # (an attack under way goes on as a charge; riding back, it rides on)
+		elif st == UT.AB_NOW and tg >= 0 and tg < n_units and u_side[tg] != u_side[u] and u_state[tg] < U_DESTROYED:
+			o2["type"] = ORDER_ATTACK
+			o2["target"] = tg
+			o2["run"] = 1
+			_apply_unit(u, o2)
+	elif ab == UT.AB_BATTER:
+		if st == UT.AB_NOW:
+			_batter_now(u, tg, o2)
+		elif st == UT.AB_HOLD and u_order[u] == O_ATTACK and u_gtarget[u] <= -2:
+			u_order[u] = O_NONE  # (men again: the battering stops)
+			u_gtarget[u] = -1
+			u_dirty[u] = 1
+			u_settled[u] = 0
+
+
+## The batter order (Use now): battery u shoots wall stretch tg (-1: its
+## choice, batter_pick) or building -2 - tg, by the attack order's rule
+## ("wall" / "bld"), until it is breached or falls.
+func _batter_now(u: int, tg: int, o2: Dictionary) -> void:
+	if city_on == 0 or u_side[u] == city_def:
+		return
+	o2["type"] = ORDER_ATTACK
+	o2["target"] = -1
+	if tg <= -2:
+		o2["bld"] = -2 - tg
+	else:
+		var sg := tg if tg >= 0 else batter_pick(u)
+		if sg < 0:
+			return
+		o2["wall"] = sg
+	_apply_unit(u, o2)
+
+
+## The stretch battery u batters when told to batter the walls: the one the
+## destruction AI would (SiegeAI._batter_stretch) by the shut gate nearest
+## it; else the standing stretch (not facing the sea) nearest it. -1 none.
+func batter_pick(u: int) -> int:
+	if ws_hp.is_empty():
+		return -1
+	var bg := -1
+	var bd := 0
+	for g in n_gates:
+		if g_state[g] != GATE_CLOSED:
+			continue
+		var f := gate_face(g)
+		var d := FM.approx_len(f.x - u_cx[u], f.y - u_cy[u])
+		if bg < 0 or d < bd:
+			bg = g
+			bd = d
+	if bg >= 0:
+		var s0 := SiegeAI._batter_stretch(self, u_side[u], bg, false)
+		if s0 >= 0:
+			return s0
+	var best := -1
+	var bs := 0
+	for sg in ws_hp.size():
+		if ws_state[sg] != WS_STANDING or ws_hp0[sg] <= 0 or (ws_fl[sg] & MapGen.SEG_SEA) != 0:
+			continue
+		var mp := seg_pt(self, sg, seg_len(self, sg) / 2)
+		var d := FM.approx_len(mp.x - u_cx[u], mp.y - u_cy[u])
+		if best < 0 or d < bs:
+			best = sg
+			bs = d
+	return best
+
+
+## Battery u's building target (the batter order: u_gtarget BLD_TGT - b), -1
+## none or fallen.
+func bld_tgt(u: int) -> int:
+	var gt := u_gtarget[u]
+	if gt > BLD_TGT:
+		return -1
+	var b := BLD_TGT - gt
+	return b if b < ob_state.size() and ob_state[b] == WS_STANDING else -1
+
+
+## Where a battery aims at building b: the middle of its cells (static; built
+## on first use from ob_cell).
+func ob_aim(b: int) -> Vector2i:
+	if _ob_ax.size() != ob_state.size():
+		var nb := ob_state.size()
+		var sx := PackedInt64Array()
+		sx.resize(nb)
+		sx.fill(0)
+		var sy := PackedInt64Array()
+		sy.resize(nb)
+		sy.fill(0)
+		var sn := PackedInt32Array()
+		sn.resize(nb)
+		sn.fill(0)
+		for c in ob_cell.size():
+			var bb := ob_cell[c] - 1
+			if bb >= 0 and bb < nb:
+				sx[bb] += ((c % ob_w) << 11) + 1024
+				sy[bb] += ((c / ob_w) << 11) + 1024
+				sn[bb] += 1
+		_ob_ax.resize(nb)
+		_ob_ay.resize(nb)
+		for bb in nb:
+			_ob_ax[bb] = int(sx[bb] / maxi(sn[bb], 1))
+			_ob_ay[bb] = int(sy[bb] / maxi(sn[bb], 1))
+	return Vector2i(_ob_ax[b], _ob_ay[b])
+
+
+## Man i of a pistol unit strikes enemy soldier t with a pistol at
+## point-blank (in place of a blow): PIS_HIT %, PIS_DMG less half the
+## armour, PIS_MOR off the struck man's unit hit or miss.
+func _pistol(i: int, t: int) -> void:
+	if state[t] >= S_DEAD:
+		return
+	s_pis[i] -= 1
+	stat_pis_shots += 1
+	var ua := unit_of[i]
+	var ud := unit_of[t]
+	facing[i] = FM.atan2_a(pos_y[t] - pos_y[i], pos_x[t] - pos_x[i])
+	if vis_on != 0:
+		_shot_seen(ua)
+	if u_state[ud] == U_READY:
+		u_morale[ud] -= PIS_MOR
+	if _rand() % 100 >= PIS_HIT:
+		return
+	stat_pis_hits += 1
+	var dmg := maxi(PIS_DMG - t_armour[u_otype[ud]] / 2, 10) * (85 + _rand() % 31) / 100
+	var h := hp[t] - dmg
+	if h <= 0:
+		stat_pis_kills += 1
+		_credit(ua, ud)
+		_remove(t, GONE_KILLED)
+	else:
+		hp[t] = h
+
+
+## The pistols' reload rotation (each pistol unit every PIS_THINK ticks): a
+## front-rank man fighting with his brace spent changes places with the
+## next loaded man of the rear ranks (u_pptr, round them) and reloads there
+## for PIS_RELOAD; a spent man not fighting reloads where he is; with no
+## loaded man behind he fights on with the blade. Out of the fight a man
+## tops up a brace part spent. Hold: no change of places.
+func _pistol_pass() -> void:
+	for u in n_units:
+		var ty := u_otype[u]
+		if t_pis[ty] <= 0 or (u + tick) % PIS_THINK != 0 or u_state[u] >= U_DESTROYED or u_alive[u] <= 0:
+			continue
+		var held := ((u_abs[u] >> (UT.AB_PISTOL * 2)) & 3) == UT.AB_HOLD
+		var alive := u_alive[u]
+		var base := u_slot_base[u]
+		var files := maxi(mini(files_of(u), alive), 1)
+		var engaged := u_contact[u] != 0 or u_fighting[u] > 0
+		var full := t_pis[ty]
+		for s in alive:
+			var i := slot_soldier[base + s]
+			if s_prl[i] > 0:
+				if tick >= s_prl[i]:
+					s_pis[i] = full
+					s_prl[i] = 0
+					stat_pis_reloads += 1
+				continue
+			if s_pis[i] >= full or state[i] >= S_DEAD or state[i] == S_DOWN:
+				continue
+			if state[i] != S_FIGHTING:
+				if s_pis[i] == 0 or not engaged:
+					s_prl[i] = tick + PIS_RELOAD
+				continue
+			if s_pis[i] > 0 or s >= files or held or alive <= files:
+				continue
+			var nr := alive - files
+			var k0 := u_pptr[u] % nr
+			for q in nr:
+				var s2 := files + (k0 + q) % nr
+				var j := slot_soldier[base + s2]
+				if state[j] == S_FORMED and s_pis[j] > 0 and s_prl[j] == 0 and target[j] < 0:
+					slot_soldier[base + s] = j
+					slot_of[j] = s
+					slot_soldier[base + s2] = i
+					slot_of[i] = s2
+					target[i] = -1
+					state[i] = S_FORMED
+					s_prl[i] = tick + PIS_RELOAD
+					u_pptr[u] = (k0 + q + 1) % nr
+					stat_pis_swaps += 1
+					break
+
+
+## Grenades held (the ability on Hold): unit u throws none and fights as
+## shock foot (not shy in a melee; an attack order closes to contact).
+func _gren_hold(u: int) -> bool:
+	return u < u_abs.size() and (t_abil[u_type[u]] & (1 << UT.AB_GRENADE)) != 0 \
+		and ((u_abs[u] >> (UT.AB_GRENADE * 2)) & 3) == UT.AB_HOLD
+
+
+## Grenades on Auto throw at unit o: a formed block (a ready unit of
+## GREN_BLOCK men or more, not disordered, not horse) or a unit holding a
+## building.
+func _gren_block(o: int) -> bool:
+	if u_state[o] != U_READY:
+		return false
+	if occ_on != 0 and u_occ[o] > 0:
+		return true
+	return u_alive[o] >= GREN_BLOCK and u_disorder[o] < DISORDERED and u_cls[o] != UT.CLS_CAV
+
+
+## Grenades on Auto, standing with nothing to throw at: the nearest shut
+## gate whose face is in reach and in a clear throw (-1 none).
+func _gren_gate(u: int) -> int:
+	var best := -1
+	var bd := 0
+	var rng := mrange(u)
+	for g in n_gates:
+		if g_state[g] != GATE_CLOSED:
+			continue
+		var f := gate_face(g)
+		var d := FM.approx_len(f.x - u_cx[u], f.y - u_cy[u])
+		if d <= rng and (best < 0 or d < bd) and _gate_shot_ok(u, g):
+			best = g
+			bd = d
+	return best
+
+
+## The caracole's bookkeeping after an order to unit u (a caracole rider):
+## an attack on a unit (not "charge" 1, the ability not held) starts or
+## goes on with a pass at it; another order (but run, fire, skirmish,
+## ammunition, stance) ends it.
+func _car_order(u: int, o: Dictionary) -> void:
+	var typ := int(o["type"])
+	if typ == ORDER_ATTACK:
+		var t := u_target[u]
+		if u_order[u] != O_ATTACK or t < 0 or int(o.get("charge", 0)) != 0 \
+				or ((u_abs[u] >> (UT.AB_CARACOLE * 2)) & 3) == UT.AB_HOLD:
+			u_car[u] = 0
+			return
+		if u_car[u] == 1 and u_crt[u] == t:
+			return  # (the same pass)
+		u_car[u] = 1
+		u_crt[u] = t
+		u_crk[u] = tick
+	elif typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH and typ != ORDER_AMMO and typ != ORDER_STANCE:
+		u_car[u] = 0
+
+
+## The caracole (every FIRE_THINK): closing (1) the riders stop at
+## CAR_STOP_PCT of their range (the attack order's stand-off) and their
+## volley goes; then they ride back (2) to CAR_BACK from the target; back
+## (3) they reload (a brace of pistols: CAR_RELOAD; muskets: the volley's
+## reload) and wait CAR_WAIT_MIN at least; then the next pass. A target
+## that breaks or is locked in a melee with ours is charged (the attack
+## goes on); contact while closing turns them back. Muskets spent: they
+## stand.
+func _caracole(u: int) -> void:
+	var t := u_crt[u]
+	var ph := u_car[u]
+	var ty := u_type[u]
+	if u_state[u] != U_READY or t < 0 or t >= n_units or u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
+		u_car[u] = 0
+		return
+	if u_state[t] == U_ROUTING or u_fighting[t] > 0:
+		u_car[u] = 0  # (broken, or held by ours: they fall on it)
+		if ph >= 2:
+			_car_attack(u, t)
+		return
+	var pistol := t_m_range[ty] <= CAR_PISTOL_R
+	if ph == 1:
+		if u_order[u] != O_ATTACK or u_target[u] != t:
+			u_car[u] = 0
+			return
+		var fired := u_crv[u] >= u_crk[u]
+		if fired or u_contact[u] != 0:
+			if fired:
+				stat_car_volleys += 1
+			_car_back(u, t)
+		elif u_ammo[u] <= 0 and not pistol:
+			_car_halt(u)
+		return
+	if ph == 2:
+		if u_order[u] != O_MOVE or tick - u_crk[u] >= CAR_RETIRE_T:
+			u_car[u] = 3
+			u_crk[u] = tick
+			if u_order[u] == O_MOVE:
+				u_order[u] = O_NONE
+			u_dface[u] = FM.atan2_a(u_cy[t] - u_ay[u], u_cx[t] - u_ax[u]) & FM.ANGLE_MASK
+			u_dirty[u] = 1
+			u_settled[u] = 0
+		return
+	if u_contact[u] != 0:
+		u_car[u] = 0  # (caught while back: it fights where it stands)
+		return
+	if pistol:
+		if tick - u_crk[u] < CAR_RELOAD:
+			return
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if ammo[i] < t_m_ammo[ty]:
+				u_ammo[u] += t_m_ammo[ty] - ammo[i]
+				ammo[i] = t_m_ammo[ty]
+	elif u_ammo[u] <= 0:
+		_car_halt(u)
+		return
+	elif u_fire_acc[u] < t_m_reload[ty] or tick - u_crk[u] < CAR_WAIT_MIN:
+		return
+	_car_attack(u, t)
+	u_car[u] = 1
+	u_crk[u] = tick
+
+
+## The caracole's next pass: unit u attacks t again (the sim's order, not
+## through the order rules: the ability's own).
+func _car_attack(u: int, t: int) -> void:
+	u_order[u] = O_ATTACK
+	u_target[u] = t
+	u_gtarget[u] = -1
+	u_run[u] = 1
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	if obs_on != 0:
+		u_pn[u] = 0
+		u_flt[u] = -FLOW_EVERY
+
+
+## The caracole's ride back after a pass at t: a run to CAR_BACK beyond its
+## depth from t, along the line from t through the riders, facing t at the
+## end.
+func _car_back(u: int, t: int) -> void:
+	var ex := u_cx[u] - u_cx[t]
+	var ey := u_cy[u] - u_cy[t]
+	var d := maxi(FM.approx_len(ex, ey), 1)
+	var bk := CAR_BACK + unit_depth(u)
+	u_order[u] = O_MOVE
+	u_dx[u] = clampi(u_cx[t] + ex * bk / d, 5 * M, field_w - 5 * M)
+	u_dy[u] = clampi(u_cy[t] + ey * bk / d, 5 * M, field_h - 5 * M)
+	u_dface[u] = FM.atan2_a(-ey, -ex) & FM.ANGLE_MASK
+	u_target[u] = -1
+	u_ftarget[u] = -1
+	u_run[u] = 1
+	u_dirty[u] = 1
+	u_settled[u] = 0
+	if obs_on != 0:
+		u_pn[u] = 0
+		u_flt[u] = -FLOW_EVERY
+	u_car[u] = 2
+	u_crk[u] = tick
+	stat_car_back += 1
+
+
+## The caracole ends with nothing to fire: the riders stand.
+func _car_halt(u: int) -> void:
+	u_car[u] = 0
+	if u_order[u] == O_ATTACK:
+		u_order[u] = O_NONE
+		u_target[u] = -1
+		u_dface[u] = u_face[u]
+		u_dirty[u] = 1
+		u_settled[u] = 0
+
+
+## Skirmisher u's places drift into the trees (u_skc): the Cover stance,
+## standing (no order, or shooting its attack order's target from where it
+## stands), not fighting, on the ground, no cover spots of its own (u_cvb);
+## an AI side only with R_SK_DRIFT.
+func _skd_ok(u: int) -> bool:
+	if u_state[u] != U_READY or u_alive[u] <= 0 or phase != PHASE_BATTLE or u_stance[u] != STANCE_COVER \
+			or u_contact[u] != 0 or u_fighting[u] != 0 or u_wall[u] != 0 or u_stair[u] != 0 or u_neng[u] != 0 \
+			or u_cvb[u] >= 0 or (occ_on != 0 and u_occ[u] > 0) or (sg_on != 0 and u_carry[u] >= 0) or u_bnd[u] != 0:
+		return false
+	if ai_sides[u_side[u]] != 0 and AIProfile.of(self, u_side[u])[AIProfile.R_SK_DRIFT] == 0:
+		return false
+	var o := u_order[u]
+	if o == O_NONE:
+		return true
+	return o == O_ATTACK and u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0 and u_moved[u] == 0
+
+
+## Skirmisher u's places just laid out: each place not in woods moves to the
+## nearest free spot in the woods within SKD_R of it on its ground (a 4 m
+## cell of the veg grid holds four, 1 m off its middle each way); the others
+## keep their places. Places in slot order, spots nearest first (ties: the
+## cells' scan order, then the spot's).
+func _skd_places(u: int) -> void:
+	var base := u_slot_base[u]
+	var alive := u_alive[u]
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var gm := _ground_mask(u)
+	var cells := PackedInt32Array()
+	var used := PackedInt32Array()
+	var r2 := SKD_R * SKD_R
+	for s in alive:
+		var x := ax + off_x[base + s]
+		var y := ay + off_y[base + s]
+		if (veg_bits(x, y) & MapGen.V_DENS) != 0:
+			continue
+		var ci := x >> 12
+		var cj := y >> 12
+		var bk := -1
+		var bq := 0
+		var bd := 0
+		var bx := 0
+		var by := 0
+		for dj in range(-2, 3):
+			for di in range(-2, 3):
+				var i := ci + di
+				var j := cj + dj
+				if i < 0 or j < 0 or i >= veg_w or j >= veg_h:
+					continue
+				var key := j * veg_w + i
+				if (veg[key] & MapGen.V_DENS) == 0:
+					continue
+				var k := cells.find(key)
+				var um := used[k] if k >= 0 else 0
+				for q in 4:
+					if (um & (1 << q)) != 0:
+						continue
+					var px := (i << 12) + 2048 + SKD_Q[q * 2]
+					var py := (j << 12) + 2048 + SKD_Q[q * 2 + 1]
+					var dd := (px - x) * (px - x) + (py - y) * (py - y)
+					if dd > r2 or (bk >= 0 and dd >= bd):
+						continue
+					if obs_on != 0 and (nav_at(px, py) & gm) == 0:
+						continue
+					bk = key
+					bq = q
+					bd = dd
+					bx = px
+					by = py
+		if bk < 0:
+			continue
+		var k2 := cells.find(bk)
+		if k2 < 0:
+			cells.append(bk)
+			used.append(1 << bq)
+		else:
+			used[k2] |= 1 << bq
+		off_x[base + s] = bx - ax
+		off_y[base + s] = by - ay
+		stat_skd_men += 1

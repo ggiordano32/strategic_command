@@ -431,6 +431,12 @@ static func _make(id: String) -> Dictionary:
 				unit(1, UT.index_of("musketeers"), 100, 200, 150, FACE_DOWN)],
 				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
 				"orders": [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]}
+		"asym_woods", "asym_field":
+			# The asymmetry probe (roles step 2, docs/design/battle_sim.md
+			# "Roles, step 2"): a Spanish army (side 0) and a native war party
+			# (side 1) of equal cost, both AI, in dense woods across the
+			# middle of the field / on open ground.
+			return asym(id == "asym_woods")
 		"test_cav_art":
 			# Enemy batteries guarded by spearmen; your cavalry raids them
 			# (light infantry can slog in too).
@@ -442,6 +448,31 @@ static func _make(id: String) -> Dictionary:
 				unit(1, UT.SPEAR, 100, 150, 95, FACE_DOWN)], [])
 	push_error("unknown scenario " + id)
 	return {}
+
+
+## The asymmetry probe (roles step 2): the Spanish (musketeers x 2, pikemen,
+## rodeleros, lancers: 2,940) against natives (warriors x 3, bowmen x 2, canoe
+## raiders x 3, holcan: 2,920) on a 400 x 400 m field, both AI; `woods`: a
+## band of woods (dense patches in it) from 60 m to 300 m across the field,
+## the natives starting inside it, the Spanish 40 m short of its edge.
+static func asym(woods: bool) -> Dictionary:
+	var sp: Array = [["w_pikemen", 120, 200, 340], ["musketeers", 100, 145, 340], ["musketeers", 100, 255, 340],
+		["rodeleros", 100, 95, 340], ["lancers", 60, 315, 345]]
+	var na: Array = [["native_warriors", 100, 200, 110], ["native_warriors", 100, 140, 110], ["native_warriors", 100, 260, 110],
+		["native_bowmen", 80, 170, 128], ["native_bowmen", 80, 230, 128], ["canoe_raiders", 60, 90, 110],
+		["canoe_raiders", 60, 310, 110], ["canoe_raiders", 60, 50, 110], ["holcan", 60, 350, 110]]
+	var units: Array = []
+	for r in sp:
+		units.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))
+	for r in na:
+		units.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
+	var sc := {"width_m": 400, "height_m": 400, "ai_sides": [0, 1], "units": units}
+	if woods:
+		sc["terrain"] = {"kind": Terrain.K_FLAT, "woods": [[200, 180, 200, 120, 2], [110, 200, 45, 40, 3],
+			[290, 160, 45, 40, 3], [200, 110, 60, 30, 3]]}
+	else:
+		sc["terrain"] = {"kind": Terrain.K_FLAT}
+	return sc
 
 
 ## One unit as scenario data. x_m/y_m is the front centre in metres.

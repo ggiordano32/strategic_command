@@ -2223,3 +2223,105 @@ are `line` (they hold a front), the Gallic Warband `shock`. Missile infantry (`m
 | guns_siege | stone, tower_stone | heavy_gun, mortar |
 | command | general, legate, sufet, hetairoi_guard, strategos, chieftain, hero_foot, hero_missile, hero_cav, hero_siege, assassin, diplomat, wagon, wagon2, wagon3 | none |
 | beast | camel, elephant | none |
+
+### Roles, step 2 (as built, 2026-10-23)
+
+The behaviours of "Behaviours (step 2, sim)". Code: `sim/unit_types.gd` (`SKIRM_FILE_SP` / `SKIRM_RANK_SP`, `AB_*`,
+`abilities()`, the rows' `pistols` and `grenades` keys), `sim/battle_sim.gd` (section "roles, step 2 (abilities)":
+`_setup_roles`, `make_ability_order`, `ability_refusal`, `ability_state`, `_ability_order`, `_batter_now`,
+`batter_pick`, `bld_tgt`, `ob_aim`, `_pistol`, `_pistol_pass`, `_gren_hold`, `_gren_block`, `_gren_gate`,
+`_car_order`, `_caracole`, `_car_attack`, `_car_back`, `_car_halt`, `_skd_ok`, `_skd_places`; hooks in
+`_apply_orders`, `order_units`, `_apply_unit`, `_order_rule` (the attack order's `"bld"`), `_compute_offsets`, `step`,
+`_update_soldiers` (the two blow sites, the reload skip, `shy`), `_missile_think`, `_gate_volleys`, the attack
+movement, `_charge_state`, `_gun_unit`, the battery's aim and fire (`_art_fire_at`), `state_hash`), `sim/battle_ai.gd`
+(`_attack`), `sim/ai_profile.gd` (knobs 283-284, docs/AI.md 36), test `tests/roles_sim_test.gd`, probe
+`tests/asym_probe.gd` with the scenarios `asym_woods` / `asym_field` (`Scenarios.asym`). No HUD work: the chips are
+step 3, folded into the battle UI pass; Auto is every unit's default, so play is untouched without an order.
+
+**The ability table.** `UT.abilities(ty)`: a bit per `AB_PISTOL` (rows with `pistols` > 0: buccaneers, coureurs,
+pistoleers and the cuirassiers by inheritance, dragoons), `AB_GRENADE` (rows whose standard ammunition is the grenade:
+grenadiers, boarding grenadiers; or a row with `grenades` > 0, the hook for the buccaneers later: no row sets it and
+no sim rule reads its count yet), `AB_CARACOLE` (horse_skirmish rows of the cavalry class with a firearm: pistoleers,
+cuirassiers, dragoons; Rome's light horse are missile-class skirmishers already and keep their rule), `AB_BATTER`
+(guns_siege: stone throwers, heavy guns, mortars; a tower's engine refused). State per unit `u_abs` (2 bits an
+ability: Auto 0, Hold 1, Use now 2) and `u_abt` (the Use now target), changed only by `ORDER_ABILITY` 28
+(`make_ability_order(tick, unit, ability, state, target)`; through the lockstep like any unit order, the issuer must
+command the unit; applied beside the gate orders, not through the order rules, so waypoints and the order preview
+are untouched; Use now refused in the deployment phase). Hashed from the first ability order on (`ab_on`).
+
+**Skirmish: loose order and cover drift.** Every `skirmish` row stands at least 1.8 m x 2.0 m (the javelinmen's; a
+floor in `_build_types`): native bowmen (1.3 x 1.6 before) and Rome's slingers (1.6 x 1.8) open up, the rest had it.
+Drift (`skd_on`: woods on the map and a skirmish unit; `u_skc` hashed): a skirmish unit in the Cover stance, standing
+(no order, or shooting its attack target from where it stands), not in contact, on the ground, with no obstacle
+cover spots of its own (`u_cvb`), is checked once a second; while it qualifies its places are laid out with every
+place not in woods moved to the nearest free spot of a woods cell within `SKD_R` 8 m (a 4 m veg cell holds four, 1 m
+off its middle each way; places in slot order, spots nearest first). A unit that stops qualifying lays its places
+out again. An AI side drifts only with `R_SK_DRIFT`. `line` keeps today's partial cover (no change).
+
+**Pistols at contact** (`pis_on`; per man `s_pis` loaded, `s_prl` reloading until; `u_pptr` per unit; hashed). Every
+man of a pistol unit starts with his brace (2). In a melee, while he has a pistol loaded and is not reloading, his
+blow (both blow sites of the contact path) is a pistol shot instead: `PIS_HIT` 70 % (no to-hit roll, no shield),
+`PIS_DMG` 90 less half the armour (x 85-115 %), `PIS_MOR` 4 morale off the struck man's unit hit or miss; so his
+first two melee rounds are pistols, then the blade. The rotation (`_pistol_pass`, each unit every `PIS_THINK` 10
+ticks): a front-rank man fighting with both spent changes slots with the next loaded, formed, untargeted man of the
+rear ranks (`u_pptr` round them) and reloads for `PIS_RELOAD` 300 ticks; a stepped-back reloading man takes a target
+only within his reach; a spent man not fighting reloads where he stands; out of the fight a part-spent brace is
+topped up; with no loaded man behind he fights on with the blade. Hold: blades only, no rotation. Pistol shots are
+separate from the unit's missile ammunition (the buccaneers' muskets, the pistoleers' ranged brace). Measured
+(`roles_sim_test` pistols: 60 buccaneers without rounds against 100 musketeers, 120 s): 63 shots, 41 hits, 29
+kills, 29 changes of place, 32 braces reloaded.
+
+**Grenades.** Auto (the batch 1 missile path as the trigger): fire at will throws only at a "formed block"
+(`_gren_block`: a ready unit of `GREN_BLOCK` 30 men or more, not disordered, not horse) or a unit holding a building;
+an attack order's target is thrown at as before; standing with nothing to throw at, attackers take the nearest shut
+gate in reach and in a clear throw as their target (`_gren_gate`, then `_gate_volleys`). Hold: nothing thrown, and the
+unit fights as shock foot (not "shy" in a melee; an attack order closes to contact). Use now with a target: an attack
+order at that unit (or gate `-2 - g`), thrown whatever its size. Measured (60 grenadiers 15 m from musketeers, 30 s):
+Auto at 100 men 10 thrown, Hold 0, Auto at 20 men 0, Use now at the 20 men 7.
+
+**Caracole** (`car_on`; `u_car` phase, `u_crt` target, `u_crk` phase tick, `u_crv` last volley; hashed). An attack
+order on a unit by a caracole rider (not `"charge": 1`, the ability not on Hold) is a caracole: (1) the riders close
+to `CAR_STOP_PCT` 75 % of their range from the target (the missile stand-off of the attack movement; no charge starts
+while closing) and fire their volley (riders fire on the move: `_gun_unit` marks `u_crv`); (2) after it, or at
+contact, they ride back at the run to `CAR_BACK` 40 m beyond their depth from the target, at most `CAR_RETIRE_T` 20 s;
+(3) back, facing it, pistol riders (range <= 30 m) reload their brace over `CAR_RELOAD` 30 s (the missile rounds back
+to the row's), musket riders wait for their volley's reload; at least `CAR_WAIT_MIN` 3 s; then the next pass. A target
+that routs or is locked in a melee with ours is charged (the attack goes on; the riders fall on an engaged flank or
+run down the broken); caught in contact while back, they fight; muskets spent, they stand. Another attack on the same
+target while riding back or reloading changes nothing (the AI re-orders every second); any other order but run, fire,
+skirmish, ammunition and stance ends it. Hold: the attack is a charge, as before; Use now with a target: a caracole at
+it. Measured (60 pistoleers against 100 musketeers without rounds, 240 s): six passes, volley at 23 m, back to 54 m,
+no charge; on Hold a charge.
+
+**Batter.** Use now on a guns_siege battery of the attackers: target -1 the stretch `batter_pick` gives (the
+destruction AI's `SiegeAI._batter_stretch` by the shut gate nearest the battery, else the nearest standing stretch not
+facing the sea), a stretch index, or a building `-2 - b`. A stretch is the existing wall attack order (`"wall"`); a
+building is the new `"bld"` key of the attack order (`u_gtarget` = `BLD_TGT` -100,000 - building; aim point `ob_aim`,
+the middle of its cells; the battery turns to it, `_art_fire_at` shoots it until it falls, `stat_bld_shots`). Hold
+stops a battering under way (men again); Auto is today's (men, or what it was ordered at). Field guns have no batter.
+Measured (siege_test 32, walls 1, stone throwers): the stretch picked breached in 6 shots; a house 193 m off fell in 7.
+
+**Asymmetry probe** (`asym_woods` / `asym_field`: Spanish musketeers x 2, pikemen, rodeleros, lancers, 2,940, side 0;
+natives warriors x 3, bowmen x 2, canoe raiders x 3, holcan, 2,920; both AI Average; 400 x 400 m; woods a band from
+60 m to 300 m with dense patches, the natives in it), side-0 (Spanish) wins of 16 seeds, HEAD -> step 2: woods 0 -> 0
+(natives win all), field 14 -> 11 (one draw). No pistol, grenade or caracole unit is in either army, so the field's
+change is the bowmen's loose order (fewer struck by a volley: a native favour the principle does not ask for in the
+open; within the noise of 16 seeds, but the direction is noted); the AI's skirmishers in these battles never stood
+still in the Cover stance long enough to drift (`stat_skd_men` 0: the AI keeps them moving).
+
+**Harness** (`tools/balance`, attacker wins %, HEAD `9a48e65d64` -> `051401e46c`; no cell beyond its interval):
+rome_walls (16 seeds) pooled walls 1 / 2 / 3: 74 -> 74, 44 -> 41, 20 -> 19 (Sicilia walls 2 75 -> 56 the largest
+cell); west_named (16) walls 0 / 1 / 2: 49 -> 54, 36 -> 33, 14 -> 12 (Cartagena and Veracruz walls 1 -25, Havana walls
+0 and Port Royal walls 1 +19); open_town (8, walls 0, Average): Santo Domingo 100 -> 100, Havana 25 -> 12, Cartagena
+100 -> 88. Determinism: the flat goldens and every open-field run unmoved; 15 run hashes moved (woods and towns with
+skirmishers or pistol units: test_woods, ai_woods~as, the siege@ai runs, siege_eq_ring3, siege_eq_polis2~sa; not pinned
+constants); lockstep hashes and the campaign_sim pins unmoved (the campaign never runs the sim; it reads the rows).
+
+**Choices where the plan was silent.** Pistols are a brace separate from missile ammunition; pistoleers, cuirassiers
+and dragoons got the brace too (the plan named "pistoleers, dragoons" for pistols; the brief adds cuirassiers). The
+caracole is for cavalry-class riders only (Rome's horse javelins already skirmish as missile troops); its own volley
+uses the unit's missile weapon; pistol riders reload it on the way back. Charging stays an order: the attack order's
+`"charge": 1` (or Hold) until the HUD's chips. Grenades' Auto "formed block" is 30 men; the attack order is still
+honoured on Auto (the player's explicit choice); Hold makes grenadiers shock foot. The batter order reuses the
+destruction AI's stretch choice; buildings needed their own target (no AI uses it). The drift radius is 8 m ("a few
+metres": 6 m left a front rank 7 m from a wood's cells out). No unit stat was changed for the probe.

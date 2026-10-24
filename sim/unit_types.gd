@@ -257,6 +257,8 @@ const DEFAULTS := {
 	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
 	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0, "cover": 0,
 	"amphib": 0,  # campaign: 1 = paddles the coastal sea at foot pace (CRules.amphibious; the general stays 0)
+	"pistols": 0,   # roles step 2: a brace of this many pistols a man, fired point-blank in his first melee rounds (AB_PISTOL)
+	"grenades": 0,  # roles step 2: the grenade ability's data hook for a row whose missile is not the grenade (buccaneers later; no sim rule reads it yet)
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
@@ -1459,6 +1461,7 @@ const WEST: Array[Dictionary] = [
 		"m_hgain": 60,
 		"cost": 7,          # 420 a unit
 		"climb": 13,
+		"pistols": 2,       # roles step 2: a brace in the belt for the boarding (AB_PISTOL)
 	},
 	{
 		"key": "rodeleros", "role": "shock", "line": "heavy", "pack": "west", "name": "Rodeleros", "short": "Rodelero",
@@ -1524,7 +1527,7 @@ const WEST: Array[Dictionary] = [
 		"icon": 28, "sprite": 5, "sprite_set": 22,
 		"size": 60, "files0": 15,
 		"what": "Pistol cavalry",
-		"desc": "Riders with a brace of pistols. Charging, they fire both barrels' first volley at about 25 m and crash in after it, the volley shaking the target just before the impact; then they fight with the sword. Two shots each, so a second pass needs a reload away from the fight.",
+		"desc": "Riders with a brace of pistols. Left to themselves they caracole: ride to pistol range, fire both barrels, wheel back out of reach to reload, and come again; a routed or pinned enemy they ride down. Ordered to charge, they fire the brace at about 25 m and crash in after it, then fight with the sword.",
 		"good_vs": "Musketeers and crews, cavalry they shoot before contact, the flanks of engaged units.",
 		"weak_vs": "Pike fronts, musket volleys from a steady line, heavy cavalry head on.",
 		"cls": CLS_CAV, "mount": MOUNT_HORSE,
@@ -1548,6 +1551,7 @@ const WEST: Array[Dictionary] = [
 		"m_fear": 40,
 		"cost": 10,         # 600 a unit, shock cavalry's
 		"climb": 24,
+		"pistols": 2,       # roles step 2: the brace again at contact (AB_PISTOL; the cuirassiers inherit it)
 	},
 	{
 		"key": "native_warriors", "role": "shock", "line": "light", "pack": "west", "name": "Warriors", "short": "Warriors",
@@ -1811,6 +1815,7 @@ const WEST_LATE: Array[Dictionary] = [
 		"m_hgain": 50,
 		"cost": 10,         # 400 a unit (pistoleers' 10 a man, 60 men)
 		"climb": 24,
+		"pistols": 2,       # roles step 2: saddle pistols at contact (AB_PISTOL)
 	},
 	{
 		"key": "coureurs", "role": "skirmish", "line": "buccaneer", "pack": "west", "tier": 2, "name": "Coureurs des Bois", "short": "Coureurs",
@@ -1844,6 +1849,7 @@ const WEST_LATE: Array[Dictionary] = [
 		"m_hgain": 60,
 		"cost": 8,          # 400 a unit: buccaneers 7 x 1.2
 		"climb": 13,
+		"pistols": 2,       # roles step 2: a brace for the close work (AB_PISTOL)
 	},
 	{
 		"key": "boarding_grenadiers", "role": "shock", "line": "heavy", "pack": "west", "tier": 2, "name": "Boarding Grenadiers", "short": "Boarders",
@@ -2111,6 +2117,13 @@ static func _build_types() -> Array[Dictionary]:
 		row["base"] = out.size()
 		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
+	# Roles step 2: skirmishers stand in loose order (at least the javelinmen's
+	# 1.8 x 2.0 m; the line keeps its close files): native bowmen and the
+	# slingers open up, the rest had it already.
+	for row in out:
+		if str(row.get("role", "")) == "skirmish":
+			row["file_sp"] = maxi(int(row.get("file_sp", DEFAULTS["file_sp"])), SKIRM_FILE_SP)
+			row["rank_sp"] = maxi(int(row.get("rank_sp", DEFAULTS["rank_sp"])), SKIRM_RANK_SP)
 	return out
 
 
@@ -2203,9 +2216,47 @@ static func cls(ty: int) -> int:
 	return stat(ty, "cls")
 
 
-## The role of a row (a key of ROLES; view and pickers only: no sim rule reads it yet).
+## The role of a row (a key of ROLES). The sim reads it since roles step 2 (BattleSim t_role:
+## the skirmishers' loose order and cover drift, the caracole, the batter order).
 static func role(ty: int) -> String:
 	return str(TYPES[ty].get("role", ""))
+
+
+## Roles step 2 (docs/design/battle_sim.md "Roles, step 2 (as built)"): the loose order of the
+## `skirmish` role (a floor on the rows' spacing, _build_types).
+const SKIRM_FILE_SP := 1843
+const SKIRM_RANK_SP := 2048
+
+## The abilities (BattleSim ab_* state: Auto / Hold / Use now per unit, ORDER_ABILITY).
+const AB_PISTOL := 0    # pistols at contact: a point-blank shot in each of a man's first melee rounds
+const AB_GRENADE := 1   # grenades: thrown at a formed block, a held door or a gate in range
+const AB_CARACOLE := 2  # horse_skirmish riders with a firearm: ride to range, fire, retire; charge only when ordered
+const AB_BATTER := 3    # guns_siege: target walls or buildings when ordered
+const AB_N := 4
+const AB_NAMES: Array[String] = ["Pistols", "Grenades", "Caracole", "Batter"]
+const AB_AUTO := 0
+const AB_HOLD := 1
+const AB_NOW := 2
+const AB_STATE_NAMES: Array[String] = ["Auto", "Hold", "Use now"]
+
+
+## The abilities a row has (a bit per AB_*), from its role and its row: pistols where the row
+## carries a brace ("pistols"), grenades where its missile is the grenade (or "grenades", the hook
+## for later rows), the caracole for horse_skirmish riders with a firearm (cavalry class: the
+## pistoleers, cuirassiers, dragoons; Rome's light horse are missile troops already), batter for
+## guns_siege.
+static func abilities(ty: int) -> int:
+	var m := 0
+	if stat(ty, "pistols") > 0:
+		m |= 1 << AB_PISTOL
+	var gk := ammo_index("grenade")
+	if (gk >= 0 and stat(ty, "m_ak") == gk) or stat(ty, "grenades") > 0:
+		m |= 1 << AB_GRENADE
+	if role(ty) == "horse_skirmish" and cls(ty) == CLS_CAV and stat(ty, "m_ammo") > 0 and stat(ty, "m_gun") != 0:
+		m |= 1 << AB_CARACOLE
+	if role(ty) == "guns_siege":
+		m |= 1 << AB_BATTER
+	return m
 
 
 ## The role table row of a type.
