@@ -2332,6 +2332,8 @@ static func pack_of(ty: int) -> String:
 ##   blast   extra blast radius where it lands (sim units; stones)
 ##   fire    % chance it sets a wooden thing it lands on alight (gate, tower,
 ##           engine, ladders, ram, wagon); a man it hits sets his unit burning
+##   poison  1: a man it strikes and does not kill poisons his unit (BattleSim
+##           u_poisoned: one man in POISON_PER dies every POISON_T)
 ##   wagon   standard kinds: what a hand cart carries of it (WAGONS stock_pct)
 ## Display only: key, name, short (the HUD toggle's word), desc.
 ## Special kinds are never strictly better than the standard one: each pays
@@ -2401,10 +2403,16 @@ const AMMO: Array[Dictionary] = [
 	{"key": "shell", "name": "Mortar shells", "short": "shells", "base": -1, "share": 100, "dmg": 100, "obj": 111,
 		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 4096, "fire": 0, "aoe": 1, "wagon": 0,
 		"desc": "Hollow iron shells lobbed high over walls: a burst 4 m wide where they land."},
+	# (Caribbean batch 2, 2026-10-24) Poisoned arrows (index 13): the native bowmen's special kind, a third of the
+	# quiver. 67 % damage (a third below the plain arrow) and 67 % against gates and towers pay for the poison: a
+	# man struck and not killed poisons his unit (BattleSim u_poisoned), which then loses men over time.
+	{"key": "poison_arrows", "name": "Poisoned arrows", "short": "poison", "base": 0, "share": 33, "dmg": 67, "obj": 67,
+		"ap": 0, "pierce": 100, "range": 100, "rate": 100, "fear": 0, "blast": 0, "fire": 0, "poison": 1,
+		"desc": "Arrows tipped with poison, a third of the quiver: weaker than arrows, but a man they wound sickens and dies later; a unit they strike keeps losing men and heart after the shooting stops."},
 ]
 ## Fields of AMMO the sim reads, in t_k_* order (BattleSim._load_types).
 const AMMO_FIELDS: Array[String] = ["base", "share", "dmg", "obj", "ap", "pierce", "range", "rate", "fear",
-	"blast", "fire", "aoe"]
+	"blast", "fire", "aoe", "poison"]
 static var _ak_by_key := {}
 
 

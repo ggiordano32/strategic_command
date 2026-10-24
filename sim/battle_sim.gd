@@ -258,6 +258,12 @@ static var GATE_FIRE_CHIP: Array[int] = [6, 15, 8, 6]  # ... a gate's, by wall l
 const FIRE_R := 3 * M            # a fire missile landing this near an engine, ladders, a ram or a wagon (a tower: its radius)
 const BURN_UNIT := 40            # a unit a fire missile struck burns this many ticks ...
 const BURN_DRAIN := 1            # ... losing this much morale a tick meanwhile
+# Poisoned arrows (Caribbean batch 2; docs/design/battle_sim.md "Poisoned arrows (as built)"): a man struck by
+# an ammunition kind with poison and not killed poisons his unit (u_poisoned + 1, at most its men).
+const POISON_T := 200            # every 20 s (from the first poisoning) a poisoned unit loses ...
+const POISON_PER := 8            # ... one man per this many poisoned men (at least one while any remain) ...
+const POISON_MOR := 2            # ... and this much morale per man lost (beside a death's own), the poisoned count falling by the same ...
+const POISON_RECOVER := 4        # ... and by one per this many poisoned men who recover in the same pass (about a third die in the end)
 const LADDER_HP := 400           # ladder set hit points (fire)
 # Resupply (docs/DESIGN.md "Resupply: foraging and the ammunition wagon").
 # Ammunition wagons are equipment (EQ_WAGON, below) that a wagon unit's
@@ -1507,6 +1513,13 @@ var stat_car_volleys: int = 0         # caracole passes fired
 var stat_car_back: int = 0            # ... and ridden back
 var stat_skd_men: int = 0             # skirmishers' places drawn into the trees (layouts summed)
 var stat_bld_shots: int = 0           # shots at buildings (the batter order)
+# Poisoned arrows (Caribbean batch 2): hashed from the first poisoning on (a battle without one hashes as before).
+var poi_on: int = 0                   # a man was poisoned: u_poisoned, u_poison_t, u_poison_by hashed from then on
+var u_poisoned := PackedInt32Array()  # per unit: poisoned men (at most its alive)
+var u_poison_t := PackedInt32Array()  # ... ticks to the next poison death (0: none poisoned)
+var u_poison_by := PackedInt32Array() # ... the unit whose arrow poisoned it last (credited with the deaths; -1 none)
+var stat_poison_hits: int = 0         # men poisoned (struck, not killed)
+var stat_poison_dead: int = 0         # men dead of poison
 var stat_lean: int = 0                # shots fired leaning out round a cover spot
 var bk_x := PackedInt32Array()        # view: where the last BK_N blocked shots stopped (ring; diagnostics, not hashed)
 var bk_y := PackedInt32Array()
@@ -1533,6 +1546,7 @@ var t_k_fear := PackedInt32Array()
 var t_k_blast := PackedInt32Array()
 var t_k_fire := PackedInt32Array()
 var t_k_aoe := PackedInt32Array()
+var t_k_poison := PackedInt32Array()
 
 # Spatial grid, one per side so target search only walks enemies.
 var grid_w: int = 0
@@ -2709,7 +2723,7 @@ func _load_types() -> void:
 			for f in CH_FIELDS.size():
 				t_chv[f] = maxi(t_chv[f], UT.stat(t, CH_FIELDS[f]))
 	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
-		t_k_blast, t_k_fire, t_k_aoe]
+		t_k_blast, t_k_fire, t_k_aoe, t_k_poison]
 	var na := UT.AMMO.size()
 	for k in ka.size():
 		var arr: PackedInt32Array = ka[k]
@@ -8700,6 +8714,8 @@ func step() -> void:
 		_pistol_pass()
 	if fire_on != 0:
 		_update_fire()
+	if poi_on != 0:
+		_poison_pass()
 	_refresh_offsets()
 	_update_morale()
 	if city_on != 0:
@@ -12720,6 +12736,8 @@ func _missile_hit(p: int, d: int) -> void:
 		_remove(d, GONE_KILLED)
 	else:
 		hp[d] = h
+		if k >= 0 and t_k_poison[k] != 0:
+			_poison(ud, pr_unit[p])
 
 
 # ------------------------------------------------------ ammunition kinds ---
@@ -12787,6 +12805,51 @@ func _kind_shock(ud: int, k: int, fear: bool = true) -> void:
 		if u_burn[ud] == 0:
 			stat_unit_burn += 1
 		u_burn[ud] = BURN_UNIT
+
+
+## A man of unit ud struck and not killed by a poisoned missile of unit by:
+## one more poisoned man (at most its men); the first starts its clock.
+func _poison(ud: int, by: int) -> void:
+	poi_on = 1
+	stat_poison_hits += 1
+	if u_poisoned[ud] <= 0:
+		u_poison_t[ud] = POISON_T
+	u_poisoned[ud] = mini(u_poisoned[ud] + 1, u_alive[ud])
+	u_poison_by[ud] = by
+
+
+## Poisoned units (after the missiles, before morale; poi_on only): every
+## POISON_T a unit loses one man per POISON_PER poisoned men (at least one)
+## and POISON_MOR morale with each, and one man per POISON_RECOVER poisoned
+## recovers (no morale); the poisoned count falls by both.
+## The men die from the back of its slots; the deaths count as missile
+## kills, credited to the unit that poisoned it last. Index order, no RNG.
+func _poison_pass() -> void:
+	for u in n_units:
+		var pn := u_poisoned[u]
+		if pn <= 0:
+			continue
+		if u_alive[u] <= 0 or u_state[u] >= U_DESTROYED:
+			u_poisoned[u] = 0
+			u_poison_t[u] = 0
+			continue
+		pn = mini(pn, u_alive[u])  # (poisoned men killed otherwise take it with them)
+		u_poisoned[u] = pn
+		u_poison_t[u] -= 1
+		if u_poison_t[u] > 0:
+			continue
+		var die := mini(maxi(pn / POISON_PER, 1), u_alive[u])
+		var rec := pn / POISON_RECOVER  # (the men who shake it off this pass)
+		var base := u_slot_base[u]
+		for j in die:
+			stat_poison_dead += 1
+			stat_kills[3] += 1
+			stat_kside[u_side[u] * 5 + 3] += 1
+			_credit(u_poison_by[u], u)
+			_remove(slot_soldier[base + u_alive[u] - 1], GONE_KILLED)
+			u_morale[u] -= POISON_MOR
+		u_poisoned[u] = clampi(pn - die - rec, 0, u_alive[u])
+		u_poison_t[u] = POISON_T if u_poisoned[u] > 0 else 0
 
 
 ## A fire missile (projectile p) lands: each wooden thing within reach of
@@ -17882,6 +17945,10 @@ func state_hash() -> int:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if skd_on != 0:
 		ctx.update(u_skc.to_byte_array())
+	if poi_on != 0:
+		# Poisoned arrows (a battle where nobody was poisoned hashes as before).
+		for arr in [u_poisoned, u_poison_t, u_poison_by]:
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	var digest := ctx.finish()
 	return digest.decode_u32(0)
 
@@ -19894,6 +19961,14 @@ func _setup_roles() -> void:
 	stat_car_back = 0
 	stat_skd_men = 0
 	stat_bld_shots = 0
+	poi_on = 0
+	for arr in [u_poisoned, u_poison_t]:
+		arr.resize(n_units)
+		arr.fill(0)
+	u_poison_by.resize(n_units)
+	u_poison_by.fill(-1)
+	stat_poison_hits = 0
+	stat_poison_dead = 0
 	var sk := false
 	for u in n_units:
 		var ty := u_otype[u]

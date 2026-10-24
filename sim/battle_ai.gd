@@ -3294,7 +3294,8 @@ static func forage(sim, u: int, kn: PackedInt32Array) -> bool:
 # targets its fields suit (no per-kind code): a fire kind at wooden things
 # and, with any fear or fire, at wavering units; a harder-hitting kind
 # (damage or pierce above the standard) at armour and batteries; a bursting
-# kind at big units and batteries. Otherwise the standard kind. Knobs AK_*.
+# kind at big units and batteries; a poison kind at men under AK_ARMOUR
+# armour. Otherwise the standard kind. Knobs AK_*.
 
 ## Unit u's choice of ammunition against its target t (default: what it
 ## shoots at or is told to attack); orders the change if any.
@@ -3329,6 +3330,8 @@ static func ammo_suits(sim, k: int, t: int, kn: PackedInt32Array) -> bool:
 	if (UT.ammo_stat(k, "dmg") > 100 or UT.ammo_stat(k, "pierce") > 100) \
 			and (art or UT.stat(ot, "armour") >= kn[AP.AK_ARMOUR]):
 		return true
+	if UT.ammo_stat(k, "poison") > 0 and not art and UT.stat(ot, "armour") < kn[AP.AK_ARMOUR]:
+		return true  # (poisoned arrows: at men whose armour the plain arrow does not need to beat)
 	return false
 
 

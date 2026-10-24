@@ -292,9 +292,12 @@ const START_WARS: Array = [
 	["brethren", "dutch"],
 ]
 
-## (Guns carry no special kinds yet; the native bowmen fire arrows.)
+## (Guns carry no special kinds yet.) One special arrow per native nation
+## (owner 2026-10-24): the Itza (the city builders, sieges) fire arrows, the
+## Miskito (the raiders) poisoned arrows.
 const AMMO_AVAIL: Array = [
-	["fire_arrows", ["itza", "miskito"], RANGE, 2],
+	["fire_arrows", ["itza"], RANGE, 2],
+	["poison_arrows", ["miskito"], RANGE, 2],
 ]
 
 const KEY_CITIES: Array[String] = ["havana", "cartagena", "veracruz", "portobelo", "port_royal", "santo_domingo"]

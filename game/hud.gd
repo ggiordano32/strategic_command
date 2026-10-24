@@ -1191,6 +1191,9 @@ func update_cards(sim) -> void:
 			st = CardFace.ST_WAVER
 		f.state = st
 		f.under_fire = tick - sim.u_hit_t[u] < 10 or tick - sim.u_charged_t[u] < 15
+		f.poisoned = sim.poi_on != 0 and sim.u_poisoned[u] > 0
+		if f.poisoned:
+			f.summary += " | %d poisoned" % sim.u_poisoned[u]
 		# Holding a building under fire (destruction): its hit points as a small bar.
 		f.bld_pm = -1
 		var bpm: int = sim.occ_hp_pm(u)
@@ -1511,6 +1514,8 @@ class CardFace extends Control:
 	var char_icon := ""
 	## Holding a building under fire: its hit points per mille (-1: no bar).
 	var bld_pm := -1
+	## Poisoned men in it (poisoned arrows): a green strip down the right edge.
+	var poisoned := false
 
 	func _draw() -> void:
 		var sz := size
@@ -1544,6 +1549,8 @@ class CardFace extends Control:
 			draw_rect(Rect2(0, 0, sz.x, 3), owner_col)
 		if under_fire and state != ST_GONE:
 			draw_rect(Rect2(0, 0, 3, sz.y), Color(1.0, 0.55, 0.1))
+		if poisoned and state != ST_GONE:
+			draw_rect(Rect2(sz.x - 3, 0, 3, sz.y), Color(0.45, 0.85, 0.25))
 		var r := minf(sz.y * 0.3, 10.0)
 		var glyph := Color(0.12, 0.1, 0.05) if state == ST_ROUT else Color.WHITE
 		var disc := Color(1.0, 0.9, 0.3) if state == ST_ROUT else (Color(0.45, 0.45, 0.45) if state == ST_GONE else side_col)

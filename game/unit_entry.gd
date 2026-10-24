@@ -328,7 +328,7 @@ static func ammo_line(ty: int) -> String:
 			who.append("%s, %s %d" % [", ".join(fs), str(CData.CHAINS[int(row[2])]["name"]), int(row[3])])
 		parts.append("%s (%d%% of the load, %d%% damage, %d%% range%s): %s%s" % [UT.ammo_text(k, "name"),
 			UT.ammo_stat(k, "share"), UT.ammo_stat(k, "dmg"), UT.ammo_stat(k, "range"),
-			", sets things alight" if UT.ammo_stat(k, "fire") > 0 else "", UT.ammo_text(k, "desc"),
+			", sets things alight" if UT.ammo_stat(k, "fire") > 0 else (", poisons" if UT.ammo_stat(k, "poison") > 0 else ""), UT.ammo_text(k, "desc"),
 			(" Carried by: " + "; ".join(who) + ".") if not who.is_empty() else ""])
 	var head := "Ammunition: %s." % UT.ammo_text(std, "name").to_lower()
 	if parts.is_empty():

@@ -2206,6 +2206,40 @@ pins (Sonnet); then (4) the harness before / after (west_named, open_town, west_
 with the Spanish army given mounted arquebusiers and the natives slingers and atlatl (`asym_field` /
 `asym_woods` get a second army pair), read against the principle.
 
+### Poisoned arrows (as built, 2026-10-24)
+
+- **The kind.** `UnitTypes.AMMO` row 13 `poison_arrows` ("poison"), riding on arrows (base 0), a third of the
+  quiver (share 33), 67 % damage and 67 % against gates and towers, range and reload as arrows, no fear or fire;
+  a new generic AMMO field `poison` (1) read into `t_k_poison`. The custom battle picker offers it wherever fire
+  arrows are offered (`ammo_specials`: every special riding on arrows). The unit book line says "poisons".
+- **The campaign grant** (owner 2026-10-24): one special arrow per native nation, split by faction. West
+  `AMMO_AVAIL`: `["fire_arrows", ["itza"], RANGE, 2]` (the city builders, sieges) and
+  `["poison_arrows", ["miskito"], RANGE, 2]` (the raiders). (A unit carries one special kind, the first
+  matching row: `CRules.ammo_for`.)
+- **The poison.** A man struck by a poison kind and not killed adds one to his unit's `u_poisoned` (at most its
+  men alive); the first sets `u_poison_t` to `POISON_T` 200 ticks (20 s). `_poison_pass` (after the missiles and
+  fire, before morale; only once `poi_on` is set) in unit index order: the count is clipped to the men alive;
+  when the clock runs out the unit loses d = `max(poisoned / POISON_PER 8, 1)` men, each also `POISON_MOR` 2
+  morale on top of a death's own loss, and r = `poisoned / POISON_RECOVER 4` men recover (no morale); the count
+  falls by d + r and the clock restarts while any remain. About a third of the men poisoned die in the end; no
+  RNG. The deaths are missile kills in the stats and credited (`u_kills`) to the unit that poisoned it last
+  (`u_poison_by`); `stat_poison_hits`, `stat_poison_dead` are diagnostics (the result screen lists no causes, so
+  no line there).
+- **Accepted simplifications.** The poison is a count per unit, not per man: a man hit twice counts twice
+  (capped at the men alive), and the men who die are taken from the back of the unit's slots, not the wounded.
+- **State.** `poi_on`, `u_poisoned`, `u_poison_t`, `u_poison_by` (packed, per unit): hashed only once `poi_on`
+  is set (a battle where nobody is poisoned hashes as before); snapshot / restore by the script-variable capture.
+- **AI.** `BattleAI.ammo_suits`: a poison kind suits a target (not artillery) whose armour is under `AK_ARMOUR`;
+  the standard arrow otherwise.
+- **View.** A green strip down the right edge of a poisoned unit's card and "N poisoned" in its summary.
+- **Tests.** `tests/poison_test.gd`: 40 bowmen shoot 120 native warriors for 30 s and cease fire; plain arrows
+  (88 hits): no losses after the shooting stops (117 -> 117); poisoned arrows (92 men poisoned): 112 alive at
+  36 s, 93 at 140 s, 27 dead of poison (all credited to the bowmen), 8 still poisoned; snapshot / restore
+  mid-bleed and a repeat run identical. Goldens and battle pins unmoved; two wagon run hashes moved only because
+  `q_stock` (hashed) has one more column per wagon for the new kind (siege_eq_ring3 b0378b37 -> d4f9a12c,
+  siege_eq_polis2~sa 83ff7f7b -> 708664df; every coverage line equal). West campaign pins moved on the seeds
+  where Miskito raise bowmen at a Range 2 (the unit entries now store `"ak": "poison_arrows"`; docs/STATUS.md).
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus
