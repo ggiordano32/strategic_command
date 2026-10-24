@@ -1593,8 +1593,291 @@
         {"n": "char_b", "shape": "box", "bone": "frame", "mat": "char", "pos": [-0.4, -0.12, 0.45], "size": [0.4, 0.4, 0.03], "show": {"death": [2]}},
         {"n": "ember", "shape": "sphere", "bone": "frame", "mat": "ember", "pos": [0.3, 0.0, 0.5], "r": 0.1, "show": {"death": [1]}}
       ]
+    },
+    "mounted_arquebusiers": {
+      "name": "Mounted Arquebusiers",
+      "look": "Spanish arquebusier on horseback: morion with a comb, buff coat with a coloured sash, a long arquebus across the saddle; the attack is the arquebus brought up and fired from the saddle (flash on frame 1)",
+      "rig": "horse",
+      "body": "horse",
+      "rider": {
+        "rig": "humanoid",
+        "body": "humanoid",
+        "seat": [-0.08, 0, 0.66],
+        "parent_bone": "body",
+        "pose": "musket"
+      },
+      "render_box": [
+        -3.0,
+        3.25,
+        -2.0,
+        2.0
+      ],
+      "rider_parts": [
+        {"n": "sash", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0.0, 0, 1.0], "size": [0.36, 0.52, 0.1], "bevel": 0.03},
+        {"n": "bandolier", "shape": "box", "bone": "spine", "mat": "leather", "pos": [0.04, 0, 1.28], "size": [0.3, 0.06, 0.5], "bevel": 0.02, "rot": [0, 0, 40]},
+        {"n": "morion_bowl", "shape": "sphere", "bone": "head", "mat": "metal", "pos": [0.0, 0, 1.78], "r": 0.2, "scale": [1.0, 1.0, 0.85]},
+        {"n": "morion_brim", "shape": "cyl", "bone": "head", "mat": "metal", "pos": [0.0, 0, 1.74], "r": 0.3, "len": 0.03, "verts": 10},
+        {"n": "morion_comb", "shape": "limb", "bone": "head", "mat": "metal", "a": [-0.2, 0, 1.88], "b": [0.2, 0, 1.88], "t": [0.05, 0.1]},
+        {"n": "morion_plume", "shape": "limb", "bone": "head", "mat": "accent", "a": [-0.1, 0, 1.94], "b": [-0.5, 0.05, 1.86], "t": [0.07, 0.11]},
+        {"n": "buff_coat", "shape": "box", "bone": "spine", "mat": "leather", "pos": [0.0, 0, 1.26], "size": [0.34, 0.54, 0.42], "bevel": 0.07},
+        {"n": "buff_skirt", "shape": "box", "bone": "hips", "mat": "leather", "pos": [-0.12, 0, 0.9], "size": [0.36, 0.66, 0.14], "bevel": 0.05},
+        {"n": "collar", "shape": "box", "bone": "spine", "mat": "linen", "pos": [-0.03, 0, 1.5], "size": [0.2, 0.46, 0.06], "bevel": 0.02},
+        {"n": "sleeve_u.L", "shape": "limb", "bone": "upper_arm.L", "mat": "leather", "a": [0, 0.27, 1.42], "b": [0.1, 0.31, 1.14], "t": 0.19, "mirror": 1},
+        {"n": "sleeve_f.L", "shape": "limb", "bone": "forearm.L", "mat": "leather", "a": [0.1, 0.31, 1.14], "b": [0.3, 0.285, 1.12], "t": 0.16, "mirror": 1},
+        {"n": "cuff.L", "shape": "box", "bone": "forearm.L", "mat": "linen", "pos": [0.3, 0.285, 1.12], "size": [0.1, 0.2, 0.2], "bevel": 0.03, "mirror": 1},
+        {"n": "m_stock", "shape": "limb", "bone": "spine", "mat": "wood", "a": [-0.2, -0.04, 1.08], "b": [0.5, -0.03, 1.16], "t": [0.07, 0.09]},
+        {"n": "m_butt", "shape": "box", "bone": "spine", "mat": "wood", "pos": [-0.24, -0.04, 1.06], "size": [0.12, 0.1, 0.15], "bevel": 0.02},
+        {"n": "m_barrel", "shape": "limb", "bone": "spine", "mat": "metal", "a": [0.4, -0.03, 1.17], "b": [1.3, -0.02, 1.24], "t": [0.055, 0.055]},
+        {"n": "m_lock", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0.18, -0.06, 1.15], "size": [0.1, 0.05, 0.07], "bevel": 0.01},
+        {"n": "m_muzzle", "shape": "cone", "bone": "spine", "mat": "dark", "a": [1.29, -0.02, 1.24], "b": [1.4, -0.02, 1.245], "r": 0.045},
+        {"n": "m_flash", "shape": "sphere", "bone": "spine", "mat": "ember", "pos": [1.68, -0.02, 1.26], "r": 0.2, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}},
+        {"n": "m_flash2", "shape": "sphere", "bone": "spine", "mat": "string", "pos": [1.54, -0.02, 1.26], "r": 0.11, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}}
+      ],
+      "parts": [
+
+      ]
+    },
+    "marines": {
+      "name": "Marines",
+      "look": "Sea soldier: round hat, short sea coat with broad cuffs, crossbelt with a cartridge box, musket across the body and a cutlass at the belt",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "musket",
+      "skip": [
+        "cloak_back"
+      ],
+      "render_box": [
+        -1.5,
+        2.25,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "hat_brim", "shape": "cyl", "bone": "head", "mat": "dark", "pos": [0.0, 0, 1.765], "r": 0.36, "len": 0.035, "verts": 14},
+        {"n": "hat_crown", "shape": "sphere", "bone": "head", "mat": "dark", "pos": [0.0, 0, 1.82], "r": 0.21, "scale": [1.0, 1.0, 0.9]},
+        {"n": "hat_band", "shape": "cyl", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.79], "r": 0.215, "len": 0.05, "verts": 10},
+        {"n": "sleeve_u.L", "shape": "limb", "bone": "upper_arm.L", "mat": "primary", "a": [0, 0.27, 1.42], "b": [0.1, 0.31, 1.14], "t": 0.19, "mirror": 1, "pattern": 1},
+        {"n": "sleeve_f.L", "shape": "limb", "bone": "forearm.L", "mat": "primary", "a": [0.1, 0.31, 1.14], "b": [0.3, 0.285, 1.12], "t": 0.16, "mirror": 1, "pattern": 1},
+        {"n": "cuff.L", "shape": "box", "bone": "forearm.L", "mat": "secondary", "pos": [0.3, 0.285, 1.12], "size": [0.1, 0.2, 0.2], "bevel": 0.03, "mirror": 1},
+        {"n": "coat_skirt", "shape": "box", "bone": "hips", "mat": "primary", "pos": [-0.06, 0, 0.78], "size": [0.44, 0.62, 0.34], "bevel": 0.08, "pattern": 1},
+        {"n": "collar", "shape": "box", "bone": "spine", "mat": "secondary", "pos": [-0.03, 0, 1.5], "size": [0.2, 0.46, 0.06], "bevel": 0.02},
+        {"n": "sash", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0.0, 0, 1.0], "size": [0.36, 0.52, 0.1], "bevel": 0.03},
+        {"n": "m_stock", "shape": "limb", "bone": "spine", "mat": "wood", "a": [-0.2, -0.04, 1.08], "b": [0.5, -0.03, 1.16], "t": [0.07, 0.09]},
+        {"n": "m_butt", "shape": "box", "bone": "spine", "mat": "wood", "pos": [-0.24, -0.04, 1.06], "size": [0.12, 0.1, 0.15], "bevel": 0.02},
+        {"n": "m_barrel", "shape": "limb", "bone": "spine", "mat": "metal", "a": [0.4, -0.03, 1.17], "b": [1.35, -0.02, 1.24], "t": [0.05, 0.05]},
+        {"n": "m_lock", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0.18, -0.06, 1.15], "size": [0.1, 0.05, 0.07], "bevel": 0.01},
+        {"n": "m_muzzle", "shape": "cone", "bone": "spine", "mat": "dark", "a": [1.34, -0.02, 1.24], "b": [1.45, -0.02, 1.245], "r": 0.04},
+        {"n": "m_flash", "shape": "sphere", "bone": "spine", "mat": "ember", "pos": [1.7, -0.02, 1.26], "r": 0.17, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}},
+        {"n": "m_flash2", "shape": "sphere", "bone": "spine", "mat": "string", "pos": [1.57, -0.02, 1.26], "r": 0.1, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}},
+        {"n": "pouch", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.0, -0.3, 0.95], "size": [0.14, 0.12, 0.16], "bevel": 0.03},
+        {"n": "shoulder_pad.L", "shape": "box", "bone": "spine", "mat": "secondary", "pos": [0.0, 0.3, 1.45], "size": [0.22, 0.14, 0.07], "bevel": 0.03, "rot": [12, 0, 0], "mirror": 1},
+        {"n": "cutlass_scab", "shape": "limb", "bone": "hips", "mat": "dark", "a": [0.0, 0.3, 0.92], "b": [-0.4, 0.42, 0.76], "t": [0.05, 0.07]},
+        {"n": "cutlass_hilt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0.03, 0.3, 0.94], "size": [0.12, 0.08, 0.07], "bevel": 0.01},
+        {"n": "cross_belt", "shape": "limb", "bone": "spine", "mat": "linen", "a": [0.0, 0.22, 1.52], "b": [0.02, -0.22, 1.0], "t": [0.07, 0.11]},
+        {"n": "cartridge_box", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.0, -0.3, 0.95], "size": [0.18, 0.12, 0.14], "bevel": 0.02},
+        {"n": "coat_slop", "shape": "box", "bone": "hips", "mat": "primary", "pos": [-0.2, 0, 0.8], "size": [0.2, 0.6, 0.28], "bevel": 0.05, "pattern": 1}
+      ]
+    },
+    "naval_gun": {
+      "name": "Naval Gun",
+      "look": "A ship's demi-cannon landed: a long heavy gun on a low timber sledge, no wheels, hauling ropes and a rope breeching; the attack is the recoil and a flash at the muzzle",
+      "rig": "cannon_engine",
+      "render_box": [
+        -2.25,
+        2.5,
+        -1.25,
+        1.25
+      ],
+      "parts": [
+        {"n": "runner.L", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.0, 0.34, 0.14], "size": [2.3, 0.18, 0.2], "bevel": 0.04, "mirror": 1},
+        {"n": "runner_tip.L", "shape": "box", "bone": "frame", "mat": "wood", "pos": [1.2, 0.34, 0.2], "size": [0.3, 0.18, 0.14], "bevel": 0.04, "rot": [0, -20, 0], "mirror": 1},
+        {"n": "cross_a", "shape": "box", "bone": "frame", "mat": "primary", "pos": [0.6, 0, 0.3], "size": [0.2, 0.9, 0.14], "bevel": 0.03},
+        {"n": "cross_b", "shape": "box", "bone": "frame", "mat": "primary", "pos": [-0.6, 0, 0.3], "size": [0.2, 0.9, 0.14], "bevel": 0.03},
+        {"n": "bed", "shape": "box", "bone": "frame", "mat": "wood", "pos": [0.0, 0, 0.4], "size": [1.7, 0.7, 0.12], "bevel": 0.02},
+        {"n": "cheek.L", "shape": "box", "bone": "frame", "mat": "primary", "pos": [0.1, 0.3, 0.52], "size": [1.0, 0.12, 0.26], "bevel": 0.03, "mirror": 1, "pattern": 1},
+        {"n": "quoin", "shape": "box", "bone": "frame", "mat": "wood", "pos": [-0.55, 0, 0.5], "size": [0.4, 0.4, 0.14], "bevel": 0.02},
+        {"n": "breech_rope", "shape": "box", "bone": "frame", "mat": "rope", "pos": [-0.7, 0, 0.66], "size": [0.06, 0.8, 0.1], "bevel": 0.02},
+        {"n": "haul_rope.L", "shape": "limb", "bone": "frame", "mat": "rope", "a": [1.3, 0.34, 0.24], "b": [2.0, 0.2, 0.1], "t": 0.07, "mirror": 1},
+        {"n": "haul_knot", "shape": "sphere", "bone": "frame", "mat": "rope", "pos": [2.0, 0, 0.1], "r": 0.1},
+        {"n": "hand_spike", "shape": "limb", "bone": "frame", "mat": "wood", "a": [-0.6, 0.1, 0.46], "b": [-1.5, 0.25, 0.22], "t": 0.07},
+        {"n": "shot_a", "shape": "sphere", "bone": "frame", "mat": "dark", "pos": [-0.1, -0.5, 0.5], "r": 0.11},
+        {"n": "shot_b", "shape": "sphere", "bone": "frame", "mat": "dark", "pos": [0.15, -0.52, 0.5], "r": 0.11},
+        {"n": "gun", "shape": "cyl", "bone": "barrel", "mat": "gun", "pos": [0.55, 0, 0.62], "r": 0.2, "len": 1.7, "verts": 12, "rot": [0, 90, 0]},
+        {"n": "gun_breech", "shape": "cyl", "bone": "barrel", "mat": "gun", "pos": [-0.35, 0, 0.62], "r": 0.24, "len": 0.2, "verts": 12, "rot": [0, 90, 0]},
+        {"n": "cascabel", "shape": "sphere", "bone": "barrel", "mat": "gun", "pos": [-0.52, 0, 0.62], "r": 0.1},
+        {"n": "gun_ring_a", "shape": "cyl", "bone": "barrel", "mat": "accent", "pos": [0.1, 0, 0.62], "r": 0.25, "len": 0.07, "verts": 12, "rot": [0, 90, 0]},
+        {"n": "gun_ring_b", "shape": "cyl", "bone": "barrel", "mat": "accent", "pos": [0.9, 0, 0.62], "r": 0.22, "len": 0.07, "verts": 12, "rot": [0, 90, 0]},
+        {"n": "muzzle", "shape": "cyl", "bone": "barrel", "mat": "gun", "pos": [1.4, 0, 0.62], "r": 0.25, "len": 0.12, "verts": 12, "rot": [0, 90, 0]},
+        {"n": "trunnion.L", "shape": "box", "bone": "barrel", "mat": "dark", "pos": [0.3, 0.25, 0.6], "size": [0.12, 0.16, 0.1], "mirror": 1},
+        {"n": "blast", "shape": "sphere", "bone": "barrel", "mat": "ember", "pos": [1.8, 0, 0.62], "r": 0.3, "scale": [1.6, 1.2, 0.8], "show": {"attack": [1]}},
+        {"n": "blast2", "shape": "sphere", "bone": "barrel", "mat": "string", "pos": [1.65, 0, 0.62], "r": 0.18, "scale": [1.5, 1.0, 0.8], "show": {"attack": [1]}},
+        {"n": "char_a", "shape": "box", "bone": "frame", "mat": "char", "pos": [0.1, 0.1, 0.5], "size": [0.8, 0.3, 0.03], "show": {"death": [1, 2]}},
+        {"n": "char_b", "shape": "box", "bone": "frame", "mat": "char", "pos": [-0.4, -0.12, 0.44999999999999996], "size": [0.4, 0.4, 0.03], "show": {"death": [2]}},
+        {"n": "ember", "shape": "sphere", "bone": "frame", "mat": "ember", "pos": [0.3, 0.0, 0.44999999999999996], "r": 0.1, "show": {"death": [1]}}
+      ]
+    },
+    "colonial_militia": {
+      "name": "Colonial Militia",
+      "look": "Ragged civilian levy: assorted hats (straw, felt, a knitted cap), shirtsleeves and a patched vest, bare feet and breeches, a powder horn and a musket; no armour",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "musket",
+      "skip": [
+        "cloak_back",
+        "skirt",
+        "cloak"
+      ],
+      "render_box": [
+        -1.5,
+        2.25,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "straw_brim", "shape": "cyl", "bone": "head", "mat": "rope", "pos": [0.0, 0, 1.76], "r": 0.46, "len": 0.025, "verts": 12},
+        {"n": "straw_crown", "shape": "sphere", "bone": "head", "mat": "rope", "pos": [0.0, 0, 1.8], "r": 0.2, "scale": [1.0, 1.0, 0.8]},
+        {"n": "hat_band", "shape": "cyl", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.77], "r": 0.205, "len": 0.04, "verts": 10},
+        {"n": "hair", "shape": "sphere", "bone": "head", "mat": "hair", "pos": [-0.06, 0, 1.64], "r": 0.16, "scale": [1.0, 1.0, 0.9]},
+        {"n": "shirt", "shape": "box", "bone": "spine", "mat": "linen", "pos": [0.0, 0, 1.26], "size": [0.34, 0.52, 0.42], "bevel": 0.07},
+        {"n": "shirt_tail", "shape": "box", "bone": "hips", "mat": "linen", "pos": [-0.04, 0, 0.98], "size": [0.32, 0.5, 0.2], "bevel": 0.05},
+        {"n": "vest", "shape": "box", "bone": "spine", "mat": "primary", "pos": [0.03, 0, 1.26], "size": [0.34, 0.4, 0.36], "bevel": 0.05, "pattern": 1},
+        {"n": "sleeve_u.L", "shape": "limb", "bone": "upper_arm.L", "mat": "linen", "a": [0, 0.27, 1.42], "b": [0.1, 0.31, 1.14], "t": 0.17, "mirror": 1},
+        {"n": "sleeve_f.L", "shape": "limb", "bone": "forearm.L", "mat": "linen", "a": [0.1, 0.31, 1.14], "b": [0.3, 0.285, 1.12], "t": 0.14, "mirror": 1},
+        {"n": "breeches", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0, 0, 0.9], "size": [0.32, 0.46, 0.3], "bevel": 0.06},
+        {"n": "sash_rag", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0.0, 0, 1.0], "size": [0.34, 0.5, 0.08], "bevel": 0.02},
+        {"n": "rag_tail", "shape": "limb", "bone": "hips", "mat": "secondary", "a": [0.04, 0.3, 0.97], "b": [-0.16, 0.36, 0.78], "t": [0.05, 0.1]},
+        {"n": "powder_horn", "shape": "cyl", "bone": "hips", "mat": "ivory", "pos": [0.02, -0.3, 0.98], "r": 0.05, "len": 0.22, "verts": 8, "rot": [0, 90, 0]},
+        {"n": "pouch", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.04, 0.3, 0.95], "size": [0.14, 0.12, 0.16], "bevel": 0.03},
+        {"n": "strap", "shape": "limb", "bone": "spine", "mat": "leather", "a": [0.0, 0.22, 1.5], "b": [0.02, -0.22, 1.05], "t": [0.04, 0.08]},
+        {"n": "m_stock", "shape": "limb", "bone": "spine", "mat": "wood", "a": [-0.2, -0.04, 1.08], "b": [0.5, -0.03, 1.16], "t": [0.07, 0.09]},
+        {"n": "m_butt", "shape": "box", "bone": "spine", "mat": "wood", "pos": [-0.24, -0.04, 1.06], "size": [0.12, 0.1, 0.15], "bevel": 0.02},
+        {"n": "m_barrel", "shape": "limb", "bone": "spine", "mat": "metal", "a": [0.4, -0.03, 1.17], "b": [1.2, -0.02, 1.23], "t": [0.05, 0.05]},
+        {"n": "m_lock", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0.18, -0.06, 1.15], "size": [0.1, 0.05, 0.07], "bevel": 0.01},
+        {"n": "m_muzzle", "shape": "cone", "bone": "spine", "mat": "dark", "a": [1.19, -0.02, 1.23], "b": [1.3, -0.02, 1.235], "r": 0.04},
+        {"n": "m_flash", "shape": "sphere", "bone": "spine", "mat": "ember", "pos": [1.55, -0.02, 1.25], "r": 0.17, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}},
+        {"n": "m_flash2", "shape": "sphere", "bone": "spine", "mat": "string", "pos": [1.42, -0.02, 1.25], "r": 0.1, "scale": [1.5, 1.0, 0.7], "show": {"attack": [1]}}
+      ]
+    },
+    "maroons": {
+      "name": "Maroons",
+      "look": "Escaped-slave guerrilla of the hills: bare chest or a torn shirt hanging off one shoulder, head cloth, loose cut-off breeches, a machete in hand, a short musket slung on the back",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "skip": [
+        "torso",
+        "cloak",
+        "cloak_back",
+        "skirt"
+      ],
+      "render_box": [
+        -1.5,
+        2.0,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "chest", "shape": "box", "bone": "spine", "mat": "skin", "pos": [0, 0, 1.26], "size": [0.28, 0.48, 0.4], "bevel": 0.06},
+        {"n": "shoulders", "shape": "box", "bone": "spine", "mat": "skin", "pos": [-0.04, 0, 1.43], "size": [0.22, 0.6, 0.1], "bevel": 0.04},
+        {"n": "shirt_rag.L", "shape": "box", "bone": "spine", "mat": "linen", "pos": [0.0, 0.14, 1.3], "size": [0.32, 0.24, 0.34], "bevel": 0.05},
+        {"n": "shirt_hem", "shape": "box", "bone": "hips", "mat": "linen", "pos": [0.0, 0.1, 1.04], "size": [0.32, 0.3, 0.14], "bevel": 0.03},
+        {"n": "sleeve_rag.L", "shape": "limb", "bone": "upper_arm.L", "mat": "linen", "a": [0, 0.27, 1.42], "b": [0.08, 0.3, 1.24], "t": 0.17},
+        {"n": "hair", "shape": "sphere", "bone": "head", "mat": "hair", "pos": [-0.02, 0, 1.69], "r": 0.17, "scale": [1.0, 1.0, 0.9]},
+        {"n": "head_cloth", "shape": "sphere", "bone": "head", "mat": "primary", "pos": [0.0, 0, 1.71], "r": 0.185, "scale": [1.05, 1.02, 0.75], "pattern": 1},
+        {"n": "cloth_knot", "shape": "box", "bone": "head", "mat": "primary", "pos": [-0.19, 0, 1.68], "size": [0.09, 0.11, 0.08], "bevel": 0.02},
+        {"n": "cloth_tail", "shape": "limb", "bone": "head", "mat": "primary", "a": [-0.2, 0.02, 1.67], "b": [-0.46, 0.12, 1.58], "t": [0.05, 0.1]},
+        {"n": "breeches", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0, 0, 0.9], "size": [0.32, 0.46, 0.3], "bevel": 0.06, "pattern": 1},
+        {"n": "rope_belt", "shape": "box", "bone": "hips", "mat": "rope", "pos": [0, 0, 1.02], "size": [0.3, 0.46, 0.06]},
+        {"n": "machete_blade", "shape": "limb", "bone": "forearm.R", "mat": "metal", "a": [0.36, -0.29, 1.1], "b": [1.0, -0.3, 1.14], "t": [0.03, 0.11]},
+        {"n": "machete_tip", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [0.98, -0.3, 1.14], "b": [1.18, -0.26, 1.15], "r": 0.06},
+        {"n": "machete_grip", "shape": "box", "bone": "forearm.R", "mat": "wood", "pos": [0.34, -0.29, 1.08], "size": [0.14, 0.07, 0.07], "bevel": 0.01},
+        {"n": "bag", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.0, -0.3, 0.95], "size": [0.14, 0.12, 0.16], "bevel": 0.03},
+        {"n": "sling_strap", "shape": "limb", "bone": "spine", "mat": "leather", "a": [0.0, 0.22, 1.52], "b": [0.0, -0.2, 1.1], "t": [0.04, 0.08]},
+        {"n": "musk_stock", "shape": "limb", "bone": "spine", "mat": "wood", "a": [-0.5, -0.24, 1.0], "b": [-0.1, 0.16, 1.5], "t": [0.06, 0.08]},
+        {"n": "musk_barrel", "shape": "limb", "bone": "spine", "mat": "metal", "a": [-0.12, 0.14, 1.48], "b": [0.28, 0.4, 1.82], "t": [0.05, 0.05]}
+      ]
+    },
+    "atlatl": {
+      "name": "Atlatl Throwers",
+      "look": "Itza dart thrower: bare painted torso, a light feathered headdress, a carved atlatl in the throwing hand with a dart laid in it, a bundle of darts across the back; the attack is the overarm cast (javelin pose)",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "javelin",
+      "skip": [
+        "torso",
+        "cloak",
+        "cloak_back",
+        "skirt"
+      ],
+      "render_box": [
+        -1.75,
+        2.0,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "chest", "shape": "box", "bone": "spine", "mat": "skin", "pos": [0, 0, 1.26], "size": [0.28, 0.48, 0.4], "bevel": 0.06},
+        {"n": "shoulders", "shape": "box", "bone": "spine", "mat": "skin", "pos": [-0.04, 0, 1.43], "size": [0.22, 0.6, 0.1], "bevel": 0.04},
+        {"n": "hair", "shape": "sphere", "bone": "head", "mat": "hair", "pos": [-0.02, 0, 1.69], "r": 0.17, "scale": [1.0, 1.0, 0.9]},
+        {"n": "paint_a", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.0, 0.24, 1.47], "b": [0.12, 0.0, 1.46], "t": [0.04, 0.08]},
+        {"n": "paint_b", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.12, 0.0, 1.46], "b": [0.0, -0.24, 1.47], "t": [0.04, 0.08]},
+        {"n": "loincloth", "shape": "box", "bone": "hips", "mat": "primary", "pos": [0.06, 0, 0.88], "size": [0.22, 0.34, 0.3], "bevel": 0.04, "pattern": 1},
+        {"n": "loin_back", "shape": "box", "bone": "hips", "mat": "primary", "pos": [-0.1, 0, 0.84], "size": [0.1, 0.3, 0.34], "bevel": 0.03, "pattern": 1},
+        {"n": "armband.L", "shape": "box", "bone": "upper_arm.L", "mat": "accent", "pos": [0.04, 0.29, 1.28], "size": [0.1, 0.14, 0.1], "bevel": 0.02, "mirror": 1},
+        {"n": "headband", "shape": "box", "bone": "head", "mat": "primary", "pos": [0.0, 0, 1.74], "size": [0.34, 0.34, 0.05], "bevel": 0.02},
+        {"n": "tattoo", "shape": "box", "bone": "spine", "mat": "primary", "pos": [0.15, 0, 1.3], "size": [0.04, 0.3, 0.1], "bevel": 0.01},
+        {"n": "feather1", "shape": "limb", "bone": "head", "mat": "secondary", "a": [0.115, 0.096, 1.74], "b": [0.058, 0.183, 1.86], "t": [0.05, 0.075]},
+        {"n": "feather3", "shape": "limb", "bone": "head", "mat": "secondary", "a": [-0.075, 0.13, 1.74], "b": [-0.302, 0.247, 1.86], "t": [0.05, 0.075]},
+        {"n": "feather5", "shape": "limb", "bone": "head", "mat": "secondary", "a": [-0.141, -0.051, 1.74], "b": [-0.428, -0.097, 1.86], "t": [0.05, 0.075]},
+        {"n": "feather7", "shape": "limb", "bone": "head", "mat": "secondary", "a": [0.026, -0.148, 1.74], "b": [-0.111, -0.281, 1.86], "t": [0.05, 0.075]},
+        {"n": "atl_stick", "shape": "limb", "bone": "forearm.R", "mat": "arm_wood", "a": [0.3, -0.29, 1.1], "b": [0.95, -0.29, 1.14], "t": [0.04, 0.06], "hide": {"attack": [2, 3]}},
+        {"n": "atl_hook", "shape": "cone", "bone": "forearm.R", "mat": "accent", "a": [0.95, -0.29, 1.14], "b": [1.05, -0.29, 1.2], "r": 0.04, "hide": {"attack": [2, 3]}},
+        {"n": "dart_r", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.4, -0.29, 1.1], "b": [1.05, -0.29, 1.16], "t": 0.035, "hide": {"attack": [2, 3]}},
+        {"n": "dart_r_head", "shape": "cone", "bone": "forearm.R", "mat": "stone", "a": [1.03, -0.29, 1.16], "b": [1.26, -0.29, 1.17], "r": 0.05, "hide": {"attack": [2, 3]}},
+        {"n": "dart_r_fletch", "shape": "cone", "bone": "forearm.R", "mat": "fletch", "a": [-0.34, -0.29, 1.1], "b": [-0.42, -0.29, 1.1], "r": 0.06, "hide": {"attack": [2, 3]}},
+        {"n": "dart_bundle", "shape": "cyl", "bone": "spine", "mat": "wood", "pos": [-0.22, -0.1, 1.3], "r": 0.09, "len": 0.8, "verts": 8, "rot": [0, -24, -8]},
+        {"n": "bundle_tie", "shape": "cyl", "bone": "spine", "mat": "accent", "pos": [-0.22, -0.1, 1.3], "r": 0.1, "len": 0.1, "verts": 8, "rot": [0, -24, -8]},
+        {"n": "bundle_fletch", "shape": "box", "bone": "spine", "mat": "fletch", "pos": [-0.4, -0.1, 1.66], "size": [0.1, 0.16, 0.1], "bevel": 0.02},
+        {"n": "pouch", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.04, 0.3, 0.95], "size": [0.14, 0.12, 0.16], "bevel": 0.03}
+      ]
+    },
+    "w_slingers": {
+      "name": "West Slingers",
+      "look": "Native slinger: bare painted torso, a plain headband with one feather, a woven sling whirled in the right hand (the slingers' pose), a net bag of river stones at the hip",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "pose": "sling",
+      "skip": [
+        "torso",
+        "cloak",
+        "cloak_back",
+        "skirt"
+      ],
+      "render_box": [
+        -1.75,
+        2.0,
+        -1.75,
+        1.5
+      ],
+      "parts": [
+        {"n": "chest", "shape": "box", "bone": "spine", "mat": "skin", "pos": [0, 0, 1.26], "size": [0.28, 0.48, 0.4], "bevel": 0.06},
+        {"n": "shoulders", "shape": "box", "bone": "spine", "mat": "skin", "pos": [-0.04, 0, 1.43], "size": [0.22, 0.6, 0.1], "bevel": 0.04},
+        {"n": "hair", "shape": "sphere", "bone": "head", "mat": "hair", "pos": [-0.02, 0, 1.69], "r": 0.17, "scale": [1.0, 1.0, 0.9]},
+        {"n": "headband", "shape": "box", "bone": "head", "mat": "primary", "pos": [0.0, 0, 1.74], "size": [0.34, 0.34, 0.05], "bevel": 0.02},
+        {"n": "paint_a", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.0, 0.24, 1.47], "b": [0.12, 0.0, 1.46], "t": [0.04, 0.08]},
+        {"n": "paint_b", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.12, 0.0, 1.46], "b": [0.0, -0.24, 1.47], "t": [0.04, 0.08]},
+        {"n": "loincloth", "shape": "box", "bone": "hips", "mat": "primary", "pos": [0.06, 0, 0.88], "size": [0.22, 0.34, 0.3], "bevel": 0.04, "pattern": 1},
+        {"n": "loin_back", "shape": "box", "bone": "hips", "mat": "primary", "pos": [-0.1, 0, 0.84], "size": [0.1, 0.3, 0.34], "bevel": 0.03, "pattern": 1},
+        {"n": "armband.L", "shape": "box", "bone": "upper_arm.L", "mat": "accent", "pos": [0.04, 0.29, 1.28], "size": [0.1, 0.14, 0.1], "bevel": 0.02, "mirror": 1},
+        {"n": "feather3", "shape": "limb", "bone": "head", "mat": "secondary", "a": [-0.138, 0.021, 1.74], "b": [-0.427, 0.064, 1.84], "t": [0.05, 0.075]},
+        {"n": "bag", "shape": "box", "bone": "hips", "mat": "leather", "pos": [0.02, 0.26, 0.98], "size": [0.2, 0.14, 0.22], "bevel": 0.04},
+        {"n": "bag_flap", "shape": "box", "bone": "hips", "mat": "secondary", "pos": [0.02, 0.26, 1.08], "size": [0.22, 0.16, 0.05]},
+        {"n": "sling_cord", "shape": "limb", "bone": "weapon.R", "mat": "string", "a": [0.34, -0.29, 1.08], "b": [1.0, -0.29, 1.08], "t": 0.04},
+        {"n": "sling_pouch", "shape": "box", "bone": "weapon.R", "mat": "leather", "pos": [1.02, -0.29, 1.08], "size": [0.14, 0.1, 0.07], "bevel": 0.02},
+        {"n": "sling_stone", "shape": "sphere", "bone": "weapon.R", "mat": "fletch", "pos": [1.04, -0.29, 1.13], "r": 0.045, "verts": 6, "hide": {"attack": [3]}},
+        {"n": "stone_belt", "shape": "limb", "bone": "spine", "mat": "leather", "a": [0.0, 0.22, 1.5], "b": [0.02, -0.22, 1.05], "t": [0.04, 0.08]}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
 }

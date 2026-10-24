@@ -437,3 +437,20 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
   a tall fan of feathers, a long macuahuitl in both hands; pose `twohand`: raised overhead, cut at frame 2), 33 mortar (engine
   set, rig `mortar_engine`, anim `cannon`: short fat barrel elevated 65 degrees on a wooden bed with painted rails; attack 1 is
   the recoil and flash). Atlas 1024x2156, 1.2 MB of PNG. New poses in `build.py`: `grenade`, `boarder`, `twohand`.
+
+### Seven more Caribbean sets, batch 2 (2026-10-24)
+
+- **Sets** (ids in `atlas.sets` order, appended; 40 of 63 used): 34 mounted_arquebusiers (horse rig and rider as the dragoons;
+  morion with a comb and plume, buff coat with linen collar and cuffs, a long arquebus across the saddle; rider pose `musket`,
+  flash on frame 1), 35 marines (musketeers' body re-dressed: round hat, short sea coat, linen crossbelt, cartridge box, cutlass
+  and scabbard at the belt; pose `musket`), 36 naval_gun (engine set, rig `cannon_engine`, anim `cannon`: a long heavy gun low on
+  a timber sledge with runners, a rope breeching, hauling ropes and a hand spike; attack 1 is the flash; its crew is the existing
+  w_crew set 25), 37 colonial_militia (straw hat, linen shirt, patched vest, breeches, powder horn, a shorter musket; pose
+  `musket`), 38 maroons (bare chest and a torn shirt on one shoulder, head cloth, rope belt, machete in hand, a short musket
+  slung on the back; the default melee pose), 39 atlatl (Itza body of the canoe raiders, a light fan of four feathers, an atlatl
+  and dart in the throwing hand shown in attack frames 0-1, a bundle of darts across the back; pose `javelin`), 40 w_slingers
+  (native body of the bowmen with one feather, sling and stone bag of Rome's slinger set; pose `sling`). No new poses or shader
+  changes; sets 1-33 are pixel-identical (every frame rect of the old atlas compared with the new one, shade and mask).
+  Atlas 1024x2460, 1.4 MB of PNG. Build: the seven units about 2 s each; the new sets need `sprite_set` (and `engine_set` for
+  the naval gun) on their unit rows in `sim/unit_types.gd`, not done here.
+

@@ -101,6 +101,12 @@ Caribbean batch 1 (2026-10-23, ids 27-33): 27 grenadiers (pose `grenade`), 28 dr
 29 coureurs (pose `musket`), 30 boarding_grenadiers (pose `boarder`), 31 canoe_raiders (pose `javelin`), 32 holcan (pose
 `twohand`), 33 mortar (engine set, rig `mortar_engine`, anim `cannon`).
 
+Caribbean batch 2 (2026-10-24, ids 34-40): 34 mounted_arquebusiers (mounted, rider pose `musket`, morion and buff coat),
+35 marines (pose `musket`, round hat, sea coat, cutlass at the belt), 36 naval_gun (engine set, rig `cannon_engine`, anim
+`cannon`, a long demi-cannon on a wheelless sledge), 37 colonial_militia (pose `musket`, civilian rags), 38 maroons
+(default melee pose, machete, a short musket slung), 39 atlatl (pose `javelin`: atlatl and dart hidden after the cast), 40
+w_slingers (pose `sling`, native body). Atlas 1024x2460, 1.4 MB of PNG. No new poses.
+
 Rigs name their animation set (`anim`: humanoid, horse (also the camel
 rig), elephant, bolt / scorpion / onager (engines), cart / wagon (props)).
 A unit may carry `riders` (a list: prefix, rig, body, seat, parent_bone,
