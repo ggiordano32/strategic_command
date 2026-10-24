@@ -2148,6 +2148,64 @@ the kind's `obj`, not the row's.
   `WEST_LINES` (the custom picker) and the unit book's building table likewise; the West `CHAINS` texts name the new units
   where they are built. The unit book reads the rows by itself.
 
+## The Caribbean roster, batch 2 (plan, 2026-10-24)
+
+Batch 1 gave each side one or two pieces of its own; batch 2 fills the gaps the asymmetry principle shows: Spain
+has no horse shot for the field it is meant to own, the Dutch have no specialist at all, the nations have no cheap
+garrison filler, the pirates have no gun they can bring ashore, and the natives have only bowmen and clubs where
+history gives them darts, stones and poison. Seven West rows and one ammunition kind; every row has a `role`
+(the roles' behaviours of step 2 apply unchanged: skirmishers in loose order and cover, horse skirmishers
+caracoling). Each is a West row, a sprite set (the 6-bit field has 34 of 64 used), a roster and AI entry in
+`campaign/data/west.gd`, a UNIT_NEEDS entry, a book page and a custom battle list entry.
+
+- **Mounted arquebusiers** (New Spain and Tierra Firme; Stables 1 + Range 1; `horse_skirmish`): Spain's horse
+  shot. `cls` cav, an arquebus (musket range, the dragoons' reload), the step-2 caracole and pistols-at-contact
+  brace; melee between dragoons and lancers, armour light, cost a little above dragoons. Played: ride to the
+  flank of a native party in the open and shoot it out of cover's reach; charge only the routed. The field piece
+  that makes the Spanish the side to beat in the open.
+- **Marines** (England and the Dutch; Barracks 2 and a Port 1 in the town; `line`): disciplined shot with the
+  deck bonus of `DECK_CREWS`, morale a step above musketeers, melee the musketeers' plus a quarter, a musket at
+  the musketeers' reload, fewer rounds, cost between musketeers and grenadiers. Played: the landing party that
+  holds a beach or a quay, and the nations' answer to pirate boarders. The Dutch's first specialist.
+- **Landed naval guns** (the Brethren and the Dutch; Workshop 1 and a Port 1; `guns_field`): a ship's demi-cannon
+  on a sledge: the heavy gun's shot (400 or more, so the destruction AI counts it a wall breaker and batters with
+  it when the side has no mortar), range the field gun's, reload slower, moves at half the field gun's pace,
+  crew the heavy gun's, cost below the heavy gun. Played: hauled up from the boats to knock a hole in a fort; the
+  pirates' siege answer without a Workshop 3.
+- **Colonial militia** (every nation; Barracks 1; `line`): cheap, numerous (the largest West foot count), a musket
+  at a slow reload, poor accuracy, morale low, melee weak, armour none, upkeep half the musketeers'. Played: the
+  garrison that holds a wall and a gate; in the field it fires one volley and runs. Gives the nations numbers
+  without giving them quality, so a raid still bites.
+- **Maroons** (the Brethren and the Miskito; Barracks 1; `skirmish`): escaped-slave communities, machetes and a
+  few muskets: `cover`, ambush, the coureurs' woods pace, a short musket (the buccaneers' accuracy, 60 % of
+  their range, few rounds), melee the best of any skirmisher (near cutlass men), morale high in woods (the
+  cover trait's bonus), armour none. Played: the ambush party that also wins the brawl in the trees; useless
+  in a line.
+- **Atlatl darts** (Itza; Range 1; `skirmish`): dart throwers. Range 45 m, a dart that ignores light armour
+  (`m_ap` or the javelins' armour rule, whichever exists), 8 darts, fast reload, `cover`, melee the native
+  warriors' minus a step, cost low. Played: from the tree line at a column's flank; the Itza's reach past the
+  bowmen's.
+- **Slingers** (Itza and Miskito; Barracks 1; `skirmish`): Rome's slinger row re-costed for the West (range 80 m,
+  harass, a stone's morale bite), `cover`, cheapest West row. Played: the screen that makes a Spanish column
+  halt and deploy, then is gone.
+- **Poisoned arrows** (an ammunition kind for the native bowmen, Itza and Miskito; Range 2; in `AMMO_AVAIL`
+  beside the fire arrows): a struck man who is not killed is poisoned; a poisoned unit loses one man every
+  `POISON_T` (20 s) per 8 poisoned men and 2 morale with each, until no poisoned men remain (sim: a per-unit
+  poisoned count and a tick, packed arrays, hashed only when any unit is poisoned, snapshotted). Damage per hit
+  a third below the plain arrow. Played: a party that took a volley from the trees keeps bleeding as it marches;
+  the natives win by what happens after the ambush, not during it.
+
+**The AI.** `AI_SPECIALISTS` gains maroons, atlatl, slingers and mounted arquebusiers; `AI_BUILDUP_LINES` gains
+marines and the landed guns (they need a Port). Colonial militia go to the garrison mix, never the field army's
+first pick. The battle AI already caracoles, seeks cover and batters.
+
+**Order of work.** (1) Sprites for all seven (Sonnet; poses and props; atlas rebuilt; `soldier_facing_test` both
+paths) and (2) the poison ammunition in the sim (Opus; small; hashed; `tests/roles_sim_test.gd` or a sibling)
+in parallel; then (3) the rows, rosters, needs, AI lists, book pages, custom battle lists, tests and the West
+pins (Sonnet); then (4) the harness before / after (west_named, open_town, west_walls) and the asymmetry probe
+with the Spanish army given mounted arquebusiers and the natives slingers and atlatl (`asym_field` /
+`asym_woods` get a second army pair), read against the principle.
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus
