@@ -523,13 +523,18 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 						and CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key, "army": id}) == "":
 					up += CState.upkeep_of(ty)
 				break
+	# (docs/AI.md 37) The mix lines some recruiting centre can raise now
+	# ({}: every line, as before).
+	var live := {}
+	if kn[CP.MIX_LIVE] != 0 and CData.AI_LIVE_MIX != 0:
+		live = _live_lines(st, f, mix, scored)
 	var guard := 0
 	var raised := {}  # region -> 1 / 0: a band (amphibious) / other recruits there this turn without an army named (_recruit_order)
 	for e in scored:
 		var r: int = e[1]
 		while guard < kn[CP.RECRUIT_MAX]:
 			guard += 1
-			var line := _next_line(st, f, mix)
+			var line := _next_line(st, f, mix, live)
 			var lean := kn[CP.RECRUIT_LEAN_PCT]
 			if lean > 0 and CState.rand(st, 100) < lean:
 				line = _most_line(st, f, mix)  # more of what it already has
@@ -706,8 +711,44 @@ static func _home_march(st: Dictionary, f: int, moves: Array, id: int) -> bool:
 	return true
 
 
-## The line furthest below its share of the preferred mix.
-static func _next_line(st: Dictionary, f: int, mix: Dictionary) -> String:
+## The lines of `mix` (line -> 1) some recruiting centre of `scored`
+## ([score, region]) has the buildings for, any tier of faction f's roster
+## (docs/AI.md 37). Every line when none is (the old pick stands).
+static func _live_lines(st: Dictionary, f: int, mix: Dictionary, scored: Array) -> Dictionary:
+	var live := {}
+	for line in CData.LINE_ORDER:
+		if not mix.has(line):
+			continue
+		var ok := false
+		for tier in [1, 2, 3]:
+			var key := CState.roster_type(f, line, tier)
+			if key == "":
+				continue
+			for e in scored:
+				if _has_buildings(st, int(e[1]), key):
+					ok = true
+					break
+			if ok:
+				break
+		if ok:
+			live[line] = 1
+	return live
+
+
+## Region r has every building unit `key` needs (CRules.needs, UNIT_NEEDS).
+static func _has_buildings(st: Dictionary, r: int, key: String) -> bool:
+	var nd := CRules.needs(key)
+	if CState.building(st, r, int(nd[0])) < int(nd[1]):
+		return false
+	for nd2 in CData.UNIT_NEEDS.get(key, []):
+		if CState.building(st, r, int(nd2[0])) < int(nd2[1]):
+			return false
+	return true
+
+
+## The line furthest below its share of the preferred mix; with `live`
+## (line -> 1, not empty) only among those lines.
+static func _next_line(st: Dictionary, f: int, mix: Dictionary, live: Dictionary = {}) -> String:
 	var have := {}
 	var total := 0
 	for a in CState.armies_of(st, f):
@@ -724,7 +765,7 @@ static func _next_line(st: Dictionary, f: int, mix: Dictionary) -> String:
 	var best := ""
 	var best_gap := -100000
 	for line in CData.LINE_ORDER:
-		if not mix.has(line):
+		if not mix.has(line) or (not live.is_empty() and not live.has(line)):
 			continue
 		var gap := int(mix[line]) * (total + 1) - int(have.get(line, 0)) * 100
 		if gap > best_gap:

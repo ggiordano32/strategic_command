@@ -2613,3 +2613,65 @@ Measured with the sim rules (16 seeds, attacker wins %): rome_walls 74 / 44 / 20
 field 14 -> 11. Open: the AI's skirmishers rarely stand still long enough to drift in a field battle (`stat_skd_men` 0
 in the probe); the AI never uses Hold or Use now (the grenades' Use now at a gate, the batter at buildings) nor
 the caracole's charge flag above Easy.
+
+## 37. The West AI after the Caribbean batch 2: mix lines that can be raised (2026-10-24)
+
+(Asked for as "section 36"; 36 was taken by the roles' AI.) The 6 pin seeds went from 5 eliminations before batch 2
+to 2 after, with battles alike, and the two suspects were (a) the mixes diluted for the new rows, (b) marines and
+naval guns needing a Shipyard the build-up never builds. Measured first (`campaign_sim` West, all Average, 60 turns;
+144 seeds as six `--seed0` shards of 24; a probe copy counted every recruit by the line picked and every capture by
+taker and victim):
+
+- **No pacing drop.** Before batch 2 (`c4f39dd`) 89 eliminations in 144 seeds, 53.9 battles a seed, 19.4 sea
+  crossings; batch 2 (`101c39f`) 85, 54.5, 19.3; the Spanish held 12.3 / 12.8 regions at turn 60 before (New Spain /
+  Tierra Firme) and 12.5 / 13.1 after. The three 24-seed blocks before batch 2 had 18, 9 and 20 eliminations: the
+  pin seeds' 5 -> 2 is seed noise. Restoring only the old mixes on top of batch 2, per group (Spain; the natives; the
+  others), gave 16, 22 and 21 in the first 24 seeds (batch 2 there: 12, all old mixes 17), so no mix stands out.
+- **(b) is not it.** England's and the Dutch capitals, Port Royal and Port of Spain, hold a Shipyard 2 by turn 5
+  (seed 1000 trace), and the fleet AI builds one at its best port. What the Dutch marines lack is a Barracks 2 there
+  (the Dutch seldom reach it), and England's marine line never got picked: its share (3) ties with the grenadier's,
+  which comes first in `LINE_ORDER` and is dead (Barracks 3). A probe that built the Shipyard and the line's other
+  building at a harbour centre, port lines first in `AI_BUILDUP_LINES`, changed nothing (72 seeds: 42 eliminations
+  against 41, Shipyards finished 11 -> 12, no more marines); not kept.
+- **The real defect: dead lines take the pick.** `_next_line` picks the mix line furthest below its share; a line
+  no recruiting centre has the buildings for stays furthest below for ever, its recruit is "" and the region raises
+  `_any_type` (the first unit its recruit options allow: pikemen, rodeleros, warriors). Share of recruits raised that
+  way at batch 2: New Spain 20 % (the field guns), Tierra Firme 17 % (the mortars), England 43 % (the grenadiers),
+  France 25 % (the dragoons), the Dutch 51 % (the marines 30 % of the picks: batch 2's new dead line), the Brethren
+  15 %, the Itza 71 % (the holcan); the Miskito 1 %. Before batch 2 the same, the Dutch 35 %. So the mixes were
+  largely not what the armies were made of (the Spanish rodeleros and England's pikemen came from the fallback).
+
+As built: **`MIX_LIVE`** (`cai_profile.gd` id 120, `SK_SUPPORT + 45`; Easy 0, Average 1, Skilled 1). In a pack with
+`CData.AI_LIVE_MIX` (the West's `west.gd` sets 1; Rome has none, so Rome is unchanged by construction) `_recruit`
+first collects the mix lines some recruiting centre (the regions it scores: a military building, no battle) has every
+building for, at any tier of the roster (`_live_lines`, `_has_buildings`: `CRules.needs` and `UNIT_NEEDS`, buildings
+only, not money or the queue), and `_next_line` picks only among those (none live: every line, as before). A dead
+line's share goes to the rest in proportion; it comes back the turn its buildings stand. The mixes, rosters, unit
+stats, the build-up and the garrison rule are untouched (militia stay out of every field mix).
+
+| Knob (`cai_profile.gd`, id 120) | Easy | Average | Skilled |
+|---|---|---|---|
+| `MIX_LIVE` | 0 (as before) | 1 | 1 |
+
+Measured, 144 seeds, batch 2 -> as built: eliminations 85 -> 88 (before batch 2 89; the Brethren 33 -> 32, the
+Miskito 23 -> 21, the Itza 18 -> 23, the Dutch 7 -> 6, England 3 -> 4, France 1 -> 2), battles 54.5 -> 55.5 a seed,
+sea crossings 19.3 -> 19.5, captures 23.3 -> 23.8 a campaign; regions at turn 60 New Spain 12.5 -> 12.1, Tierra Firme
+13.1 -> 13.2 (the Spanish stay the two largest; Tierra Firme takes 5.0 regions a campaign, the most). Fallback
+recruits 0-4 % for every side. Units standing at turn 60 (72 seeds, per surviving faction): marines England 0 ->
+0.7, the Dutch 0.5 -> 0.8; naval guns the Dutch 0 -> 0.3, the Brethren 0 -> 0.1; the Itza atlatl 0.8 -> 4.5 and
+slingers 0.7 -> 3.9 (warriors 27.9 -> 21.3, bowmen 9.5 -> 13.2); New Spain rodeleros 10.5 -> 6.7 and pikemen 7.6 ->
+8.2, light guns 1.0 -> 1.5, war dogs 0.2 -> 1.1; England pikemen 6.5 -> 4.8, pistoleers 3.2 -> 4.3, light guns
+0.8 -> 1.5. The 6 pin seeds: eliminations 2 (Itza 58, Brethren 59) -> 4 (Miskito 57; Brethren 58, Itza 23; Miskito
+28), battles 53.7 -> 52.5, sea crossings 19.8 -> 19.8. Mean turn time alike (57-80 ms a seed against 56-73, on a
+loaded machine).
+
+Also measured and not kept: the main lines restored to their pre-batch-2 weights with the new rows' shares taken
+from the second line (New Spain heavy 15 -> 12, cav 9 -> 12; Tierra Firme heavy 15 -> 11, cav 21 -> 25; England
+musket 34 -> 37, pike 25 -> 22; the Dutch musket 35 -> 40, pike 25 -> 20, light gun 15 -> 13, field gun 5 -> 7; the
+Brethren buccaneer 31 -> 35, heavy 35 -> 31; the Itza light 45 -> 52, sling 7 -> 3, archer 27 -> 28, javelin 8 ->
+4; the Miskito light 44 -> 50, sling 6 -> 3, archer 30 -> 27) on top of `MIX_LIVE`: 78 eliminations in 144 seeds,
+54.6 battles.
+
+Open: the pin seeds swing 2-5 eliminations on noise alone; pacing claims want 72+ seeds (`tools/balance` or six
+`--seed0` shards). The Dutch rarely reach the Barracks 2 their marines need; the holcan, grenadiers and mortars
+still wait for buildings the build-up seldom finishes (their shares now go to the live lines meanwhile).

@@ -103,6 +103,9 @@ static var NAMES_DEFAULT: Array[String] = _ROME.NAMES_DEFAULT
 ## line's veterans (raised for a share of the line, CP.SPECIALIST_PCT).
 static var AI_BUILDUP_LINES: Array = []
 static var AI_SPECIALISTS: Array = []
+## AI_LIVE_MIX (1: the West): recruiting skips the mix lines no recruiting
+## centre can raise yet (cai.gd _next_line, CP.MIX_LIVE; docs/AI.md 37).
+static var AI_LIVE_MIX := 0
 
 const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"
@@ -392,6 +395,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	NAMES_DEFAULT = c["NAMES_DEFAULT"]
 	AI_BUILDUP_LINES = c.get("AI_BUILDUP_LINES", [])
 	AI_SPECIALISTS = c.get("AI_SPECIALISTS", [])
+	AI_LIVE_MIX = int(c.get("AI_LIVE_MIX", 0))
 	SHIPS = c.get("SHIPS", null)
 	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}

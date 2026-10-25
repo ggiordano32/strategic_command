@@ -196,7 +196,9 @@ const BU_LINE_REGIONS := SK_SUPPORT + 41  # ... in a faction of at least this ma
 const RANGE_FIRST_PCT := SK_SUPPORT + 42  # a recruiting centre without a Range builds one first when a Range line has at least this % of the mix (0 off)
 const SPECIALIST_PCT := SK_SUPPORT + 43   # a line's specialist (CData.AI_SPECIALISTS: canoe raiders, boarding grenadiers, coureurs) is raised while it is below this % of the line's units, else the line's main unit (100: always the specialist, as before)
 const AMPHIB_BAND := SK_SUPPORT + 44      # amphibious recruits (the canoe raiders) muster as their own band: into an amphibious army at the settlement, else a new one; no other recruit or merge joins it (1), or as any recruit (0)
-const N_KNOBS := SK_SUPPORT + 45
+# The West AI after the Caribbean batch 2 (docs/AI.md 37, 2026-10-24).
+const MIX_LIVE := SK_SUPPORT + 45         # in a pack with CData.AI_LIVE_MIX, recruiting picks the line furthest below its share among the mix lines some recruiting centre can raise now (1: a line no centre has the buildings for gives its share to the rest), or among all of them (0: such a line takes the pick and the recruit is any unit the centre allows, as before)
+const N_KNOBS := SK_SUPPORT + 46
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -361,6 +363,10 @@ const KNOBS: Array = [
 	[RANGE_FIRST_PCT, 0, 30, 30],
 	[SPECIALIST_PCT, 100, 30, 30],
 	[AMPHIB_BAND, 0, 1, 1],
+	# (docs/AI.md 37) Easy recruits as before; Average and Skilled skip the
+	# mix lines no centre can raise yet (the West: grenadiers, marines,
+	# mortars, the field guns, holcan before their buildings).
+	[MIX_LIVE, 0, 1, 1],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
