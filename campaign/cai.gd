@@ -338,7 +338,12 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 	if kn[CP.CHAR_HERO] > 0:
 		# Heroes (CData.CHAR_NEEDS) come from Barracks 2: a faction that
 		# raises them wants one at its military centre (after the above).
-		goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
+		# The West's (docs/AI.md 38): a shaman's Barracks 1; a sea captain's
+		# Shipyard comes from the fleet AI, the Spanish raise none.
+		if CData.pack != "west":
+			goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
+		elif CChars.allowed("shaman", f):
+			goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["shaman"][1])])
 	if kn[CP.BU_LINE_MAX] > 0 and regions.size() >= kn[CP.BU_LINE_REGIONS]:
 		# (docs/AI.md 34) The pack's build-up lines in the mix (the West's
 		# mortars, Workshop 3; grenadiers, Barracks 3): their chain to the
@@ -593,8 +598,9 @@ static func _characters(st: Dictionary, f: int, moves: Array) -> void:
 				continue
 			if CChars.slot_taken(st, int(a["id"]), CChars.SLOT_HERO):
 				continue
-			var kind := _hero_kind(a)
-			_raise_char(st, f, a, kind, floor_gold)
+			var kind := _hero_kind_of(f, a)
+			if kind != "":
+				_raise_char(st, f, a, kind, floor_gold)
 	if kn[CP.CHAR_DIPLOMAT] > 0 and not mine.is_empty():
 		var main: Dictionary = mine[0]
 		for a in mine:
@@ -602,7 +608,21 @@ static func _characters(st: Dictionary, f: int, moves: Array) -> void:
 				main = a
 		if int(main["busy"]) == 0 and not marching.has(int(main["id"])) \
 				and not CChars.slot_taken(st, int(main["id"]), CChars.SLOT_DIPLOMAT):
-			_raise_char(st, f, main, "diplomat", floor_gold)
+			var dk := "missionary" if CData.pack == "west" else "diplomat"
+			if CChars.allowed(dk, f):
+				_raise_char(st, f, main, dk, floor_gold)
+
+
+## The hero kind faction f raises for army a (docs/AI.md 38): in the West the faction's own (a sea captain for
+## the coast nations and the Brethren, a shaman for the natives; the Spanish have none, "" raises nothing), else
+## the arm of the most men (_hero_kind).
+static func _hero_kind_of(f: int, a: Dictionary) -> String:
+	if CData.pack != "west":
+		return _hero_kind(a)
+	for k in ["sea_captain", "shaman"]:
+		if CChars.allowed(k, f):
+			return k
+	return ""
 
 
 ## The hero kind for army a: the arm with the most men (foot on a tie).

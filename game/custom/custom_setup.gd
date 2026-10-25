@@ -55,6 +55,8 @@ const CTRL_NAMES := {"p1": "Player 1", "p2": "Player 2", "ai": "AI"}
 ## Heroes and agents a side may bring (docs/DESIGN.md "Heroes and agents"):
 ## a side's "chars" (keys, at most one of each) go in as the scenario's "chars".
 const CHAR_KEYS: Array[String] = ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]
+## The West's four (batch 3), offered instead of Rome's six in a West setup: char_keys(st).
+const WEST_CHAR_KEYS: Array[String] = ["sea_captain", "shaman", "privateer", "missionary"]
 const FIELD_KINDS := [Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE, Terrain.K_VALLEY, Terrain.K_HILL,
 	Terrain.K_SLOPE]
 const SITE_KINDS := [Terrain.K_ROLLING, Terrain.K_FLAT, Terrain.K_HILL, Terrain.K_RIDGE]
@@ -121,6 +123,7 @@ static func set_pack(st: Dictionary, pack: String) -> void:
 	var army: Array = WEST_ARMY if pack == "west" else (default_setup(0)["sides"][0]["armies"][0]["units"] as Array)
 	for s in 2:
 		st["sides"][s]["armies"] = [{"ctrl": "p1" if s == 0 else "ai", "units": army.duplicate(true)}]
+		(st["sides"][s] as Dictionary).erase("chars")  # (the other setting's characters)
 	if st.get("sea") is Dictionary:
 		st["sea"] = sea_default(pack)  # (R2: the ships on offer follow the setting)
 	fit_map(st)
@@ -261,11 +264,16 @@ static func side_cost(st: Dictionary, s: int) -> int:
 	return c
 
 
-## The characters side s brings (CHAR_KEYS order, known rows only).
+## The character keys a setup of this pack offers: Rome's six, or the West's four.
+static func char_keys(st: Dictionary) -> Array[String]:
+	return WEST_CHAR_KEYS if pack_of(st) == "west" else CHAR_KEYS
+
+
+## The characters side s brings (char_keys order, known rows only).
 static func chars_of(st: Dictionary, s: int) -> Array:
 	var have: Array = st["sides"][s].get("chars", [])
 	var out: Array = []
-	for k in CHAR_KEYS:
+	for k in char_keys(st):
 		if have.has(k) and UT.index_of(k) >= 0:
 			out.append(k)
 	return out

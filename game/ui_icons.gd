@@ -32,6 +32,7 @@ const NAMES: Array[String] = [
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 	"details", "embark", "more",
 	"grenade", "pistol", "caracole", "target", "hand",
+	"hat", "knife", "cross", "feathers",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
 ## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
@@ -880,5 +881,22 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			for x in [-0.3, 0.0, 0.3, 0.6]:
 				_l(x, 0.15, x, -0.8 + absf(x - 0.15) * 0.3, 0.9)
 			_pl([-0.55, 0.85, 0.6, 0.85, 0.6, 0.15], false, 0.9)
+		"hat":  # a sea captain: a broad hat, its crown, a curling plume
+			_pl([-0.95, 0.38, 0.0, 0.62, 0.95, 0.38], false, 1.1)
+			_pl([-0.5, 0.45, -0.46, -0.3, -0.2, -0.62, 0.2, -0.62, 0.46, -0.3, 0.5, 0.45], false, 0.95)
+			_pl([0.28, -0.58, 0.62, -0.92, 0.95, -0.55, 0.8, -0.15], false, 0.8)
+		"knife":  # a privateer: a short broad blade, guard and grip
+			_fill([-0.2, 0.3, 0.88, -0.88, 0.72, -0.2, 0.15, 0.42])
+			_l(-0.38, 0.12, 0.22, 0.7, 1.1)
+			_l(-0.08, 0.5, -0.72, 0.95, 1.5)
+		"cross":  # a missionary: a tall cross on a small base
+			_l(0.0, -0.92, 0.0, 0.85, 1.35)
+			_l(-0.55, -0.4, 0.55, -0.4, 1.35)
+			_l(-0.32, 0.88, 0.32, 0.88, 1.0)
+		"feathers":  # a shaman: a fan of feathers over a band
+			for a in [-0.8, -0.4, 0.0, 0.4, 0.8]:
+				_l(0.0, 0.62, sin(a) * 0.85, 0.62 - cos(a) * 1.5, 0.85)
+				_dot(sin(a) * 0.85, 0.62 - cos(a) * 1.5, 0.1)
+			_l(-0.3, 0.8, 0.3, 0.8, 1.3)
 		_:
 			_ring(0.0, 0.0, 0.5)

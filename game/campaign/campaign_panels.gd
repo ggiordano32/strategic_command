@@ -1530,6 +1530,15 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 # ------------------------------------------------ heroes and agents (8a) ---
 
 const CHAR_GLYPH: Array[String] = ["crown", "dagger", "scroll"]
+## The West's four (the row's "glyph"): a hat, a knife, a cross, feathers.
+const CHAR_GLYPH_WEST: Array[String] = ["hat", "knife", "cross", "feathers"]
+
+
+## The glyph of character kind `kind`: his row's own ("glyph", the West's), else his slot's.
+static func char_glyph(kind: String) -> String:
+	var ty := UT.index_of(kind)
+	var g := str(UT.TYPES[ty].get("glyph", "")) if ty >= 0 else ""
+	return g if g != "" else CHAR_GLYPH[maxi(CChars.slot_of(kind), 0)]
 
 
 ## The "Characters" block of an army card: the three slots (hero, assassin,
@@ -1558,7 +1567,7 @@ func _chars_block(box: VBoxContainer, a: Dictionary, mine: bool) -> void:
 		if not q.is_empty():
 			rows.append(_char_queued_row(q))
 		elif mine and CChars.available(CChars.KINDS[0]):
-			var e := Kit.label("No %s" % CChars.SLOT_NAMES[slot].to_lower(), Kit.FONT_SMALL, Kit.COL_DIM)
+			var e := Kit.label("No %s" % CChars.slot_name(slot).to_lower(), Kit.FONT_SMALL, Kit.COL_DIM)
 			e.name = "char_none_%d" % slot
 			Kit.label_icon(e, CHAR_GLYPH[slot])
 			rows.append(e)
@@ -1586,7 +1595,7 @@ func _char_row(c: Dictionary, mine: bool, with_detach: bool = true) -> Control:
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.clip_text = true
 	b.add_theme_color_override("font_color", Kit.COL_BAD if left > 0 else col)
-	Kit.set_icon(b, CHAR_GLYPH[CChars.slot_of(str(c["kind"]))], Kit.COL_BAD if left > 0 else col)
+	Kit.set_icon(b, char_glyph(str(c["kind"])), Kit.COL_BAD if left > 0 else col)
 	b.name = "char_%d" % int(c["id"])
 	b.tooltip_text = Traits.char_text(ty)
 	h.add_child(b)
@@ -1609,7 +1618,7 @@ func _char_queued_row(o: Dictionary) -> Control:
 	var h := Kit.hbox(4)
 	var l := Kit.label("%s  (arrives at the end of the turn)" % CChars.display(str(o["kind"])), Kit.FONT_SMALL, Kit.COL_DIM)
 	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	Kit.label_icon(l, CHAR_GLYPH[CChars.slot_of(str(o["kind"]))])
+	Kit.label_icon(l, char_glyph(str(o["kind"])))
 	h.name = "char_queued_%s" % str(o["kind"])
 	h.add_child(l)
 	h.add_child(Kit.icon_button("", "close", func(): s.remove_orders(func(x): return is_same(x, o)), 44))
@@ -1676,7 +1685,7 @@ func _char_recruit_rows(box: VBoxContainer, r: int, army: int) -> void:
 	box.add_child(sec)
 	box.add_child(Kit.label("One a turn at a settlement; paid now, no unit slot, no upkeep.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var locked: Array = []
-	for kind in ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]:
+	for kind in CChars.kinds_for(int(s.f)):
 		if not CChars.available(kind):
 			continue
 		var nd0 := CChars.needs(kind)

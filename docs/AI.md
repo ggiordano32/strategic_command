@@ -2675,3 +2675,31 @@ Brethren buccaneer 31 -> 35, heavy 35 -> 31; the Itza light 45 -> 52, sling 7 ->
 Open: the pin seeds swing 2-5 eliminations on noise alone; pacing claims want 72+ seeds (`tools/balance` or six
 `--seed0` shards). The Dutch rarely reach the Barracks 2 their marines need; the holcan, grenadiers and mortars
 still wait for buildings the build-up seldom finishes (their shares now go to the live lines meanwhile).
+
+
+## 38. The West's characters (2026-10-24)
+
+(37 is the West AI after batch 2.) The campaign AI raised Rome's six characters in the West before batch 3 (the same
+`_characters` code, Barracks 2 for heroes); the West now has four of its own (docs/design/battle_sim.md "The Caribbean
+roster, batch 3 (as built)") and Rome's six are refused there (`CChars.allowed`). No new knob: `CHAR_HERO` (Average,
+Skilled) and `CHAR_DIPLOMAT` (Skilled) keep their meaning.
+
+- **Heroes** (`_hero_kind_of(f, army)`): in the West a sea captain for England, France, the Dutch and the Brethren, a shaman
+  for the Itza and the Miskito, none for New Spain and Tierra Firme (they raised Rome's heroes before). Every army of
+  `CHAR_HERO` units or more at a city with the building gets one, as before, when the money stays above the reserve. A sea
+  captain needs a Shipyard 1 in the city the army stands in (the fleet AI already builds one at the nations' best port; the
+  build-up adds no Shipyard goal); a shaman a Barracks 1, which the build-up goal now asks of the natives' centre (it asked
+  every faction Barracks 2 in the West before; Rome's goal is unchanged).
+- **Agents**: the Skilled diplomat is a missionary, for New Spain, Tierra Firme and France (the factions that may raise
+  one; the others and the natives raise none). Privateers never, as assassins never.
+- **In battle** the character AI (section 27) is by kind and unchanged: a sea captain or shaman (`CK_FOOT`) is posted behind
+  the line centre, whatever his `au_roles`; the missionary parleys as the diplomat does (the pick does not weigh the bonus).
+
+Measured, `campaign_sim` West, all Average, 60 turns (before = HEAD 158f4c2): the 6 pin seeds eliminations 4 -> 2,
+battles 52.5 -> 52.3 a seed; 72 seeds (three `--seed0` shards of 24) eliminations 43 -> 50, battles 54.5 -> 51.8 a seed,
+characters raised 5.4 -> 4.8 a campaign, sea battles 26.6 -> 27.6, landings 21.5 -> 19.6; eliminated by faction (before ->
+after): the Brethren 17 -> 14, the Miskito 10 -> 14, the Itza 12 -> 12, the Dutch 1 -> 8, France 2 -> 1, England 1 -> 0, New
+Spain 0 -> 1. The Dutch swing is the largest and the only one outside the earlier 144-seed spread (6 in 144 at section 37);
+the Spanish lose their heroes' `char_pct` 6 in auto-resolve, the coast nations and natives keep a hero at 6 and 4. Not
+tuned; Rome unmoved (the Rome pins are identical).
+

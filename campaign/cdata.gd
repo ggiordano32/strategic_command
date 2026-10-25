@@ -605,7 +605,15 @@ const PRISONER_RANSOM := 5       # gold a man for a winner's prisoners, paid at 
 ## Where each kind is recruited: [building chain, level] (hero Barracks 2,
 ## assassin Market 2, diplomat Market 1). One character recruit a turn per region.
 const CHAR_NEEDS := {"hero_foot": [BARRACKS, 2], "hero_missile": [BARRACKS, 2], "hero_cav": [BARRACKS, 2],
-	"hero_siege": [BARRACKS, 2], "assassin": [MARKET, 2], "diplomat": [MARKET, 1]}
+	"hero_siege": [BARRACKS, 2], "assassin": [MARKET, 2], "diplomat": [MARKET, 1],
+	# The West's four (docs/design/battle_sim.md "The Caribbean roster, batch 3"): a sea captain from a Shipyard,
+	# a privateer from a Market 2 (the assassin's), a missionary from a Market 1, a shaman from a Barracks 1.
+	"sea_captain": [SHIPYARD, 1], "privateer": [MARKET, 2], "missionary": [MARKET, 1], "shaman": [BARRACKS, 1]}
+## Who may raise the West's characters (faction keys of the West pack). Rome's six are raised only outside the
+## West (CChars.allowed); a kind not listed here is Rome's.
+const CHAR_FACTIONS := {
+	"sea_captain": ["england", "france", "dutch", "brethren"], "privateer": ["england", "france", "dutch", "brethren"],
+	"missionary": ["new_spain", "tierra_firme", "france"], "shaman": ["itza", "miskito"]}
 
 
 ## The name list of faction f (the pack's NAMES_BY_FACTION for its key, else

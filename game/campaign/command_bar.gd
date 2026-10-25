@@ -96,6 +96,7 @@ func _warm_icons() -> void:
 	var small: Array = WARM_STATS.duplicate()
 	small.append_array(Panels.STANCE_ICONS.values())
 	small.append_array(Panels.CHAR_GLYPH)
+	small.append_array(Panels.CHAR_GLYPH_WEST)
 	IconRaster.warm(small, [UiIcons.px_for(12)])
 	IconRaster.warm(Traits.TRAIT_ICONS.values(), [12, 14])
 
@@ -436,7 +437,7 @@ func _build_army(id: int) -> void:
 			stats.append(_stat("forage", "%d" % int(sg.get("supply", 0)), "Turns of supplies left in the siege"))
 	for c in CChars.of_army(ps, id):
 		if int(CChars.slot_of(str(c["kind"]))) != CChars.SLOT_HERO:
-			stats.append(_stat(str(Panels.CHAR_GLYPH[CChars.slot_of(str(c["kind"]))]), "", "%s: %s" % [CChars.SLOT_NAMES[CChars.slot_of(str(c["kind"]))], str(c.get("name", ""))]))
+			stats.append(_stat(Panels.char_glyph(str(c["kind"])), "", "%s: %s" % [CChars.slot_name(CChars.slot_of(str(c["kind"]))), str(c.get("name", ""))]))
 	var stt := _status(a)
 	var leader := _leader(af, title, sub, CData.faction_color(af).lightened(0.45), stats, str(stt[0]), stt[1])
 	# Actions.

@@ -2433,6 +2433,59 @@ Open for the rows step: the battle AI places a `CK_FOOT` hero in "the second lin
 units his list names. The AI's parley pick does not weigh `parley_bonus`.
 
 
+### The Caribbean roster, batch 3 (as built, 2026-10-24)
+
+Step (3) of the order of work: the four West character rows and everything round them. Sim untouched (the fields
+were built in "Batch 3 sim and campaign hooks"); Rome's hashes, goldens and all four Rome pins unmoved; the West's
+two campaign pins moved (the AI now raises the West's own characters, not Rome's six).
+
+- **Rows** (`UT.WEST_LATE`, appended after `w_slingers`: no index moves; `"pack": "west"`, `"char": 1`, `role`
+  `command`, one man each, `"sprite_set"` 41-44 so the soldier layer draws the new men, not the procedural figure;
+  `"icon"` 35-38 and a view-only `"glyph"`):
+
+| Key | Kind | Price | Body | Fields |
+|---|---|---|---|---|
+| `sea_captain` | `CK_FOOT` | 1,500 | 46 / 40, armour 10, no shield, hp 600, `duel` 35, `nobreak`, `pistols` 2 | `au_hit` 15, `au_mor` 3 within 40 m, `au_roles` skirmish, shock, marines; `sea_cq` 1; `char_pct` 6; the Champion's fall numbers |
+| `privateer` | `CK_ASSASSIN` | 800 | the assassin's: 30 / 20 / 3, hp 80, hidden | none |
+| `missionary` | `CK_DIPLOMAT` | 800 | the diplomat's: 0 / 15 / 2, hp 100, unarmed | `au_steady` 50 within 30 m; `parley_vs` native_warriors, native_bowmen, canoe_raiders, holcan, atlatl, w_slingers (not the maroons); `parley_bonus` 25: the parley is 85 % routing / 60 % wavering against them (60 / 35 otherwise) |
+| `shaman` | `CK_FOOT` | 1,200 | 30 / 25, armour 0, hp 300, no `duel`, `nobreak` | `au_hit` 15, `au_mor` 3 within 40 m, `au_roles` skirmish, shock; `au_fear` 1, `au_fear_r` 30 m; `char_pct` 4; the Champion's fall numbers |
+
+  The book names the shaman Ah Kin (Itza) and Sukia (Miskito) in its text; the row's name is "Shaman".
+- **Campaign**: `CData.CHAR_NEEDS` sea captain Shipyard 1, privateer Market 2, missionary Market 1, shaman Barracks 1.
+  `CData.CHAR_FACTIONS` lists who may raise the West's four (sea captain and privateer: England, France, the Dutch, the
+  Brethren; missionary: New Spain, Tierra Firme, France; shaman: Itza, Miskito); `CChars.allowed(kind, f)` is true for a
+  West kind only in the West pack for those factions, and for Rome's six only outside the West pack (so Rome's six
+  never appear in the West and the West's four never in Rome); `CChars.recruit_check` refuses the rest with "not for
+  your people". `CChars.KINDS` lists the ten (Rome's six first), `slot_of` maps sea captain and shaman to the hero slot,
+  privateer to the assassin's, missionary to the diplomat's (one hero, one agent of each slot per army as before);
+  `kinds_for(f)` is what the recruit page lists; `slot_name` shows "Privateer" / "Missionary" in the West.
+- **The AI** (docs/AI.md 38): `_hero_kind_of(f, army)` in the West is a sea captain for the coast nations and the
+  Brethren, a shaman for the natives, nothing for the Spanish; the Skilled diplomat raise is a missionary for the
+  factions that may; privateers never; the build-up goal for heroes is the shaman's Barracks 1 (Rome's Barracks 2 is
+  Rome only; the sea captain's Shipyard comes from the fleet AI).
+- **View**: `Overlay.draw_char_glyph` takes the row's `glyph` (hat, knife, cross, feathers: four new `ui_icons.gd` icons) on
+  the gold-rimmed disc; the unit cards' corner mark (`UnitTraits.char_icon`), the army card, the command bar and the
+  recruit rows use the same glyphs; unit icons 35-38 in `unit_icons.gd`. The HUD's act chips follow the kind unchanged.
+- **Book**: a page per row from the row's text; "Heroes and agents" for the West (`UnitBook.chars_help_west`) names the four
+  and quotes their numbers, the missionary's parley as 60 / 35 plus 25 (85 / 60); `UnitTraits.char_text` knows `au_fear`,
+  `parley_bonus`, `sea_cq` and the role filter.
+- **Custom battle**: `CustomSetup.char_keys(setup)` is Rome's six or the West's four (`WEST_CHAR_KEYS`); `chars_of`,
+  the cost against the funds and the setup screen's toggles follow it; switching the setting clears a side's characters.
+- **Tests**: `tests/pack_test.gd` `_batch3` (the rows and numbers, indices, CHAR_NEEDS, the faction x kind table with every
+  building at 3 and a level short, Rome refusing the four and allowing its six, the AI's hero kinds, the custom battle for
+  both packs with prices and a built battle, 40 AI turns raising only sea captains / shamans); `tests/chars_test.gd` `west`
+  (the real rows in the sim: the role filter on West units, the shaman's fear, the missionary's bonus turns native refusals
+  into surrenders and changes no pike block's).
+
+Choices where the plan was silent: the sea captain's `au_roles` name the marines by their row key
+(their role is `line`); the missionary's order bonus is not built (no public order); the shaman's reach is 1126 (a
+staff) against the Champion's 1331 and his damage 30; the AI gives every army of the coast nations a sea captain (it does not check that
+the army fields skirmishers, shock troops or marines); the Spanish get no hero (they raised Rome's six before). Open: the
+battle AI posts a `CK_FOOT` hero behind the line centre whatever his `au_roles` (docs/AI.md 27); the AI's parley pick
+ignores `parley_bonus`; no probe battles yet (a shaman with the natives in `asym_field2`, a sea captain with the pirates on
+a deck, a missionary against a wavering war party); the sets have only the melee pose (no pistol or staff poses).
+
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus

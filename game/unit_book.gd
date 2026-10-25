@@ -213,7 +213,9 @@ func _role_head(rk: String) -> Control:
 
 ## The Heroes and agents page (docs/DESIGN.md "Heroes and agents"), with the
 ## numbers the sim uses (each character also has his own page above).
-static func chars_help() -> String:
+static func chars_help(pk: String = "rome") -> String:
+	if pk == "west":
+		return chars_help_west()
 	var f := UT.index_of("hero_foot")
 	var mi := UT.index_of("hero_missile")
 	var cv := UT.index_of("hero_cav")
@@ -242,6 +244,42 @@ static func chars_help() -> String:
 			BattleSim.PARLEY_SEE / 1024, BattleSim.PARLEY_T / 10, BattleSim.PARLEY_PCT, BattleSim.PARLEY_PCT_W, BattleSim.PARLEY_WAIT / 10],
 		"",
 		"Orders: select the assassin or the diplomat, press Sabotage, Attempt or Parley over the unit cards, then tap the target.",
+	]
+	return "\n".join(lines)
+
+
+## The West's Heroes and agents page (batch 3, docs/design/battle_sim.md "The Caribbean roster, batch 3"): the
+## sea captain, the privateer, the missionary and the shaman, with the numbers of their rows and of the sim.
+static func chars_help_west() -> String:
+	var cap := UT.index_of("sea_captain")
+	var prv := UT.index_of("privateer")
+	var mis := UT.index_of("missionary")
+	var sha := UT.index_of("shaman")
+	if cap < 0 or prv < 0 or mis < 0 or sha < 0:
+		return "HEROES AND AGENTS"
+	var lines: Array[String] = [
+		"HEROES AND AGENTS",
+		"",
+		"Four characters ride with an army without taking a unit's place; each is a single man with a gold-rimmed marker: a hat for the sea captain, a knife for the privateer, a cross for the missionary, feathers for the shaman. They never break and never hold the field on their own: when the army is beaten they leave with it. A hero who falls shakes his side within %d m (-%d morale at once) and heartens the enemy there (+%d)." % [
+			UT.stat(cap, "fall_r") / 1024, UT.stat(cap, "fall_loss"), UT.stat(cap, "fall_gain")],
+		"",
+		"Sea Captain (%d hit points, the Champion's body, a cutlass and a brace of pistols; England, France, the Dutch and the Brethren raise him at a Shipyard). Friendly skirmishers, shock troops and marines within %d m strike %d%% truer and gain %d morale a second; pikemen and musket lines take nothing from him. He duels any single man. On the campaign a fleet that carries his army sails with its captain's quality one step higher, at sea and in auto-resolve." % [
+			UT.stat(cap, "hp"), UT.stat(cap, "ch_r") / 1024, UT.stat(cap, "au_hit"), UT.stat(cap, "au_mor")],
+		"",
+		"Shaman (Ah Kin among the Itza, Sukia among the Miskito; %d hit points, a weak body; raised at a Barracks). Friendly skirmishers and shock troops within %d m strike %d%% truer and gain %d morale a second. And enemy units within %d m of him lose %d morale a second more, as if beasts were upon them; a diplomat's or missionary's steadying halves it. The natives' answer to the tercio's discipline." % [
+			UT.stat(sha, "hp"), UT.stat(sha, "ch_r") / 1024, UT.stat(sha, "au_hit"), UT.stat(sha, "au_mor"),
+			UT.stat(sha, "au_fear_r") / 1024, UT.stat(sha, "au_fear")],
+		"",
+		"Privateer. The enemy does not see him until he acts or comes within %d m of their men in the open (woods hide him). Sabotage: tap an enemy battery (he spikes a gun every %d s beside it) or a shut gate (he slips over the wall beside it and unbars it in %d s). Attempt (once a battle): tap an enemy hero or general; he walks up and strikes: %d%% kills, %d%% wounds (half his hit points), the rest fail. Three enemy men around him take him. Raised at a Market 2 by England, France, the Dutch and the Brethren." % [
+			BattleSim.SEEN_R / 1024, BattleSim.SABOTAGE_T / 10, BattleSim.SAB_UNBAR / 10, BattleSim.ATTEMPT_PCT, BattleSim.ATTEMPT_WOUND],
+		"",
+		"Missionary. Unarmed. Friendly units within %d m lose only %d%% of the heart fear would cost them (beasts, routing friends, artillery). Parley: tap a routing enemy unit or one below %d%% of its morale; he walks within %d m under a cross (routers within %d m stop for it), it stops fighting for %d s (the men near it hold; only missiles can hurt him then), then it surrenders and its men are taken prisoner, or it fights on and he may try again after %d s. The chance is %d%% for a routing unit and %d%% for a wavering one; against native warriors, bowmen, raiders, holcan, atlatl throwers and slingers %d points more (%d%% and %d%%). A garrison on a wall yields only once its plaza is held. Raised at a Market 1 by New Spain, Tierra Firme and France." % [
+			UT.stat(mis, "ch_r") / 1024, 100 - UT.stat(mis, "au_steady"), BattleSim.PARLEY_MOR, BattleSim.PARLEY_R / 1024,
+			BattleSim.PARLEY_SEE / 1024, BattleSim.PARLEY_T / 10, BattleSim.PARLEY_WAIT / 10,
+			BattleSim.PARLEY_PCT, BattleSim.PARLEY_PCT_W, UT.stat(mis, "parley_bonus"),
+			mini(BattleSim.PARLEY_PCT + UT.stat(mis, "parley_bonus"), 95), mini(BattleSim.PARLEY_PCT_W + UT.stat(mis, "parley_bonus"), 95)],
+		"",
+		"Orders: select the privateer or the missionary, press Sabotage, Attempt or Parley over the unit cards, then tap the target.",
 	]
 	return "\n".join(lines)
 
@@ -431,7 +469,7 @@ func show_type(ty: int) -> void:
 	terrain_page.visible = terr
 	entry.visible = not terr
 	if terr:
-		terrain_text.text = terrain_help() if current == UT.count() else (siege_help() if current == UT.count() + 1 else chars_help())
+		terrain_text.text = terrain_help() if current == UT.count() else (siege_help() if current == UT.count() + 1 else chars_help(_shown))
 		terrain_page.scroll_vertical = 0
 	else:
 		entry.set_unit_type(current, side_color)

@@ -9,7 +9,9 @@ extends SceneTree
 ##             targets; on the same seeds the bonus turns refusals into surrenders and never the
 ##             other way; an unlisted target rolls as before.
 ##   snapshot  the fear set piece survives snapshot / restore (same hashes after restore).
-##   godot --headless --script res://tests/chars_test.gd [-- --only=roles|fear|parley|snapshot]
+##   west      the batch 3 rows themselves (sea captain, shaman, missionary) on West units: the role filter, the
+##             shaman's fear, the missionary's bonus against a native row and none against a pike block.
+##   godot --headless --script res://tests/chars_test.gd [-- --only=roles|fear|parley|snapshot|west]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -39,6 +41,8 @@ func _init() -> void:
 		_parley()
 	if only == "" or only == "snapshot":
 		_snapshot()
+	if only == "" or only == "west":
+		_west()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	quit(0 if fails == 0 else 1)
 
@@ -245,3 +249,84 @@ func _snapshot() -> void:
 	_set_row("hero_foot", old)
 	_check(ok and h1 == h2 and (sim.u_aura[1] & BattleSim.AU_FEAR) != 0,
 		"snapshot: au_fear / au_roles set piece: 150 ticks after restore hash as the original (%x)" % h1[h1.size() - 1])
+
+
+# ---------------------------------------------------------------- west ---
+
+func _west_aura(hero: String, kinds: Array) -> Array:
+	var units: Array = []
+	for i in kinds.size():
+		units.append(Scenarios.unit(0, UT.index_of(str(kinds[i])), 20, 156 + 22 * i, 300, Scenarios.FACE_UP))
+	units.append(Scenarios.unit(1, UT.HEAVY, 40, 200, 60, Scenarios.FACE_DOWN))
+	var sim := BattleSim.new()
+	sim.setup(_sc(units, [[_ch(hero)], []]), 611)
+	var h := _ch_unit(sim, 0, UT.CK_FOOT)
+	sim.step()
+	_put(sim, h, 200, 300)
+	for t in 20:
+		sim.step()
+	var out: Array = []
+	for i in kinds.size():
+		out.append(sim.u_aura[i])
+	return out
+
+
+func _west() -> void:
+	var sc := _west_aura("sea_captain", ["buccaneers", "w_pikemen", "marines", "native_warriors", "musketeers"])
+	_check((sc[0] & BattleSim.AU_FOOT) != 0 and sc[1] == 0 and (sc[2] & BattleSim.AU_FOOT) != 0 and (sc[3] & BattleSim.AU_FOOT) != 0 and sc[4] == 0,
+		"west: the sea captain's aura reaches buccaneers (skirmish), marines (named) and warriors (shock), not pikemen or musketeers (bits %s)" % str(sc))
+	var sh := _west_aura("shaman", ["native_bowmen", "w_pikemen", "native_warriors", "marines"])
+	_check((sh[0] & BattleSim.AU_FOOT) != 0 and sh[1] == 0 and (sh[2] & BattleSim.AU_FOOT) != 0 and sh[3] == 0,
+		"west: the shaman's aura reaches bowmen and warriors, not pikemen or marines (bits %s)" % str(sh))
+	# The shaman's fear: their heavy foot 15 m from him.
+	var sim := BattleSim.new()
+	sim.setup(_sc([
+		Scenarios.unit(0, UT.index_of("native_warriors"), 60, 200, 360, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 60, 200, 100, Scenarios.FACE_DOWN)], [[_ch("shaman")], []]), 777)
+	var h := _ch_unit(sim, 0, UT.CK_FOOT)
+	sim.step()
+	_put(sim, h, 200, int(sim.u_maxy[1] / M) + 15)
+	for t in 9:
+		sim.step()
+	var m0: int = sim.u_morale[1]
+	for t in 200:
+		sim.step()
+	var drop: int = m0 - sim.u_morale[1]
+	_check((sim.u_aura[1] & BattleSim.AU_FEAR) != 0 and drop >= 18 and drop <= 22,
+		"west: the shaman frightens the enemy foot 15 m off, 1 morale a second (%d over 20 s)" % drop)
+	# The missionary: a wavering native warrior band against a wavering pike block, on the same seeds.
+	var gain := {"native_warriors": 0, "w_pikemen": 0}
+	for key in gain:
+		for sd in 14:
+			var pair: Array = []
+			for with_bonus in [false, true]:
+				var old := {}
+				if not with_bonus:
+					old = _set_row("missionary", {"parley_bonus": 0})
+				var s2 := BattleSim.new()
+				s2.setup(_sc([
+					Scenarios.unit(0, UT.HEAVY, 100, 200, 330, Scenarios.FACE_UP),
+					Scenarios.unit(1, UT.index_of(key), 60, 200, 200, Scenarios.FACE_DOWN)], [[_ch("missionary")], []]), 930 + sd)
+				var dip := _ch_unit(s2, 0, UT.CK_DIPLOMAT)
+				_put(s2, dip, 235, 190)
+				s2.u_morale[1] = 0
+				s2.step()
+				s2.queue_order(BattleSim.make_parley_order(s2.tick, dip, 1))
+				var res := -1
+				for t in 400:
+					s2.step()
+					if s2.stat_parley_ok > 0:
+						res = 1
+						break
+					if s2.stat_parley_fail > 0:
+						res = 0
+						break
+				pair.append(res)
+				if not old.is_empty():
+					_set_row("missionary", old)
+			if pair[0] == 0 and pair[1] == 1:
+				gain[key] += 1
+			if pair[0] == 1 and pair[1] != 1:
+				gain[key] -= 100
+	_check(gain["native_warriors"] > 0 and gain["w_pikemen"] == 0,
+		"west: the missionary's +25 turns refusals into surrenders of a native band (%d of 14 seeds) and changes no pike block's (%d)" % [gain["native_warriors"], gain["w_pikemen"]])

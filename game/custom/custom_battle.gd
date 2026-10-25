@@ -428,7 +428,7 @@ func _side_view(s: int) -> Control:
 	var cr := Kit.flow(6)
 	cr.add_child(Kit.label("Characters", Kit.FONT_SMALL, Kit.COL_DIM))
 	var have := CS.chars_of(setup, s)
-	for key in CS.CHAR_KEYS:
+	for key in CS.char_keys(setup):
 		var ty := UT.index_of(key)
 		if ty < 0:
 			continue

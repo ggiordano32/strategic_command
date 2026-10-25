@@ -22,11 +22,20 @@ const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
-const KINDS: Array[String] = ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat"]
+## Rome's six, then the West's four (campaign/cdata.gd CHAR_FACTIONS: the West's, by faction).
+const KINDS: Array[String] = ["hero_foot", "hero_missile", "hero_cav", "hero_siege", "assassin", "diplomat",
+	"sea_captain", "shaman", "privateer", "missionary"]
+const ROME_KINDS := 6
 const SLOT_HERO := 0
 const SLOT_ASSASSIN := 1
 const SLOT_DIPLOMAT := 2
 const SLOT_NAMES: Array[String] = ["Hero", "Assassin", "Diplomat"]
+const SLOT_NAMES_WEST: Array[String] = ["Hero", "Privateer", "Missionary"]
+
+
+## The name of slot `slot` in the active pack (the West's agents are a privateer and a missionary).
+static func slot_name(slot: int) -> String:
+	return (SLOT_NAMES_WEST if CData.pack == "west" else SLOT_NAMES)[slot]
 
 
 ## crules.gd preloads this file, so it is loaded at run time here (a cached
@@ -39,14 +48,37 @@ static func _rules() -> GDScript:
 
 ## Slot (SLOT_*) of a character kind key (-1 unknown).
 static func slot_of(kind: String) -> int:
-	var k := KINDS.find(kind)
-	if k < 0:
-		return -1
-	return SLOT_HERO if k < 4 else (SLOT_ASSASSIN if k == 4 else SLOT_DIPLOMAT)
+	match kind:
+		"hero_foot", "hero_missile", "hero_cav", "hero_siege", "sea_captain", "shaman":
+			return SLOT_HERO
+		"assassin", "privateer":
+			return SLOT_ASSASSIN
+		"diplomat", "missionary":
+			return SLOT_DIPLOMAT
+	return -1
 
 
 static func is_char_key(kind: String) -> bool:
 	return KINDS.has(kind)
+
+
+## Faction f may raise character `kind` in the active pack: the West's four only the factions CData.CHAR_FACTIONS
+## names (in the West pack), Rome's six only outside the West pack.
+static func allowed(kind: String, f: int) -> bool:
+	if f < 0 or f >= CData.FACTIONS.size():
+		return false
+	if CData.CHAR_FACTIONS.has(kind):
+		return CData.pack == "west" and (CData.CHAR_FACTIONS[kind] as Array).has(str(CData.FACTIONS[f]["key"]))
+	return CData.pack != "west"
+
+
+## The kinds faction f may raise, in KINDS order (the recruit pages and the AI read this).
+static func kinds_for(f: int) -> Array[String]:
+	var out: Array[String] = []
+	for k in KINDS:
+		if allowed(k, f):
+			out.append(k)
+	return out
 
 
 ## The unit row exists (the sim's rows are added by the sim agent).
@@ -175,6 +207,8 @@ static func recruit_check(st: Dictionary, f: int, r: int, kind: String, army: in
 		return "bad order"
 	if not available(kind):
 		return "unknown unit"
+	if not allowed(kind, f):
+		return "not for your people"
 	var rs: Dictionary = st["regions"][r]
 	if int(rs["owner"]) != f:
 		return "not your region"
@@ -201,7 +235,7 @@ static func recruit_check(st: Dictionary, f: int, r: int, kind: String, army: in
 		if int(a["busy"]) != 0:
 			return "in a battle"
 		if slot_taken(st, army, slot_of(kind)):
-			return "the army already has a %s" % SLOT_NAMES[slot_of(kind)].to_lower()
+			return "the army already has a %s" % slot_name(slot_of(kind)).to_lower()
 	return ""
 
 
@@ -276,7 +310,7 @@ static func attach_check(st: Dictionary, f: int, id: int, army: int) -> String:
 	if int(a["busy"]) != 0:
 		return "in a battle"
 	if slot_taken(st, army, slot_of(str(c["kind"]))):
-		return "the army already has a %s" % SLOT_NAMES[slot_of(str(c["kind"]))].to_lower()
+		return "the army already has a %s" % slot_name(slot_of(str(c["kind"]))).to_lower()
 	return ""
 
 

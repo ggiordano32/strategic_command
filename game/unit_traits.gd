@@ -337,6 +337,9 @@ static func classes_text(ty: int, good: bool) -> String:
 ## UI icon of a character row (char_kind 1-4 a hero: "crown", 5 assassin:
 ## "dagger", 6 diplomat: "scroll"); "" for any other row.
 static func char_icon(ty: int) -> String:
+	var g := str(UT.TYPES[ty].get("glyph", "")) if ty >= 0 else ""
+	if g != "":
+		return g  # (the West's four: hat, knife, cross, feathers)
 	match UT.stat(ty, "char_kind"):
 		1, 2, 3, 4:
 			return "crown"
@@ -358,11 +361,16 @@ static func char_text(ty: int) -> String:
 	var pairs := [["au_hit", "foot melee to-hit +%d %%"], ["au_mor", "morale +%d a second"], ["au_rng", "missile range +%d %%"],
 		["au_spr", "scatter -%d %%"], ["au_mom", "charge impact +%d %%"], ["au_rally", "routers rally +%d a second"],
 		["au_climb", "ladders %d %% faster"], ["au_reload", "engines reload %d %% faster"],
-		["au_batter", "ram and towers take %d %% less battering"], ["au_steady", "fear costs %d %% less morale"]]
+		["au_batter", "ram and towers take %d %% less battering"], ["au_steady", "fear costs %d %% less morale"],
+		["au_fear", "enemy units within 30 m lose %d morale a second"], ["parley_bonus", "parley +%d points against natives"],
+		["sea_cq", "his fleet's captain steps up %d tier"]]
 	for p in pairs:
 		var v := UT.stat(ty, str(p[0]))
 		if v != 0:
 			parts.append(str(p[1]) % v)
+	var roles: Array = UT.TYPES[ty].get("au_roles", [])
+	if not roles.is_empty() and not parts.is_empty():
+		parts[0] += " (only %s)" % ", ".join(roles)
 	var kind := "Hero" if ck <= 4 else "Agent"
 	var out := "%s: %s" % [kind, nm]
 	if not parts.is_empty():

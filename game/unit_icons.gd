@@ -20,6 +20,7 @@ extends RefCounted
 ##   29 culverins: a cannon on its carriage   30 fort gun: the same on a parapet   31 light guns: a short piece on a spoked wheel
 ##   32 native warriors: a war club and a feathered arrow   33 native bowmen: a short bow, a fletched arrow
 ##   34 the West general: a tricorne over crossed cutlasses (icon_of maps 15 to 34 while the West pack is active)
+##   35-38 the West's characters: a sea captain's hat, a privateer's knife, a missionary's cross, a shaman's feathers
 ## Symbol ids above 99 carry a tier mark (see icon_of).
 
 const UT := preload("res://sim/unit_types.gd")
@@ -286,6 +287,8 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 			for sg in [-1.0, 1.0]:
 				ci.draw_polyline(PackedVector2Array([c + Vector2(-0.8 * sg, 0.95) * s, c + Vector2(-0.1 * sg, 0.45) * s,
 					c + Vector2(0.45 * sg, 0.15) * s, c + Vector2(0.78 * sg, 0.1) * s]), col, w, true)
+		35, 36, 37, 38:  # the West's characters (batch 3): a captain's hat, a privateer's knife, a cross, feathers
+			UIIcons.draw_icon(ci, ["hat", "knife", "cross", "feathers"][icon - 35], Rect2(c - Vector2(s, s), Vector2(s, s) * 2.0), col)
 		20, 21, 22:  # heroes and agents (sim/unit_types.gd CHARS): crown, dagger, scroll (game/ui_icons.gd)
 			UIIcons.draw_icon(ci, ["crown", "dagger", "scroll"][icon - 20], Rect2(c - Vector2(s, s), Vector2(s, s) * 2.0), col)
 		_:

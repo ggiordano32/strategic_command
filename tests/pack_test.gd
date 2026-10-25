@@ -22,6 +22,11 @@ const CCaptain := preload("res://campaign/ccaptain.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CLanes := preload("res://campaign/clanes.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
+const CChars := preload("res://campaign/cchars.gd")
+const CAI := preload("res://campaign/cai.gd")
+const CP := preload("res://campaign/cai_profile.gd")
+const CSetup := preload("res://game/custom/custom_setup.gd")
+const BattleSim := preload("res://sim/battle_sim.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
@@ -41,6 +46,7 @@ func _init() -> void:
 	_heavy_guns()
 	_batch1()
 	_batch2()
+	_batch3()
 	_fleets()
 	_fleet_joins()
 	_sea()
@@ -432,7 +438,7 @@ func _batch1() -> void:
 	_check(ok_all, "batch 1: each unit is in its factions' rosters and nobody else's")
 	_check(ok_low, "batch 1: each needs exactly its buildings (a level short is refused, the levels alone are enough)")
 	var order := ["grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar"]
-	var idx_ok := UT.index_of("heavy_gun") == UT.FORT_GUN + 1 and UT.TYPES.size() == UT.FORT_GUN + 2 + order.size() + 7 \
+	var idx_ok := UT.index_of("heavy_gun") == UT.FORT_GUN + 1 and UT.TYPES.size() == UT.FORT_GUN + 2 + order.size() + 7 + 4 \
 		and UT.index_of("fort_gun") == UT.FORT_GUN
 	for i in order.size():
 		idx_ok = idx_ok and UT.index_of(order[i]) == UT.FORT_GUN + 2 + i and UT.pack_of(UT.index_of(order[i])) == "west"
@@ -551,7 +557,7 @@ func _batch2() -> void:
 	_check(ok_low, "batch 2: each needs exactly its buildings (a level short is refused, the levels alone are enough)")
 	var order := ["mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers"]
 	var first := UT.index_of("mortar") + 1
-	var idx_ok := UT.TYPES.size() == first + order.size()
+	var idx_ok := UT.TYPES.size() == first + order.size() + 4  # (+ the four characters of batch 3)
 	for i in order.size():
 		idx_ok = idx_ok and UT.index_of(order[i]) == first + i and UT.pack_of(UT.index_of(order[i])) == "west"
 		idx_ok = idx_ok and UT.stat(UT.index_of(order[i]), "sprite_set") == (25 if order[i] == "naval_gun" else 34 + i)
@@ -610,6 +616,172 @@ func _batch2() -> void:
 					mix_ok = false
 					print("  mix line '%s' of %s has no roster/chain" % [line, fa["key"]])
 	_check(mix_ok, "batch 2: every mix line is in its roster")
+
+
+## Batch 3, the characters (docs/design/battle_sim.md "The Caribbean roster, batch 3 (as built)"): the four
+## West rows, CHAR_NEEDS, who may raise which (Rome's six never in the West, the West's four never in Rome),
+## the AI's kinds, and the custom battle's toggles.
+func _batch3() -> void:
+	CData.use_pack("west")
+	var keys := ["sea_captain", "privateer", "missionary", "shaman"]
+	var first := UT.index_of("w_slingers") + 1
+	var row_ok := UT.TYPES.size() == first + 4
+	for i in 4:
+		var t := UT.index_of(keys[i])
+		row_ok = row_ok and t == first + i and UT.pack_of(t) == "west" and UT.stat(t, "char") == 1 and UT.role(t) == "command" \
+			and UT.stat(t, "sprite_set") == 41 + i and UT.stat(t, "icon") == 35 + i and str(UT.TYPES[t].get("glyph", "")) == ["hat", "knife", "cross", "feathers"][i]
+	_check(row_ok, "batch 3: the four character rows follow the slingers (the last West rows), West pack, char 1, command, sprite sets 41-44, icons 35-38")
+	var cap := UT.index_of("sea_captain")
+	var hf := UT.index_of("hero_foot")
+	var asn := UT.index_of("assassin")
+	var dip := UT.index_of("diplomat")
+	var prv := UT.index_of("privateer")
+	var mis := UT.index_of("missionary")
+	var sha := UT.index_of("shaman")
+	_check(UT.stat(cap, "char_kind") == UT.CK_FOOT and UT.stat(cap, "attack") == 46 and UT.stat(cap, "defence") == 40 and UT.stat(cap, "armour") == 10
+		and UT.stat(cap, "hp") == 600 and UT.stat(cap, "duel") == 35 and UT.stat(cap, "nobreak") == 1 and UT.stat(cap, "pistols") == 2
+		and UT.stat(cap, "char_pct") == 6 and UT.stat(cap, "sea_cq") == 1 and UT.price_of(cap) == 1500 and UT.stat(cap, "au_hit") == UT.stat(hf, "au_hit")
+		and UT.stat(cap, "au_mor") == UT.stat(hf, "au_mor") and UT.stat(cap, "ch_r") == 40 * 1024
+		and (UT.TYPES[cap]["au_roles"] as Array) == ["skirmish", "shock", "marines"],
+		"batch 3: the sea captain is the Champion's body in armour 10 with the brace, the role filter, sea_cq 1, char_pct 6, 1500")
+	_check(UT.stat(prv, "char_kind") == UT.CK_ASSASSIN and UT.price_of(prv) == 800 and UT.stat(prv, "hidden") == 1
+		and UT.stat(prv, "hp") == UT.stat(asn, "hp") and UT.stat(prv, "attack") == UT.stat(asn, "attack") and UT.stat(prv, "defence") == UT.stat(asn, "defence")
+		and UT.stat(prv, "walk") == UT.stat(asn, "walk") and UT.stat(prv, "char_pct") == 0,
+		"batch 3: the privateer is the assassin's numbers and kind at 800")
+	var pv: Array = UT.TYPES[mis]["parley_vs"]
+	_check(UT.stat(mis, "char_kind") == UT.CK_DIPLOMAT and UT.price_of(mis) == 800 and UT.stat(mis, "unarmed") == 1 and UT.stat(mis, "hp") == UT.stat(dip, "hp")
+		and UT.stat(mis, "au_steady") == UT.stat(dip, "au_steady") and UT.stat(mis, "ch_r") == UT.stat(dip, "ch_r") and UT.stat(mis, "parley_bonus") == 25
+		and pv == ["native_warriors", "native_bowmen", "canoe_raiders", "holcan", "atlatl", "w_slingers"] and not pv.has("maroons"),
+		"batch 3: the missionary is the diplomat's numbers at 800 with +25 against the native rows (not the maroons)")
+	_check(UT.stat(sha, "char_kind") == UT.CK_FOOT and UT.stat(sha, "attack") == 30 and UT.stat(sha, "defence") == 25 and UT.stat(sha, "armour") == 0
+		and UT.stat(sha, "hp") == 300 and UT.stat(sha, "duel") == 0 and UT.stat(sha, "nobreak") == 1 and UT.stat(sha, "au_fear") == 1
+		and UT.stat(sha, "au_fear_r") == 30 * 1024 and UT.stat(sha, "char_pct") == 4 and UT.price_of(sha) == 1200
+		and (UT.TYPES[sha]["au_roles"] as Array) == ["skirmish", "shock"],
+		"batch 3: the shaman is a 30 / 25 body, 300 hp, no duel, fear 1 within 30 m, the role filter, char_pct 4, 1200")
+	var nd := CData.CHAR_NEEDS
+	_check(nd["sea_captain"] == [CData.SHIPYARD, 1] and nd["privateer"] == [CData.MARKET, 2] and nd["missionary"] == [CData.MARKET, 1]
+		and nd["shaman"] == [CData.BARRACKS, 1], "batch 3: CHAR_NEEDS: sea captain Shipyard 1, privateer Market 2, missionary Market 1, shaman Barracks 1")
+	_check(CChars.slot_of("sea_captain") == CChars.SLOT_HERO and CChars.slot_of("shaman") == CChars.SLOT_HERO
+		and CChars.slot_of("privateer") == CChars.SLOT_ASSASSIN and CChars.slot_of("missionary") == CChars.SLOT_DIPLOMAT
+		and CChars.is_char_key("shaman") and CChars.slot_name(CChars.SLOT_DIPLOMAT) == "Missionary", "batch 3: CChars slots for the West's four")
+	# Who may raise which, in the West: every faction x every kind with the buildings at 3 and money.
+	var want := {
+		"sea_captain": ["england", "france", "dutch", "brethren"], "privateer": ["england", "france", "dutch", "brethren"],
+		"missionary": ["new_spain", "tierra_firme", "france"], "shaman": ["itza", "miskito"]}
+	var facs := ["new_spain", "tierra_firme", "england", "france", "dutch", "brethren", "itza", "miskito"]
+	var st := CState.new_campaign("b3", 7, [CData.faction_index("england")], {}, [], "west")
+	var ok_who := true
+	var ok_needs := true
+	for kind in CChars.KINDS:
+		for fk in facs:
+			var f := CData.faction_index(fk)
+			var r: int = CState.regions_of(st, f)[0]
+			for c in [CData.BARRACKS, CData.MARKET, CData.SHIPYARD]:
+				var found := false
+				for sl in st["regions"][r]["slots"]:
+					if int(sl[0]) == c:
+						sl[1] = 3
+						found = true
+				if not found:
+					(st["regions"][r]["slots"] as Array).append([c, 3])
+			st["regions"][r].erase("cq")
+			st["factions"][f]["treasury"] = 100000
+			var why := CChars.recruit_check(st, f, r, kind)
+			var should: bool = want.has(kind) and (want[kind] as Array).has(fk)
+			if (why == "") != should or (not should and why != "not for your people"):
+				ok_who = false
+				print("  %s by %s: '%s'" % [kind, fk, why])
+			if should:
+				var need: Array = CData.CHAR_NEEDS[kind]
+				for sl in st["regions"][r]["slots"]:
+					if int(sl[0]) == int(need[0]):
+						sl[1] = int(need[1]) - 1
+				if not CChars.recruit_check(st, f, r, kind).begins_with("needs"):
+					ok_needs = false
+	_check(ok_who, "batch 3: in the West each of the four is raised by exactly its factions, and Rome's six by nobody")
+	_check(ok_needs, "batch 3: a level short of a West character's building is refused")
+	var lists_ok := true
+	for fk in facs:
+		var ks := CChars.kinds_for(CData.faction_index(fk))
+		var expect: Array[String] = []
+		for kind in ["sea_captain", "shaman", "privateer", "missionary"]:
+			if (want[kind] as Array).has(fk):
+				expect.append(kind)
+		lists_ok = lists_ok and ks == expect
+	_check(lists_ok, "batch 3: the recruit page's kinds per faction are the West's own (England: sea captain, privateer; Itza: shaman)")
+	# The AI's kinds.
+	var army_units := [{"t": "musketeers", "n": 80, "x": 0}]
+	var arm := {"units": army_units}
+	_check(CAI._hero_kind_of(CData.faction_index("england"), arm) == "sea_captain" and CAI._hero_kind_of(CData.faction_index("brethren"), arm) == "sea_captain"
+		and CAI._hero_kind_of(CData.faction_index("france"), arm) == "sea_captain" and CAI._hero_kind_of(CData.faction_index("dutch"), arm) == "sea_captain"
+		and CAI._hero_kind_of(CData.faction_index("itza"), arm) == "shaman" and CAI._hero_kind_of(CData.faction_index("miskito"), arm) == "shaman"
+		and CAI._hero_kind_of(CData.faction_index("new_spain"), arm) == "" and CAI._hero_kind_of(CData.faction_index("tierra_firme"), arm) == "",
+		"batch 3: the AI's hero in the West: a sea captain for the coast nations and the Brethren, a shaman for the natives, none for the Spanish")
+	# Rome: the West's four are refused, Rome's six are not.
+	CData.use_pack("rome")
+	var rs := CState.new_campaign("b3r", 7, [CData.faction_index("rome")], {}, [])
+	var rf := CData.faction_index("rome")
+	var rr: int = CState.regions_of(rs, rf)[0]
+	for c in [CData.BARRACKS, CData.MARKET]:
+		var found := false
+		for sl in rs["regions"][rr]["slots"]:
+			if int(sl[0]) == c:
+				sl[1] = 3
+				found = true
+		if not found:
+			(rs["regions"][rr]["slots"] as Array).append([c, 3])
+	rs["factions"][rf]["treasury"] = 100000
+	var rome_ok := true
+	for kind in CChars.KINDS:
+		var why := CChars.recruit_check(rs, rf, rr, kind)
+		var west_kind: bool = CData.CHAR_FACTIONS.has(kind)
+		if west_kind != (why == "not for your people") or (not west_kind and why != ""):
+			rome_ok = false
+			print("  rome %s: '%s'" % [kind, why])
+	_check(rome_ok, "batch 3: in Rome the West's four are refused and Rome's six raised as before")
+	_check(CChars.kinds_for(rf).size() == 6 and CChars.kinds_for(rf)[0] == "hero_foot", "batch 3: Rome's recruit page lists its six")
+	# The custom battle: the toggles per pack, prices against the funds, the scenario's characters.
+	var cw := CSetup.default_setup(15)
+	CSetup.set_pack(cw, "west")
+	_check(CSetup.char_keys(cw) == CSetup.WEST_CHAR_KEYS and CSetup.char_keys(CSetup.default_setup(15)) == CSetup.CHAR_KEYS,
+		"batch 3: the custom battle offers the West's four in a West setup and Rome's six in Rome's")
+	var plain_cost := CSetup.side_cost(cw, 0)
+	for k in CSetup.WEST_CHAR_KEYS:
+		CSetup.toggle_char(cw, 0, k)
+	CSetup.toggle_char(cw, 0, "hero_foot")  # (Rome's: not offered in the West, not counted)
+	var want_cost := 0
+	for k in keys:
+		want_cost += UT.price_of(UT.index_of(k))
+	_check(CSetup.chars_of(cw, 0).size() == 4 and not CSetup.chars_of(cw, 0).has("hero_foot") and CSetup.side_cost(cw, 0) - plain_cost == want_cost,
+		"batch 3: the four toggles cost %d against the funds, a Rome kind in a West setup counts for nothing" % want_cost)
+	var b := CSetup.build(cw)
+	var lists: Array = (b["scenario"] as Dictionary).get("chars", [])
+	_check(lists.size() == 2 and (lists[0] as Array).size() == 4 and (lists[1] as Array).is_empty(),
+		"batch 3: the scenario carries side 1's four characters")
+	var kinds := []
+	var sim := BattleSim.new()
+	sim.setup(b["scenario"], int(b["seed"]))
+	for u in sim.n_units:
+		if sim.u_char[u] != 0:
+			kinds.append(sim.u_char[u])
+	kinds.sort()
+	_check(kinds == [1, 1, 5, 6], "batch 3: the battle has a hero, a hero (shaman), the privateer and the missionary as characters (kinds %s)" % str(kinds))
+	CSetup.set_pack(cw, "rome")
+	_check(CSetup.chars_of(cw, 0).is_empty(), "batch 3: back to Rome the West's characters are gone from the setup")
+	# The AI raises the West's own over a campaign: sea captains and shamans, never Rome's six or a privateer.
+	CData.use_pack("west")
+	var ai := CState.new_campaign("b3ai", 1000, [], {}, [], "west")
+	for t in 40:
+		ai = CTurn.resolve_turn(ai, [])
+	var seen := {}
+	for c in CChars.all(ai):
+		seen[str(c["kind"])] = int(seen.get(str(c["kind"]), 0)) + 1
+	var ai_ok := true
+	for k in seen:
+		if k != "sea_captain" and k != "shaman" and k != "missionary":
+			ai_ok = false
+	_check(ai_ok and not seen.is_empty(), "batch 3: 40 turns of the West AI raised only the West's own heroes and agents, no privateer (%s)" % str(seen))
+	CData.use_pack("rome")
 
 
 ## N2 (West only): a blockade cuts the port's income and pays the

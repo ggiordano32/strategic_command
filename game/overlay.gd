@@ -822,7 +822,7 @@ func _draw_char_marker(u: int, c: Vector2, r: float, col: Color, lw: float) -> v
 	var a := 0.45 if sim.u_hidden[u] != 0 else 1.0
 	draw_circle(c, r, Color(col, a))
 	draw_arc(c, r, 0, TAU, 20, Color(1.0, 0.82, 0.25, a), maxf(r * 0.16, 1.2), true)
-	draw_char_glyph(self, sim.u_char[u], c, r * 0.72, Color(1, 1, 1, 0.97 * a))
+	draw_char_glyph(self, sim.u_char[u], c, r * 0.72, Color(1, 1, 1, 0.97 * a), str(UT.TYPES[sim.u_otype[u]].get("glyph", "")))
 	var cho: int = sim.u_cho[u]
 	if cho == BattleSim.CHO_PARLEY:
 		var pole := c + Vector2(r * 1.3, r * 0.9)
@@ -845,9 +845,12 @@ func _draw_char_marker(u: int, c: Vector2, r: float, col: Color, lw: float) -> v
 ## A character's glyph by kind (UT.CK_*), fitting a circle of radius s: a
 ## crown (heroes: CK_FOOT .. CK_SIEGE), a dagger (the assassin), a scroll
 ## (the diplomat). Static: the HUD cards and the unit book may use it too.
-static func draw_char_glyph(ci: CanvasItem, kind: int, c: Vector2, s: float, col: Color) -> void:
+static func draw_char_glyph(ci: CanvasItem, kind: int, c: Vector2, s: float, col: Color, glyph: String = "") -> void:
 	var w := maxf(s * 0.17, 1.0)
-	if kind == UT.CK_ASSASSIN:
+	if glyph != "":
+		# The West's four (a row's "glyph": hat, knife, cross, feathers): the UI icon, on the same footing.
+		UIIcons.draw_icon(ci, glyph, Rect2(c - Vector2(s, s), Vector2(s, s) * 2.0), col)
+	elif kind == UT.CK_ASSASSIN:
 		# A dagger point down: blade, guard, grip, pommel.
 		ci.draw_colored_polygon(PackedVector2Array([c + Vector2(-0.16, -0.3) * s, c + Vector2(0.16, -0.3) * s,
 			c + Vector2(0, 0.95) * s]), col)

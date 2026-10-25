@@ -458,7 +458,7 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
 
 - **Characters are not drawn by a set in Rome**: `UT.CHARS` rows carry `"sprite": 0` and no `sprite_set`, and are drawn
   by the procedural path (their story busts / figures are the view-only art of "Characters (as built)"). These four sets
-  exist so the batch-3 rows can point at them with `"sprite_set": N`; none is wired here.
+  exist so the batch-3 rows can point at them with `"sprite_set": N`; wired 2026-10-24 (the four West character rows carry sprite_set 41-44, battle_sim.md "The Caribbean roster, batch 3 (as built)").
 - **Sets** (ids appended; 44 of 63 used; one man each, no new poses, default melee pose with the right forearm holding the
   weapon): 41 sea_captain (broad hat with plume, long laced sea coat, sash, crossbelt, two pistols at the belt, drawn
   cutlass), 42 privateer (dark coat, tricorn with cockade, sash and neck scarf, knife in the right hand and a pistol in the
