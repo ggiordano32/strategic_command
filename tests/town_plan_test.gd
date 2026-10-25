@@ -27,7 +27,7 @@ func _initialize() -> void:
 	var fails := 0
 	var ships := 0
 	var spots := 0
-	var lens := {"ship_sloop": 17.0, "ship_brigantine": 22.0, "ship_frigate": 30.0, "ship_galleon": 36.0}
+	var lens := {"ship_sloop": 17.0, "ship_brigantine": 22.0, "ship_frigate": 30.0, "ship_galleon": 36.0, "ship_lembos": 18.0, "ship_trireme": 28.0}
 	for pack in ["west", "rome"]:
 		PackView.use_pack(pack)
 		var st: Dictionary = CState.new_campaign("T", 3, [], {}, [], pack)

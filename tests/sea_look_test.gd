@@ -72,6 +72,15 @@ func _initialize() -> void:
 			palms += 1
 	_check(not ml.tropic and ml.shore_ok() and not ml.trees.is_empty() and palms == 0,
 		"Mediterranean (Rome pack): not tropic, %d trees, no palms, the shore inside the sim's land" % ml.trees.size())
+	var rocks := 0
+	var towers := 0
+	for t in ml.trees:
+		var nm2: String = SeaLook.Atlas.NAMES[int(t[2])]
+		rocks += 1 if nm2.begins_with("rock_") else 0
+		towers += 1 if nm2 == "tower_round" else 0
+	_check(rocks > 0 and towers <= 1, "Mediterranean (R3): rocks among the scrub (%d), at most one ruined tower (%d)" % [rocks, towers])
+	var wl := _look(Checks.scenario("frigates"), 7)   # (no land: nothing to place)
+	_check((wl[1] as SeaLook).trees.is_empty(), "Mediterranean: open water has no props")
 	_check((ml.water_mat.get_shader_parameter("c_deep") as Vector3).z < 0.45, "Mediterranean: the deep water is the deeper blue")
 	# Graphics Low (fewer trees, the same fields).
 	var lowr := _low_look()

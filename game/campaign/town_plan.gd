@@ -1480,7 +1480,9 @@ static func _moored(s: Dictionary, f: Dictionary, lvl: int, water: Vector2) -> A
 	var kinds := ["brigantine", "frigate"]
 	if str(f["style"]) == "haven":
 		kinds = ["sloop", "brigantine"]
-	var lens := {"sloop": 17.0, "brigantine": 22.0, "frigate": 30.0, "galleon": 36.0}
+	elif CData.pack != "west":
+		kinds = ["trireme", "lembos"]   # (R3) Rome's quays: galleys, not the West's sail ships
+	var lens := {"sloop": 17.0, "brigantine": 22.0, "frigate": 30.0, "galleon": 36.0, "lembos": 18.0, "trireme": 28.0}
 	# which way the fleet row of a port runs (away from the town): ships go the other way along the quay
 	var c: Vector2 = s["c"]
 	var row := -1.0 if water.x < c.x else 1.0

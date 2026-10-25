@@ -32,9 +32,10 @@ const SITE_MIN_ZOOM := 0.55
 const SHIP_MIN_ZOOM := 0.35
 const TILE_M := 58.0           # a base tile's width in metres (the sprites' scale)
 const SHIP_RANK := ["ship_of_the_line", "galleon", "quinquereme", "quinquereme_p", "frigate", "corbita", "trireme", "brigantine", "sloop", "lembos", "war_canoe"]
-## (R2, Rome's navy) The map sprites of the galleys: until they have their own art they stand in as the sail ships of
-## about their size (open: oared sprites).
-const SHIP_LOOK := {"lembos": "sloop", "trireme": "brigantine", "quinquereme": "frigate", "quinquereme_p": "frigate", "corbita": "galleon"}
+## (R3, Rome's navy) Rome's galleys have their own oared sprites (ship_lembos / trireme / quinquereme / quinquereme_p:
+## banks of oars, a bronze ram, one mast with the sail furled, the corvus on the quinquereme; tools/structures
+## gen_spec.py `galley_parts`); only the merchantman still stands in as the galleon.
+const SHIP_LOOK := {"corbita": "galleon"}
 const SHIP_K := 1.0
 
 var overlay: Node2D

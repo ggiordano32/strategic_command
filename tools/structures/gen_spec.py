@@ -787,6 +787,61 @@ for kind in SHIPS:
     DEFS["ship_%s_def" % kind] = parts
 
 
+def galley_parts(kind):
+    """(R3, Rome's navy) Oared ships: a long narrow hull, a bronze ram at the waterline, banks of oars along both
+    sides, one mast with the square sail furled on its yard, a raised stern post. The quinquereme carries a
+    second bank and, unless Punic, the corvus (a raised boarding bridge on a post by the bow)."""
+    p = []
+    if kind == "lembos":
+        L, B, H, pairs, mast = 18, 3.8, 1.9, 5, 10
+    elif kind == "trireme":
+        L, B, H, pairs, mast = 28, 4.6, 2.4, 8, 14
+    else:
+        L, B, H, pairs, mast = 34, 5.8, 2.9, 9, 17
+    pts = [[-L * 0.5, -B * 0.3], [-L * 0.3, -B * 0.5], [L * 0.28, -B * 0.5], [L * 0.5, -0.25], [L * 0.5, 0.25], [L * 0.28, B * 0.5],
+           [-L * 0.3, B * 0.5], [-L * 0.5, B * 0.3]]
+    p += [part("poly", None, "hull_lt", pts=pts, z0=-0.7, z1=H, sc0=0.55, sc1=1.0),
+          part("wall", None, "primary", pts=pts, closed=True, t=0.5, h=0.7, z0=H),
+          box([0, 0, H], [L * 0.62, B * 0.62, 0.35], "hull_dk", ol=0)]
+    # the ram: a bronze beak at the waterline, a cone pointing forward (+x)
+    p.append(cone([L * 0.5 - 0.2, 0, -0.1], 0.7 + B * 0.07, 2.6 + B * 0.15, "ship_gold", n=6, r=[0, 90, 0]))
+    # the stern post, curving up
+    p.append(box([-L * 0.5 + 0.4, 0, H], [0.5, 0.5, 2.6 + B * 0.2], "hull_dk"))
+    p.append(box([-L * 0.5 + 1.2, 0, H + 2.5 + B * 0.2], [1.6, 0.4, 0.4], "ship_gold", ol=0))
+    # oars: two banks (quinquereme: a third short one), each a thin rod angled out and down to the water
+    banks = 1 if kind == "lembos" else 2
+    for k in range(pairs):
+        x = -L * 0.34 + k * (L * 0.62 / max(pairs - 1, 1))
+        for sd in (-1, 1):
+            for b in range(banks):
+                z = H - 0.2 + 0.0 * b
+                reach = B * 0.5 + 3.4 + 0.6 * b
+                p.append(cyl([x + 0.35 * b, sd * (B * 0.5 - 0.1), z + 0.5 * b], 0.1, reach, "dark_wood", n=4, r=[-sd * 118, 0, 0], ol=0))
+    # one mast, the sail furled on its yard (a roll across the ship) and the faction's band
+    p.append(cyl([-L * 0.04, 0, H], 0.34, mast, "dark_wood", n=6))
+    p.append(cyl([-L * 0.04, B * 0.95, H + mast * 0.8], 0.26, B * 1.9, "dark_wood", n=6, r=[90, 0, 0]))
+    p.append(cyl([-L * 0.04, B * 0.85, H + mast * 0.8 - 0.55], 0.5, B * 1.7, "sail", n=8, r=[90, 0, 0], ol=0))
+    p.append(cyl([-L * 0.04, B * 0.25, H + mast * 0.8 - 0.55], 0.54, B * 0.5, "primary", n=8, r=[90, 0, 0], ol=0))
+    if kind == "quinquereme":
+        # the corvus: a post by the bow and a plank hauled up on it
+        p.append(cyl([L * 0.3, 0, H], 0.3, 7.0, "dark_wood", n=6))
+        p.append(box([L * 0.3 + 2.2, 0, H + 6.4], [5.2, 1.3, 0.35], "dark_wood", r=[0, -28, 0]))
+        p.append(cone([L * 0.3 + 4.6, 0, H + 7.6], 0.4, 1.2, "black", n=4, r=[0, 180, 0], ol=0))
+    return p, L * 0.5 + 3.0, int(mast + H + 3)
+
+
+GALLEYS = ["lembos", "trireme", "quinquereme", "quinquereme_p"]
+for kind in GALLEYS:
+    parts, hw, zmax = galley_parts("quinquereme" if kind == "quinquereme_p" else kind)
+    if kind == "quinquereme_p":   # the Punic one: the same hull without the corvus
+        parts = [q for q in parts if not (q.get("m") == "dark_wood" and q.get("s") == "cyl" and q.get("h") == 7.0)
+                 and not (q.get("s") == "box" and q.get("sz") == [5.2, 1.3, 0.35]) and q.get("m") != "black"]
+    for hd in range(8):
+        add("ship_%s__h%d" % (kind, hd), [{"use": "ship_%s_def" % kind, "p": [0, 0, 0], "r": 45.0 * hd}],
+            [-hw * 1.2, -hw * 1.2, hw * 1.2, hw * 1.2, zmax], zex=1.45, nm="%s h%d" % (kind, hd))
+    DEFS["ship_%s_def" % kind] = parts
+
+
 # ---------------------------------------------------------------- pieces (the overworld kit, 2026-10-15)
 # Single pieces for game/campaign/town_plan.gd / town_layer.gd: houses, churches, walls, quays ... each at
 # 8 yaws (k * 45 deg anticlockwise from "front towards south (-y)"; pieces symmetric under a half turn have 4,

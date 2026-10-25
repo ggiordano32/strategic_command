@@ -539,10 +539,11 @@ func _props() -> void:
 	_place_forts()
 	var pieces: Array = []
 	var names: Array = ["tree_palm_a", "tree_palm_b", "tree_palm_a", "tree_broad_a", "bush_a"] if tropic else \
-		["tree_pine_a", "tree_pine_b", "tree_pine_a", "tree_broad_b", "bush_a", "bush_b"]   # (the Mediterranean: pines and scrub; no cypress or olive pieces in the kit)
+		["tree_pine_a", "tree_pine_b", "tree_pine_a", "tree_broad_b", "bush_a", "bush_b", "bush_b", "rock_a", "rock_b"]   # (the Mediterranean, R3: pines, scrub and rocks; no cypress or olive pieces in the kit)
 	for nm in names:
 		pieces.append(Atlas.NAMES.find(nm))
 	var cap := TREE_CAP_LOW if low else TREE_CAP
+	var ruin := 0 if tropic else 1   # (R3) one ruined watch-tower a Mediterranean map
 	var step := 13.0
 	var cx := int(field.x / step)
 	var cy := int(field.y / step)
@@ -562,6 +563,10 @@ func _props() -> void:
 				continue
 			var pc: int = pieces[_hi(i, j, 8 + _seed) % pieces.size()]
 			var sc := 0.85 + 0.55 * _hf(i, j, 9 + _seed)
+			if ruin > 0 and _hf(i, j, 11 + _seed) < 0.03 and sdf_at(p) < -(SHORE_MIN + SHORE_AMP + 30.0):
+				pc = Atlas.NAMES.find("tower_round")   # the ruin: a round tower among the pines, a little weathered
+				sc = 1.0
+				ruin -= 1
 			if Atlas.NAMES[pc] == "bush_a" or Atlas.NAMES[pc] == "bush_b":
 				sc *= 1.5
 			var tint := 0.88 + 0.2 * _hf(i, j, 10 + _seed)

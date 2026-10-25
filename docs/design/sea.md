@@ -619,6 +619,50 @@ and Carthage lands in the empty cities; see the history row. (2026-10-23: the AI
 docs/AI.md 12.2: 1 of 6, at turn 27; with the data follow-up, Syracuse's start fleet trimmed and Rome
 `SEA_TRADE_PCT` 50, `BLOCKADE_CUT_PCT` 75 as the West: 4 of 6, at turns 16, 33, 47, 56.)
 
+### Rome's navy R3: the Mediterranean maps, galley sprites, lane check (as built 2026-10-24)
+
+View and data only; no sim rule, no hash moved (the Rome pins `7df61f83 8e12363b 07354ffa 3656ce6d a27c02da 2640b4c5`,
+`ROME_20`, the West pins and the sea goldens are as before).
+
+**The look.** R2 already took `TROPIC` from the pack (deeper blue water, a pale limestone shore, pines and scrub, no
+palms). R3 adds the rest of the plan's props to the non-tropic kit in `SeaLook._props`: rocks (`rock_a`, `rock_b`) among
+the scrub, more scrub, and one ruined watch-tower (`tower_round`, at most one a map, inland of the beach) in place of the
+palms and the harbour forts. Open water has no props. The Caribbean list and the tropic palette are untouched (Havana's
+test and the West looks byte-identical). `tests/sea_look_test.gd` asserts rocks, at most one tower, no palms.
+
+**The lane check** (`tests/sea_lanes_test.gd`, `-- --pack=west` runs the West's). For every sea cell of every lane
+(`CLanes.cells_of`, the port cell is land and is skipped) and four seeds with the wind 30 degrees either side of the pack's
+north-westerly, the map is built as `cseabattle.build` does (`land_of`, the layout "we" for a coast with a west or north
+side, 3 triremes a side) and checked: no ship starts on land or shoal or off the field, the fleets' centres start at least
+250 m apart, no map more than 50 % land, and on a coast map there is a line of open water between the two fleets (an
+island between them is the map's feature and is only counted: column isleLOS). Result: no lane needed a data change.
+One finding: **Gades - Tingis has no sea cell** (the Strait of Gibraltar is land in the grid; the lane is an army link
+only, `LANES_FOR_ARMIES`), so it can never be raided or fought on; the test lists it as known (`NO_SEA`). Changing the
+grid or dropping the lane would move the Rome pins, so it is left for a map pass. The test also plays the plan's "done
+when": a Punic fleet at war raids the Latium - Sardinia lane (`CLanes.raiders`), Rome's corvus quinquereme and a trireme
+sail onto it (`fmove` with `tgt`), the pending sea battle builds with `CBattle.build`, the sim fights it AI against AI and
+`CTurn.apply_battle` writes it back: 12 campaigns, 12 battles, 30 corvus boardings in the log, Rome won 4 (against two Punic
+quinqueremes and a trireme), every Rome win with corvus boardings.
+
+**Oared sprites on the overworld.** The map's ships are atlas sprites (`tools/structures`, Blender, style D), so the
+galleys went through that pipeline: `galley_parts` in `gen_spec.py` (a long narrow hull, a bronze ram at the waterline,
+banks of oars dipping into the water, one mast with the sail furled on its yard, a raised stern post; the quinquereme
+carries a second bank and the corvus on a post by the bow, `quinquereme_p` the same hull without it) gives
+`ship_lembos`, `ship_trireme`, `ship_quinquereme`, `ship_quinquereme_p` at the 8 headings in both atlases (big 128 px,
+small 64 px; frames rendered with `--structs` of these only into a copy of `_frames`, then `pack.py`: the 1852 older sprite
+rectangles compared pixel-identical in the repacked atlases, the atlas grows to 2048 x 1216 / 384). `minis_layer.gd`
+`SHIP_LOOK` now only maps the `corbita` to the galleon (open: a merchantman sprite). Faction colour and selection are the
+same path as the sail ships (the mask's primary / secondary). Rome's moored ships in a harbour (`TownPlan._moored`) are a
+trireme and a lembos instead of the West's brigantine and frigate.
+
+**The ns layout's first-mover edge: not geometry, a sim rule.** `tests/sea_probe.gd --layouts=ns --modes=ai --ships=trireme:4`,
+24 seeds: side 0 won 18 of 24; with `--swap` (side 1's ships listed first, same geometry) side 1 won 16 of 24 and side 0 8.
+The side whose ships have the lower unit indices wins about two in three whichever end of the map it starts at (the 48-battle
+mirrored run: ns 36 / 12 and gauge0 32 / 16 to side 0 with the fleets A and B at 24 / 24). The starting lines are
+mirrored (`_layout`, `_place_line`: the same offsets and stagger, facing each other), so there is nothing to fix in the
+layout data; the edge is in index-order resolution in the sim (the AI's orders and target picks run in unit order, ties go to
+the lower index). Left for a sim pass (it moves every sea hash); open.
+
 ## Docking (plan, 2026-10-23)
 
 The owner, 2026-10-23: a fleet should be able to **dock with a city**, not only lie off it; armies keep
