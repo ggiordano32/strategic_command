@@ -393,7 +393,7 @@ func _ready() -> void:
 	hud.halt_pressed.connect(_halt)
 	hud.fire_pressed.connect(_toggle_fire)
 	hud.skirmish_pressed.connect(_toggle_skirmish)
-	hud.stance_pressed.connect(_cycle_stance)
+	hud.stance_set.connect(_set_stance)
 	hud.bounds_pressed.connect(_toggle_bounds)
 	hud.occupy_pressed.connect(_toggle_occupy)
 	hud.waypoints_pressed.connect(_toggle_waypoints)
@@ -410,6 +410,7 @@ func _ready() -> void:
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
 	hud.ability_pressed.connect(_ability_pressed)
+	hud.ability_set.connect(_ability_set)
 	hud.card_states = _card_states
 	hud.add_toggled.connect(func(on: bool):
 		add_mode = on
@@ -1626,6 +1627,7 @@ func _refresh_actions() -> void:
 			if ammo < 0 or on > ammo:
 				ammo_word = UT.ammo_text(sk if on != 0 else sim.t_m_ak[sim.u_type[u]], "short")
 			ammo = maxi(ammo, on)
+			hud.ammo_kinds = [UT.ammo_text(sim.t_m_ak[sim.u_type[u]], "short"), UT.ammo_text(sk, "short")]
 		var art := UT.cls(sim.u_type[u]) == UT.CLS_ART
 		if not art:
 			run = maxi(run, 1 if orders.value(u, "run") != 0 else 0)
@@ -1875,6 +1877,11 @@ func _cycle_stance() -> void:
 			break
 	if nxt < 0:
 		return
+	_set_stance(nxt)
+
+
+## The Stance chip's options: every eligible selected unit takes stance `nxt` (0 Line, 1 Cover, 2 Hold street).
+func _set_stance(nxt: int) -> void:
 	for u in selection:
 		if BattleSim.stance_ok(sim.u_type[u]):
 			_queue({"type": BattleSim.ORDER_STANCE, "unit": u, "stance": nxt})
@@ -2119,19 +2126,29 @@ func _queue_ability(u: int, ab: int, st: int, tgt: int) -> void:
 	_ab_pred[u * 8 + ab] = [st, sim.tick]
 
 
-## An ability chip was tapped: cycle its state; Use now arms the pick.
+## An ability chip was tapped: cycle its state; Use now arms the pick. (The bar's chips no longer cycle: a tap opens
+## the options and a row calls _ability_set; this stays for the armed chip tapped again, which cancels.)
 func _ability_pressed(ab: int) -> void:
 	if not interactive:
 		return
 	if ability_armed == ab:
 		_ability_cancel(true)
 		return
-	if ability_armed >= 0:
-		_ability_cancel(true)
 	var us := _ability_units(ab)
 	if us.is_empty():
 		return
-	var nxt := (_ab_state(us[0], ab) + 1) % 3
+	_ability_set(ab, (_ab_state(us[0], ab) + 1) % 3)
+
+
+## A row of an ability chip's options: set the state `nxt` (Auto / Hold / Use now) for the selected units that have it.
+func _ability_set(ab: int, nxt: int) -> void:
+	if not interactive:
+		return
+	if ability_armed >= 0:
+		_ability_cancel(true)   # (back to Auto; a row other than Auto then sets its own state)
+	var us := _ability_units(ab)
+	if us.is_empty():
+		return
 	if nxt == UT.AB_NOW and ab == UT.AB_PISTOL:
 		nxt = UT.AB_AUTO   # (no target to give a brace of pistols)
 	if nxt == UT.AB_NOW and sim.phase != BattleSim.PHASE_BATTLE:

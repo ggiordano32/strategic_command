@@ -131,6 +131,9 @@ func _initialize() -> void:
 		_step_check_group_line,
 		_step_group_missile,
 		_step_missile_buttons,
+		_step_opt_row,
+		_step_missile_skirm,
+		_step_opt_row,
 		_step_check_missile_pending,
 		_step_shoot_enemy,
 		_step_check_shoot_pending,
@@ -157,6 +160,7 @@ func _initialize() -> void:
 		_step_art_card,
 		_step_check_art_card,
 		_step_art_deploy_tap,
+		_step_opt_row,
 		_step_check_art_deploy_pending,
 		_step_art_shoot,
 		_step_check_art_shoot_pending,
@@ -290,11 +294,14 @@ func _initialize() -> void:
 		_step_rs_start,
 		_step_rs_ammo,
 		_step_rs_ammo_tap,
+		_step_opt_row,
 		_step_rs_check_ammo,
 		_step_rs_forage,
+		_step_opt_row,
 		_step_rs_check_forage,
 		_step_rs_wait,
 		_step_rs_refill,
+		_step_opt_row,
 		_step_rs_check_refill,
 		# Elephants: "Kill elephant" shows while ours run amok; a tap
 		# orders their drivers to kill them.
@@ -308,6 +315,7 @@ func _initialize() -> void:
 		_step_dog_select,
 		_step_dog_check_button,
 		_step_dog_arm,
+		_step_opt_row,
 		_step_dog_check_armed,
 		_step_dog_tap_enemy,
 		_step_dog_check_order,
@@ -990,8 +998,25 @@ func _step_check_group_line() -> void:
 func _step_missile_buttons() -> void:
 	_paused_tick = battle.sim.tick
 	_check(battle.sim.u_fire[u_arch] == 1, "archers start with fire at will")
-	_tap_control(battle.hud.fire_button)
+	_tap_control(battle.hud.fire_button)   # (opens the options popover; _step_opt_row taps the other row)
+
+
+func _step_missile_skirm() -> void:
 	_tap_control(battle.hud.skirm_button)
+
+
+## A multi-state chip's tap opens its options popover (docs/design/ui.md "Chip options"): tap the row that is not the
+## current state (every chip this test presses is a two-state toggle), which sends the order the old tap sent.
+func _step_opt_row() -> void:
+	var h = battle.hud
+	_check(h.opt_panel.visible, "the chip tap opened its options popover")
+	var tapped := false
+	for r in h.opt_box.get_children():
+		if not r.current:
+			_tap_control(r)
+			tapped = true
+			break
+	_check(tapped, "the options popover has a row that is not the current state")
 
 
 func _step_check_missile_pending() -> void:

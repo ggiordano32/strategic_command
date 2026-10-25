@@ -18,7 +18,6 @@ signal run_pressed
 signal halt_pressed
 signal fire_pressed
 signal skirmish_pressed
-signal stance_pressed
 signal occupy_pressed
 signal waypoints_pressed
 signal bounds_pressed
@@ -33,7 +32,9 @@ signal char_pressed(act: String)  # a character's act button: "sabotage", "attem
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
-signal ability_pressed(ab: int)   # an ability chip (UT.AB_*): battle.gd cycles Auto / Hold / Use now
+signal ability_pressed(ab: int)   # an armed ability chip tapped again (UT.AB_*): battle.gd cancels the pick
+signal ability_set(ab: int, state: int)   # a row of an ability chip's options: UT.AB_AUTO / AB_HOLD / AB_NOW
+signal stance_set(stance: int)    # a row of the Stance options: 0 Line, 1 Cover, 2 Hold street
 signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
 signal paths_toggled(on: bool)
@@ -86,6 +87,13 @@ var chips_box: HBoxContainer      # the chips that fit the bar (after Halt / Run
 var more_button: AbilityChip           # More: opens the popover with the chips that did not fit
 var more_panel: PanelContainer
 var more_box: GridContainer       # (one column; more columns when the list is taller than the room above the bar)
+var opt_panel: PanelContainer     # the options popover of a multi-state chip (docs/design/ui.md "Chip options")
+var opt_box: VBoxContainer
+var ammo_kinds: Array = []        # [standard, special] ammunition words of the selection (set by battle.gd)
+var _opt_chip: AbilityChip = null # the chip whose options are open
+var _opt_cur := -1                # that chip's current state value when it opened
+var _cur_val := {}                # chip key -> current state value (1 on / 0 off, stance 0..2), set by set_selection
+var _toggle_emit := {}            # multi-state toggle chip -> Callable that emits its old signal (one press = one flip)
 var ab_chips := {}                # UT.AB_* -> its chip
 var _chip_order: Array = []       # every chip, in the bar's fixed order
 var _sel: Array[int] = []         # the selection as last set
@@ -418,7 +426,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	Kit.tip(halt_button, "Halt", "Stop where they stand and drop their orders.")
 	halt_button.pressed.connect(func(): halt_pressed.emit())
 	run_button = _chip("run", "Run", "run", "Run", "Run or walk: the selection's pace.", "off")
-	run_button.pressed.connect(func(): run_pressed.emit())
+	_multi(run_button, func(): run_pressed.emit())
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
 	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge.")
 	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
@@ -433,40 +441,44 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		var abk: int = ab
 		var ac := _chip(UT.AB_NAMES[abk].to_lower(), "Target" if abk == UT.AB_BATTER else UT.AB_NAMES[abk],
 			str(ab_icons[abk]), str(ab_tips[abk][0]), str(ab_tips[abk][1]), "Auto", false, abk)
-		ac.pressed.connect(func(): ability_pressed.emit(abk))
+		ac.pressed.connect(func():
+			if ac.armed:
+				ability_pressed.emit(abk)   # (the armed chip again cancels the pick)
+			else:
+				_open_options(ac))
 		ac.visible = false
 		ab_chips[abk] = ac
 	fire_button = _chip("fire", "Fire", "fire", "Fire", "Missile troops fire at will, or hold fire.", "at will")
-	fire_button.pressed.connect(func(): fire_pressed.emit())
+	_multi(fire_button, func(): fire_pressed.emit())
 	skirm_button = _chip("skirmish", "Skirmish", "skirmish", "Skirmish", "Missile troops fall back from approaching melee troops.", "on")
-	skirm_button.pressed.connect(func(): skirmish_pressed.emit())
+	_multi(skirm_button, func(): skirmish_pressed.emit())
 	stance_button = _chip("stance", "Stance", "stance_line", "Stance", "Line keeps the formation. Cover takes cover spots. Hold street fills the street.", "Line")
-	stance_button.pressed.connect(func(): stance_pressed.emit())
+	_multi(stance_button, Callable())
 	stance_button.visible = false
 	occupy_button = _chip("occupy", "Occupy", "inside", "Occupy", "Lights the buildings these men can hold: point at one to see what its windows and roof cover, then click it (tap twice on a touch screen) to send them in (I). Leave goes out by the door.", "", true)
 	occupy_button.name = "occupy"
 	occupy_button.pressed.connect(func(): occupy_pressed.emit())
 	occupy_button.visible = false
 	bounds_button = _chip("bounds", "Bounds", "bound", "Bounds", "Half the men run to the next cover while the others shoot, then they swap.", "off")
-	bounds_button.pressed.connect(func(): bounds_pressed.emit())
+	_multi(bounds_button, func(): bounds_pressed.emit())
 	bounds_button.visible = false
 	deploy_button = _chip("deploy", "Deploy", "deploy", "Deploy", "Artillery sets up to shoot or packs up to move. Both take time.", "on")
-	deploy_button.pressed.connect(func(): deploy_pressed.emit())
+	_multi(deploy_button, func(): deploy_pressed.emit())
 	ammo_button = _chip("ammo", "Ammo", "ammo", "Ammunition", "Shoot the second kind (fire arrows, heavy bolts) or the standard one (V).", "arrows")
 	ammo_button.name = "ammo"
-	ammo_button.pressed.connect(func(): ammo_pressed.emit())
+	_multi(ammo_button, func(): ammo_pressed.emit())
 	refill_button = _chip("refill", "Refill", "pick_up", "Refill", "Artillery brings up shots from the baggage; missile troops refill at an ammunition wagon. No moving or shooting meanwhile.", "off")
-	refill_button.pressed.connect(func(): refill_pressed.emit())
+	_multi(refill_button, func(): refill_pressed.emit())
 	forage_button = _chip("forage", "Forage", "forage", "Forage", "Missile troops in woods make arrows or javelins, slowly. No moving or shooting meanwhile (J).", "off")
 	forage_button.name = "forage"
-	forage_button.pressed.connect(func(): forage_pressed.emit())
+	_multi(forage_button, func(): forage_pressed.emit())
 	drop_button = _chip("drop", "Drop", "drop", "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.", "")
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
 	release_button = _chip("release", "Release", "release", "Release", "Let the war dogs loose, then tap an enemy unit within 80 m (U).", "0 dogs", true)
 	release_button.name = "release"
 	release_button.low = true
-	release_button.pressed.connect(func(): release_pressed.emit())
+	_multi(release_button, func(): release_pressed.emit())
 	release_button.visible = false
 	for a in [["sabotage", "Sabotage", "fire", "Assassin: tap an enemy battery to wreck its engines, or a shut gate to unbar it from inside (Shift+B)."],
 			["attempt", "Attempt", "dagger", "Assassin: tap an enemy hero or general. One strike: 40 % kills, 30 % wounds (T)."],
@@ -514,6 +526,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	more_box.add_theme_constant_override("v_separation", int(GAP))
 	more_panel.add_child(more_box)
 	_ui_controls.append(more_panel)
+	opt_panel = PanelContainer.new()
+	opt_panel.name = "opt_panel"
+	opt_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 6.0))
+	opt_panel.visible = false
+	root.add_child(opt_panel)
+	opt_box = VBoxContainer.new()
+	opt_box.add_theme_constant_override("separation", 2)
+	opt_panel.add_child(opt_box)
+	_ui_controls.append(opt_panel)
 	actions.visible = false
 	actions_box = actions
 	_ui_controls.append(actions)
@@ -1036,6 +1057,7 @@ static func _disc(d: int, col: Color) -> ImageTexture:
 func set_speed_panel_open(on: bool) -> void:
 	speed_panel.visible = on
 	if on:
+		_close_options()
 		speed_panel.reset_size()
 		var r := speed_button.get_global_rect()
 		var w := speed_panel.size.x
@@ -1054,6 +1076,19 @@ func set_speed(q: int, slider_q: int) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Esc closes the options popover without a change; a press outside it (and its chip) closes it too.
+	if opt_panel != null and opt_panel.visible:
+		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+			_close_options()
+			get_viewport().set_input_as_handled()
+		else:
+			var op := Vector2(-1, -1)
+			if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+				op = (event as InputEventScreenTouch).position
+			elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+				op = (event as InputEventMouseButton).position
+			if op.x >= 0.0 and not opt_panel.get_global_rect().has_point(op) and not _opt_chip.get_global_rect().has_point(op):
+				_close_options()
 	# A press outside the open More popover (and its button) closes it.
 	if more_panel != null and more_panel.visible:
 		var mp := Vector2(-1, -1)
@@ -1061,7 +1096,8 @@ func _input(event: InputEvent) -> void:
 			mp = (event as InputEventScreenTouch).position
 		elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 			mp = (event as InputEventMouseButton).position
-		if mp.x >= 0.0 and not more_panel.get_global_rect().has_point(mp) and not more_button.get_global_rect().has_point(mp):
+		if mp.x >= 0.0 and not more_panel.get_global_rect().has_point(mp) and not more_button.get_global_rect().has_point(mp) \
+				and not (opt_panel != null and opt_panel.visible and opt_panel.get_global_rect().has_point(mp)):
 			_set_more_open(false)
 	# A press anywhere outside the open speed popover (and its button) closes it.
 	if speed_panel != null and speed_panel.visible and event is InputEventScreenTouch \
@@ -1124,8 +1160,13 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	ammo_button.set_state(ammo_word)
 	forage_button.set_state("on" if forage > 0 else "off")
 	release_button.set_state("tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0))
+	_cur_val = {"run": 1 if run > 0 else 0, "fire": 1 if fire > 0 else 0, "skirmish": 1 if skirm > 0 else 0,
+		"stance": clampi(stance, 0, 2), "bounds": 1 if bounds > 0 else 0, "deploy": 1 if deploy > 0 else 0,
+		"refill": 1 if refill > 0 else 0, "forage": 1 if forage > 0 else 0, "ammo": 1 if ammo > 0 else 0,
+		"release": 1 if release_armed else 0}
 	if _sel != units:
 		_set_more_open(false)
+		_close_options()
 	_sel = units.duplicate()
 	_update_common()
 	_fit_actions()
@@ -1283,6 +1324,7 @@ func _fit_now() -> void:
 	if not more_button.visible:
 		_set_more_open(false)
 	_place_more()
+	_place_options()
 
 
 func _row_w(items: Array, compact: bool) -> float:
@@ -1313,6 +1355,8 @@ func _set_more_open(on: bool) -> void:
 	on = on and more_button.visible and more_box.get_child_count() > 0
 	more_panel.visible = on
 	more_button.set_pressed_no_signal(on)
+	if on or (_opt_chip != null and _opt_chip.get_parent() == more_box):
+		_close_options()
 	if on:
 		_place_more()
 
@@ -1336,6 +1380,173 @@ func _place_more() -> void:
 	var y := maxf(r.position.y - sz.y - GAP, MARGIN)
 	more_panel.position = Vector2(x, y)
 	more_panel.size = sz
+
+
+# ------------------------------------------------------ chip options ---
+# docs/design/ui.md "Chip options": a tap on a chip with more than one state opens a small popover above it with one
+# 42 px row per state (the current one pressed, with a check); a row sets that state and closes the popover. A tap
+# outside, on the chip again, Esc or a selection change closes it with no change. Keys still cycle (battle.gd).
+
+## An option row: a toggle-look button that draws a check at its right end when it is the current state.
+class OptRow extends Button:
+	var current := false
+
+	func _draw() -> void:
+		if not current:
+			return
+		var c := Color(1.0, 0.85, 0.4)
+		var x := size.x - 22.0
+		var y := size.y * 0.5
+		draw_polyline(PackedVector2Array([Vector2(x, y), Vector2(x + 5, y + 5), Vector2(x + 14, y - 6)]), c, 2.5, true)
+
+
+func _is_multi(c: AbilityChip) -> bool:
+	return c.ab >= 0 or _toggle_emit.has(c)
+
+
+## Register a multi-state toggle chip: a press opens its options; `act` emits its old (flip) signal.
+func _multi(c: AbilityChip, act: Callable) -> void:
+	_toggle_emit[c] = act
+	c.pressed.connect(func(): _open_options(c))
+
+
+## The rows of a chip: [word, icon, state value] in display order ([] for a single-action chip).
+func _chip_rows(c: AbilityChip) -> Array:
+	if c.ab >= 0:
+		var rows := [["Auto", "", UT.AB_AUTO], ["Hold", "", UT.AB_HOLD]]
+		if c.ab != UT.AB_PISTOL:
+			rows.append(["Use now", "", UT.AB_NOW])
+		return rows
+	match c.key:
+		"run":
+			return [["On", "", 1], ["Off", "", 0]]
+		"fire":
+			return [["At will", "fire", 1], ["Hold", "hold_fire", 0]]
+		"skirmish", "bounds", "deploy", "refill", "forage":
+			return [["On", "", 1], ["Off", "", 0]]
+		"stance":
+			return [["Line", "stance_line", 0], ["Cover", "stance_cover", 1], ["Hold street", "stance_hold", 2]]
+		"ammo":
+			var std := str(ammo_kinds[0]) if ammo_kinds.size() > 0 else "Standard"
+			var spc := str(ammo_kinds[1]) if ammo_kinds.size() > 1 else "Special"
+			return [[std, "ammo", 0], [spc, "ammo", 1]]
+		"release":
+			return [["Ready", "", 0], ["Tap an enemy", "", 1]]
+	return []
+
+
+func _ability_cur(c: AbilityChip) -> int:
+	if c.armed:
+		return UT.AB_NOW
+	match c.state_word:
+		"Auto":
+			return UT.AB_AUTO
+		"Hold":
+			return UT.AB_HOLD
+		"Use now":
+			return UT.AB_NOW
+	return -1   # Mixed
+
+
+func _open_options(c: AbilityChip) -> void:
+	if c.toggle_mode:
+		c.set_pressed_no_signal(int(_cur_val.get(c.key, 0)) == 1)   # (the press must not flip the lit look: only a row does)
+	if opt_panel.visible and _opt_chip == c:
+		_close_options()
+		return
+	var rows := _chip_rows(c)
+	if rows.is_empty():
+		return
+	set_speed_panel_open(false)
+	if c.get_parent() != more_box:
+		_set_more_open(false)
+	_close_options()
+	_opt_cur = _ability_cur(c) if c.ab >= 0 else int(_cur_val.get(c.key, 0))
+	var wmax := 0.0
+	var made: Array[OptRow] = []
+	for r in rows:
+		var row := OptRow.new()
+		row.name = "opt_%d" % int(r[2])
+		row.set_meta("value", int(r[2]))
+		row.text = str(r[0])
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.focus_mode = Control.FOCUS_NONE
+		row.toggle_mode = true
+		row.add_theme_font_size_override("font_size", FONT)
+		BTheme.plate(row, true, false, false)
+		if str(r[1]) != "":
+			Kit.set_icon(row, str(r[1]))
+		row.current = int(r[2]) == _opt_cur
+		row.set_pressed_no_signal(row.current)
+		row.custom_minimum_size = Vector2(0.0, AbilityChip.H)
+		row.pressed.connect(AudioFx.click)
+		var val := int(r[2])
+		row.pressed.connect(func(): _choose_option(c, val))
+		opt_box.add_child(row)
+		made.append(row)
+		wmax = maxf(wmax, _button_w(row, row.text) + 28.0)
+	for row in made:
+		row.custom_minimum_size.x = wmax
+	_opt_chip = c
+	opt_panel.visible = true
+	_place_options()
+
+
+func _close_options() -> void:
+	if opt_panel == null:
+		return
+	opt_panel.visible = false
+	_opt_chip = null
+	for k in opt_box.get_children():
+		opt_box.remove_child(k)
+		k.queue_free()
+
+
+## A row was tapped: close the popover, then set that state through the old order path.
+func _choose_option(c: AbilityChip, value: int) -> void:
+	var cur := _opt_cur
+	_close_options()
+	if value == cur:
+		return
+	if c.ab >= 0:
+		ability_set.emit(c.ab, value)
+	elif c.key == "stance":
+		stance_set.emit(value)
+	elif _toggle_emit.has(c):
+		(_toggle_emit[c] as Callable).call()
+	if c.toggle_mode and c.key == "release":
+		c.set_pressed_no_signal(int(_cur_val.get(c.key, 0)) == 1)
+
+
+## The popover sits above its chip (centred, kept inside the viewport); for a chip under More it goes beside the More
+## popover (left, else right), else above it, else clamped inside the viewport.
+func _place_options() -> void:
+	if opt_panel == null or not opt_panel.visible:
+		return
+	if _opt_chip == null or not _opt_chip.is_visible_in_tree():
+		_close_options()
+		return
+	var vp := get_viewport().get_visible_rect().size
+	opt_panel.reset_size()
+	var sz := opt_panel.get_combined_minimum_size()
+	var r := _opt_chip.get_global_rect()
+	var pos: Vector2
+	if _opt_chip.get_parent() == more_box and more_panel.visible:
+		var mr := more_panel.get_global_rect()
+		var y := clampf(r.get_center().y - sz.y * 0.5, MARGIN, maxf(vp.y - sz.y - MARGIN, MARGIN))
+		if mr.position.x - GAP - sz.x >= MARGIN:
+			pos = Vector2(mr.position.x - GAP - sz.x, y)
+		elif mr.end.x + GAP + sz.x <= vp.x - MARGIN:
+			pos = Vector2(mr.end.x + GAP, y)
+		elif mr.position.y - GAP - sz.y >= MARGIN:
+			pos = Vector2(clampf(r.get_center().x - sz.x * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)), mr.position.y - GAP - sz.y)
+		else:
+			pos = Vector2(clampf(r.get_center().x - sz.x * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)), y)
+	else:
+		pos = Vector2(clampf(r.get_center().x - sz.x * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)),
+			maxf(r.position.y - sz.y - GAP, MARGIN))
+	opt_panel.position = pos
+	opt_panel.size = sz
 
 
 func _button_w(b: Button, t: String) -> float:
@@ -1777,7 +1988,7 @@ func _chip(key: String, label: String, icon: String, title: String, tip_text: St
 	c.state_word = state
 	c.text = c.full_text()
 	c.pressed.connect(func():
-		if more_panel != null and c.get_parent() == more_box and c != more_button:
+		if more_panel != null and c.get_parent() == more_box and c != more_button and not _is_multi(c):
 			_set_more_open(false))
 	return c
 

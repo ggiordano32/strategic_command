@@ -201,6 +201,145 @@ func _stress() -> void:
 	await _frames(2)
 
 
+## Open a chip's options (More first when the chip is under it), pick the row with `value`; returns the popover's rect.
+func _choose(c: AbilityChip, value: int) -> void:
+	var h = b.hud
+	if c.get_parent() == h.more_box:
+		h._set_more_open(true)
+		await _frames(2)
+	c.pressed.emit()
+	await _frames(2)
+	var row = h.opt_box.find_child("opt_%d" % value, false, false)
+	if row == null:
+		_check(false, "%s: a row for %d" % [c.key, value])
+		return
+	row.pressed.emit()
+	await _frames(2)
+
+
+## Words of the open popover's rows.
+func _row_words() -> Array:
+	var out := []
+	for r in b.hud.opt_box.get_children():
+		out.append((r as Button).text)
+	return out
+
+
+## Every multi-state chip's options popover: inside the viewport, the right rows 42 px high, closes on the chip again.
+func _options_stress() -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var want := {"run": ["On", "Off"], "fire": ["At will", "Hold"], "skirmish": ["On", "Off"], "stance": ["Line", "Cover", "Hold street"],
+		"bounds": ["On", "Off"], "deploy": ["On", "Off"], "refill": ["On", "Off"], "forage": ["On", "Off"], "release": ["Ready", "Tap an enemy"]}
+	var seen := 0
+	var chips: Array = [h.run_button]
+	chips.append_array(h._chip_order)
+	for c in chips:
+		var ch: AbilityChip = c
+		if not ch.visible:
+			continue
+		var exp: Array = []
+		if ch.ab >= 0:
+			exp = ["Auto", "Hold"] if ch.ab == UT.AB_PISTOL else ["Auto", "Hold", "Use now"]
+		elif ch.key == "ammo":
+			exp = ["*", "*"]
+		else:
+			exp = want.get(ch.key, [])
+		if ch.get_parent() == h.more_box:
+			h._set_more_open(true)
+			await _frames(2)
+		ch.pressed.emit()
+		await _frames(2)
+		var tag := "%s %s: %s options" % [_size_name, "under More" if ch.get_parent() == h.more_box else "on the bar", ch.key]
+		if exp.is_empty():
+			_check(not h.opt_panel.visible, tag + ": a single-action chip opens none")
+			continue
+		seen += 1
+		var words := _row_words()
+		var words_ok := words.size() == exp.size()
+		for i in exp.size():
+			if words_ok and exp[i] != "*" and words[i] != exp[i]:
+				words_ok = false
+		_check(h.opt_panel.visible and words_ok, tag + " list %s" % str(words))
+		var pr: Rect2 = h.opt_panel.get_global_rect()
+		_check(_rect_in(h.opt_panel, vp), tag + " stay inside the viewport %s of %s" % [str(pr), str(vp)])
+		var tall := true
+		for r in h.opt_box.get_children():
+			if (r as Control).size.y < 41.5:
+				tall = false
+		_check(tall, tag + ": rows are 42 px")
+		if ch.get_parent() != h.more_box:
+			_check(pr.end.y <= ch.get_global_rect().position.y + 0.5, tag + ": above the chip")
+		else:
+			_check(h.more_panel.visible, tag + ": More stays open under it")
+		ch.pressed.emit()
+		await _frames(2)
+		_check(not h.opt_panel.visible, tag + ": the chip again closes it")
+	h._set_more_open(false)
+	_check(seen >= 8, "%s: %d multi-state chips checked" % [_size_name, seen])
+
+
+## A real skirmish selection: each row sends the expected order; Esc, a selection change and the other popovers close it.
+func _options_orders(by_role: Dictionary) -> void:
+	var h = b.hud
+	await _select_types(["skirmish"], by_role)
+	var u: int = b.selection[0]
+	var fire0: int = b.orders.value(u, "fire")
+	for pair in [[h.fire_button, 0], [h.fire_button, 1]]:
+		await _choose(pair[0], pair[1])
+		_check(b.orders.value(u, "fire") == pair[1] and h.fire_button.state_word == ("at will" if pair[1] == 1 else "hold"),
+			"%s: the Fire row %d sends the fire order (%s)" % [_size_name, pair[1], h.fire_button.text])
+	await _choose(h.fire_button, 1)
+	_check(b.orders.value(u, "fire") == 1, "%s: choosing the current Fire row changes nothing" % _size_name)
+	if h.stance_button.visible:
+		await _choose(h.stance_button, 2)
+		_check(b.orders.value(u, "stance") == 2 and h.stance_button.state_word == "Hold", "%s: the Stance row Hold street (%s)" % [_size_name, h.stance_button.text])
+		await _choose(h.stance_button, 1)
+		_check(b.orders.value(u, "stance") == 1, "%s: the Stance row Cover" % _size_name)
+	await _choose(h.run_button, 1)
+	_check(b.orders.value(u, "run") == 1 and h.run_button.state_word == "on", "%s: the Run row On" % _size_name)
+	# Closing without a change: Esc, a selection change, speed popover, More.
+	var f: int = b.orders.value(u, "fire")
+	await _open_chip(h.fire_button)
+	_check(h.opt_panel.visible, "%s: Fire's options open" % _size_name)
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	Input.parse_input_event(esc)
+	await _frames(2)
+	_check(not h.opt_panel.visible and b.orders.value(u, "fire") == f, "%s: Esc closes it with no change" % _size_name)
+	await _open_chip(h.fire_button)
+	await _select_types(["line"], by_role)
+	_check(not h.opt_panel.visible, "%s: a selection change closes it" % _size_name)
+	await _select_types(["skirmish"], by_role)
+	await _open_chip(h.fire_button)
+	h.set_speed_panel_open(true)
+	_check(not h.opt_panel.visible, "%s: opening the speed popover closes it" % _size_name)
+	h.set_speed_panel_open(false)
+	if h.more_button.visible:
+		await _open_chip(h.fire_button)
+		h._set_more_open(true)
+		_check(not h.opt_panel.visible, "%s: opening More closes it" % _size_name)
+		h._set_more_open(false)
+	await _open_chip(h.fire_button)
+	var out := Vector2(2, 2)
+	var tap := InputEventScreenTouch.new()
+	tap.position = out
+	tap.pressed = true
+	h._input(tap)
+	_check(not h.opt_panel.visible and b.orders.value(u, "fire") == f, "%s: a press outside closes it with no change" % _size_name)
+	_check(fire0 == 1 or fire0 == 0, "(fire order read)")
+
+
+func _open_chip(c: AbilityChip) -> void:
+	var h = b.hud
+	if c.get_parent() == h.more_box:
+		h._set_more_open(true)
+		await _frames(2)
+	c.pressed.emit()
+	await _frames(2)
+
+
 func _run() -> void:
 	var by_role := _types_by_role()
 	_check(by_role.size() >= 8, "a row of each role found (%d roles)" % by_role.size())
@@ -228,7 +367,9 @@ func _run() -> void:
 		await _fit("line + skirmish + guns")
 		await _stress()
 		await _fit("stress: every chip")
+		await _options_stress()
 		b.process_mode = Node.PROCESS_MODE_INHERIT
+		await _options_orders(by_role)
 		if _shots != "" and sz[2]:
 			# A skirmish unit, then the mixed selection, on the phone.
 			await _select_types(["skirmish"], by_role)
@@ -274,18 +415,16 @@ func _states(by_role: Dictionary) -> void:
 	var gc: AbilityChip = h.ab_chips[UT.AB_GRENADE]
 	_check(gc.visible and gc.state_word == "Auto" and gc.text == "Grenades: Auto", "Grenades shows Auto (%s)" % gc.text)
 	_check(not h.ab_chips[UT.AB_CARACOLE].visible or (b.sim.t_abil[b.sim.u_type[gren]] & (1 << UT.AB_CARACOLE)) != 0, "no Caracole chip for a unit without it")
-	gc.pressed.emit()
-	await _frames(2)
-	_check(gc.state_word == "Hold" and gc.text == "Grenades: Hold", "a tap: Hold (%s)" % gc.text)
+	await _choose(gc, UT.AB_HOLD)
+	_check(gc.state_word == "Hold" and gc.text == "Grenades: Hold", "the Hold row: Hold (%s)" % gc.text)
 	var strip: Array = b._card_states(gren)
 	_check(str(strip).contains("grenade!"), "the card strip shows the grenade on Hold (%s)" % str(strip))
 	b._set_paused(false)
 	await _frames(12)
 	b._set_paused(true)
 	_check(b.sim.ability_state(gren, UT.AB_GRENADE) == UT.AB_HOLD, "the sim got the Hold order")
-	gc.pressed.emit()
-	await _frames(2)
-	_check(b.ability_armed == UT.AB_GRENADE and gc.armed and gc.text == "Use now: tap a target", "a second tap arms Use now (%s)" % gc.text)
+	await _choose(gc, UT.AB_NOW)
+	_check(b.ability_armed == UT.AB_GRENADE and gc.armed and gc.text == "Use now: tap a target", "the Use now row arms the pick (%s)" % gc.text)
 	_check(not b.overlay.target_lit.is_empty(), "the enemy units are lit for the pick")
 	gc.pressed.emit()
 	await _frames(2)
@@ -293,12 +432,14 @@ func _states(by_role: Dictionary) -> void:
 	# Pistols: Auto <-> Hold only.
 	await _pick([pist])
 	var pc: AbilityChip = h.ab_chips[UT.AB_PISTOL]
+	await _choose(pc, UT.AB_HOLD)
+	_check(pc.state_word == "Hold", "Pistols: the Hold row")
+	await _choose(pc, UT.AB_AUTO)
+	_check(pc.state_word == "Auto" and b.ability_armed < 0, "Pistols: the Auto row")
 	pc.pressed.emit()
 	await _frames(2)
-	_check(pc.state_word == "Hold", "Pistols: Auto -> Hold")
-	pc.pressed.emit()
-	await _frames(2)
-	_check(pc.state_word == "Auto" and b.ability_armed < 0, "Pistols: Hold -> Auto (no Use now)")
+	_check(h.opt_panel.visible and h.opt_box.get_child_count() == 2 and h.opt_box.find_child("opt_2", false, false) == null, "Pistols' options: Auto and Hold only, no Use now")
+	h._close_options()
 	# Mixed states read Mixed.
 	await _pick([gren, pist])
 	b._ability_pressed(UT.AB_GRENADE)
@@ -349,14 +490,14 @@ func _siege() -> void:
 	var tc: AbilityChip = h.ab_chips[UT.AB_BATTER]
 	_check(tc.visible and tc.label_name == "Target", "the Target chip shows for a siege gun")
 	var deploying: bool = b.sim.phase != BattleSim.PHASE_BATTLE
-	tc.pressed.emit()
-	tc.pressed.emit()
+	await _choose(tc, UT.AB_HOLD)
+	await _choose(tc, UT.AB_NOW)
 	await _frames(2)
 	if deploying:
 		_check(b.ability_armed < 0 and tc.state_word == "Auto", "in the deployment Use now is not offered: Auto -> Hold -> Auto (%s)" % tc.text)
 		b.sim.phase = BattleSim.PHASE_BATTLE   # (a view test: go on as in the battle)
-		tc.pressed.emit()
-		tc.pressed.emit()
+		await _choose(tc, UT.AB_HOLD)
+		await _choose(tc, UT.AB_NOW)
 		await _frames(2)
 	_check(b.ability_armed == UT.AB_BATTER and b.overlay.occ_mode and b.overlay.occ_lit.size() == b.sim.ob_state.size(), "Use now lights the standing buildings (%d of %d)" % [b.overlay.occ_lit.size(), b.sim.ob_state.size()])
 	b._ability_cancel(true)

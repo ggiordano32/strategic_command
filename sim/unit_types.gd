@@ -255,6 +255,7 @@ const DEFAULTS := {
 	"char": 0, "char_kind": 0, "char_pct": 0, "ch_r": 0, "au_hit": 0, "au_mor": 0, "au_rng": 0,
 	"au_spr": 0, "au_mom": 0, "au_rally": 0, "au_climb": 0, "au_reload": 0, "au_batter": 0,
 	"au_steady": 0, "fall_r": 0, "fall_loss": 0, "fall_gain": 0, "duel": 0, "unarmed": 0, "hidden": 0,
+	"sea_cq": 0,        # a character aboard steps the fleet captain's tier (CCaptain.fleet_tier); 0 for every other row
 	"au_fear": 0, "au_fear_r": 0, "parley_bonus": 0,  # batch 3 hooks (a hero's fright of the enemy near him; a diplomat's bonus vs parley_vs)
 	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0, "cover": 0,
 	"amphib": 0,  # campaign: 1 = paddles the coastal sea at foot pace (CRules.amphibious; the general stays 0)

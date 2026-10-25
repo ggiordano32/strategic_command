@@ -859,3 +859,34 @@ View only: nothing under `sim/` changed (the determinism hashes are as before). 
   with a selection standing. It asserts nothing past the viewport, Halt / Withdraw (Run unless guns) on the bar, every applicable
   chip on the bar xor under More, the popover inside the viewport, no capsule / actions overlap. `input_test` and `battle_screen_test`
   were not changed (the `Run`, `Halt` order on the bar and the popover are not asserted there).
+
+### Chip options (as built, 2026-10-24)
+
+The owner, 2026-10-24: "Instead of cycling when a button is pushed, show the options above the button as selections." View
+only (nothing under `sim/` changed). A tap on a chip with more than one state no longer cycles it: it opens an **options
+popover** (`Hud.opt_panel`, built in `game/hud.gd`, section "chip options") directly above the chip, one 42 px row per state
+(`OptRow`: the state's word, an icon where the chip has one per state: Fire's `fire` / `hold_fire`, Stance's three, Ammo's
+quiver), the current state pressed-lit with a check drawn at the right. Rows: Run, Skirmish, Bounds, Deploy, Refill, Forage
+On / Off; Fire At will / Hold; Stance Line / Cover / Hold street; Ammo the two kinds of the selection (`Hud.ammo_kinds`, set
+by `Battle._refresh_actions`); Release Ready / Tap an enemy; the abilities Auto / Hold / Use now (Pistols Auto / Hold). The
+chip itself keeps its state word. Halt, Withdraw, Waypoints, Drop, Gift, the acts and Occupy / Leave (one word at a time, an
+action rather than a state) act at once as before.
+- **Choosing.** A row other than the current one sets that state through the old order path: a toggle chip emits its old
+  signal once (`_toggle_emit`; the flip is exactly what a tap did), Stance emits `stance_set` (`Battle._set_stance`, shared with
+  the key's `_cycle_stance`), an ability emits `ability_set` (`Battle._ability_set`, shared with `_ability_pressed`; Use now arms
+  the pick as before, Pistols never Use now, Use now before the battle falls back to Auto). The current row closes it with no
+  change. An armed ability chip tapped again still cancels the pick (no popover).
+- **Closing.** A tap on the chip again, a press outside the popover (`Hud._input`; the More popover no longer closes when the
+  press is on a row), Esc (handled in the HUD before the field's deselect), a selection change, the speed popover or More
+  opening (and the other way round). One popover at a time.
+- **Placement.** Centred above the chip, kept inside the viewport (shifted at the edges). A chip under More puts it beside the
+  More popover (left, else right), else above it, else clamped inside the viewport; More stays open under it, and closes with it.
+  `_fit_now` re-places it (or closes it if its chip is gone).
+- **Keys** still cycle (`controls.gd` and the `_toggle_*` functions are unchanged).
+- **Not built.** The drag from the chip up onto a row and release (it would cross the outside-press rule and the field's touch
+  handling); a tap selects.
+- **Tests.** `tests/hud_fit_test.gd`: at 844x390, 1180x820 and 1280x720 every multi-state chip's popover (on the bar and under
+  More) lists the right states, stays inside the viewport, has 42 px rows, sits above its chip and closes on the chip again; Fire /
+  Stance / Run rows send their orders; Esc, a selection change, the speed popover, More and an outside press close it with no
+  change; the ability tests choose rows. `tests/input_test.gd`: Fire, Skirmish, Deploy, Ammo, Forage, Refill and Release now
+  tap the chip, then the row that is not the current state (`_step_opt_row`); their expectations are unchanged.
