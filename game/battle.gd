@@ -1144,7 +1144,10 @@ static func destr_line(p_sim) -> String:
 	if p_sim.stat_breaches > 0:
 		parts.append("%d wall stretch%s breached" % [p_sim.stat_breaches, "" if p_sim.stat_breaches == 1 else "es"])
 	if p_sim.stat_collapses > 0:
-		parts.append("%d building%s fallen" % [p_sim.stat_collapses, "" if p_sim.stat_collapses == 1 else "s"])
+		var bt := "%d building%s fallen" % [p_sim.stat_collapses, "" if p_sim.stat_collapses == 1 else "s"]
+		if p_sim.stat_bld_burnt > 0:
+			bt += " (%d burnt)" % p_sim.stat_bld_burnt
+		parts.append(bt)
 	var lost: int = p_sim.stat_breach_kill + p_sim.stat_collapse_kill
 	if lost > 0:
 		parts.append("%d men lost in the ruins" % lost)

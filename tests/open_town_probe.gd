@@ -170,6 +170,9 @@ func _run(town: String, walls: int, skill: int, s: int, occ_all: bool, trace: bo
 	var res := sim.result()
 	r["kia"] = int(res["sides"][0]["killed"])
 	r["kid"] = int(res["sides"][1]["killed"])
+	r["fallen"] = sim.stat_collapses
+	r["burnt"] = sim.stat_bld_burnt
+	r["lit"] = sim.ob_fire_n
 	return r
 
 

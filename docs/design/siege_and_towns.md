@@ -2692,3 +2692,92 @@ siege_polis@ai 1a227d83 -> 440bd398, siege_punic@ai b321be2e -> 19c6aebe, siege_
 siege_city@ai~ea 3e1f6181 -> 055dd17d, ~ae 3a92750b -> 624a7a33, ~sa 3a5fb759 -> f9166c03, ~as 60cd3d58 -> 2d3e366c,
 siege_eq_ring3 2463e9e1 -> 9edb502b, siege_eq_polis2~sa c8c13afd -> 652dfe0e; the goldens, every open-field run,
 gate_ops, cit_ops, siege_village@ai and siege_hill@ai unmoved.
+
+### Fire (as built, 2026-10-24)
+
+The destruction follow-up agreed in STATUS ("fire burning houses down", "timber houses do not burn with men
+inside"): timber buildings catch fire, burn down and fall by the destruction's collapse. Code: `sim/battle_sim.gd`
+(constants FIRE_CATCH_PCT ... FIRE_ADJ_GAP by the destruction's; state `ob_fire`, `ob_fby`, `ob_fire_n`; static
+`ob_timber`, `ob_adj0` / `ob_adj`; `_ob_is_timber`, `_fire_adj` in `_setup_destr`; `_ignite_bld` from `_ignite`,
+`_bld_alight`, `_update_bld_fire` from `_update_fire`, `_bld_fire_out`; the occupy refusals; `state_hash()`),
+the view (`game/overlay.gd` `_draw_bld_fires`, EV_FIRE in `_destr_events`; `game/hud.gd` the card's building bar;
+`game/battle.gd` `destr_line`; `game/unit_book.gd` "Burning houses"), test `tests/determinism_test.gd`
+`_check_fire` (`--only=fire`, also in `--only=destr` and the full run).
+
+**What burns.** A building is timber (`ob_timber`) by its record: a record that carries its material (the West's
+plan and generated towns, index 16: `MapGen.MAT_TIMBER` / `MAT_STONE`; the West's shacks, lean-tos, stakes and
+timber houses, taverns, stores; the forts, churches, governors' houses, barracks are stone) is timber or stone by
+it. A record without one (Rome's generator: every Rome plan, the natives' oppidum) is timber in a village (level
+0) or an oppidum plan, else stone (castrum, polis, Punic, ring towns and cities). Stone never catches.
+
+**Catching.** A fire missile (a kind with `fire` > 0: fire arrows, fire javelins, fire pots) lands on a
+standing timber building's cell (or 1 m east, west, south or north of the landing point: the men at its windows
+stand at its edge) not yet alight. A lobbed fire shot (`m_kind` 2: fire pots) sets it alight at once with
+FIRE_CATCH_LOB 100 % (a roll of the sim's RNG). An arrow or javelin opens the building's catch window if none is
+open (`ob_fhit` = the tick + 1, `ob_fby` that shooter; `ob_fwin` windows open, `ob_fstruck` ever opened); further
+hits in the window add nothing. FIRE_ROLL_T 50 ticks (5 s) after the first hit the window closes (`_fire_windows`,
+once a tick while any is open, index order) and the building, if still standing and not alight, rolls once with
+FIRE_CATCH_PCT 35 % (the coordinator's change, 2026-10-24: one roll per hit, 25 %, lit a held house under a volley
+in about 3 s; now a bow line lights it in about 15 s on average, a single hit still can). Either side's missiles
+(as for shot damage to buildings). `ob_fire` = the tick + 1 (0: not burning), `ob_fby` the window's shooter; `ob_fire_n` + 1, `stat_ignite` + 1, the event EV_FIRE (building);
+`fire_on` is set (a building lit with no fire kind in the battle, the test's spread case, still burns). Units on
+their way into it lose the errand.
+
+**Burning.** Every second (index order) a burning building loses FIRE_DMG = `ob_hp0` / FIRE_BURN_S 90 (centi-hp,
+at least 1): a house burns down in 90 s from whole (sooner if shot first), whatever its size. It never goes out
+(unlike a gate's 30 s fires). Nobody may go in ("it is on fire": `occupy_refusal`, `occupy_near`, `_occ_enter`).
+The unit holding it loses FIRE_MOR 4 morale a second (and `u_hit_t`: no recovery). Below FIRE_LEAVE_PCT 50 % of its
+hit points it comes out on its own (`_bld_fire_out`, for the player's units too): by the door, then a run order to
+the best cover within 24 m of the door (`SiegeAI._cover_near`, the destruction AI's rule), shaken
+(FIRE_LEAVE_MOR 50 and `u_hit_t`); `stat_bld_fire_out`. At 0 it falls by `_collapse` (credited to `ob_fby`):
+COLLAPSE_KILL_PCT 70 % of anyone still inside lost (a unit that could not leave: routing, or caught low), rubble,
+EV_COLLAPSE; `stat_bld_burnt` + 1 (also in `stat_burnt` and `stat_collapses`); a fallen building stops burning.
+
+**Spread.** Every FIRE_SPREAD_T 200 ticks (20 s) of its burning a building rolls FIRE_SPREAD_PCT 15 % for each
+timber neighbour not alight (index order; those lit are set alight after the pass, by no unit, `stat_bld_spread`).
+A neighbour: a building with a cell within FIRE_ADJ_GAP 2 cells (Chebyshev, 2 m cells) of one of its cells, i.e.
+touching or across one 2 m cell (a lane, a yard). The plan said "sharing a cell edge": almost no West house
+touches another (0 timber pairs in the level 0 Latin test town, 1 in a level 1 town of 133 timber buildings), so
+spread would never happen; across one cell the same towns have 7 and 26 timber pairs (a gap of 3 cells: 16 and 47).
+FIRE_ADJ_GAP 2 is the agreed neighbour rule (coordinator, 2026-10-24).
+A building burning its full 90 s rolls four times: about half its timber neighbours catch.
+
+**State and hashes.** `ob_fire`, `ob_fby`, `ob_fhit`, `ob_fire_n`, `ob_fwin`, `ob_fstruck` and the stats are
+script variables (snapshotted); the static `ob_timber`, `ob_adj0`, `ob_adj` are rebuilt by setup (`_SNAP_SKIP`).
+The fire state (those six) is hashed with `city_on` only once a building has been struck by fire or caught
+(`ob_fstruck` or `ob_fire_n` > 0), so every battle where no fire lands on a building hashes as before (open field
+and towns alike). `stat_bld_burnt` buildings are also counted in the older `stat_burnt` (gates, engines, equipment
+burnt) and in `stat_collapses` (agreed: the result line reads the building counts).
+
+**View.** A burning building (overlay, when `fire_on`) shows one to three flames along its long axis (one per 8 m,
+taller as it burns down, the gate fire's two-tone flicker) and one smoke column (four puffs, wider and higher as it
+burns), culled to the view; the moment it catches, the fire missile's spark burst (FX_FIRE) at its middle. Its
+fall is the collapse's dust (FX_BLAST, FX_RUIN). The unit card's building bar is red while the building burns (at
+any level) and the summary says "building on fire N%". The result line: "N buildings fallen (N burnt)". The book's
+Settlements and sieges page has a "Burning houses" paragraph. The Paths hatch is unchanged (rubble as before).
+
+**AI.** None in this pass: the defenders come out by the sim rule (at 50 %, before the destruction AI's 33 %
+`S_RUIN_LEAVE_PCT`), and the AI never sends a unit into a burning building (the refusal); attackers do not aim fire
+at houses (their fire arrows land on houses only when they shoot the men in them). Open: attackers firing houses on
+purpose (the Itza against a held street), defenders avoiding timber houses near fire-arrow troops, putting fires
+out.
+
+**Tests.** `tests/determinism_test.gd --only=fire` (`_check_fire`): a West town (`_occ_sc`), a musket company in
+the timber house nearest it (fire off), 60 archers with fire arrows 90 m out shooting it from tick 300, four seeds:
+the house caught 7.5-17.9 s after the first shot (never before a window could close), the company came out on its own at 48 % (not shaken before: its
+morale lower than when it caught), the house fell 89 s after catching with nobody lost in the ruins, rubble and
+"it has fallen" after, the fallen house no longer burning; identical on repeat (every 50 ticks) and across
+snapshot / restore (seed 7, 100 ticks after the catch, 150 ticks on). Fire landings on every building of the town:
+stone caught 0 of 205, timber 16 of 51 arrow windows (31 %; 35 wanted, within the test's 14 points; none lit at the
+hit itself) and 51 of 51 lobbed shots. Spread (a level 1 West town, the timber building with the most timber neighbours lit, seeds 1-6): 5
+neighbours lit (at 20-60 s), each next to a burning building. The rest of the full run is line for line as before
+(every golden, open-field and town hash unmoved: no scenario of the suite lands a fire missile on a building).
+`lockstep_test`, `custom_battle_test`, `battle_screen_test` pass; `tools/check_scripts.sh` clean.
+
+**Measured.** `tools/balance` open_town (Havana, Cartagena, Santo Domingo, walls 0, 8 seeds; `e48486f013` ->
+`38b5bc2079`): identical in every cell (attackers win 67 %): its armies carry no fire missiles. With two companies
+of 80 native bowmen with fire arrows added to the attackers (a scratch probe over the same towns and seeds, HEAD
+against this build; the AI does not aim at houses, the arrows land on houses when they shoot the men in them): 2.2
+buildings burnt a battle (Havana 1.5, Cartagena 2.25, Santo Domingo 2.75; of 4 held), attackers 23 -> 22 of 24
+(Havana 7 -> 7, Cartagena 8 -> 7, Santo Domingo 8 -> 8), decided Havana 8.1 -> 8.3, Cartagena 9.6 -> 9.3, Santo
+Domingo 7.9 -> 7.2 min. (The first build, one roll a hit at 25 %: 2.6 a battle, 24 of 24, 0.8-1.0 min sooner.)

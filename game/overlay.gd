@@ -303,6 +303,13 @@ func _destr_events() -> void:
 				var b: Array = blds[a]
 				pts.append(Vector2(float(int(b[0]) + int(b[2])), float(int(b[1]) + int(b[3]))) * 0.5 * px_per_m)
 				rad = maxf(float(int(b[2]) - int(b[0])), float(int(b[3]) - int(b[1]))) * 0.5 * px_per_m
+		elif sim.ev_k[r] == BattleSim.EV_FIRE:
+			# (A building caught fire: a burst of sparks; the flames themselves are _draw_bld_fires.)
+			var bf: Array = (sim.map_info.get("city", {}) as Dictionary).get("buildings", [])
+			if a < bf.size():
+				var b2: Array = bf[a]
+				_fx_spawn(FX_FIRE, Vector2(float(int(b2[0]) + int(b2[2])), float(int(b2[1]) + int(b2[3]))) * 0.5 * px_per_m, px_per_m * 2.0)
+			continue
 		for pt in pts:
 			_fx_spawn(FX_BLAST, pt, maxf(rad, px_per_m * 3.0))
 			_fx_spawn(FX_RUIN, pt, maxf(rad, px_per_m * 3.0))
@@ -1933,6 +1940,46 @@ func _draw_fires(lw: float) -> void:
 			p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
 		draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
 		_smoke_column(p - Vector2(0, h * 0.7), k, 4, px_per_m * 9.0, px_per_m * 1.5, 0.4, _clock * 0.25 + k * 0.31)
+	if sim.ob_fire_n > 0:
+		_draw_bld_fires(lw)
+
+
+## Burning buildings (sim ob_fire; fire, 2026-10-24): a few flames along the
+## footprint's long axis (one a 8 m, at most three; taller as it burns
+## down) and one smoke column over it, darker and wider than an engine's.
+## Phone cost: a handful of polygons and four puffs a building, culled to
+## the view.
+func _draw_bld_fires(lw: float) -> void:
+	var blds: Array = (sim.map_info.get("city", {}) as Dictionary).get("buildings", [])
+	var vr := _view_rect()
+	var t := Time.get_ticks_msec() / 140.0
+	var pm := px_per_m
+	for b in mini(sim.ob_fire.size(), blds.size()):
+		if sim.ob_fire[b] == 0:
+			continue
+		var a: Array = blds[b]
+		var x0 := float(int(a[0]))
+		var y0 := float(int(a[1]))
+		var x1 := float(int(a[2]))
+		var y1 := float(int(a[3]))
+		var c := Vector2(x0 + x1, y0 + y1) * 0.5 * pm
+		if not vr.has_point(c):
+			continue
+		var burnt := 1.0 - clampf(float(sim.ob_hp[b]) / maxf(float(sim.ob_hp0[b]), 1.0), 0.0, 1.0)
+		var along := Vector2(x1 - x0, 0.0) if x1 - x0 >= y1 - y0 else Vector2(0.0, y1 - y0)
+		var n := clampi(int(along.length() / 8.0) + 1, 1, 3)
+		for k in n:
+			var p := c + along * pm * ((k + 0.5) / n - 0.5) * 0.7
+			var f := 0.7 + 0.3 * sin(t + b * 2.3 + k * 1.9)
+			var h := maxf(pm * (2.2 + 2.0 * burnt), 12.0 / zoom) * f
+			var w := h * 0.42
+			draw_colored_polygon(PackedVector2Array([p + Vector2(-w, 0), p + Vector2(0, -h), p + Vector2(w, 0)]),
+				Color(1.0, 0.42, 0.08, 0.85))
+			draw_colored_polygon(PackedVector2Array([p + Vector2(-w * 0.5, 0), p + Vector2(0, -h * 0.6),
+				p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
+			draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
+		_smoke_column(c - Vector2(0, pm * 3.0), b, 4, pm * (12.0 + 6.0 * burnt), pm * (2.0 + 1.5 * burnt), 0.45,
+			_clock * 0.2 + b * 0.37)
 
 
 ## Piece q's heading on screen (radians): its carriers' facing, a little

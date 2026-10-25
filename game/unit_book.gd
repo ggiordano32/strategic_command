@@ -405,6 +405,10 @@ static func siege_help() -> String:
 			BattleSim.WS_HP[1], BattleSim.WS_HP[2], BattleSim.WS_HP[3], BattleSim.OB_HP_BASE, BattleSim.OB_HP_CELL,
 			BattleSim.BREACH_KILL_PCT, BattleSim.COLLAPSE_KILL_PCT, BattleSim.RUBBLE_SPEED / 10, BattleSim.RUBBLE_COVER_PCT],
 		"",
+		"Burning houses. Timber buildings burn (the West's timber houses, shacks and stakes, a village's or an oppidum's huts; stone ones never do): one struck by fire arrows or javelins catches %d%% of the time (one chance every %d seconds however many strike it), a fire pot sets it alight at once. It then burns down in %d seconds and falls as a house knocked down does; nobody can go into it, the unit holding it loses %d morale a second and comes out on its own, shaken, to the nearest cover once the house is below %d%%. Every %d seconds a burning house has a %d%% chance to light each timber house within a lane's width of it." % [
+			BattleSim.FIRE_CATCH_PCT, BattleSim.FIRE_ROLL_T / 10, BattleSim.FIRE_BURN_S, BattleSim.FIRE_MOR, BattleSim.FIRE_LEAVE_PCT,
+			BattleSim.FIRE_SPREAD_T / 10, BattleSim.FIRE_SPREAD_PCT],
+		"",
 		"Taking the city. Besides breaking the defenders' army, the attackers win by holding the plaza: a unit of at least %d men in it, and no defending unit within %d m beyond it, for %d seconds in a row (the ring round the plaza fills) - then every defender breaks. Where there is a citadel (acropolis or Byrsa) its court is the place to hold, so the attackers must break two gates; its gate starts open and the defenders shut it when they fall back into it." % [
 			BattleSim.CAPTURE_MEN, BattleSim.CAPTURE_CLEAR / 1024, BattleSim.CAPTURE_TICKS / 10],
 		"",

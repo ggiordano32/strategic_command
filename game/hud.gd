@@ -1686,12 +1686,16 @@ func update_cards(sim) -> void:
 			f.summary += " | %d poisoned" % sim.u_poisoned[u]
 		# Holding a building under fire (destruction): its hit points as a small bar.
 		f.bld_pm = -1
+		f.bld_fire = false
 		var bpm: int = sim.occ_hp_pm(u)
 		if bpm >= 0:
 			var ob: int = sim.u_occ[u] - 1
+			f.bld_fire = ob < sim.ob_fire.size() and sim.ob_fire[ob] != 0
 			if bpm < 1000 and tick - sim.ob_hit_t[ob] < 300:
 				f.bld_pm = bpm
-			if bpm < 1000:
+			if f.bld_fire:
+				f.summary += " | building on fire %d%%" % (bpm / 10)
+			elif bpm < 1000:
 				f.summary += " | building %d%%" % (bpm / 10)
 		f.fighting = sim.u_fighting[u] > 0
 		_card_state_strip(u, f)
@@ -2039,6 +2043,8 @@ class CardFace extends Control:
 	var char_icon := ""
 	## Holding a building under fire: its hit points per mille (-1: no bar).
 	var bld_pm := -1
+	## ... and the building is burning (the bar red at any level).
+	var bld_fire := false
 	## Poisoned men in it (poisoned arrows): a green strip down the right edge.
 	var poisoned := false
 	## The state strip (top right): a glyph per chip not at its default, "icon" (a state), "icon!" (on Hold: struck
@@ -2128,7 +2134,7 @@ class CardFace extends Control:
 			# The building it holds: a thin stone bar over the headcount, red below a third.
 			var bf := clampf(bld_pm / 1000.0, 0.0, 1.0)
 			draw_rect(Rect2(bx, by - 4, bw, 3), Color(0, 0, 0, 0.45))
-			draw_rect(Rect2(bx, by - 4, bw * bf, 3), Color(0.92, 0.32, 0.22) if bld_pm < 333 else Color(0.78, 0.72, 0.6))
+			draw_rect(Rect2(bx, by - 4, bw * bf, 3), Color(0.92, 0.32, 0.22) if bld_pm < 333 or bld_fire else Color(0.78, 0.72, 0.6))
 		var aw := 0.0
 		if ammo_text != "":
 			aw = font.get_string_size(ammo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 3

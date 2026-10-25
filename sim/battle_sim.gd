@@ -478,7 +478,23 @@ const WS_STANDING := 0           # ws_state / ob_state
 const WS_BREACHED := 1           # (a building: fallen)
 const EV_BREACH := 0             # the destruction events ring (view): a stretch breached (ev_a: the stretch)
 const EV_COLLAPSE := 1           # ... a building fell (ev_a: the building)
+const EV_FIRE := 2               # ... a building caught fire (ev_a: the building)
 const EV_N := 32
+# Burning buildings (docs/design/siege_and_towns.md "Fire (as built,
+# 2026-10-24)"): a fire missile striking a timber building may set it alight
+# (ob_fire); it burns until it falls (the destruction's collapse), the men
+# inside lose heart and come out below FIRE_LEAVE_PCT, and it may light the
+# timber buildings that share a cell edge with it.
+const FIRE_CATCH_PCT := 35       # a timber building struck by fire arrows or javelins: its chance to catch, one roll a window ...
+const FIRE_ROLL_T := 50          # ... at the end of this many ticks (5 s) from the first such hit (however many hit it meanwhile)
+const FIRE_CATCH_LOB := 100      # ... a lobbed fire shot (fire pots)
+const FIRE_BURN_S := 90          # a burning building loses ob_hp0 / this every second (FIRE_DMG: burnt down in 90 s)
+const FIRE_MOR := 4              # the unit inside a burning building loses this morale a second
+const FIRE_LEAVE_PCT := 50       # ... and comes out on its own (to cover near the door) below this % of its hit points
+const FIRE_LEAVE_MOR := 50       # ... shaken: this morale blow as it comes out
+const FIRE_SPREAD_T := 200       # every this many ticks (20 s) of burning a building rolls ...
+const FIRE_SPREAD_PCT := 15      # ... this chance to light each timber building near it (FIRE_ADJ_GAP)
+static var FIRE_ADJ_GAP := 2     # near: a cell of the other within this many 2 m cells of one of its own (2: across a 2 m lane or yard; 1 touching: almost no West house touches another)
 ## Siege levers (docs/DESIGN.md "Siege equipment and wall towers"): static
 ## so tests/matchups.gd --tune can try values; the game never changes them.
 static var WALL_COVER: Array[int] = [0, 25, 15, 25]  # % of missiles from below stopped by the battlements, by wall level (balance T 2026-10-16: walls 2-3 25 / 40 -> 15 / 25, equal-force sieges; 2026-10-09 was 25 / 45 / 70)
@@ -1107,6 +1123,23 @@ var ob_hp := PackedInt32Array()
 var ob_hp0 := PackedInt32Array()
 var ob_state := PackedInt32Array()
 var ob_hit_t := PackedInt32Array()
+# Burning buildings (2026-10-24). State: per building 0 or the tick it caught
+# fire + 1 (ob_fire) and the unit whose missile lit it (ob_fby, -1 spread),
+# hashed with city_on once any building has caught (ob_fire_n > 0). Static
+# (setup; skipped in snapshots): ob_timber (1 it can burn), the buildings
+# sharing a cell edge with each (CSR ob_adj0 / ob_adj, index order).
+var ob_fire := PackedInt32Array()
+var ob_fby := PackedInt32Array()
+var ob_fire_n: int = 0
+var ob_fhit := PackedInt32Array()  # per building: 0, or the tick + 1 of the first fire hit of its open catch window (FIRE_ROLL_T)
+var ob_fwin: int = 0               # catch windows open now (the pass is skipped at 0)
+var ob_fstruck: int = 0            # catch windows ever opened (ob_fhit hashed from the first)
+var ob_timber := PackedInt32Array()
+var ob_adj0 := PackedInt32Array()
+var ob_adj := PackedInt32Array()
+var stat_bld_burnt: int = 0       # buildings burnt down (also counted in stat_burnt and stat_collapses)
+var stat_bld_fire_out: int = 0    # units driven out of a burning building
+var stat_bld_spread: int = 0      # buildings lit by a burning neighbour
 var rub_n: int = 0
 var ev_k := PackedInt32Array()
 var ev_a := PackedInt32Array()
@@ -5550,6 +5583,18 @@ func _setup_destr() -> void:
 	stat_bld_dmg = 0
 	stat_rubble_stop = 0
 	stat_wall_shots = 0
+	ob_fire = PackedInt32Array()
+	ob_fby = PackedInt32Array()
+	ob_fire_n = 0
+	ob_fhit = PackedInt32Array()
+	ob_fwin = 0
+	ob_fstruck = 0
+	ob_timber = PackedInt32Array()
+	ob_adj0 = PackedInt32Array()
+	ob_adj = PackedInt32Array()
+	stat_bld_burnt = 0
+	stat_bld_fire_out = 0
+	stat_bld_spread = 0
 	if city_on == 0 or obs_on == 0 or not map_info.has("city"):
 		return
 	obs0 = obs.duplicate()
@@ -5674,6 +5719,11 @@ func _setup_destr() -> void:
 		ob_hp.append(bhp * 100)
 		ob_state.append(WS_STANDING)
 		ob_hit_t.append(-1000)
+		ob_fire.append(0)
+		ob_fby.append(-1)
+		ob_fhit.append(0)
+		ob_timber.append(1 if _ob_is_timber(a, lay) else 0)
+	_fire_adj(blds.size(), nc)
 	ob_cmp.resize(blds.size())
 	ob_cmp.fill(-1)
 	# The pieces of open ground beside each stretch and building.
@@ -5752,6 +5802,53 @@ func breached_count() -> int:
 		if ws_state[sg] != WS_STANDING:
 			nb += 1
 	return nb
+
+
+## Building record a of layout lay can burn: a record with its material
+## (the West's: index 16) is timber or stone by it; one without (Rome's
+## generator) is timber in a village (level 0) or an oppidum, else stone.
+static func _ob_is_timber(a: Array, lay: Dictionary) -> bool:
+	if a.size() >= 17:
+		return int(a[16]) == MapGen.MAT_TIMBER
+	return int(lay.get("level", 1)) == 0 or int(lay.get("plan", MapGen.PLAN_RING)) == MapGen.PLAN_OPPIDUM
+
+
+## The buildings near each (static, from ob_cell): another building's cell
+## within FIRE_ADJ_GAP cells (Chebyshev) of one of its cells; CSR ob_adj0
+## (nb + 1) / ob_adj, each list in index order.
+func _fire_adj(nb: int, nc: int) -> void:
+	var keys := PackedInt32Array()
+	var g := FIRE_ADJ_GAP
+	for c in nc:
+		var b := ob_cell[c] - 1
+		if b < 0:
+			continue
+		var i := c % ob_w
+		var j := c / ob_w
+		for dj in range(0, g + 1):
+			for di in range(-g, g + 1):
+				if dj == 0 and di <= 0:
+					continue
+				var i2 := i + di
+				var j2 := j + dj
+				if i2 < 0 or i2 >= ob_w or j2 >= ob_h:
+					continue
+				var b2 := ob_cell[j2 * ob_w + i2] - 1
+				if b2 >= 0 and b2 != b:
+					keys.append(b * nb + b2)
+					keys.append(b2 * nb + b)
+	keys.sort()
+	ob_adj0.resize(nb + 1)
+	ob_adj0.fill(0)
+	var last := -1
+	for k in keys:
+		if k == last:
+			continue
+		last = k
+		ob_adj.append(k % nb)
+		ob_adj0[k / nb + 1] += 1
+	for b in nb:
+		ob_adj0[b + 1] += ob_adj0[b]
 
 
 ## The breaches' graph nodes: per stretch (not one facing the sea) a node
@@ -12991,6 +13088,124 @@ func _ignite(p: int) -> void:
 			if q_burn[q] == 0:
 				stat_ignite += 1
 			q_burn[q] = FIRE_TICKS
+	if not ob_fire.is_empty():
+		_ignite_bld(p, x, y)
+
+
+## A fire missile (projectile p) lands at (x, y): the timber building it
+## strikes (its cell, else the first of the cells 1 m east, west, south,
+## north of it), standing and not yet alight: a lobbed shot sets it alight
+## with FIRE_CATCH_LOB (a roll now); an arrow or javelin opens its catch
+## window if none is open (the roll comes at the window's end:
+## _fire_windows).
+func _ignite_bld(p: int, x: int, y: int) -> void:
+	var b := -1
+	for q in 5:
+		var w := _destr_at(x + (M if q == 1 else (-M if q == 2 else 0)), y + (M if q == 3 else (-M if q == 4 else 0)))
+		if w <= -2:
+			b = -2 - w
+			break
+	if b < 0 or ob_timber[b] == 0 or ob_fire[b] != 0:
+		return
+	if t_m_kind[pr_ty[p]] == 2:
+		if _rand() % 100 < FIRE_CATCH_LOB:
+			_bld_alight(b, pr_unit[p])
+		return
+	if ob_fhit[b] == 0:
+		ob_fhit[b] = tick + 1
+		ob_fby[b] = pr_unit[p]
+		ob_fwin += 1
+		ob_fstruck += 1
+
+
+## Catch windows (ob_fwin > 0, once a tick, index order): a window FIRE_ROLL_T
+## old closes and its building, if it still stands timber and not alight,
+## rolls FIRE_CATCH_PCT once (lit by the unit of the window's first hit).
+func _fire_windows() -> void:
+	for b in ob_fhit.size():
+		if ob_fhit[b] == 0 or tick + 1 - ob_fhit[b] < FIRE_ROLL_T:
+			continue
+		ob_fhit[b] = 0
+		ob_fwin -= 1
+		if ob_state[b] != WS_STANDING or ob_fire[b] != 0:
+			continue
+		if _rand() % 100 < FIRE_CATCH_PCT:
+			_bld_alight(b, ob_fby[b])
+
+
+## Building b catches fire (lit by unit `by`'s missile, -1 a neighbour's
+## fire): nobody may go in now, and those sent to it lose the errand.
+func _bld_alight(b: int, by: int) -> void:
+	ob_fire[b] = tick + 1
+	ob_fby[b] = by
+	ob_fire_n += 1
+	fire_on = 1  # (_update_fire runs the burning)
+	stat_ignite += 1
+	_destr_event(EV_FIRE, b)
+	if occ_on != 0:
+		for v in n_units:
+			if u_ocg[v] == b + 1:
+				u_ocg[v] = 0
+				u_oct[v] = 0
+
+
+## Burning buildings, once a tick (ob_fire_n > 0): every second each loses
+## FIRE_DMG (ob_hp0 / FIRE_BURN_S), the unit inside FIRE_MOR morale; below
+## FIRE_LEAVE_PCT the unit comes out (_bld_fire_out); at 0 it falls (the
+## destruction's collapse: COLLAPSE_KILL_PCT of anyone still inside lost).
+## Every FIRE_SPREAD_T of its burning it rolls FIRE_SPREAD_PCT for each
+## timber neighbour not alight (lit after the pass). Index order.
+func _update_bld_fire() -> void:
+	if tick % TICKS_PER_SECOND != 0:
+		return
+	var lit := PackedInt32Array()
+	for b in ob_fire.size():
+		if ob_fire[b] == 0:
+			continue
+		if ob_state[b] != WS_STANDING:
+			ob_fire[b] = 0
+			continue
+		var dmg := maxi(ob_hp0[b] / FIRE_BURN_S, 1)
+		ob_hp[b] -= dmg
+		ob_hit_t[b] = tick
+		stat_fire_dmg += dmg / 100
+		var u := ob_u[b] - 1 if occ_on != 0 and b < ob_u.size() else -1
+		if u >= 0 and u_alive[u] > 0:
+			u_morale[u] -= FIRE_MOR
+			u_hit_t[u] = tick
+		if ob_hp[b] <= 0:
+			ob_fire[b] = 0
+			stat_bld_burnt += 1
+			stat_burnt += 1
+			_collapse(b, ob_fby[b])
+			continue
+		if u >= 0 and u_alive[u] > 0 and ob_hp[b] * 100 < ob_hp0[b] * FIRE_LEAVE_PCT:
+			_bld_fire_out(u, b)
+		var age := tick + 1 - ob_fire[b]
+		if age > 0 and age % FIRE_SPREAD_T == 0:
+			for e in range(ob_adj0[b], ob_adj0[b + 1]):
+				var nb := ob_adj[e]
+				if ob_timber[nb] == 0 or ob_state[nb] != WS_STANDING or ob_fire[nb] != 0 or lit.has(nb):
+					continue
+				if _rand() % 100 < FIRE_SPREAD_PCT:
+					lit.append(nb)
+	for nb in lit:
+		stat_bld_spread += 1
+		_bld_alight(nb, -1)
+
+
+## Unit u comes out of burning building b on its own: by the door, then at
+## the run to the best cover near it (SiegeAI._cover_near, as the destruction
+## AI's leave), shaken.
+func _bld_fire_out(u: int, b: int) -> void:
+	stat_bld_fire_out += 1
+	if u_state[u] == U_READY:
+		var cp: Vector2i = SiegeAI._cover_near(self, u, ob_dx[b], ob_dy[b], b)
+		_apply_unit(u, {"type": ORDER_MOVE, "unit": u, "x": cp.x, "y": cp.y, "facing": ob_face[b], "width": 0, "run": 1})
+	if u_occ[u] > 0:
+		_occ_leave(u)
+	u_hit_t[u] = tick
+	u_morale[u] -= FIRE_LEAVE_MOR
 
 
 ## Full hit points of piece q (fire chips a share of them).
@@ -13088,6 +13303,10 @@ func _update_fire() -> void:
 			if q_hp[q] <= 0:
 				_eq_wreck(q)
 				stat_burnt += 1
+	if ob_fwin > 0:
+		_fire_windows()
+	if ob_fire_n > 0:
+		_update_bld_fire()
 
 
 ## Missile unit u (told to shoot at gate g) can reach its face from where
@@ -17354,6 +17573,7 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"_xf_live": true, "_xf_pend": true, "_xb_pass": true, "_xb_q": true, "_xb_f": true,
 	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true,
 	"ws_cell": true, "ob_cell": true, "ws_cmp": true, "ob_cmp": true, "ws_in": true, "obs0": true,
+	"ob_timber": true, "ob_adj0": true, "ob_adj": true,
 	"bld_g": true, "_tr_c": true, "_tr_wood": true, "clr_g": true, "clr_b": true, "cb_k": true, "cb_g": true, "cb_l": true, "cl_sat": true, "cl_sw": true, "cl_on": true, "cl_w": true, "cl_h": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
@@ -17526,6 +17746,8 @@ static func occupy_refusal(sim, u: int, b: int) -> String:
 		return "this building cannot be held"
 	if b < sim.ob_state.size() and sim.ob_state[b] != WS_STANDING:
 		return "it has fallen"
+	if b < sim.ob_fire.size() and sim.ob_fire[b] != 0:
+		return "it is on fire"
 	if sim.ob_u[b] != 0 and sim.ob_u[b] != u + 1:
 		return "another unit holds it"
 	if (sim.u_wall[u] if u < sim.u_wall.size() else 0) > 0 or (sim.u_stair[u] if u < sim.u_stair.size() else 0) != 0:
@@ -17543,7 +17765,8 @@ func occupy_near(u: int, x: int, y: int, r: int) -> int:
 	var best := -1
 	var bd := r + 1
 	for b in ob_ok.size():
-		if ob_ok[b] == 0 or (ob_u[b] != 0 and ob_u[b] != u + 1) or (b < ob_state.size() and ob_state[b] != WS_STANDING):
+		if ob_ok[b] == 0 or (ob_u[b] != 0 and ob_u[b] != u + 1) or (b < ob_state.size() and ob_state[b] != WS_STANDING) \
+				or (b < ob_fire.size() and ob_fire[b] != 0):
 			continue
 		var d := FM.approx_len(ob_dx[b] - x, ob_dy[b] - y)
 		if d < bd:
@@ -17559,7 +17782,7 @@ func _occ_enter(u: int) -> void:
 	u_ocg[u] = 0
 	u_oct[u] = 0
 	if b < 0 or b >= ob_ok.size() or ob_ok[b] == 0 or (ob_u[b] != 0 and ob_u[b] != u + 1) \
-			or (b < ob_state.size() and ob_state[b] != WS_STANDING):
+			or (b < ob_state.size() and ob_state[b] != WS_STANDING) or (b < ob_fire.size() and ob_fire[b] != 0):
 		return
 	ob_u[b] = u + 1
 	u_occ[u] = b + 1
@@ -17956,6 +18179,12 @@ func state_hash() -> int:
 			for arr in [ws_hp, ws_state, ob_hp, ob_state]:
 				if not (arr as PackedInt32Array).is_empty():
 					ctx.update((arr as PackedInt32Array).to_byte_array())
+			if ob_fire_n > 0 or ob_fstruck > 0:
+				# (Burning buildings, 2026-10-24: only once one was struck by fire, so towns without fire hash as before.)
+				ctx.update(ob_fire.to_byte_array())
+				ctx.update(ob_fby.to_byte_array())
+				ctx.update(ob_fhit.to_byte_array())
+				ctx.update(PackedInt64Array([ob_fire_n, ob_fwin, ob_fstruck]).to_byte_array())
 		if obs_on != 0:
 			for arr in _stair_arrays():
 				ctx.update((arr as PackedInt32Array).to_byte_array())

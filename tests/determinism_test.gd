@@ -344,6 +344,12 @@ func _init() -> void:
 		_check_destr()
 		_check_destr_ai()
 		_check_preset_breach()
+		_check_fire()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
+	if "--only=fire" in OS.get_cmdline_user_args():
+		_check_fire()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -420,6 +426,7 @@ func _init() -> void:
 	_check_destr()
 	_check_destr_ai()
 	_check_preset_breach()
+	_check_fire()
 	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
@@ -7519,6 +7526,276 @@ func _check_preset_breach() -> void:
 	else:
 		for x in bad:
 			_fail(str(x))
+
+
+## Burning buildings (docs/design/siege_and_towns.md "Fire (as built, 2026-10-24)"; "--only=fire", also in
+## "--only=destr" and the full run). (1) A West town (_occ_sc), a musket company in the timber house nearest it,
+## archers shooting fire arrows at it from outside (four seeds): the house catches, burns down FIRE_BURN_S after
+## it caught (within a few seconds), the company comes out on its own below FIRE_LEAVE_PCT (not inside when it
+## falls: nobody lost in the ruins), shaken and away from the door, the house refuses to be held while burning and
+## is rubble after; identical on repeat (every 50 ticks) and across snapshot / restore (seed 7). (2) Fire landings
+## on every building of the town: a stone one never catches, a timber one at about FIRE_CATCH_PCT for an arrow
+## and always for a lobbed fire shot. (3) Spread: a level 1 West town, the timber building with the most timber
+## neighbours lit, seeds 1-6: a neighbour (and only a neighbour of a burning building) is lit on some seed.
+func _check_fire() -> void:
+	var bad: Array = []
+	var txt: Array[String] = []
+	var rep := ""
+	for sd in [7, 8, 9, 10]:
+		var r := _fire_run(sd, sd == 7)
+		if str(r.get("bad", "")) != "":
+			bad.append("fire: seed %d: %s" % [sd, r["bad"]])
+			continue
+		txt.append("caught %.1f s after the first shot, out at %d%%, fell %d s after catching" % [
+			float(r["catch_t"] - r["shot_t"]) / 10.0, int(r["out_pct"]), (int(r["fall_t"]) - int(r["catch_t"])) / 10])
+		if r.has("rep"):
+			rep = str(r["rep"])
+	if rep != "":
+		bad.append("fire: " + rep)
+	var cr := _fire_catch()
+	if str(cr.get("bad", "")) != "":
+		bad.append("fire: " + str(cr["bad"]))
+	var sp := _fire_spread()
+	if str(sp.get("bad", "")) != "":
+		bad.append("fire: " + str(sp["bad"]))
+	if bad.is_empty():
+		print("PASS fire: a held timber house under fire arrows (four seeds): %s; no one lost in the ruins; stone caught 0 of %d landings, timber %d of %d arrows (%d%%, want %d) and %d of %d lobbed shots; spread lit %s; identical on repeat and across snapshot / restore" % [
+			"; ".join(txt), int(cr["stone_n"]), int(cr["arrow_lit"]), int(cr["timber"]), int(cr["pct"]), BattleSim.FIRE_CATCH_PCT,
+			int(cr["lob_lit"]), int(cr["timber"]), sp["txt"]])
+	else:
+		for b in bad:
+			_fail(str(b))
+
+
+## The fire scenario: _occ_sc plus a company of archers with fire arrows 90 m out from the door of the timber
+## house nearest the defenders' musket company (which holds it from tick 0, its fire off); the archers shoot
+## their fire arrows at the company from tick 300. Returns [scenario, defender unit, archer unit, building].
+func _fire_sc(sd: int) -> Array:
+	var sc := _occ_sc()
+	var sim := BattleSim.new()
+	sim.setup(sc, sd)
+	var d := -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 1:
+			d = u
+			break
+	var bb := -1
+	var bd := 1 << 40
+	for b in sim.ob_ok.size():
+		if sim.ob_ok[b] == 0 or sim.ob_timber[b] == 0 or sim.ob_sn[b] < 4:
+			continue
+		var dd := FM.approx_len(sim.ob_dx[b] - sim.u_ax[d], sim.ob_dy[b] - sim.u_ay[d])
+		if dd < bd:
+			bd = dd
+			bb = b
+	var ax: int = sim.ob_dx[bb] + FM.cos_a(sim.ob_face[bb]) * 90 / FM.TRIG_ONE * M
+	var ay: int = sim.ob_dy[bb] + FM.sin_a(sim.ob_face[bb]) * 90 / FM.TRIG_ONE * M
+	var gp: Vector2i = BattleSim.open_snap(sim, clampi(ax, 20 * M, sim.field_w - 20 * M), clampi(ay, 20 * M, sim.field_h - 20 * M), MapGen.NAV_GROUND)
+	var face := FM.atan2_a(sim.ob_dy[bb] - gp.y, sim.ob_dx[bb] - gp.x)
+	var ud := Scenarios.unit(0, UT.ARCHER, 60, gp.x / M, gp.y / M, face)
+	ud["ak"] = UT.ammo_index("fire_arrows")
+	(sc["units"] as Array).append(ud)
+	var arch: int = (sc["units"] as Array).size() - 1
+	sc["orders"] = [{"tick": 0, "type": BattleSim.ORDER_OCCUPY, "unit": d, "building": bb, "run": 1},
+		{"tick": 0, "type": SiegeAI.ORDER_FIRE, "unit": d, "on": 0},
+		{"tick": 0, "type": BattleSim.ORDER_AMMO, "unit": arch, "on": 1},
+		{"tick": 0, "type": SiegeAI.ORDER_FIRE, "unit": arch, "on": 0},
+		{"tick": 300, "type": BattleSim.ORDER_ATTACK, "unit": arch, "target": d, "run": 0}]
+	return [sc, d, arch, bb]
+
+
+func _fire_run(sd: int, check_rep: bool) -> Dictionary:
+	var f := _fire_sc(sd)
+	var sc: Dictionary = f[0]
+	var d: int = f[1]
+	var bb: int = f[3]
+	var sim := BattleSim.new()
+	sim.setup(sc, sd)
+	var twin: BattleSim = null
+	if check_rep:
+		twin = BattleSim.new()
+		twin.setup(sc, sd)
+	var r := {"bad": "", "shot_t": 300, "catch_t": -1, "out_t": -1, "out_pct": -1, "fall_t": -1}
+	var k0: int = sim.stat_collapse_kill
+	var mor_in := -1
+	var snap_done := false
+	while sim.tick < 3600 and r["fall_t"] < 0:
+		sim.step()
+		if twin != null:
+			twin.step()
+			if sim.tick % 50 == 0 and sim.state_hash() != twin.state_hash():
+				r["rep"] = "seed %d: diverged on repeat at tick %d" % [sd, sim.tick]
+				twin = null
+		if r["catch_t"] < 0 and sim.ob_fire[bb] != 0:
+			r["catch_t"] = sim.tick
+			mor_in = sim.u_morale[d]
+			if sim.u_occ[d] != bb + 1:
+				r["bad"] = "the company was not in the house when it caught (tick %d, in %d)" % [sim.tick, sim.u_occ[d]]
+				return r
+		if r["catch_t"] >= 0 and r["out_t"] < 0 and sim.u_occ[d] == 0:
+			r["out_t"] = sim.tick
+			r["out_pct"] = sim.ob_hp[bb] * 100 / sim.ob_hp0[bb]
+			if BattleSim.occupy_refusal(sim, d, bb) != "it is on fire" and sim.u_state[d] == BattleSim.U_READY:
+				r["bad"] = "refusal while burning '%s'" % BattleSim.occupy_refusal(sim, d, bb)
+			if sim.u_morale[d] >= mor_in:
+				r["bad"] = "not shaken (morale %d, %d when it caught)" % [sim.u_morale[d], mor_in]
+		if check_rep and not snap_done and r["catch_t"] >= 0 and sim.tick == r["catch_t"] + 100:
+			snap_done = true
+			var c1 := BattleSim.new()
+			c1.setup(sc, sd)
+			if not c1.restore(sim.snapshot()) or c1.state_hash() != sim.state_hash():
+				r["rep"] = "seed %d: a snapshot of a burning house did not restore the same" % sd
+			else:
+				var c2 := BattleSim.new()
+				c2.setup(sc, sd)
+				c2.restore(sim.snapshot())
+				for t in 150:
+					c1.step()
+					c2.step()
+				var a2 := BattleSim.new()
+				a2.setup(sc, sd)
+				a2.restore(sim.snapshot())
+				for t in 150:
+					a2.step()
+				if c1.state_hash() != c2.state_hash() or c1.ob_hp[bb] != a2.ob_hp[bb] or c1.state_hash() != a2.state_hash():
+					r["rep"] = "seed %d: the restored copies diverged" % sd
+		if sim.ob_state[bb] != BattleSim.WS_STANDING:
+			r["fall_t"] = sim.tick
+	if r["bad"] != "":
+		return r
+	if sim.u_occ[d] != bb + 1 and r["catch_t"] < 0:
+		return {"bad": "the house (%d) never caught (in it %d, burning %d)" % [bb, sim.u_occ[d], sim.ob_fire[bb]]}
+	if r["catch_t"] < 0:
+		return {"bad": "the held house %d never caught in %d ticks (fire arrows shot %d)" % [bb, sim.tick, sim.stat_ak_shots]}
+	if r["fall_t"] < 0:
+		return {"bad": "the house never fell (hp %d of %d)" % [sim.ob_hp[bb], sim.ob_hp0[bb]]}
+	if int(r["catch_t"]) - int(r["shot_t"]) < BattleSim.FIRE_ROLL_T:
+		return {"bad": "caught %d ticks after the first shot, before a catch window could close" % (int(r["catch_t"]) - int(r["shot_t"]))}
+	var burn: int = int(r["fall_t"]) - int(r["catch_t"])
+	if burn < BattleSim.FIRE_BURN_S * 10 - 20 or burn > BattleSim.FIRE_BURN_S * 10 + 20:
+		return {"bad": "burnt down in %d ticks (want about %d)" % [burn, BattleSim.FIRE_BURN_S * 10]}
+	if r["out_t"] < 0 or r["out_t"] >= r["fall_t"]:
+		return {"bad": "the company did not come out before the fall (out at %d, fell %d)" % [r["out_t"], r["fall_t"]]}
+	if int(r["out_pct"]) >= BattleSim.FIRE_LEAVE_PCT or int(r["out_pct"]) < BattleSim.FIRE_LEAVE_PCT - 5:
+		return {"bad": "came out at %d%% of the house's hit points (want just under %d)" % [r["out_pct"], BattleSim.FIRE_LEAVE_PCT]}
+	if sim.stat_collapse_kill != k0 or sim.stat_bld_burnt != 1 or sim.stat_collapses != 1:
+		return {"bad": "after the fall: lost in the ruins %d, burnt %d, fallen %d" % [sim.stat_collapse_kill - k0, sim.stat_bld_burnt, sim.stat_collapses]}
+	var cell := sim.ob_cell.find(bb + 1)
+	if sim.obs[cell] != MapGen.C_RUBBLE or BattleSim.occupy_refusal(sim, d, bb) != "it has fallen" and sim.u_state[d] == BattleSim.U_READY:
+		return {"bad": "after the fall: rubble %d, refusal '%s'" % [1 if sim.obs[cell] == MapGen.C_RUBBLE else 0, BattleSim.occupy_refusal(sim, d, bb)]}
+	if sim.u_alive[d] > 0 and FM.approx_len(sim.u_cx[d] - sim.ob_dx[bb], sim.u_cy[d] - sim.ob_dy[bb]) < 4 * M \
+			and sim.u_state[d] == BattleSim.U_READY:
+		return {"bad": "the company is still at the door after the fall"}
+	if sim.ob_fire[bb] != 0:
+		return {"bad": "the fallen house still burns"}
+	return r
+
+
+## Fire landings on every building of the West town (one fake projectile of the archers' type, then of a stone
+## thrower's): stone ones never catch (5 landings each), timber ones once each.
+func _fire_catch() -> Dictionary:
+	var f := _fire_sc(7)
+	var sc: Dictionary = f[0]
+	var res := {"bad": "", "stone_n": 0, "timber": 0, "arrow_lit": 0, "lob_lit": 0, "pct": 0}
+	for lob in [false, true]:
+		var sim := BattleSim.new()
+		sim.setup(sc, 7)
+		var arch: int = f[2]
+		sim.pr_ty[0] = UT.STONE if lob else sim.u_type[arch]
+		sim.pr_unit[0] = arch
+		var nt := 0
+		var lit := 0
+		for b in sim.ob_timber.size():
+			var c := sim.ob_cell.find(b + 1)
+			if c < 0:
+				continue
+			var x := ((c % sim.ob_w) << 11) + 1024
+			var y := ((c / sim.ob_w) << 11) + 1024
+			if sim.ob_timber[b] == 0:
+				for k in 5:
+					sim._ignite_bld(0, x, y)
+				if not lob:
+					res["stone_n"] = int(res["stone_n"]) + 5
+				if sim.ob_fire[b] != 0:
+					res["bad"] = "stone building %d caught fire" % b
+			else:
+				nt += 1
+				sim._ignite_bld(0, x, y)
+				if lob and sim.ob_fire[b] != 0:
+					lit += 1
+		if not lob:
+			# (Arrows: nothing lit at the hit; each struck building rolls once at its window's end.)
+			for b in sim.ob_fire.size():
+				if sim.ob_fire[b] != 0:
+					res["bad"] = "building %d lit at the arrow's hit, before its window closed" % b
+			for t in BattleSim.FIRE_ROLL_T + 1:
+				sim.step()
+			for b in sim.ob_fire.size():
+				if sim.ob_fire[b] != 0:
+					lit += 1
+					if sim.ob_timber[b] == 0:
+						res["bad"] = "stone building %d caught fire" % b
+		res["timber"] = nt
+		if lob:
+			res["lob_lit"] = lit
+		else:
+			res["arrow_lit"] = lit
+	if int(res["stone_n"]) == 0 or int(res["timber"]) < 20:
+		res["bad"] = "too few buildings to test (stone %d, timber %d)" % [res["stone_n"], res["timber"]]
+	res["pct"] = int(res["arrow_lit"]) * 100 / maxi(int(res["timber"]), 1)
+	if str(res["bad"]) == "" and (absi(int(res["pct"]) - BattleSim.FIRE_CATCH_PCT) > 14 or int(res["lob_lit"]) != int(res["timber"])):
+		res["bad"] = "timber caught %d%% of arrows (want about %d), %d of %d lobbed shots" % [res["pct"], BattleSim.FIRE_CATCH_PCT,
+			res["lob_lit"], res["timber"]]
+	return res
+
+
+## Spread: a level 1 West town, the timber building with the most timber neighbours lit at tick 10; seeds 1-6,
+## until it has burnt down. Every building lit by spread is a neighbour of one already alight; some seed spreads.
+func _fire_spread() -> Dictionary:
+	var sc := Scenarios.west_town(12, 1, 0, 1, Terrain.K_FLAT, MapGen.PAL_DRY, 1)
+	sc["units"] = [(sc["units"] as Array)[0], (sc["units"] as Array)[(sc["units"] as Array).size() - 1]]
+	sc["deploy_zones"] = []
+	sc["ai_sides"] = []
+	sc["orders"] = []
+	var hits: Array[String] = []
+	for sd in range(1, 7):
+		var sim := BattleSim.new()
+		sim.setup(sc, sd)
+		var src := -1
+		var most := 0
+		for b in sim.ob_timber.size():
+			if sim.ob_timber[b] == 0:
+				continue
+			var n := 0
+			for e in range(sim.ob_adj0[b], sim.ob_adj0[b + 1]):
+				n += sim.ob_timber[sim.ob_adj[e]]
+			if n > most:
+				most = n
+				src = b
+		if src < 0:
+			return {"bad": "spread: no timber building with a timber neighbour"}
+		while sim.tick < 10:
+			sim.step()
+		sim._bld_alight(src, -1)
+		var alight := {src: true}
+		while sim.tick < 1000:
+			sim.step()
+			for b in sim.ob_fire.size():
+				if sim.ob_fire[b] == 0 or alight.has(b):
+					continue
+				var near := false
+				for e in range(sim.ob_adj0[b], sim.ob_adj0[b + 1]):
+					if alight.has(sim.ob_adj[e]):
+						near = true
+				if not near or sim.ob_timber[b] == 0:
+					return {"bad": "spread: seed %d: building %d lit with no burning neighbour (timber %d)" % [sd, b, sim.ob_timber[b]]}
+				alight[b] = true
+				hits.append("seed %d: %d at %.0f s" % [sd, b, (sim.tick - 10) / 10.0])
+		if sim.ob_state[src] == BattleSim.WS_STANDING:
+			return {"bad": "spread: seed %d: the source still stands after 99 s" % sd}
+	if hits.is_empty():
+		return {"bad": "spread: no neighbour lit on seeds 1-6"}
+	return {"bad": "", "txt": "%d neighbour(s) on seeds 1-6 (%s)" % [hits.size(), ", ".join(hits)]}
 
 
 ## The destruction AI (docs/AI.md 35): AI against AI, a walls-1 fair siege with no siege kit (the gate falls

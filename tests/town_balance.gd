@@ -90,7 +90,7 @@ func _initialize() -> void:
 					"started_att": int(res["sides"][0]["started"]), "started_def": int(res["sides"][1]["started"]),
 					"remaining_att": int(res["sides"][0]["remaining"]), "remaining_def": int(res["sides"][1]["remaining"]),
 					"gate_tick": gate_tick, "gates_broken": sim.stat_gate_broken,
-					"breach_tick": breach_tick, "breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots,
+					"breach_tick": breach_tick, "breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots, "burnt": sim.stat_bld_burnt,
 					"wall_dmg": sim.stat_wall_dmg}))
 		print("TOWNBAL %s %s walls %d: attacker %d / %d (%d %%), draws %d, %.1f min, killed att %.0f def %.0f (plan maps %d)" % [
 			set_name, "old" if old else "plan", walls, aw, seeds, aw * 100 / maxi(seeds, 1), dr, t_sum / maxi(seeds, 1),
