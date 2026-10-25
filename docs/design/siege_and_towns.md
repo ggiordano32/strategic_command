@@ -2658,6 +2658,13 @@ breach in 95 of 96 battles a level, 0.5-1 min before the gate used to fall: the 
 waiting at the gate mouth. Tuned (two knobs): `S_BATTER_T` 4,800 -> 2,400 (8 seeds, build 1) cut walls 3 (the
 latest breaches) far more than walls 2 and went back to 4,800; `S_PLUG` 1 -> 3 / 4 / 5 (8 seeds) 92 / 44 / 38, 81 / 52 /
 23, 60 / 29 / 19; kept 4. `S_BATTER_PCT` does not bite in Rome (one stone-thrower unit a side; the share is by unit).
+
+**Follow-up, walls 3 (2026-10-24, docs/AI.md 39).** The stack does not wait at the shut gate (the plug takes its units);
+the four plugs hold walls 3's 12 m rubble. `S_PLUG_DEEP` (12 m at Average / Skilled): at a breach in walls that thick or
+more the last plug is a second line `PLUG_BACK` 20 m further in. `S_BATTER_OPEN`: no stretch is battered whose breach's
+outside point lies in a tower's cells (Punic towns: the storm stood against the tower). rome_walls 74 / 41 / 19 -> 74 /
+39 / 33. Also there: grenadiers' Hold / Use now in a siege (`R_GREN_SIEGE`) and the batteries' Use now at a held
+building on the storm's route (`R_BATTER_BLD`).
 Final (16 seeds, `a6c41d737a`): rome_walls walls 1 / 2 / 3 58 -> 74 (beyond its interval), 32 -> 44, 24 -> 20; by
 town the swings are large both ways (Latium walls 2 6 -> 75, Sicilia 38 -> 75, Zeugitana walls 1 25 -> 69; Arverni
 walls 2 81 -> 12, walls 1 62 -> 31). A stretch was breached in 96 / 95 / 95 of 96 battles a level, before the gate in 95 / 94 / 86 (median 1.3 / 2.5 / 3.2

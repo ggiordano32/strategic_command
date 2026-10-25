@@ -2430,7 +2430,7 @@ Champion and Diplomat given the fields for the run: roles, fear, parley, snapsho
 
 Open for the rows step: the battle AI places a `CK_FOOT` hero in "the second line" behind the line centre
 (`battle_ai.gd`, docs/AI.md 27) whatever his `au_roles`; a sea captain or shaman wants the AI to post him behind
-units his list names. The AI's parley pick does not weigh `parley_bonus`.
+units his list names. The AI's parley pick does not weigh `parley_bonus`. (Both built 2026-10-24, docs/AI.md 39: `BattleAI._aura_centre`, `CH_PARLEY_BONUS`.)
 
 
 ### The Caribbean roster, batch 3 (as built, 2026-10-24)

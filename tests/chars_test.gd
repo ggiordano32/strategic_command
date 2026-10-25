@@ -11,7 +11,10 @@ extends SceneTree
 ##   snapshot  the fear set piece survives snapshot / restore (same hashes after restore).
 ##   west      the batch 3 rows themselves (sea captain, shaman, missionary) on West units: the role filter, the
 ##             shaman's fear, the missionary's bonus against a native row and none against a pike block.
-##   godot --headless --script res://tests/chars_test.gd [-- --only=roles|fear|parley|snapshot|west]
+##   ai        the battle AI's use of them (docs/AI.md 39): a sea captain posted behind the units his au_roles
+##             serve (and behind the line centre with none on the field, as Rome's Champion always is); the
+##             missionary's parley pick takes a routing native band before a nearer routing pike block.
+##   godot --headless --script res://tests/chars_test.gd [-- --only=roles|fear|parley|snapshot|west|ai]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -43,6 +46,8 @@ func _init() -> void:
 		_snapshot()
 	if only == "" or only == "west":
 		_west()
+	if only == "" or only == "ai":
+		_ai()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL (%d)" % fails)
 	quit(0 if fails == 0 else 1)
 
@@ -330,3 +335,88 @@ func _west() -> void:
 				gain[key] -= 100
 	_check(gain["native_warriors"] > 0 and gain["w_pikemen"] == 0,
 		"west: the missionary's +25 turns refusals into surrenders of a native band (%d of 14 seeds) and changes no pike block's (%d)" % [gain["native_warriors"], gain["w_pikemen"]])
+
+
+# ------------------------------------------------------------------ ai ---
+
+## Our side (AI, Average) of pikemen and musketeers on the left and middle, `right` units on the right,
+## their foot far off; hero `hero`. Returns [mean |x - their mean x| in m over the samples, mean metres
+## behind them, mean |x - the foot's mean x| in m].
+func _post_run(hero: String, right: Array) -> Array:
+	var units: Array = [
+		Scenarios.unit(0, UT.index_of("w_pikemen"), 60, 100, 330, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.index_of("musketeers"), 60, 170, 330, Scenarios.FACE_UP)]
+	for i in right.size():
+		units.append(Scenarios.unit(0, UT.index_of(str(right[i])), 40, 290 + 40 * i, 330, Scenarios.FACE_UP))
+	units.append(Scenarios.unit(1, UT.HEAVY, 60, 200, 40, Scenarios.FACE_DOWN))
+	var sc := _sc(units, [[_ch(hero)], []])
+	sc["ai_sides"] = [0]
+	var sim := BattleSim.new()
+	sim.setup(sc, 4242)
+	var h := _ch_unit(sim, 0, UT.CK_FOOT)
+	var dx := 0
+	var back := 0
+	var dxf := 0
+	var n := 0
+	for t in 600:
+		sim.step()
+		if t < 300 or t % 50 != 0:
+			continue
+		var sx := 0
+		var sy := 0
+		var k := 0
+		var fx := 0
+		var fk := 0
+		for o in sim.n_units:
+			if sim.u_side[o] != 0 or sim.u_char[o] != 0 or sim.u_state[o] != BattleSim.U_READY:
+				continue
+			fx += sim.u_cx[o]
+			fk += 1
+			if o >= 2:
+				sx += sim.u_cx[o]
+				sy += sim.u_cy[o]
+				k += 1
+		if k > 0:
+			dx += absi(sim.u_cx[h] - sx / k)
+			back += sim.u_cy[h] - sy / k
+		dxf += absi(sim.u_cx[h] - fx / maxi(fk, 1))
+		n += 1
+	return [dx / maxi(n, 1) / M, back / maxi(n, 1) / M, dxf / maxi(n, 1) / M]
+
+
+## The missionary or Rome's diplomat (AI, Average) with a routing pike block 25 m off and a routing
+## native band 55 m off: the unit his parley goes for (-1 none within 40 s).
+func _pick_run(dip_key: String) -> int:
+	var sc := _sc([
+		Scenarios.unit(0, UT.HEAVY, 100, 200, 360, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 200, 200, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.index_of("native_warriors"), 40, 290, 200, Scenarios.FACE_DOWN)], [[_ch(dip_key)], []])
+	sc["ai_sides"] = [0]
+	var sim := BattleSim.new()
+	sim.setup(sc, 4343)
+	var dip := _ch_unit(sim, 0, UT.CK_DIPLOMAT)
+	sim.step()
+	_put(sim, dip, 210, 235)
+	for t in 400:
+		sim.u_morale[1] = -1000
+		sim.u_morale[2] = -1000
+		sim.step()
+		if sim.u_cho[dip] != 0:
+			return sim.u_cht[dip]
+	return -1
+
+
+func _ai() -> void:
+	var cap := _post_run("sea_captain", ["buccaneers", "marines"])
+	var champ := _post_run("hero_foot", ["buccaneers", "marines"])
+	_check(cap[0] <= 15 and cap[1] > 0 and champ[0] >= cap[0] + 25,
+		"ai: the sea captain stands behind his buccaneers and marines (%d m off their middle, %d m behind); Rome's Champion behind the line centre (%d m off it)" % [
+			cap[0], cap[1], champ[0]])
+	var none := _post_run("sea_captain", ["w_pikemen"])
+	var champ2 := _post_run("hero_foot", ["w_pikemen"])
+	_check(absi(none[2] - champ2[2]) <= 3,
+		"ai: with none of his units on the field he keeps behind the line centre as the Champion does (%d / %d m off the foot's middle)" % [none[2], champ2[2]])
+	var pm := _pick_run("missionary")
+	var pd := _pick_run("diplomat")
+	_check(pm == 2 and pd == 1,
+		"ai: the missionary's parley goes for the routing native band before the nearer pike block (unit %d); Rome's diplomat for the nearest (unit %d)" % [pm, pd])

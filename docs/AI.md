@@ -2584,7 +2584,8 @@ Measured (16 seeds, attacker wins %): rome_walls walls 1 / 2 / 3 58 / 32 / 24 ->
 battles, nearly always before the gate); west_walls walls 0 / 1 / 2 54 / 39 / 34 -> 51 / 38 / 34 (no West battery
 battered: the plan towns have no outer wall and the fort was left be). Tuned: `S_PLUG` 1 -> 4 (with one plug the
 breach beat the stack waiting at the shut gate: 88 / 65 / 47; 3 / 4 / 5 plugs at 8 seeds 92 / 44 / 38, 81 / 52 / 23,
-60 / 29 / 19); `S_BATTER_T` 2,400 tried and reverted (it cut walls 3 more than walls 2). Open: walls 3 not up, walls 1
+60 / 29 / 19); `S_BATTER_T` 2,400 tried and reverted (it cut walls 3 more than walls 2). Open: walls 3 not up (19 ->
+33 in section 39), walls 1
 up 16, large per-town swings (Arverni down), the West fort stormed with guns, a shock role for the breach party.
 
 ## 36. Roles, step 2: the AI and the role behaviours (2026-10-23)
@@ -2611,8 +2612,8 @@ gave before; two knobs decide where a level keeps the old play. No new AI memory
 Measured with the sim rules (16 seeds, attacker wins %): rome_walls 74 / 44 / 20 -> 74 / 41 / 19, west_named walls
 0 / 1 / 2 49 / 36 / 14 -> 54 / 33 / 12 (none beyond its interval); the asymmetry probe (Spanish wins of 16) woods 0 -> 0,
 field 14 -> 11. Open: the AI's skirmishers rarely stand still long enough to drift in a field battle (`stat_skd_men` 0
-in the probe); the AI never uses Hold or Use now (the grenades' Use now at a gate, the batter at buildings) nor
-the caracole's charge flag above Easy.
+in the probe); the AI never uses Hold or Use now (the grenades' Use now at a gate, the batter at buildings: built in
+section 39 for sieges) nor the caracole's charge flag above Easy.
 
 ## 37. The West AI after the Caribbean batch 2: mix lines that can be raised (2026-10-24)
 
@@ -2694,6 +2695,7 @@ Skilled) and `CHAR_DIPLOMAT` (Skilled) keep their meaning.
   one; the others and the natives raise none). Privateers never, as assassins never.
 - **In battle** the character AI (section 27) is by kind and unchanged: a sea captain or shaman (`CK_FOOT`) is posted behind
   the line centre, whatever his `au_roles`; the missionary parleys as the diplomat does (the pick does not weigh the bonus).
+  (Both since section 39: posted behind the units his aura serves; the pick prefers a target of the bonus.)
 
 Measured, `campaign_sim` West, all Average, 60 turns (before = HEAD 158f4c2): the 6 pin seeds eliminations 4 -> 2,
 battles 52.5 -> 52.3 a seed; 72 seeds (three `--seed0` shards of 24) eliminations 43 -> 50, battles 54.5 -> 51.8 a seed,
@@ -2703,3 +2705,98 @@ Spain 0 -> 1. The Dutch swing is the largest and the only one outside the earlie
 the Spanish lose their heroes' `char_pct` 6 in auto-resolve, the coast nations and natives keep a hero at 6 and 4. Not
 tuned; Rome unmoved (the Rome pins are identical).
 
+
+## 39. Battle AI loose ends after batch 3 (2026-10-24)
+
+The battle AI's open items from batch 3 (docs/design/battle_sim.md "The Caribbean roster, batch 3 (as built)"), from
+roles step 2 (section 36: "the AI never uses Hold or Use now") and from the destruction AI (section 35: "walls 3 not
+up"). Battle AI only: no unit stat, no sim rule; no new AI memory (every choice is read again each think from hashed
+state: the ability table `u_abs` / `u_abt`, hit points, units).
+
+- **Heroes posted by their aura.** A `CK_FOOT` hero whose row lists `au_roles` (the sea captain: skirmish, shock,
+  marines; the shaman: skirmish, shock) stands `CH_BACK` behind the middle of the ready friendly units his aura serves
+  (`BattleAI._aura_centre`: `_ch_bit` and `_ch_serves`, as the sim's aura; not characters, wagons or generals), along
+  the army's facing, re-posted at every think as they move; none of them on the field: behind the line centre as before
+  (`CH_BACK` + 10 m). Rome's heroes (no `au_roles`) are unchanged. No knob (every level).
+- **The parley pick weighs `parley_bonus`** (`CH_PARLEY_BONUS`): of the routing enemy units in reach that may be asked,
+  one the diplomat's row gives a bonus against comes first (the missionary: the natives), the nearest among them; else
+  the nearest as before.
+- **Grenades in a siege** (`R_GREN_SIEGE`; rows with the grenade ability attacking a town, `SiegeAI._gren_siege`): Use
+  now at the nearest shut gate in reach and in a clear throw (`BattleSim._gren_gate`; not a West fort left be), else at
+  the nearest enemy unit holding a building in range; with neither, Hold in the approach while outside the town (no
+  grenade thrown at a block on the way) and Auto after. In the approach, with the attacked gate shut and the side's foot
+  hacking it or its ram at it, they go up to 80 % of their range from the gate's face and throw once in reach; in the
+  assault they storm with the foot (they were held 110 m out with the archers before, out of their 25 m reach). The
+  ability order is given only when the wanted state differs.
+- **The batter at buildings** (`R_BATTER_BLD`, metres; `SiegeAI._batter_bld`): an attacking siege battery (the batter
+  ability: stone throwers, heavy guns, mortars) in the assault with no stretch to batter Uses now its batter on the
+  building held by an enemy unit (standing) whose middle lies within `R_BATTER_BLD` of the storm's route (from the
+  side's way in, the breach's inside edge, else the attacked gate, else the army's middle, to the plaza) and within
+  `S_ART_REACH_PCT` of its range from where it stands, the nearest the way in first; when that building falls (or its
+  men leave and none qualifies) back to Auto.
+- **Walls 3 under the destruction AI** (siege logs first, then the change). Rome's harness at HEAD (`48a6eef61b`, 16
+  seeds): walls 1 / 2 / 3 74 / 41 / 19 %; at walls 3 18 attacker wins, 55 defender wins, 23 draws of 96, a breach in 95
+  of 96 (83 before the gate fell). A probe (`fair_siege` as the harness, 6 towns x 4 seeds at walls 3, the defenders'
+  AI modes and men every 20 s from the first breach, kills per defender mode) found:
+  - **The guessed lever is not it.** The gate stack does not wait at the shut gate while the breach is stormed: the
+    plug takes the stack's foot (A_MOUTH at a shut gate counts as free, nearest first), so 20 s after the breach the
+    four plugs (357-374 men) are the stack's units. In 9 of the 11 breach-first battles traced in full the stack was
+    empty then; in Attica's two (a stack of six) two units (160-218 men) stayed at the gate. More men at the breach
+    (the stack's tail peeling off to it) would only make the plug stronger, and the plug is what holds (next).
+  - **The plug holds the deep breach.** In 7 of 24 the attackers never had 100 men inside (all four Arverni seeds,
+    Attica 3, Zeugitana 1 and 3): they bled at the rubble. Kills by defender mode (Arverni seeds 0-1): walls
+    3 the plugs 376 / 413, the wall units 178 / 83, the towers 20 / 9; walls 1 the plugs 155 / 187 and the plaza
+    reserve 104 / 159 (the attackers got through and fought the reserve). Walls 3's rubble is 12 m deep (`WALL_T` 8 /
+    10 / 12) against 8 at walls 1, so four plugs side by side at its inner edge meet the storm while it is still on the
+    slow rubble.
+  - **The rest are the endgame.** 5 of 24 were won; in 12 the attackers got in (160-530 men inside at the most) and
+    did not win in the 15 minutes (5 draws, 7 losses); in 8 of those 12 the citadel was shut and holding at the end
+    (Massalia, Sicilia, Attica, Zeugitana: its Byrsa is the plaza, so the capture cannot start while it holds), with
+    routers penned in by the shut gates.
+  - **Zeugitana's breach in a tower.** Punic walls carry large towers: 6 of the 7-9 Zeugitana stretches at walls 3 have the
+    breach's outside point (`ws_side_pt`, where the breach's graph node stands) inside a tower's cells, so a breach
+    there is unreachable: seed 1 at walls 3 breached such a stretch at 4:20 and its storm stood against the tower for
+    the rest of the battle (a draw, no fighting).
+- **The change** (two knobs):
+  - `S_PLUG_DEEP` (thickness; Easy 0, Average / Skilled 12 m): at a breach in walls that thick or more (walls 3; the
+    Punic walls 2) the last of its plugs (by index, of two or more) is a second line `PLUG_BACK` 20 m further in,
+    fighting what comes within `PLUG_REACT` of its own post; the first three hold the rubble's edge as before.
+  - `S_BATTER_OPEN` (Easy 0, Average / Skilled 1): `_batter_stretch` skips a stretch whose breach's outside point is
+    not open ground (a tower's cells). The player's batter order's own pick (`batter_pick`) uses the same choice.
+  - Tried (6 towns x 16 seeds at walls 3 unless said): one plug fewer at a deep breach (S_PLUG 3 there): walls 3 19
+    -> 36, walls 1 / 2 74 / 43 (the full plan), Attica 12 -> 56 and Latium 25 -> 62, Arverni unmoved 12; the second
+    line instead: 19 -> 33 with Arverni 12 -> 44 (kept: in the target and spread over more towns); `S_BATTER_OPEN`
+    alone: walls 3 unmoved (Zeugitana 0 -> 0: its stall turns into the gate's assault and the Byrsa endgame).
+
+| Knob (`ai_profile.gd`, ids 285-289) | Easy | Average | Skilled |
+|---|---|---|---|
+| `CH_PARLEY_BONUS` | 0 | 1 | 1 |
+| `R_GREN_SIEGE` | 0 | 1 | 1 |
+| `R_BATTER_BLD` | 0 | 40 m | 40 m |
+| `S_PLUG_DEEP` | 0 | 12 m | 12 m |
+| `S_BATTER_OPEN` | 0 | 1 | 1 |
+
+Measured (`tools/balance`, 16 seeds, attacker wins %, HEAD `48a6eef61b` -> `7780896732`; the code as committed differs
+only in comments, hash `bcf88fc68a`): rome_walls walls 1 / 2 / 3
+74 / 41 / 19 -> 74 / 39 / 33 (pooled 44 -> 49); walls 1 identical in every town (8 m walls: no rule here bites), walls 2
+moved only in Zeugitana (Punic walls 2 are 12 m: 38 -> 25, within its interval); walls 3 per town Zeugitana 0 -> 12
+(in 4 of 16 the stretch by the attacked gate had its outside point in a tower: no battering now, the gate's assault
+instead: 3 draws and a loss, against 2 draws and 2 losses by the stalled breach; its 2 wins are the second line's), Attica 12 -> 31, Sicilia 44
+-> 25, Latium 25 -> 62, Massalia 19 -> 25, Arverni 12 -> 44 (Latium and Arverni beyond their intervals); median
+minutes to decide at walls 3 9.6 -> 11.0. west_walls walls 0 / 1 / 2 49 / 37 / 28 -> 49 / 37 / 28,
+identical in every town (no West wall is 12 m thick, the plan towns have no outer wall to batter, and the sets field
+no grenadiers, siege guns or characters). The tests: `chars_test` `ai` (the sea
+captain 13 m off his units' middle and behind them, Rome's Champion 95 m off it; with none of his units, both behind the
+line centre; the missionary's parley at the native band, Rome's diplomat's at the nearer pike block), `roles_sim_test`
+`ai` (grenadiers Hold 980 ticks of the approach, up to 31 m from the gate being hacked, Auto once it falls; set by a shut
+gate, Use now and 31 thrown in 15 s; a mortar battery's Use now at a held building in a West town, 3 shots, then Auto;
+Easy no ability order and no building shot). Determinism: 3 of the 45 run hashes moved, all AI sieges at 12 m walls
+(siege_castrum@ai `5a3dd8f5` -> `27b9ec5b`, siege_punic@ai `dfb56818` -> `97da0b57`, siege_eq_ring3 `d4f9a12c` ->
+`c4a9f1db`; siege_punic@ai now takes the town by a breach with its gate still shut, so its coverage asks `breaches`
+for `gate_broken`); the flat goldens, every open-field run and the campaign AI goldens unmoved; lockstep unmoved.
+
+Open: the walls-3 endgame (a citadel shut and holding at the time limit in 8 of 24 traced battles; Carthage's Byrsa is
+its plaza; routers penned in by shut gates keep their units on the field); the Punic towers' breach points (a sim
+matter: `ws_side_pt` can fall in a tower's cells; the AI only avoids battering such a stretch); per-town swings at walls
+3 stay large (Sicilia down 19, Latium up 38); the harness fields no grenadiers, mortars, held buildings or characters,
+so items 1-2 are measured by the tests only.

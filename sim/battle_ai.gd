@@ -147,6 +147,7 @@ const ORDER_DROP := 15
 const ORDER_SABOTAGE := 21      # (BattleSim's character orders)
 const ORDER_ATTEMPT := 22
 const ORDER_PARLEY := 23
+const ORDER_ABILITY := 28      # (BattleSim's ability order: Auto / Hold / Use now; roles step 2)
 const EQ_WAGON := 3            # (BattleSim's siege equipment kinds and states)
 const Q_GROUND := 0
 const Q_CARRIED := 1
@@ -3354,6 +3355,12 @@ static func _attack(sim, u: int, t: int, run: int) -> void:
 	_order(sim, u, o, 0)
 
 
+## Ability order (roles step 2): unit u's ability ab to state st (UT.AB_AUTO /
+## AB_HOLD / AB_NOW), Use now at tgt (BattleSim.make_ability_order's target).
+static func _ability(sim, u: int, ab: int, st: int, tgt: int) -> void:
+	_order(sim, u, {"type": ORDER_ABILITY, "ability": ab, "state": st, "target": tgt}, 29)
+
+
 ## Move, skipped when the unit is already headed there.
 static func _move(sim, u: int, x: int, y: int, face: int, width: int, run: int, k: int) -> void:
 	var ox: int = sim.u_dx[u] if sim.u_order[u] == O_MOVE else sim.u_ax[u]
@@ -3762,17 +3769,27 @@ static func char_think(sim, u: int, kn: PackedInt32Array, post: bool) -> void:
 					return
 	elif k == UT.CK_DIPLOMAT:
 		if kn[AP.CH_PARLEY_R] > 0 and sim.tick >= sim.u_chcd[u]:
+			# The nearest routing enemy in reach; with CH_PARLEY_BONUS, one his
+			# row's parley_bonus applies to first (docs/AI.md 39).
 			var best := -1
 			var bd := 0
+			var bb := 0
+			var dty: int = sim.u_type[u]
 			for o in sim.n_units:
 				if sim.u_side[o] == side or sim.u_state[o] != U_ROUTING or sim.u_alive[o] <= 0:
 					continue
 				var d := _bbox_gap(sim, u, o)
-				if d <= kn[AP.CH_PARLEY_R] and (best < 0 or d < bd):
+				if d > kn[AP.CH_PARLEY_R]:
+					continue
+				var pb := 0
+				if kn[AP.CH_PARLEY_BONUS] != 0 and sim.parley_bonus(dty, sim.u_otype[o]) > 0:
+					pb = 1
+				if best < 0 or pb > bb or (pb == bb and d < bd):
 					var op := {"type": ORDER_PARLEY, "target": o, "unit": u}
 					if sim.char_refusal(sim, op) == "":
 						best = o
 						bd = d
+						bb = pb
 			if best >= 0:
 				_order(sim, u, {"type": ORDER_PARLEY, "target": best}, 27)
 				_count(sim, side, AP.C_CH_PARLEY)
@@ -3816,6 +3833,34 @@ static func _sab_target(sim, u: int, kn: PackedInt32Array) -> int:
 	return best
 
 
+## The middle of the ready friendly units hero u's aura serves when his row
+## lists au_roles (BattleSim t_aur_i; the kind's own filter, _ch_bit, on top):
+## not characters, wagons or generals. (-1, -1) when his row lists none (Rome's
+## heroes) or no such unit stands on the field.
+static func _aura_centre(sim, u: int) -> Vector2i:
+	var sty: int = sim.u_type[u]
+	if sty >= sim.t_aur_i.size() or sim.t_aur_i[sty] < 0:
+		return Vector2i(-1, -1)
+	var side: int = sim.u_side[u]
+	var k: int = sim.u_char[u]
+	var sx := 0
+	var sy := 0
+	var n := 0
+	for o in sim.n_units:
+		if o == u or sim.u_side[o] != side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 \
+				or is_char(sim, o) or is_wagon(sim, o) or is_general(sim, o):
+			continue
+		var tu: int = sim.u_otype[o]
+		if sim._ch_bit(k, tu) == 0 or not sim._ch_serves(sty, tu):
+			continue
+		sx += sim.u_cx[o]
+		sy += sim.u_cy[o]
+		n += 1
+	if n == 0:
+		return Vector2i(-1, -1)
+	return Vector2i(sx / n, sy / n)
+
+
 ## Where a character of kind k keeps when idle: behind the unit of his field
 ## (or the line's centre), facing as the army does.
 static func _char_post(sim, u: int, k: int, kn: PackedInt32Array) -> void:
@@ -3855,6 +3900,13 @@ static func _char_post(sim, u: int, k: int, kn: PackedInt32Array) -> void:
 			back = kn[AP.CH_BACK] * 2  # (none of his kind: behind the line)
 	elif k == UT.CK_FOOT:
 		back = kn[AP.CH_BACK] + 10 * M  # the second line
+		var aim := _aura_centre(sim, u)
+		if aim.x >= 0:
+			# (A hero whose aura serves only listed roles, au_roles: behind the
+			# middle of the units it serves, re-posted as they move; docs/AI.md 39.)
+			ax = aim.x
+			ay = aim.y
+			back = kn[AP.CH_BACK]
 	else:
 		# The agents: the assassin close behind the line's left of centre
 		# (an enemy general posted behind his line comes within reach), the

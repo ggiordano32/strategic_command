@@ -12,13 +12,18 @@ extends SceneTree
 ##   drift     native bowmen in the Cover stance at a wood's edge: their men go into the trees; in the
 ##             Line stance they stay.
 ##   snapshot  the ability table, the pistols and a caracole under way survive snapshot / restore.
-##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot]
+##   ai        the battle AI's Hold / Use now (docs/AI.md 39): grenadiers storming a walled town (AI, Average) Hold in
+##             the approach, go up to the gate being hacked and are on Auto once it is down; put by a shut gate
+##             they Use now at it; a mortar battery in a West town batters (Use now) a held building on the storm's
+##             route, then Auto; Easy never gives an ability order.
+##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
+const SiegeAI := preload("res://sim/siege_ai.gd")
 const M := 1024
 const UP := 768
 const DOWN := 256
@@ -64,6 +69,8 @@ func _init() -> void:
 		_drift()
 	if only == "" or only == "snapshot":
 		_snapshot()
+	if only == "" or only == "ai":
+		_ai()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL")
 	quit(0 if fails == 0 else 1)
 
@@ -346,3 +353,135 @@ func _snapshot() -> void:
 			c.step()
 		_check(c.state_hash() == h_a, "snapshot %s: repeat run identical" % kind)
 		print("snapshot %s: cut at %d (caracole phase %d, ab_on %d), hash %08x after 600 more ticks on both" % [kind, cut, car0, a.ab_on, h_a])
+
+
+# -------------------------------------------------------------------- ai ---
+
+## SIEGE_ARMY without its batteries, plus 60 grenadiers, against a level 2 town with walls 1; both AI at `skill`.
+func _gren_siege_sc(skill: int) -> Dictionary:
+	var att: Array = []
+	for e in Scenarios.SIEGE_ARMY:
+		if UT.stat(int(e[0]), "cls") != UT.CLS_ART:
+			att.append(e.duplicate())
+	att.append([UT.index_of("grenadiers"), 60])
+	var dfn: Array = [[UT.HEAVY, 60], [UT.SPEAR, 60], [UT.ARCHER, 60], [UT.HEAVY, 100]]
+	var city := {"seed": 32, "level": 2, "walls": 1, "bld": [1, 2, 4]}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 32 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_DRY], "ground": MapGen.PAL_DRY}
+	var sc: Dictionary = Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], {})["scenario"]
+	sc["ai_skill"] = [skill, skill]
+	return sc
+
+
+func _of_type(sim, side: int, key: String) -> int:
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_type[u] == UT.index_of(key):
+			return u
+	return -1
+
+
+func _put(sim, u: int, x: int, y: int) -> void:
+	sim.u_ax[u] = x
+	sim.u_ay[u] = y
+	sim.u_dx[u] = x
+	sim.u_dy[u] = y
+	var base: int = sim.u_slot_base[u]
+	for s in sim.u_alive[u]:
+		var i: int = sim.slot_soldier[base + s]
+		sim.pos_x[i] = x + sim.off_x[base + s]
+		sim.pos_y[i] = y + sim.off_y[base + s]
+	sim.u_dirty[u] = 1
+	sim.u_settled[u] = 0
+	sim._update_bounds()
+
+
+## A mortar battery with the West attack list against a level 1 West town (walls 0); both AI at `skill`.
+## Returns [building shots, a Use now at a building seen, back to Auto after, ability orders].
+func _bld_run(skill: int) -> Array:
+	var att: Array = []
+	for e in Scenarios.WEST_ATT:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	att.append([UT.index_of("mortar"), 12])
+	var dfn: Array = []
+	for e in Scenarios.WEST_DEF:
+		dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	var terr := {"kind": Terrain.K_ROLLING, "seed": 12 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_GREEN] + 20, "ground": MapGen.PAL_GREEN}
+	var city := {"seed": 12, "level": 1, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 1, "founder": MapGen.CUL_LATIN, "west": 1}
+	var sc: Dictionary = Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], {})["scenario"]
+	sc["ai_skill"] = [skill, skill]
+	var sim := BattleSim.new()
+	sim.setup(sc, 91)
+	var gu := _of_type(sim, 0, "mortar")
+	var now_bld := false
+	var back := false
+	for t in 1500:
+		sim.step()
+		var st: int = sim.ability_state(gu, UT.AB_BATTER)
+		if st == UT.AB_NOW and sim.u_abt[gu] <= -2:
+			now_bld = true
+		elif now_bld and st == UT.AB_AUTO:
+			back = true
+	return [sim.stat_bld_shots, now_bld, back, sim.stat_ab_orders]
+
+
+func _ai() -> void:
+	# Grenadiers in the approach and the assault (no battery: the foot hack at the gate).
+	var sim := BattleSim.new()
+	sim.setup(_gren_siege_sc(1), 77)
+	var gu := _of_type(sim, 0, "grenadiers")
+	var g := -1
+	var held_app := 0
+	var auto_ass := 0
+	var near := 1 << 30
+	var broke := -1
+	while sim.tick < 2400:
+		sim.step()
+		g = sim.ai_gate[0]
+		if g < 0:
+			continue
+		var st: int = sim.ability_state(gu, UT.AB_GRENADE)
+		if sim.ai_phase[0] == SiegeAI.SP_APPROACH and st == UT.AB_HOLD:
+			held_app += 1
+		if sim.g_state[g] == BattleSim.GATE_CLOSED:
+			var f: Vector2i = sim.gate_face(g)
+			near = mini(near, FM_len(f.x - sim.u_cx[gu], f.y - sim.u_cy[gu]))
+		elif broke < 0:
+			broke = sim.tick
+		if broke >= 0 and sim.tick > broke + 100 and st == UT.AB_AUTO:
+			auto_ass += 1
+	print("ai grenades: Hold in the approach %d ticks, nearest the shut gate %d m, gate down at %d, Auto after it %d ticks" % [
+		held_app, near / M, broke, auto_ass])
+	_check(held_app > 300 and near < 45 * M and broke > 0 and auto_ass > 0,
+		"ai: grenadiers Hold in the approach, go up to the gate being hacked, Auto once it is down")
+	# Put by the shut gate: Use now at it.
+	var s2 := BattleSim.new()
+	s2.setup(_gren_siege_sc(1), 77)
+	var g2 := -1
+	for t in 30:
+		s2.step()
+	g2 = s2.ai_gate[0]
+	var gu2 := _of_type(s2, 0, "grenadiers")
+	var ok_now := false
+	var a0 := 0
+	if g2 >= 0:
+		var p: Vector2i = SiegeAI._gate_point(s2, g2, 18 * M, 0)
+		_put(s2, gu2, p.x, p.y)
+		a0 = s2.u_ammo[gu2]
+		for t in 150:
+			s2.step()
+			if s2.ability_state(gu2, UT.AB_GRENADE) == UT.AB_NOW and s2.u_abt[gu2] == -2 - g2:
+				ok_now = true
+	var thrown: int = a0 - s2.u_ammo[gu2]
+	print("ai grenades by the gate: Use now at it %s, %d thrown in 15 s" % [str(ok_now), thrown])
+	_check(ok_now and thrown > 0, "ai: grenadiers by a shut gate Use now at it and throw")
+	var s3 := BattleSim.new()
+	s3.setup(_gren_siege_sc(0), 77)
+	for t in 1200:
+		s3.step()
+	_check(s3.stat_ab_orders == 0, "ai: Easy gives no ability order to its grenadiers (%d)" % s3.stat_ab_orders)
+	# The batter at a held building.
+	var b1 := _bld_run(1)
+	var b0 := _bld_run(0)
+	print("ai batter: Average %d shots at buildings, Use now %s, back to Auto %s, %d ability orders; Easy %d shots, %d orders" % [
+		b1[0], str(b1[1]), str(b1[2]), b1[3], b0[0], b0[3]])
+	_check(b1[0] > 0 and b1[1] and b1[2], "ai: a mortar battery batters a held building on the storm's route (Use now), then Auto")
+	_check(b0[0] == 0 and b0[3] == 0, "ai: Easy batters no building")

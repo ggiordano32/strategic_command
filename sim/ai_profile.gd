@@ -358,7 +358,13 @@ const S_PLUG := 282            # this many reserve foot units (or the stack's, a
 # Roles step 2 (docs/AI.md 36, 2026-10-23): the AI's use of the role behaviours.
 const R_CARACOLE := 283        # 1: the side's caracole riders (pistoleers, cuirassiers, dragoons) caracole on its attack orders; 0: they charge home ("charge" 1)
 const R_SK_DRIFT := 284        # 1: the side's skirmishers standing in the Cover stance drift into the trees (BattleSim _skd_ok); 0 never
-const N_KNOBS := 285
+# Battle AI loose ends after batch 3 (docs/AI.md 39, 2026-10-24).
+const CH_PARLEY_BONUS := 285   # 1: the diplomat's parley pick takes a routing unit his row's parley_bonus applies to before a nearer one (0: the nearest)
+const R_GREN_SIEGE := 286      # 1: grenade units attacking a town Hold their grenades in the approach, Use now at a shut gate or a held building in reach, else Auto; they go up to a gate being hacked (0: always Auto)
+const R_BATTER_BLD := 287      # attacking siege batteries batter (Use now) a held building within this of the storm's route (entry to plaza) when no stretch needs battering (0 never)
+const S_PLUG_DEEP := 288       # at a breach in walls this thick or more (WALL_T: walls 3 12 m; Punic walls 2) the last of its plugs stands PLUG_BACK further in, a second line (0 never)
+const S_BATTER_OPEN := 289     # 1: the stretch battered must have open ground at its breach's outside point (not a tower's cells); 0 any
+const N_KNOBS := 290
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -624,6 +630,12 @@ const KNOBS: Array = [
 	# Roles step 2 (docs/AI.md 36).
 	[R_CARACOLE, 0, 1, 1],
 	[R_SK_DRIFT, 0, 1, 1],
+	# Battle AI loose ends after batch 3 (docs/AI.md 39).
+	[CH_PARLEY_BONUS, 0, 1, 1],
+	[R_GREN_SIEGE, 0, 1, 1],
+	[R_BATTER_BLD, 0, 40 * M, 40 * M],
+	[S_PLUG_DEEP, 0, 12 * M, 12 * M],
+	[S_BATTER_OPEN, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

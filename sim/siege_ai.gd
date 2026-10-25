@@ -2259,6 +2259,8 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 8 * M:
 			BattleAI._move(sim, u, spot.x, spot.y, FM.atan2_a(f.y - spot.y, f.x - spot.x), BattleAI._width(sim, u), 0, 6)
 		return
+	if phase == SP_ASSAULT and not left and _batter_bld(sim, u, kn):
+		return  # (a held building on the storm's route: battered down, Use now; docs/AI.md 39)
 	if sim.fort_on != 0 and sim.ai_fort[side] == 1 and not left and sim.u_gtarget[u] < 0 and _town_gun(sim, u):
 		return
 	# No gate to shoot: fire at will from where it stands.
@@ -2619,6 +2621,8 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
 		return
+	if _gren_siege(sim, u, phase, kn):
+		return  # (grenades: Use now at a shut gate or a held building, or up to a gate being hacked; docs/AI.md 39)
 	if phase == SP_ASSAULT and sim.u_ammo[u] > 0 and _street_ai(sim, side) and _street_row(sim, u) \
 			and sim.t_cover[sim.u_otype[u]] != 0:
 		_bound_storm(sim, u)  # (West skirmishers: into the streets by bounds, C7)
@@ -3805,6 +3809,7 @@ const BATTER_HIT_PCT := 40       # a battery batters only if its shots left at t
 const WALL_HIT_RECENT := 100     # a stretch hit within this many ticks is under battering
 const PLUG_REACT := 25 * M       # the plug fights attackers this near the breach's inside edge
 const PLUG_GAP := 14 * M         # several plugs stand this far apart along it
+const PLUG_BACK := 20 * M        # a deep breach's last plug stands this much further in (S_PLUG_DEEP)
 const RUIN_COVER_R := 24 * M     # a unit leaving a failing building takes cover within this of its door
 
 
@@ -3847,7 +3852,8 @@ static func _can_batter(sim, o: int, kn: PackedInt32Array, heavy: bool) -> bool:
 ## The stretch the side batters by gate g: standing, with a way through it
 ## once breached, not facing the sea, the citadel's only at the citadel's
 ## gate (`cit`; a West fort's walls at its gate), its middle within
-## BATTER_GATE_R of the gate; nearest the gate, a stretch already hurt
+## BATTER_GATE_R of the gate (S_BATTER_OPEN: its breach's outside point on
+## open ground, not in a tower); nearest the gate, a stretch already hurt
 ## counting nearer (1 m per 10 hit points off: the batteries finish it).
 ## The same for every battery of the side (they focus). -1 none.
 static func _batter_stretch(sim, side: int, g: int, cit: bool) -> int:
@@ -3858,6 +3864,7 @@ static func _batter_stretch(sim, side: int, g: int, cit: bool) -> int:
 	var f: Vector2i = sim.gate_face(g)
 	var best := -1
 	var bs := 0
+	var open_out: bool = AP.of(sim, side)[AP.S_BATTER_OPEN] != 0
 	for sg in sim.ws_hp.size():
 		if sim.ws_state[sg] != WS_STANDING or sim.ws_hp0[sg] <= 0 or (sim.ws_fl[sg] & MapGen.SEG_SEA) != 0:
 			continue
@@ -3867,6 +3874,10 @@ static func _batter_stretch(sim, side: int, g: int, cit: bool) -> int:
 		var d := BattleAI._d(mp.x - f.x, mp.y - f.y)
 		if d > BATTER_GATE_R or not sim.ws_way(sg):
 			continue
+		if open_out:
+			var op: Vector2i = sim.ws_side_pt(sg, false)
+			if (sim.nav_at(op.x, op.y) & (MapGen.NAV_GROUND | MapGen.NAV_DITCH)) == 0:
+				continue  # (its breach's outside point in a tower: the storm could not get in by it; docs/AI.md 39)
 		var s: int = d / M - (sim.ws_hp0[sg] - sim.ws_hp[sg]) / 1000
 		if best < 0 or s < bs:
 			best = sg
@@ -4094,7 +4105,7 @@ static func _cover_near(sim, u: int, x: int, y: int, b: int) -> Vector2i:
 
 
 ## The defenders' plug (S_PLUG, army level): each breach of the walls with a
-## way through gets S_PLUG units of ours (the nearest first): reserve foot
+## way through gets S_PLUG units of ours, the nearest first: reserve foot
 ## (A_RESERVE, A_PLAZA) or foot of the stack at a gate still shut (A_MOUTH:
 ## the stack waits for a gate nobody is breaking), not fighting, not in a
 ## building, not on a wall.
@@ -4139,7 +4150,10 @@ static func _plug_breaches(sim, side: int, kn: PackedInt32Array) -> void:
 
 
 ## The plug: attackers within PLUG_REACT of the breach's inside edge are
-## fought, else it holds that edge facing out.
+## fought, else it holds that edge facing out. At a breach in walls
+## S_PLUG_DEEP thick or more the last plug (by index, of two or more) is the
+## second line PLUG_BACK further in, fighting what comes within PLUG_REACT of
+## its own post (docs/AI.md 39).
 static func _plug_unit(sim, u: int) -> void:
 	var sg: int = sim.u_ai_x[u] - 1
 	if sg < 0 or sg >= sim.ws_state.size():
@@ -4148,6 +4162,21 @@ static func _plug_unit(sim, u: int) -> void:
 		sim.u_ai_y[u] = sim.u_ay[u]
 		return
 	var ip: Vector2i = sim.ws_side_pt(sg, true)
+	var kn := AP.of(sim, sim.u_side[u])
+	var k := 0
+	var n := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] and sim.u_state[o] == U_READY and sim.u_ai[o] == A_PLUG and sim.u_ai_x[o] == sg + 1:
+			if o < u:
+				k += 1
+			n += 1
+	var d: int = sim.ws_dir[sg]
+	var second: bool = kn[AP.S_PLUG_DEEP] > 0 and sim.wall_t >= kn[AP.S_PLUG_DEEP] and n >= 2 and k == n - 1
+	if second:
+		# (A deep breach: the last plug is the second line, PLUG_BACK further
+		# in, fighting what gets past the first; docs/AI.md 39.)
+		ip = sim.open_snap(sim, ip.x - FM.cos_a(d) * PLUG_BACK / FM.TRIG_ONE, ip.y - FM.sin_a(d) * PLUG_BACK / FM.TRIG_ONE, sim._ground_mask(u))
+		n -= 1
 	if BattleAI._d(sim.u_ax[u] - ip.x, sim.u_ay[u] - ip.y) > 3 * PLUG_REACT and sim.u_fighting[u] == 0:
 		var p0: Vector2i = sim.open_snap(sim, ip.x, ip.y, sim._ground_mask(u))
 		_go_run(sim, u, p0.x, p0.y, sim.ws_dir[sg], 5, 1)
@@ -4160,15 +4189,7 @@ static func _plug_unit(sim, u: int) -> void:
 			BattleAI._attack(sim, u, t, 0)
 		return
 	# (Several plugs: side by side along the rubble's inner edge.)
-	var k := 0
-	var n := 0
-	for o in sim.n_units:
-		if sim.u_side[o] == sim.u_side[u] and sim.u_state[o] == U_READY and sim.u_ai[o] == A_PLUG and sim.u_ai_x[o] == sg + 1:
-			if o < u:
-				k += 1
-			n += 1
-	var lat := _spread(k, maxi(n, 1), PLUG_GAP)
-	var d: int = sim.ws_dir[sg]
+	var lat := 0 if second else _spread(k, maxi(n, 1), PLUG_GAP)
 	var p: Vector2i = sim.open_snap(sim, ip.x - FM.sin_a(d) * lat / FM.TRIG_ONE, ip.y + FM.cos_a(d) * lat / FM.TRIG_ONE, sim._ground_mask(u))
 	_go_run(sim, u, p.x, p.y, d, 5, 1)
 
@@ -4182,3 +4203,152 @@ static func _cit_breached(sim) -> bool:
 		if sim.ws_state[sg] != WS_STANDING and (sim.ws_fl[sg] & MapGen.SEG_CIT) != 0 and sim.ws_way(sg):
 			return true
 	return false
+
+
+# ------------------------------------- loose ends after batch 3 (AI.md 39) ---
+
+## Grenade unit u attacking a town (R_GREN_SIEGE; rows with the grenade
+## ability): Use now at the nearest shut gate in reach and in a clear throw
+## (BattleSim._gren_gate; not a West fort left be) or else the nearest enemy
+## unit holding a building within its range; with neither, Hold in the
+## approach while outside the town (no grenade spent on the way) and Auto
+## after. In the approach, with the attacked gate shut and hacked or rammed,
+## it goes up to 80 % of its range from the gate's face (Hold) and throws once
+## it reaches; in the assault it storms (it is shock foot). Stateless: the
+## wanted state is read again each think and ordered only when it differs.
+## True when the unit's orders are this rule's (the caller returns).
+static func _gren_siege(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.R_GREN_SIEGE] == 0 or (sim.t_abil[sim.u_type[u]] & (1 << UT.AB_GRENADE)) == 0 or sim.city_on == 0:
+		return false
+	var side: int = sim.u_side[u]
+	if side == sim.city_def:
+		return false
+	var want := UT.AB_AUTO
+	var tgt := -1
+	if sim.u_ammo[u] > 0:
+		var gg: int = sim._gren_gate(u)
+		if gg >= 0 and gg == sim.cit_gate and sim.fort_on != 0 and sim.ai_fort[side] != 2:
+			gg = -1  # (the fort left be)
+		if gg >= 0:
+			want = UT.AB_NOW
+			tgt = -2 - gg
+		elif sim.occ_on != 0:
+			var rng: int = sim.mrange(u)
+			var bd := 0
+			for o in sim.n_units:
+				if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_occ[o] <= 0 or sim.hidden_from(o, side):
+					continue
+				if not sim._in_range(u, o, rng):
+					continue
+				var d: int = sim._unit_dist(u, o)
+				if tgt < 0 or d < bd:
+					tgt = o
+					bd = d
+			if tgt >= 0:
+				want = UT.AB_NOW
+	var urban: bool = (sim.veg_bits(sim.u_cx[u], sim.u_cy[u]) & MapGen.V_URBAN) != 0
+	if want == UT.AB_AUTO and phase == SP_APPROACH and not urban:
+		want = UT.AB_HOLD
+	var st: int = sim.ability_state(u, UT.AB_GRENADE)
+	if st != want or (want == UT.AB_NOW and sim.u_abt[u] != tgt):
+		BattleAI._ability(sim, u, UT.AB_GRENADE, want, tgt)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		return want == UT.AB_NOW
+	if want == UT.AB_NOW:
+		# (Thrown: the Use now's attack order runs; re-aimed if it lapsed.)
+		if tgt <= -2:
+			if sim.u_gtarget[u] != -2 - tgt:
+				BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": -2 - tgt, "run": 0}, 0)
+		elif sim.u_order[u] != O_ATTACK or sim.u_target[u] != tgt:
+			BattleAI._attack(sim, u, tgt, 0)
+		return true
+	if sim.u_ammo[u] <= 0:
+		return false
+	var g: int = sim.ai_gate[side]
+	if phase == SP_APPROACH and g >= 0 and sim.g_state[g] == GATE_CLOSED:
+		var hacked := false
+		for o in sim.n_units:
+			if sim.u_side[o] == side and sim.u_state[o] == U_READY and (sim.u_ai[o] == A_HACK or sim.u_ai[o] == A_RAM):
+				hacked = true
+				break
+		if hacked:
+			var rk := _rank(sim, u, func(o): return (sim.t_abil[sim.u_type[o]] & (1 << UT.AB_GRENADE)) != 0)
+			var spot := _gate_point(sim, g, sim.mrange(u) * 80 / 100, _spread(rk.x, rk.y, 12 * M))
+			var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
+			BattleAI._set_mode(sim, u, A_COVER)
+			_go_home(sim, u, spot.x, spot.y, face, 10)
+			return true
+	if phase == SP_ASSAULT and not _street_ai(sim, side):
+		_storm(sim, u)
+		return true
+	return false
+
+
+## Attacking siege battery u in the assault with no stretch to batter
+## (R_BATTER_BLD): the building held by an enemy unit (standing) whose middle
+## lies within R_BATTER_BLD of the storm's route (the side's way in: the
+## breach's inside edge, else the attacked gate, else the army's middle; to
+## the plaza) and within S_ART_REACH_PCT of the battery's range from where it
+## stands, the nearest the way in first: Use now at it (the batter order's
+## building target); once it falls, back to Auto. True while it batters one.
+static func _batter_bld(sim, u: int, kn: PackedInt32Array) -> bool:
+	var rr: int = kn[AP.R_BATTER_BLD]
+	if rr <= 0 or sim.occ_on == 0 or sim.ob_state.is_empty() or (sim.t_abil[sim.u_type[u]] & (1 << UT.AB_BATTER)) == 0 \
+			or sim.t_fixed[sim.u_type[u]] != 0 or sim.u_ammo[u] <= 0:
+		return false
+	var side: int = sim.u_side[u]
+	var lay: Dictionary = sim.map_info.get("city", {})
+	if not lay.has("cx"):
+		return false
+	var px: int = int(lay["cx"]) * M
+	var py: int = int(lay["cy"]) * M
+	var e := _army_centre(sim, side)
+	var sg := _wall_breach(sim, side)
+	var g: int = sim.ai_gate[side]
+	if sg >= 0:
+		e = sim.ws_side_pt(sg, true)
+	elif g >= 0 and g < sim.n_gates:
+		e = Vector2i(sim.g_x[g], sim.g_y[g])
+	var reach: int = UT.stat(sim.u_type[u], "m_range") * kn[AP.S_ART_REACH_PCT] / 100
+	var mn: int = UT.stat(sim.u_type[u], "m_min")
+	var best := -1
+	var bt := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_occ[o] <= 0:
+			continue
+		var b: int = sim.u_occ[o] - 1
+		if b >= sim.ob_state.size() or sim.ob_state[b] != WS_STANDING:
+			continue
+		var a: Vector2i = sim.ob_aim(b)
+		var da := BattleAI._d(a.x - sim.u_cx[u], a.y - sim.u_cy[u])
+		if da > reach or da < mn:
+			continue
+		var on := _seg_near(e, Vector2i(px, py), a)
+		if on.x > rr:
+			continue
+		if best < 0 or on.y < bt or (on.y == bt and b < best):
+			best = b
+			bt = on.y
+	var st: int = sim.ability_state(u, UT.AB_BATTER)
+	if best < 0:
+		if st == UT.AB_NOW:
+			BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_AUTO, -1)
+		return false
+	if st != UT.AB_NOW or sim.u_abt[u] != -2 - best or sim.bld_tgt(u) != best:
+		BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_NOW, -2 - best)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+	return true
+
+
+## Point p against the segment a-b: x the distance from it, y how far along
+## it the nearest point lies (sim units from a).
+static func _seg_near(a: Vector2i, b: Vector2i, p: Vector2i) -> Vector2i:
+	var dx: int = b.x - a.x
+	var dy: int = b.y - a.y
+	var l2: int = dx * dx + dy * dy
+	var t := 0
+	if l2 > 0:
+		t = clampi(((p.x - a.x) * dx + (p.y - a.y) * dy) * 1024 / l2, 0, 1024)
+	var qx: int = a.x + dx * t / 1024
+	var qy: int = a.y + dy * t / 1024
+	return Vector2i(BattleAI._d(p.x - qx, p.y - qy), BattleAI._d(qx - a.x, qy - a.y))

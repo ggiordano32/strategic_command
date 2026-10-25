@@ -965,7 +965,12 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (No stair_down since 2026-10-15, line of sight: at this seed the
 			# assault fails before the wall units come down; over seeds 1-6
 			# they do in every run. Stair moves: cit_ops, stairs.)
-			need = ["paths", "gate_broken", "gate_art"]
+			# (No gate_broken since 2026-10-24, S_BATTER_OPEN (docs/AI.md 39):
+			# the stretch battered before had its breach's outside point in a
+			# tower and the gate fell instead; now a stretch the storm can use
+			# is breached and the town falls by it with the gate still shut.
+			# gate_broken: gate_ops, cit_ops.)
+			need = ["paths", "breaches", "gate_art"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
 			# (Destruction AI: the stones breach the wall by the gate first.)
