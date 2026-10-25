@@ -431,12 +431,12 @@ static func _make(id: String) -> Dictionary:
 				unit(1, UT.index_of("musketeers"), 100, 200, 150, FACE_DOWN)],
 				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
 				"orders": [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]}
-		"asym_woods", "asym_field":
+		"asym_woods", "asym_field", "asym_woods2", "asym_field2":
 			# The asymmetry probe (roles step 2, docs/design/battle_sim.md
 			# "Roles, step 2"): a Spanish army (side 0) and a native war party
 			# (side 1) of equal cost, both AI, in dense woods across the
 			# middle of the field / on open ground.
-			return asym(id == "asym_woods")
+			return asym(id.begins_with("asym_woods"), id.ends_with("2"))
 		"test_cav_art":
 			# Enemy batteries guarded by spearmen; your cavalry raids them
 			# (light infantry can slog in too).
@@ -455,12 +455,19 @@ static func _make(id: String) -> Dictionary:
 ## raiders x 3, holcan: 2,920) on a 400 x 400 m field, both AI; `woods`: a
 ## band of woods (dense patches in it) from 60 m to 300 m across the field,
 ## the natives starting inside it, the Spanish 40 m short of its edge.
-static func asym(woods: bool) -> Dictionary:
+## `second`: the batch-2 pair (asym_woods2 / asym_field2): one musketeers block
+## becomes 40 mounted arquebusiers on the flank beside the lancers (2,780), one
+## canoe raiders becomes 70 slingers and the holcan 60 atlatl darts (2,770).
+static func asym(woods: bool, second: bool = false) -> Dictionary:
 	var sp: Array = [["w_pikemen", 120, 200, 340], ["musketeers", 100, 145, 340], ["musketeers", 100, 255, 340],
 		["rodeleros", 100, 95, 340], ["lancers", 60, 315, 345]]
 	var na: Array = [["native_warriors", 100, 200, 110], ["native_warriors", 100, 140, 110], ["native_warriors", 100, 260, 110],
 		["native_bowmen", 80, 170, 128], ["native_bowmen", 80, 230, 128], ["canoe_raiders", 60, 90, 110],
 		["canoe_raiders", 60, 310, 110], ["canoe_raiders", 60, 50, 110], ["holcan", 60, 350, 110]]
+	if second:
+		sp[2] = ["mounted_arquebusiers", 40, 365, 345]
+		na[6] = ["w_slingers", 70, 310, 110]
+		na[8] = ["atlatl", 60, 350, 110]
 	var units: Array = []
 	for r in sp:
 		units.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))

@@ -2206,6 +2206,17 @@ pins (Sonnet); then (4) the harness before / after (west_named, open_town, west_
 with the Spanish army given mounted arquebusiers and the natives slingers and atlatl (`asym_field` /
 `asym_woods` get a second army pair), read against the principle.
 
+### Batch 2 measured (2026-10-24)
+
+The harness before (c4f39dd) and after the rows (c1c6dcd) is identical in every cell of west_named (336 battles),
+west_walls (768) and open_town (24): the plan armies field none of the new rows. The asymmetry probe gained a
+second army pair, `asym_woods2` / `asym_field2` (`Scenarios.asym(woods, true)`: the Spanish swap a musketeers
+block for 40 mounted arquebusiers on the flank, the natives a canoe raiders for 70 slingers and the holcan for
+60 atlatl; costs 2,780 vs 2,770). On 48 seeds (seed0 16): woods natives 46 / Spanish 1 / 1 draw (first pair 47 / 0 /
+1); field Spanish 45 / natives 3 (first pair 39 / 9). The principle holds with the new pieces: the horse shot adds
+nothing in the trees and rides down the slingers and darts in the open; the natives' cheap missile foot does not
+rescue them in the field. Watch the field edge (94 %) against the plan's "clearly favoured": it is on the far side.
+
 ### Poisoned arrows (as built, 2026-10-24)
 
 - **The kind.** `UnitTypes.AMMO` row 13 `poison_arrows` ("poison"), riding on arrows (base 0), a third of the
