@@ -791,6 +791,8 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	var tak := UT.ammo_index(CRules.ammo_for(st, CState.owner(st, r), r, "tower_bolt"))
 	if tak >= 0:
 		res["scenario"]["tower_ak"] = tak
+	if CState.breach(st, r) > 0 and CState.walls(st, r) > 0:
+		res["scenario"]["breaches"] = CState.breach(st, r)  # (the walls' breaches not yet mended: BattleSim._preset_breaches)
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	res["scenario"]["ai_skill"] = prof[0]
 	res["scenario"]["ai_style"] = prof[1]
@@ -1188,6 +1190,8 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 				pris[cs] = int(sd.get("prisoners", 0))
 	if pris[0] > 0 or pris[1] > 0:
 		out["prisoners"] = pris
+	if int(res.get("breaches", 0)) > 0:
+		out["breaches"] = int(res["breaches"])  # (wall stretches down at the end: the region's "breach")
 	return out
 
 
@@ -1215,7 +1219,13 @@ static func kit_of(st: Dictionary, b: Dictionary) -> int:
 ## WALLS_PCT for region r's walls against kit k.
 static func walls_pct(st: Dictionary, r: int, k: int) -> int:
 	var tab: Array = WALLS_PCT_WEST if _pack_ix() == 1 else WALLS_PCT
-	return int(tab[clampi(CState.walls(st, r), 0, 3)][clampi(k, 0, 2)])
+	var w := clampi(CState.walls(st, r), 0, 3)
+	var p := int(tab[w][clampi(k, 0, 2)])
+	if CState.breach(st, r) > 0 and w > 0:
+		# (Breached walls: a level lower while a breach stands, never more than whole: Rome's fitted walls 1 are
+		# under its walls 0.)
+		p = mini(p, int(tab[w - 1][clampi(k, 0, 2)]))
+	return p
 
 
 ## The active pack's column in the per-pack constants (0 Rome, 1 West).

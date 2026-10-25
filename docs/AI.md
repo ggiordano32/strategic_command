@@ -2800,3 +2800,70 @@ its plaza; routers penned in by shut gates keep their units on the field); the P
 matter: `ws_side_pt` can fall in a tower's cells; the AI only avoids battering such a stretch); per-town swings at walls
 3 stay large (Sicilia down 19, Latium up 38); the harness fields no grenadiers, mortars, held buildings or characters,
 so items 1-2 are measured by the tests only.
+
+## 40. The Dutch after batch 3, England's grenadiers (2026-10-24)
+
+Measured on 144 West seeds (six `--seed0` shards of 24, 60 turns, all Average) with a probe
+copy of `campaign_sim` that tallied each faction's characters and their gold, its recruits and their gold, who took
+whose regions, the buildings finished per faction and the sea battles fought with a `sea_cq` character aboard.
+
+**The Dutch.** Before batch 3 (`158f4c2`) the Dutch were eliminated in 6 of 144 seeds, after it (`9f4eb17`) in 21
+(the 72-seed 1 -> 8 was real: shards 3-5 went 5 -> 13). Tierra Firme finished them in 20 of the 21. Two causes:
+
+- **A 1,500-gold sea captain.** The Dutch raised 1.06 sea captains a campaign (0.33 heroes before: Rome's needed a
+  Barracks 2), 1,583 gold of a treasury of about 900, and recruited 8.2 units a campaign against 14.1 (4,981 gold
+  against 8,821); at turn 10 they held 2.8 regions against 3.9. England and France raised 0.9 and 0.5. His aura
+  serves skirmishers, shock troops and marines, and a coast nation's army is pike and musket. `sea_cq` did nothing
+  that mattered: fleets carrying a captain fought 0.07 of the Dutch sea battles a campaign.
+- **The Barracks 2 goal.** Batch 3 kept the build-up's hero goal (Barracks 2 at the military centre) for the natives
+  only (as a shaman's Barracks 1); the coast nations lost it, and with it the Barracks 2 their marines and veteran
+  pikes need (England's best Barracks 2 in 97 of 140 surviving campaigns before, 21 of 144 after; marines at turn 60
+  0.7 -> 0.1).
+
+Ablations, 144 seeds (Dutch eliminated / all eliminations / battles a seed): HEAD 21 / 97 / 51.3; a money floor (a
+character only with his price left in the bank) 12 / 97 / 55.6; the aura rule alone at 20 / 34 / 50 % 12-13 / 80 /
+54.7-54.9 (the same seeds); the Barracks 2 goal alone 19 / 93 / 51.7; both 8 / 91 / 56.1 (Barracks 2 for every West
+faction, the natives too, 9 / 94). Before batch 3: 6 / 88 / 55.5.
+
+**England's grenadiers.** No grenadier in 144 campaigns, none of them reached Barracks 3 (HEAD). Three things stood in
+the way: the Barracks 2 above; the mortar's Workshop 3 goal came first in `AI_BUILDUP_LINES`, so the grenadier's goal
+was never looked at while the Workshop waited (the goals are tried in order and the first unmet one is the build-up's
+step); and a build-up step is paid from the money above the reserve (a turn's upkeep), about 1,000 of England's 1,800,
+less than a Barracks 3 (1,600). Measured on top of the two Dutch fixes (Barracks 3 reached / campaigns with a
+grenadier raised, of 144): grenadier line first 23 (of the survivors) / not counted (0.2 standing at turn 60 a
+survivor); and saving for the Barracks 3 (BU_SAVE) 46 / 29; first and the Barracks 3 from the whole treasury 89 / 73; first and every Barracks step
+from the whole treasury (as built) 121 / 105. The same rule for the mortars' Workshop steps too reached Barracks 3 in
+136 and a grenadier in 128 but thinned England's line (units raised 20.4 -> 18.2, England eliminated 3 -> 6) and the
+Spanish guns ate the Dutch (9 -> 15): not kept.
+
+As built (`campaign/cai.gd`, `cai_profile.gd` ids 121-122, `campaign/data/west.gd`):
+
+- **`CHAR_AURA_PCT`** (id 121; Easy 0, Average 34, Skilled 34): a hero whose row lists `au_roles` (the West's sea
+  captain and shaman) is raised only for an army whose units his aura serves (`UT.row_named`) are at least that % of
+  its units (`_aura_serves`). Rome's heroes list none: Rome unchanged.
+- **The Barracks 2 goal** for every faction that raises heroes, as before batch 3, but the natives', who keep the
+  shaman's Barracks 1.
+- **Grenadiers first**: `AI_BUILDUP_LINES` = grenadier, mortar, marine, naval gun.
+- **`BU_LINE_TREASURY`** (id 122; Easy 0, Average 1, Skilled 1): a build-up step on the Barracks when a pack build-up
+  line needs its level 3 (England's grenadiers) is paid from the whole treasury, the reserve left out (a one-off
+  building; upkeep is paid from the income). Not the Workshop (above).
+
+| Knob (`cai_profile.gd`, ids 121-122) | Easy | Average | Skilled |
+|---|---|---|---|
+| `CHAR_AURA_PCT` | 0 | 34 | 34 |
+| `BU_LINE_TREASURY` | 0 | 1 | 1 |
+
+Measured, 144 seeds, HEAD -> as built (before batch 3 in brackets): eliminations 97 -> 88 (88), the Dutch 21 -> 9 (6),
+the Brethren 28 -> 34 (32), the Itza 24 -> 14 (23), the Miskito 22 -> 28 (21), England 0 -> 3 (4), France 1 -> 0 (2),
+New Spain 1 -> 0 (0); battles 51.3 -> 54.2 (55.5) a seed. Characters a campaign: Dutch sea captains 1.06 -> 0, English
+0.88 -> 0.03, French 0.48 -> 0.02, the Brethren's 0.12 -> 0.19, shamans Itza 1.10 -> 1.31, Miskito 1.15 -> 1.11.
+England: Barracks 2 built in 128 campaigns (median turn 20.5), Barracks 3 in 121 (median turn 29), a grenadier raised
+in 105 of 144 campaigns, 1.2 a campaign (0.9 standing at turn 60 a survivor); units raised 22.9 -> 20.4 (20.8 before
+batch 3), regions at turn 30 4.8 -> 4.7, its line at turn 60 musketeers 8.3, pikemen 6.3, pistoleers 4.4, marines 0.8;
+mortars still 0 a campaign. The Dutch recruit 8.2 -> 13.5 units a campaign (14.1), hold 4.2 regions at turn 30
+(4.2). Rome is unchanged by construction (its pins are identical).
+
+Open: the sea captain is now an AI hero of the Brethren only (their armies are buccaneers and cutlass men); a coast
+nation raises one only for a marine-heavy army. The mortar line waits for a Workshop 3 the build-up seldom pays
+(England 6 of 141 at turn 60). The Itza / Miskito swing (24 / 22 -> 14 / 28) is within the spread of the earlier
+144-seed runs (section 37: 18-23 / 21-23).

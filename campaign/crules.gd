@@ -2150,6 +2150,9 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	var rs: Dictionary = st["regions"][r]
 	if not open_field:
 		rs["gar"] = clampi(int(outcome.get("garrison_pct", rs["gar"])), 0, 100)
+	if not open_field and not field and outcome.has("breaches") and int(st.get("version", 0)) >= 9 and CState.walls(st, r) > 0:
+		# (Version 9) A fought settlement battle: the stretches down at its end stay breached until mended.
+		rs["breach"] = int(outcome["breaches"])
 	# Reinforcements stay where they are; armies in the region retreat if
 	# their side lost.
 	var loser := 1 - winner
@@ -2842,6 +2845,45 @@ static func growth_per_turn(st: Dictionary, r: int) -> int:
 	return 1 + CState.building(st, r, CData.FARM) + (1 if int(CData.REGIONS[r]["wealth"]) >= 5 else 0)
 
 
+## Breached walls (version 9; docs/design/campaign_rules.md "Breached walls on the campaign (as built)"), after the
+## money: each settlement with "breach" n > 0 (regions in index order) mends one stretch a turn, its owner paying
+## CData.wall_repair() when the treasury holds it (else it waits); an independent town mends one free; none while
+## besieged or in a battle; walls gone (level 0) clear it. The key is erased at 0.
+static func _mend_walls(st: Dictionary) -> void:
+	for r in CData.region_count():
+		var rs: Dictionary = st["regions"][r]
+		var nb := int(rs.get("breach", 0))
+		if nb <= 0:
+			if rs.has("breach"):
+				rs.erase("breach")
+			continue
+		if CState.walls(st, r) <= 0:
+			rs.erase("breach")
+			continue
+		if not CState.siege_at(st, r).is_empty() or not CState.battle_at(st, r).is_empty():
+			continue
+		var o := int(rs["owner"])
+		if o >= 0:
+			var fs: Dictionary = st["factions"][o]
+			if int(fs["treasury"]) < CData.wall_repair():
+				continue
+			fs["treasury"] = int(fs["treasury"]) - CData.wall_repair()
+		if nb <= 1:
+			rs.erase("breach")
+		else:
+			rs["breach"] = nb - 1
+
+
+## Gold faction f's breached walls cost to mend this turn (the realm's treasury line): WALL_REPAIR a town with a
+## breach that is not besieged.
+static func wall_repairs(st: Dictionary, f: int) -> int:
+	var g := 0
+	for r in CState.regions_of(st, f):
+		if CState.breach(st, r) > 0 and CState.walls(st, r) > 0 and CState.siege_at(st, r).is_empty():
+			g += CData.wall_repair()
+	return g
+
+
 ## End of turn: buildings, recruits, money, desertion, replenishment,
 ## sieges, garrisons, growth; then flags reset.
 static func end_of_turn(st: Dictionary) -> void:
@@ -2892,6 +2934,7 @@ static func end_of_turn(st: Dictionary) -> void:
 					for unit in a["units"]:
 						unit["n"] = maxi(int(unit["n"]) - maxi(int(unit["n"]) * CData.DEBT_DESERTION / 100, 1), 0)
 			event(st, {"k": "debt", "f": f, "treasury": int(fs["treasury"])})
+	_mend_walls(st)
 	for a in st["armies"]:
 		var keep: Array = []
 		for unit in a["units"]:

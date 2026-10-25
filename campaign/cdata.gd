@@ -229,6 +229,9 @@ const CAPTURED_GARRISON := 30    # a captured settlement's new garrison starts a
 const CORRUPTION_FREE := 6      # regions before running a realm costs income ...
 const CORRUPTION_PCT := 4        # ... this % per region beyond ...
 const CORRUPTION_MAX := 40       # ... at most
+## Breached walls (docs/design/campaign_rules.md "Breached walls on the campaign (as built)"): gold a stretch
+## costs to mend, [Rome, the West]; one stretch a turn while the treasury holds it.
+const WALL_REPAIR := [150, 120]
 const DEBT_DESERTION := 10       # % of men every unit loses in a turn ending in debt
 const REPLENISH_BASE := 8        # % of full strength regained per turn in friendly land
 const REPLENISH_PER_LEVEL := 6   # + this per level of the line's building in the region
@@ -425,6 +428,11 @@ static func _chains_of(ships: bool) -> Array[Dictionary]:
 	if ships:
 		ch.append(SHIPYARD_CHAIN)
 	return ch
+
+
+## WALL_REPAIR of the active pack.
+static func wall_repair() -> int:
+	return int(WALL_REPAIR[1 if pack == "west" else 0])
 
 
 ## The active pack has ships (fleets on the sea; no sea lanes for armies).

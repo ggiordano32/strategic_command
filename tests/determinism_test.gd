@@ -343,6 +343,7 @@ func _init() -> void:
 	if "--only=destr" in OS.get_cmdline_user_args():
 		_check_destr()
 		_check_destr_ai()
+		_check_preset_breach()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -418,6 +419,7 @@ func _init() -> void:
 	_check_occupy()
 	_check_destr()
 	_check_destr_ai()
+	_check_preset_breach()
 	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
@@ -7443,6 +7445,80 @@ func _check_destr() -> void:
 	else:
 		for b in bad:
 			_fail(str(b))
+
+
+## The campaign's breached walls (docs/design/campaign_rules.md "Breached walls on the campaign (as built)"): a
+## scenario's "breaches": n opens with n stretches already down (rubble ground, nearest the main gate), no wall
+## unit on them, no man lost, stat_breaches 0; the same scenario with no key opens with every stretch standing
+## (the key's absence changes nothing: the goldens pin that); AI against AI it repeats exactly, survives
+## snapshot / restore, and the result reports the stretches down at the end (the n at least).
+func _check_preset_breach() -> void:
+	var bad: Array = []
+	var txt: Array[String] = []
+	for walls in [1, 2]:
+		var sc0 := Scenarios.siege_test(31, 2, walls, MapGen.PAL_DRY, Terrain.K_FLAT)
+		sc0["deploy_zones"] = []
+		var plain := BattleSim.new()
+		plain.setup(sc0, 3)
+		if plain.breached_count() != 0:
+			bad.append("preset breach: walls %d: a scenario with no key opened breached" % walls)
+		var sc := sc0.duplicate(true)
+		sc["breaches"] = 2
+		var a := BattleSim.new()
+		a.setup(sc, 3)
+		var b := BattleSim.new()
+		b.setup(sc, 3)
+		if a.breached_count() != 2 or a.stat_breaches != 0 or a.stat_breach_kill != 0:
+			bad.append("preset breach: walls %d: opened with %d breached (want 2), stat %d, lost %d" % [walls, a.breached_count(), a.stat_breaches, a.stat_breach_kill])
+			continue
+		var gate := Vector2i(a.g_x[0], a.g_y[0])
+		var far_ok := true
+		var dmax := 0
+		var dmin_standing := 1 << 40
+		for sg in a.ws_state.size():
+			var mp := BattleSim.seg_pt(a, sg, BattleSim.seg_len(a, sg) / 2)
+			var d := absi(mp.x - gate.x) + absi(mp.y - gate.y)
+			if a.ws_state[sg] != BattleSim.WS_STANDING:
+				dmax = maxi(dmax, d)
+				var cell := a.ws_cell.find(sg + 1)
+				if cell < 0 or a.obs[cell] != MapGen.C_RUBBLE or (a.nav[cell] & MapGen.NAV_GROUND) == 0:
+					bad.append("preset breach: walls %d: stretch %d is not rubble ground" % [walls, sg])
+			elif a.ws_way(sg) and (a.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) == 0:
+				dmin_standing = mini(dmin_standing, d)
+		if dmax > dmin_standing * 3 / 2 + 20 * 1024:
+			far_ok = false
+		if not far_ok:
+			bad.append("preset breach: walls %d: the breached stretches are not the ones by the gate (%d m against %d m)" % [walls, dmax / 1024, dmin_standing / 1024])
+		for u in a.n_units:
+			if a.u_wall[u] > 0 and a.ws_state[a.u_wall[u] - 1] != BattleSim.WS_STANDING and a.t_fixed[a.u_type[u]] == 0:
+				bad.append("preset breach: walls %d: unit %d stands on a breached stretch" % [walls, u])
+		var snap := PackedByteArray()
+		while a.tick < 900:
+			a.step()
+			b.step()
+			if a.tick % 100 == 0 and a.state_hash() != b.state_hash():
+				bad.append("preset breach: walls %d: diverged on repeat at tick %d" % [walls, a.tick])
+				break
+			if a.tick == 400:
+				snap = a.snapshot()
+		var c := BattleSim.new()
+		c.setup(sc, 3)
+		if not c.restore(snap):
+			bad.append("preset breach: walls %d: the snapshot did not restore" % walls)
+		else:
+			while c.tick < 900:
+				c.step()
+			if c.state_hash() != a.state_hash():
+				bad.append("preset breach: walls %d: the restored copy diverged" % walls)
+		var res := a.result()
+		if int(res.get("breaches", 0)) < 2:
+			bad.append("preset breach: walls %d: the result reports %d breaches (want 2 or more)" % [walls, int(res.get("breaches", 0))])
+		txt.append("walls %d: hash %08x at tick 900, result breaches %d" % [walls, a.state_hash() & 0xFFFFFFFF, int(res.get("breaches", 0))])
+	if bad.is_empty():
+		print("PASS preset breaches: a scenario with breaches 2 opens with the two stretches by the main gate down (rubble ground, no wall unit on them, no man lost), repeats and survives snapshot / restore; " + "; ".join(txt))
+	else:
+		for x in bad:
+			_fail(str(x))
 
 
 ## The destruction AI (docs/AI.md 35): AI against AI, a walls-1 fair siege with no siege kit (the gate falls

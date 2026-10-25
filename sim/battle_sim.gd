@@ -1993,6 +1993,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_setup_terrain(terr0, p_seed)
 	_setup_occ()
 	_setup_destr()
+	_preset_breaches(int(scenario.get("breaches", 0)))
 
 	_load_types()
 
@@ -2256,7 +2257,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		if akk < 0 or akk >= t_k_base.size() or t_k_base[akk] < 0 or t_k_base[akk] != t_m_ak[ty]:
 			akk = -1
 		u_sk[u] = akk
-		if city_on != 0 and int(ud.get("wall", 0)) > 0 and int(ud.get("wall", 0)) <= ws_x0.size():
+		if city_on != 0 and int(ud.get("wall", 0)) > 0 and int(ud.get("wall", 0)) <= ws_x0.size() \
+				and (ws_state.is_empty() or ws_state[int(ud["wall"]) - 1] == WS_STANDING):
 			# Placed on a wall walkway: it holds that stretch of wall, in
 			# its wall line (as a unit sent up there would stand).
 			u_wall[u] = int(ud["wall"])
@@ -5701,6 +5703,55 @@ func _setup_destr() -> void:
 							ws_cmp[sg * 4 + m] = pc
 							break
 	_destr_graph()
+
+
+## A scenario's "breaches": n (the campaign's breached walls, docs/design/campaign_rules.md "Breached walls on
+## the campaign (as built)"): the battle opens with the n stretches nearest the main gate (the first outer gate; a
+## West fort's gate) already breached, as _breach leaves one: rubble cells, the breach's way open. Only stretches
+## _batter_stretch could pick (standing, not facing the sea, the outer wall's or a fort's, with a way through),
+## nearest the gate's face first (ties: index). At setup, before any unit: no men lost, no RNG, no stat, no event
+## (stat_breaches counts the battle's own). A wall unit the scenario puts on such a stretch stands on the ground.
+func _preset_breaches(nb: int) -> void:
+	if nb <= 0 or ws_hp.is_empty():
+		return
+	var g := -1
+	for k in n_gates:
+		if g_cit[k] == 0:
+			g = k
+			break
+	if g < 0 and fort_on != 0:
+		g = cit_gate
+	if g < 0:
+		return
+	var f := gate_face(g)
+	var cand: Array = []
+	for sg in ws_hp.size():
+		if ws_hp0[sg] <= 0 or (ws_fl[sg] & MapGen.SEG_SEA) != 0 or not ws_way(sg):
+			continue
+		if fort_on == 0 and (ws_fl[sg] & MapGen.SEG_CIT) != 0:
+			continue
+		var mp := seg_pt(self, sg, seg_len(self, sg) / 2)
+		cand.append([FM.approx_len(mp.x - f.x, mp.y - f.y), sg])
+	cand.sort_custom(func(a, b): return a[0] < b[0] or (a[0] == b[0] and a[1] < b[1]))
+	for k in mini(nb, cand.size()):
+		var sg: int = cand[k][1]
+		ws_state[sg] = WS_BREACHED
+		ws_hp[sg] = 0
+		rub_n += 1
+		for c in ws_cell.size():
+			if ws_cell[c] == sg + 1:
+				obs[c] = MapGen.C_RUBBLE
+				nav[c] = _nav_of(MapGen.C_RUBBLE)
+	nav_epoch += 1
+
+
+## Wall stretches breached now (the result's "breaches": the campaign's breached walls).
+func breached_count() -> int:
+	var nb := 0
+	for sg in ws_state.size():
+		if ws_state[sg] != WS_STANDING:
+			nb += 1
+	return nb
 
 
 ## The breaches' graph nodes: per stretch (not one facing the sea) a node
@@ -16189,6 +16240,8 @@ func result() -> Dictionary:
 			sides[s]["prisoners"] = ch_pris[s]  # enemy men this side took prisoner by parley
 	var out := {"winner": winner, "decided_tick": decided_tick, "ended": ended,
 		"tick": tick, "units": units, "sides": sides}
+	if breached_count() > 0:
+		out["breaches"] = breached_count()  # (wall stretches down at the end, those it opened with too)
 	if fort_on != 0:
 		# (Slice 2c.) The harbour fort: still the defenders' at the end (its
 		# garrison's men, the gun crews left out), and held when the town fell.

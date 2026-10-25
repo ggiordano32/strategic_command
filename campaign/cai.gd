@@ -272,6 +272,8 @@ static func _build(st: Dictionary, f: int) -> void:
 	if not bu.is_empty():
 		var bi := CRules.build_info(st, f, bu[0], bu[1])
 		var bb := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * kn[CP.BU_BUDGET_PCT] / 100
+		if kn[CP.BU_LINE_TREASURY] > 0 and _deep_line_chain(f, mix, int(bu[1])):
+			bb = int(st["factions"][f]["treasury"])  # (docs/AI.md 39: a one-off building, the reserve left out)
 		if int(bi.get("level", 0)) == 1 and _free_slots(st, bu[0]) == 1:
 			keep = bu[0]
 		if not bi.has("why") and int(bi["cost"]) <= bb:
@@ -338,12 +340,16 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 	if kn[CP.CHAR_HERO] > 0:
 		# Heroes (CData.CHAR_NEEDS) come from Barracks 2: a faction that
 		# raises them wants one at its military centre (after the above).
-		# The West's (docs/AI.md 38): a shaman's Barracks 1; a sea captain's
-		# Shipyard comes from the fleet AI, the Spanish raise none.
-		if CData.pack != "west":
-			goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
-		elif CChars.allowed("shaman", f):
+		# The West's (docs/AI.md 38): a shaman's Barracks 1 for the natives;
+		# the others keep the Barracks 2 they wanted before batch 3 (a sea
+		# captain's Shipyard comes from the fleet AI, the Spanish raise no
+		# hero, but the Dutch and English marines and the veteran pikes need
+		# it: without it the Dutch were eliminated 21 times in 144 seeds
+		# against 6; docs/AI.md 39).
+		if CData.pack == "west" and CChars.allowed("shaman", f):
 			goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["shaman"][1])])
+		else:
+			goals.append([CData.BARRACKS, int(CData.CHAR_NEEDS["hero_foot"][1])])
 	if kn[CP.BU_LINE_MAX] > 0 and regions.size() >= kn[CP.BU_LINE_REGIONS]:
 		# (docs/AI.md 34) The pack's build-up lines in the mix (the West's
 		# mortars, Workshop 3; grenadiers, Barracks 3): their chain to the
@@ -375,6 +381,21 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 			return [site, c, 1]  # (a line goal: built when affordable, no saving for it)
 		return [site, c]
 	return []
+
+
+## Chain c is the Barracks and a pack build-up line in the mix needs its level 3 (CP.BU_LINE_TREASURY; the West:
+## England's grenadiers). Not the Workshop: the mortars' Workshop 3 paid so thinned England's and the Spanish lines
+## (144 seeds: England's units raised 21.0 -> 18.2, the Dutch eliminated 9 -> 15; docs/AI.md 39).
+static func _deep_line_chain(f: int, mix: Dictionary, c: int) -> bool:
+	if c != CData.BARRACKS:
+		return false
+	for line in CData.AI_BUILDUP_LINES:
+		if not mix.has(str(line)):
+			continue
+		var nd := _line_entry(f, str(line))
+		if not nd.is_empty() and int(nd[0]) == c and int(nd[1]) >= 3:
+			return true
+	return false
 
 
 ## [chain, level] the first tier of faction f's `line` needs ([] none).
@@ -599,7 +620,7 @@ static func _characters(st: Dictionary, f: int, moves: Array) -> void:
 			if CChars.slot_taken(st, int(a["id"]), CChars.SLOT_HERO):
 				continue
 			var kind := _hero_kind_of(f, a)
-			if kind != "":
+			if kind != "" and _aura_serves(a, kind, kn[CP.CHAR_AURA_PCT]):
 				_raise_char(st, f, a, kind, floor_gold)
 	if kn[CP.CHAR_DIPLOMAT] > 0 and not mine.is_empty():
 		var main: Dictionary = mine[0]
@@ -623,6 +644,22 @@ static func _hero_kind_of(f: int, a: Dictionary) -> String:
 		if CChars.allowed(k, f):
 			return k
 	return ""
+
+
+## True when hero `kind` is worth raising for army a (docs/AI.md 39): his row lists no au_roles (his aura serves
+## every unit: Rome's heroes), pct is 0, or the units his aura serves (UT.row_named) are at least pct % of a's units.
+static func _aura_serves(a: Dictionary, kind: String, pct: int) -> bool:
+	var ty := UT.index_of(kind)
+	if pct <= 0 or ty < 0:
+		return true
+	var roles: Array = UT.TYPES[ty].get("au_roles", [])
+	if roles.is_empty():
+		return true
+	var n := 0
+	for u in a["units"]:
+		if UT.row_named(roles, CState.unit_type(u)):
+			n += 1
+	return n * 100 >= pct * (a["units"] as Array).size()
 
 
 ## The hero kind for army a: the arm with the most men (foot on a tie).

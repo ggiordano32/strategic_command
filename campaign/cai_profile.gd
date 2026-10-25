@@ -198,7 +198,9 @@ const SPECIALIST_PCT := SK_SUPPORT + 43   # a line's specialist (CData.AI_SPECIA
 const AMPHIB_BAND := SK_SUPPORT + 44      # amphibious recruits (the canoe raiders) muster as their own band: into an amphibious army at the settlement, else a new one; no other recruit or merge joins it (1), or as any recruit (0)
 # The West AI after the Caribbean batch 2 (docs/AI.md 37, 2026-10-24).
 const MIX_LIVE := SK_SUPPORT + 45         # in a pack with CData.AI_LIVE_MIX, recruiting picks the line furthest below its share among the mix lines some recruiting centre can raise now (1: a line no centre has the buildings for gives its share to the rest), or among all of them (0: such a line takes the pick and the recruit is any unit the centre allows, as before)
-const N_KNOBS := SK_SUPPORT + 46
+const CHAR_AURA_PCT := SK_SUPPORT + 46    # a hero whose row lists au_roles (the West's sea captain, shaman) only for an army whose units his aura serves are at least this % of its units (0: any army, as before; docs/AI.md 39)
+const BU_LINE_TREASURY := SK_SUPPORT + 47 # a build-up step on the Barracks when a pack build-up line needs its level 3 (England's grenadiers) is paid from the whole treasury, the reserve left out (1; docs/AI.md 39), or from the money above the reserve (0, as before)
+const N_KNOBS := SK_SUPPORT + 48
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -367,6 +369,11 @@ const KNOBS: Array = [
 	# mix lines no centre can raise yet (the West: grenadiers, marines,
 	# mortars, the field guns, holcan before their buildings).
 	[MIX_LIVE, 0, 1, 1],
+	# (docs/AI.md 39) a sea captain or a shaman only where his aura serves
+	# the army (Rome's heroes have no au_roles: unchanged).
+	[CHAR_AURA_PCT, 0, 34, 34],
+	# (docs/AI.md 39) England's Barracks 3 (grenadiers) from the whole treasury.
+	[BU_LINE_TREASURY, 0, 1, 1],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

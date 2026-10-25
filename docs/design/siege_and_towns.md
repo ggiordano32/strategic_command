@@ -2477,7 +2477,7 @@ determinism and custom battle pins move and are re-pinned. `tests/lockstep_test.
 **AI (a follow-up, after the sim lands).** Besieging artillery aims at the stretch nearest the planned assault (or
 the gate's flanks) until it breaches, then the assault treats the breach as an entry like a broken gate; the defender
 moves men off a stretch under heavy fire and out of a building below a third of its hit points. Campaign: walls
-damaged in a battle are repaired by the next turn (no persistence in this plan; a later item: repairs cost gold).
+damaged in a battle are repaired by the next turn (no persistence in this plan; a later item: repairs cost gold). (Built 2026-10-24: docs/design/campaign_rules.md "Breached walls on the campaign (as built)".)
 Balance: re-run `tools/balance` rome_walls and west_walls after; breaching should make the attacker's odds against
 walls 2-3 rise a few points, not flip them.
 
@@ -2589,6 +2589,11 @@ siege_eq_ring3; not pinned constants, so nothing re-pinned).
 38 -> 39, 31 -> 34 (none beyond its interval). The aim (walls 2-3 up a few points) is not met in Rome and only
 just in the West: the AI does not aim at walls yet, so breaches come only from shots at men on them. It is the AI
 follow-up's to deliver.
+
+**Campaign (2026-10-24).** The breaches outlast the battle: the result's `"breaches"` (stretches down at the end)
+becomes the region's `"breach"`, mended one stretch a turn for gold, and a scenario's `"breaches": n` opens the next
+battle there with the n stretches nearest the main gate down (`_preset_breaches`, at setup: no men lost, no RNG). The
+rules in full: docs/design/campaign_rules.md "Breached walls on the campaign (as built)".
 
 ### Destruction AI (as built, 2026-10-23)
 

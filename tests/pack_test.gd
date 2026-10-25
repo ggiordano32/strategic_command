@@ -30,9 +30,11 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const SeaChecks := preload("res://tests/sea_checks.gd")
 
 ## A Rome AI-only campaign (seed 4242) after 20 turns, all rules as they are.
-const ROME_20 := "7d094e62"  # format 8 (no trade with the enemy, 2026-10-23: was 0f451773, V7 was 9425a021; FLEET_R 5, 2026-10-23: was 2cd9a3eb; Docking, 2026-10-23: was e588f4c3; SEA_AWAY_PCT 120 at Average, 2026-10-23: was e9ea81e2; Rome data: Syracuse start fleet, SEA_TRADE_PCT 50, 2026-10-23: was 65b64803; garrisons against landings, docs/AI.md 12.2, 2026-10-23: was a2def14b; Rome fleets, R2, 2026-10-23: was 91b91238; the AI's odds as win chances, docs/AI.md 12.1, 2026-10-22: was 244711de and 6fd1aac2 as format 7; the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
+const ROME_20 := "239212f3"  # format 9 (breached walls, 2026-10-24: only the version key; as format 8 it is the old 7d094e62, ROME_20_V8; no trade with the enemy, 2026-10-23: was 0f451773, V7 was 9425a021; FLEET_R 5, 2026-10-23: was 2cd9a3eb; Docking, 2026-10-23: was e588f4c3; SEA_AWAY_PCT 120 at Average, 2026-10-23: was e9ea81e2; Rome data: Syracuse start fleet, SEA_TRADE_PCT 50, 2026-10-23: was 65b64803; garrisons against landings, docs/AI.md 12.2, 2026-10-23: was a2def14b; Rome fleets, R2, 2026-10-23: was 91b91238; the AI's odds as win chances, docs/AI.md 12.1, 2026-10-22: was 244711de and 6fd1aac2 as format 7; the sea lanes pay in the income, 2026-10-22: was 70843c45 and 57aa56ba as format 7; fog-of-war memory; was 575e23d5, 2026-10-17; d60c218a until the auto-resolve refit, 3c26a0bc until the memory gained lvl / wl, 2026-10-22)
 ## The same play without the fog keys (CState.as_format 7) = HEAD 1c04fbe
 ## before the pack switch existed: the fog changes no rule.
+## As format 8 (CState.as_format 8): the play before the breached walls (format 9), unchanged.
+const ROME_20_V8 := "7d094e62"
 const ROME_20_V7 := "de4e8cfd"  # (9425a021 until no trade with the enemy, 2026-10-23; 635e25ce until Docking, 2026-10-23; 066b42cf until SEA_AWAY_PCT 120, 2026-10-23; 5a0bbec3 until the Rome data follow-up, 2026-10-23; a0016f69 until the garrisons against landings, 2026-10-23; 4a93a2f1 until Rome fleets, R2, 2026-10-23; 6fd1aac2 until the AI's odds as win chances, 2026-10-22; 57aa56ba until the lanes paid, 2026-10-22; 575e23d5 until the auto-resolve refit, 2026-10-22)
 
 var fails := 0
@@ -104,7 +106,7 @@ func _rome_round_trip() -> void:
 	_check(CData.date_text(0) == "280 BC, summer", "Rome's calendar")
 	var b := _rome20()
 	_check(CState.hash_text(b) == CState.hash_text(a) and CState.hash_text(a) == ROME_20
-		and CState.hash_text(CState.as_format(a, 7)) == ROME_20_V7,
+		and CState.hash_text(CState.as_format(a, 7)) == ROME_20_V7 and CState.hash_text(CState.as_format(a, 8)) == ROME_20_V8,
 		"Rome after a switch round trip: the same golden (%s, %s; expected %s; as format 7 %s, expected %s)" % [CState.hash_text(a),
 		CState.hash_text(b), ROME_20, CState.hash_text(CState.as_format(a, 7)), ROME_20_V7])
 	# A state names its pack: use_state switches (resolve_turn calls it).
@@ -770,12 +772,16 @@ func _batch3() -> void:
 	_check(CSetup.chars_of(cw, 0).is_empty(), "batch 3: back to Rome the West's characters are gone from the setup")
 	# The AI raises the West's own over a campaign: sea captains and shamans, never Rome's six or a privateer.
 	CData.use_pack("west")
-	var ai := CState.new_campaign("b3ai", 1000, [], {}, [], "west")
-	for t in 40:
-		ai = CTurn.resolve_turn(ai, [])
+	# (Since docs/AI.md 39 a sea captain only joins an army his aura serves: up to three seeds until one is seen.)
 	var seen := {}
-	for c in CChars.all(ai):
-		seen[str(c["kind"])] = int(seen.get(str(c["kind"]), 0)) + 1
+	for sd in [1000, 1077, 1154]:
+		var ai := CState.new_campaign("b3ai", sd, [], {}, [], "west")
+		for t in 40:
+			ai = CTurn.resolve_turn(ai, [])
+		for c in CChars.all(ai):
+			seen[str(c["kind"])] = int(seen.get(str(c["kind"]), 0)) + 1
+		if not seen.is_empty():
+			break
 	var ai_ok := true
 	for k in seen:
 		if k != "sea_captain" and k != "shaman" and k != "missionary":

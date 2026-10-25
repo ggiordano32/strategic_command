@@ -699,3 +699,34 @@ in the army makes it land-bound. Pack-agnostic rules; in a pack without ships (R
   amphibious army says it may paddle along the coast; fog sees it as an army (by its cell).
 - **Old saves / pins.** Nothing stored, no unit has the trait: no `CState.VERSION` bump, every pin unmoved. Tests:
   `tests/campaign_test.gd` `_amphibious`.
+
+### Breached walls on the campaign (as built 2026-10-24, state format 9)
+
+Design agreed by the main session (2026-10-24); the follow-up "repairs cost gold" of siege_and_towns.md
+"Destruction: walls and buildings fall (plan)". Until now the walls stood whole again by the next turn.
+
+- **The result.** `BattleSim.result()` carries `"breaches"`: the wall stretches down at the end of a battle on a town
+  map (`breached_count()`, those it opened with included; absent when none). `CBattle.outcome_from_result` passes it
+  on. The formula (auto-resolve without the sim) breaches nothing, so AI-only play never records one.
+- **The state.** A fought settlement battle (an assault or a storm, not a sally, relief or field fight) at a town with
+  walls sets the region's `"breach": n` to the result's count (version 9; a state of an older format records none and
+  `CState.as_format(st, 8)` drops the key). Optional, absent = 0 (`CState.breach`); hashed as every key.
+- **Mending.** At the end of each turn, after the money, each settlement with a breach (regions in index order) mends
+  one stretch, its owner paying `CData.WALL_REPAIR` (150 a stretch in Rome, 120 in the West; `CData.wall_repair()`)
+  when the treasury holds it, else it waits; an independent town mends one free; none while it is besieged or has a
+  battle pending; walls gone (level 0) clear it; the key is erased at 0 (`CRules._mend_walls`).
+- **The next battle.** While n > 0 the scenario of a battle at that town gets `"breaches": n` (`CBattle._build_settlement`),
+  and `BattleSim._preset_breaches` opens the battle with the n stretches nearest the main gate (the first outer gate; a
+  West fort's gate) already breached, as `_breach` leaves one (rubble ground, the breach's way through open), among the
+  stretches the battering AI could pick (standing, not facing the sea, the outer wall's or the fort's, with a way
+  through), nearest the gate's face first; at setup before any unit, so no man is lost, no RNG is drawn, no stat or
+  event; a wall unit the scenario puts on such a stretch stands on the ground. A scenario without the key is the
+  battle it always was (the goldens and every pinned run are unmoved).
+- **Auto-resolve.** `CBattle.walls_pct` counts the walls one level lower while a breach stands, never more than the
+  whole walls' value (Rome's fitted walls 1 row, 87 %, is under its walls 0 row, 93 %: a breach there changes nothing).
+  The AI's odds read the same formula, so it sees a breached town as weaker.
+- **View.** The region panel's garrison heading adds "walls breached (n)" and a note (what it means, the cost a
+  stretch); the realm panel's treasury line adds "wall repairs -N" (`CRules.wall_repairs`).
+- **Tests.** campaign_test `_breached_walls` (the outcome and the record, none from the formula or a format 8 state,
+  the next scenario's key, walls_pct, one stretch a turn paid, waiting when poor, none while besieged, the end of turn,
+  JSON round trip); determinism_test `_check_preset_breach` (`--only=destr`, the full run). Server `StateVersion` 9.

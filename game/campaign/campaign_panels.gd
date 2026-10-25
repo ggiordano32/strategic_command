@@ -179,12 +179,18 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	_gift_section(box, r)
 	# Garrison: what the settlement provides (by level and walls).
 	var gar := CRules.garrison(ps, r)
-	var gs := Kit.section("Garrison (%d%% strength, walls %d)" % [int(rs["gar"]), CState.walls(ps, r)], "walls")
+	var brk := ", walls breached (%d)" % CState.breach(ps, r) if CState.breach(ps, r) > 0 and CState.walls(ps, r) > 0 else ""
+	var gs := Kit.section("Garrison (%d%% strength, walls %d%s)" % [int(rs["gar"]), CState.walls(ps, r), brk], "walls")
 	gs.name = "garrison_section"
 	box.add_child(gs)
 	if grid:
 		box.add_child(Kit.label("Provided by the %s and its walls; it defends the city and recovers %d%% a turn." % [
 			CData.LEVEL_NAMES[lvl].to_lower(), CData.GARRISON_REGEN], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if brk != "":
+		var bl := Kit.label("%d stretch%s of wall still breached from the last battle: the next battle here opens with them down, and the walls count a level lower. Mending one a turn costs %d (not while besieged)." % [
+			CState.breach(ps, r), "" if CState.breach(ps, r) == 1 else "es", CData.wall_repair()], Kit.FONT_SMALL, Kit.COL_BAD, true)
+		bl.name = "breach_note"
+		box.add_child(bl)
 	if grid:
 		return  # the garrison's unit cards are on the command bar
 	for g in gar:
@@ -2146,8 +2152,10 @@ func show_faction() -> void:
 			sea_inc += " (raids and blockades cost %d)" % int(inc["lanes_lost"])
 		if int(inc["lane_take"]) > 0:
 			sea_inc += ", raiding +%d" % int(inc["lane_take"])
-	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d%s, cost of a large realm -%d), upkeep %d: %+d a turn." % [
-		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), sea_inc, int(inc.get("corruption", 0)), up, int(inc["total"]) - up], "income", Kit.FONT, Kit.COL_GOLD, true))
+	var rep := CRules.wall_repairs(ps, f)  # (breached walls mended, one stretch a town a turn)
+	var rep_t := ", wall repairs -%d" % rep if rep > 0 else ""
+	box.add_child(Kit.icon_label("Income %d (regions %d, trade %d%s, cost of a large realm -%d), upkeep %d%s: %+d a turn." % [
+		int(inc["total"]), int(inc["regions"]), int(inc["trade"]), sea_inc, int(inc.get("corruption", 0)), up, rep_t, int(inc["total"]) - up - rep], "income", Kit.FONT, Kit.COL_GOLD, true))
 	if inc.has("lanes") and _lanes_raided_for(ps, f):
 		var sr := Kit.label("Stop a raid: attack the raiding fleet, blockade its home port, or make peace.", Kit.FONT_SMALL, Kit.COL_BAD, true)
 		sr.name = "stop_raid_note"

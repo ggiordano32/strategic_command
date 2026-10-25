@@ -11,7 +11,8 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 8; version 8 adds the fog of war ("fog", factions[f].mem);
+## Format (VERSION 9; version 9 adds the breached walls (regions[r].breach, optional, absent = 0);
+## version 8 adds the fog of war ("fog", factions[f].mem);
 ## version 7 adds the teams; version 1 has no city_seed, versions 1-2 no builder
 ## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
 ## (army mp / dest / mode / stance / idle), versions 1-5 no cells (army x,
@@ -83,7 +84,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 8
+const VERSION := 9
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -282,6 +283,7 @@ static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 ## 3 -> 4: no sieges yet (an empty "sieges" list switches the siege rules on).
 ## 2 -> 3: every settlement gets an empty builder list "built".
 ## 7 -> 8: the fog of war (_migrate8).
+## 8 -> 9: the breached walls (the version only: the key is absent = 0).
 ## 6 -> 7: the teams (_migrate7).
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
@@ -298,6 +300,8 @@ static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
 		_migrate7(st)
 	if int(st.get("version", 0)) < 8 and upto >= 8:
 		_migrate8(st)
+	if int(st.get("version", 0)) < 9 and upto >= 9:
+		st["version"] = 9  # (8 -> 9: the breached walls; no town has one yet)
 	return st
 
 
@@ -463,6 +467,9 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 		for b in c["battles"]:
 			for k in ["x", "y", "app"]:
 				(b as Dictionary).erase(k)
+	if v < 9:
+		for rs in c["regions"]:
+			(rs as Dictionary).erase("breach")
 	if v < 8:
 		c.erase("fog")
 		for fs in c["factions"]:
@@ -898,6 +905,12 @@ static func slot_count(r: int, level: int) -> int:
 
 static func walls(st: Dictionary, r: int) -> int:
 	return building(st, r, CData.WALLS)
+
+
+## Wall stretches of settlement r still breached from a battle (version 9; docs/design/campaign_rules.md
+## "Breached walls on the campaign (as built)"): the region's "breach", absent = 0.
+static func breach(st: Dictionary, r: int) -> int:
+	return int(st["regions"][r].get("breach", 0))
 
 
 ## Unit type key for line at tier for faction f ("" if not in its roster).

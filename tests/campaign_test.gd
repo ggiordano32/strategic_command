@@ -149,6 +149,7 @@ func _init() -> void:
 	_amphibious()
 	_rome_fleets()
 	_sea_cq()
+	_breached_walls()
 	_ai_sea_garrison()
 	_docking()
 	_sortie()
@@ -1994,6 +1995,92 @@ func _grid_siege() -> void:
 	var men1 := CState.men(CState.army(s5, int(a["id"])))
 	_check(men1 < men0 and men1 >= men0 * (100 - CData.SIEGE_BESIEGER_PCT - 1) / 100 - 4,
 		"besiegers lose about %d%% a turn once the city starves (%d -> %d)" % [CData.SIEGE_BESIEGER_PCT, men0, men1])
+
+
+## Breached walls (version 9; docs/design/campaign_rules.md "Breached walls on the campaign (as built)"): a
+## fought assault's result reports the stretches down; the region keeps "breach": n; the next battle there opens
+## with them (the scenario's "breaches"); the formula counts the walls a level lower; the owner mends one a turn
+## for WALL_REPAIR while the treasury holds it, not while besieged; an older format records none.
+func _breached_walls() -> void:
+	var rome := _f("rome")
+	var st := _empty6()
+	var ap := _r("apulia")
+	var site := CGrid.site(ap)
+	var start := -1
+	for c in CGrid.disc(site, 4):
+		if CGrid.region(c) == ap and CGrid.cheb(c, site) == 4 and CGrid.passable(c):
+			start = c
+			break
+	var a := _put(st, rome, start, ["heavy", "heavy", "heavy", "spear"])
+	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(a, site)])])
+	var s2 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [_move6(a, site, {"mode": CData.MODE_ASSAULT})])])
+	var b := CState.battle_at(s2, ap)
+	_check(not b.is_empty() and CState.walls(s2, ap) > 0 and CState.breach(s2, ap) == 0 and int(s2["version"]) == CState.VERSION,
+		"breached walls: an assault on walled Tarentum, no breach yet (version %d)" % int(s2["version"]))
+	if b.is_empty():
+		return
+	var built := CBattle.build(s2, b, rome)
+	_check(not (built["scenario"] as Dictionary).has("breaches"), "a town with whole walls: the scenario has no breaches key")
+	# The sim's result carries the stretches down at the end: the outcome passes them on.
+	var res := {"units": [], "winner": int(built["sim_side"][1]), "tick": 100, "breaches": 2}
+	var oc := CBattle.outcome_from_result(built, res, "fought")
+	_check(int(oc.get("breaches", 0)) == 2, "the outcome of a fought battle reports the breaches (%s)" % str(oc.get("breaches", "none")))
+	var own := CState.owner(s2, ap)
+	var s3 := CTurn.apply_battle(s2, int(b["id"]), {"winner": 1, "mode": "fought", "units": [], "garrison_pct": 80, "breaches": 2})
+	_check(CState.breach(s3, ap) == 2 and CState.owner(s3, ap) == own, "a lost assault leaves the town its owner's with 2 stretches breached")
+	var s3f := CTurn.apply_battle(s2, int(b["id"]), {"winner": 1, "mode": "formula", "units": [], "garrison_pct": 80})
+	_check(CState.breach(s3f, ap) == 0 and not (s3f["regions"][ap] as Dictionary).has("breach"), "an auto-resolved battle breaches nothing")
+	var v8 := CTurn.apply_battle(CState.as_format(s2, 8), int(b["id"]), {"winner": 1, "mode": "fought", "units": [], "garrison_pct": 80, "breaches": 2})
+	_check(not (v8["regions"][ap] as Dictionary).has("breach"), "a format 8 state records no breach")
+	_check(not (CState.as_format(s3, 8)["regions"][ap] as Dictionary).has("breach"), "as format 8 the key is gone")
+	# The next battle opens with them; the formula counts the walls a level lower.
+	var s2b := CState.copy(s2)
+	s2b["regions"][ap]["breach"] = 2
+	var built2 := CBattle.build(s2b, CState.battle_at(s2b, ap), rome)
+	_check(int(built2["scenario"].get("breaches", 0)) == 2, "the next battle's scenario carries breaches 2")
+	var w := CState.walls(s2, ap)
+	_check(CBattle.walls_pct(s2b, ap, 1) == mini(int((CBattle.WALLS_PCT[maxi(w - 1, 0)] as Array)[1]), int((CBattle.WALLS_PCT[w] as Array)[1])),
+		"auto-resolve: breached walls %d count as walls %d, never more than whole (%d%% against %d%%)" % [w, w - 1, CBattle.walls_pct(s2b, ap, 1), CBattle.walls_pct(s2, ap, 1)])
+	var sp := CBattle.side_strengths(s2b, CState.battle_at(s2b, ap))
+	var sp0 := CBattle.side_strengths(s2, b)
+	_check(int(sp[1]) <= int(sp0[1]) and int(sp[0]) == int(sp0[0]), "the defenders' strength never rises while a breach stands (%d against %d)" % [int(sp[1]), int(sp0[1])])
+	var s2c := CState.copy(s2b)
+	CState._add_building(s2c["regions"][ap], CData.WALLS, 3, 99)
+	var s2d := CState.copy(s2c)
+	s2d["regions"][ap].erase("breach")
+	_check(CBattle.walls_pct(s2c, ap, 2) == int((CBattle.WALLS_PCT[2] as Array)[2]) and CBattle.walls_pct(s2c, ap, 2) < CBattle.walls_pct(s2d, ap, 2),
+		"breached walls 3 count as walls 2 (%d%% against %d%%)" % [CBattle.walls_pct(s2c, ap, 2), CBattle.walls_pct(s2d, ap, 2)])
+	# Mending: one stretch a turn, WALL_REPAIR, while the treasury holds it.
+	if own >= 0:
+		var m := CState.copy(s3)
+		m["battles"] = []
+		m["factions"][own]["treasury"] = 1000
+		_check(CRules.wall_repairs(m, own) == CData.wall_repair(), "the realm's treasury line shows the repair (%d)" % CRules.wall_repairs(m, own))
+		CRules._mend_walls(m)
+		_check(CState.breach(m, ap) == 1 and int(m["factions"][own]["treasury"]) == 1000 - CData.wall_repair(),
+			"a turn mends one stretch for %d" % CData.wall_repair())
+		CRules._mend_walls(m)
+		_check(not (m["regions"][ap] as Dictionary).has("breach") and int(m["factions"][own]["treasury"]) == 1000 - 2 * CData.wall_repair(),
+			"the next turn the last: the key is gone")
+		var poor := CState.copy(s3)
+		poor["battles"] = []
+		poor["factions"][own]["treasury"] = CData.wall_repair() - 1
+		CRules._mend_walls(poor)
+		_check(CState.breach(poor, ap) == 2 and int(poor["factions"][own]["treasury"]) == CData.wall_repair() - 1, "with too little in the treasury it waits")
+		var bes := CState.copy(s1)
+		bes["regions"][ap]["breach"] = 2
+		bes["factions"][own]["treasury"] = 1000
+		CRules._mend_walls(bes)
+		_check(not CState.siege_at(bes, ap).is_empty() and CState.breach(bes, ap) == 2, "no mending while besieged")
+		var e := CState.copy(s3)
+		e["battles"] = []
+		e["factions"][own]["treasury"] = 5000
+		CRules.end_of_turn(e)
+		_check(CState.breach(e, ap) == 1, "the end of a turn mends one (%d left)" % CState.breach(e, ap))
+		var h1 := CState.hash_text(CState.from_json(CState.to_json(s3)))
+		_check(h1 == CState.hash_text(s3), "a breached state round-trips JSON with its hash (%s)" % h1)
+	else:
+		_check(false, "breached walls: Tarentum has an owner")
 
 
 ## Two armies besieging assault together (and one alone); two armies next to
@@ -5090,8 +5177,8 @@ func _sight() -> void:
 	var rome := _f("rome")
 	var carth := _f("carthage")
 	var st := CState.new_campaign("fog", 4242, [rome])
-	_check(int(st["version"]) == 8 and int(st["fog"]) == 1 and not (st["settings"] as Dictionary).has("fog"),
-		"format 8: fog on by default, a top-level key")
+	_check(int(st["version"]) == CState.VERSION and int(st["fog"]) == 1 and not (st["settings"] as Dictionary).has("fog"),
+		"format 8+: fog on by default, a top-level key")
 	var off := CState.new_campaign("fog", 4242, [rome], {"fog": 0})
 	_check(int(off["fog"]) == 0 and not (off["settings"] as Dictionary).has("fog"), "the fog option 0 is kept as fog 0")
 	var mem0: Dictionary = st["factions"][rome]["mem"]
@@ -5244,7 +5331,7 @@ func _sight() -> void:
 	# Migration 7 -> 8 equals a fresh update of the same state.
 	var v7 := CState.as_format(p1, 7)
 	_check(int(v7["version"]) == 7 and not v7.has("fog") and not (v7["factions"][rome] as Dictionary).has("mem"), "a format 7 copy has no fog keys")
-	var mg := CState.from_json(CState.to_json(v7))
+	var mg := CState.from_json(CState.to_json(v7), 8)
 	var fresh := CState.copy(v7)
 	fresh["version"] = 8
 	fresh["fog"] = 1

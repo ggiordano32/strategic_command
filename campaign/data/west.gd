@@ -289,7 +289,7 @@ const ROSTERS := {
 ## the mortars need a Workshop 3 and England's grenadiers a Barracks 3, past
 ## the AI's usual build-up; the canoe raiders, boarding grenadiers and
 ## coureurs are their line's specialists, not its veterans.
-const AI_BUILDUP_LINES: Array = ["mortar", "grenadier", "marine", "naval_gun"]
+const AI_BUILDUP_LINES: Array = ["grenadier", "mortar", "marine", "naval_gun"]  # (grenadiers first: docs/AI.md 39)
 const AI_SPECIALISTS: Array = ["canoe_raiders", "boarding_grenadiers", "coureurs", "maroons", "atlatl", "w_slingers", "mounted_arquebusiers"]
 ## (docs/AI.md 37) A mix line no recruiting centre has the buildings for
 ## yet (the marines' Barracks 2 and Shipyard, the mortars' Workshop 3, ...)
