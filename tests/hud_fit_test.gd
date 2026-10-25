@@ -238,27 +238,27 @@ func _options_stress() -> void:
 		var ch: AbilityChip = c
 		if not ch.visible:
 			continue
-		var exp: Array = []
+		var states: Array = []
 		if ch.ab >= 0:
-			exp = ["Auto", "Hold"] if ch.ab == UT.AB_PISTOL else ["Auto", "Hold", "Use now"]
+			states = ["Auto", "Hold"] if ch.ab == UT.AB_PISTOL else ["Auto", "Hold", "Use now"]
 		elif ch.key == "ammo":
-			exp = ["*", "*"]
+			states = ["*", "*"]
 		else:
-			exp = want.get(ch.key, [])
+			states = want.get(ch.key, [])
 		if ch.get_parent() == h.more_box:
 			h._set_more_open(true)
 			await _frames(2)
 		ch.pressed.emit()
 		await _frames(2)
 		var tag := "%s %s: %s options" % [_size_name, "under More" if ch.get_parent() == h.more_box else "on the bar", ch.key]
-		if exp.is_empty():
+		if states.is_empty():
 			_check(not h.opt_panel.visible, tag + ": a single-action chip opens none")
 			continue
 		seen += 1
 		var words := _row_words()
-		var words_ok := words.size() == exp.size()
-		for i in exp.size():
-			if words_ok and exp[i] != "*" and words[i] != exp[i]:
+		var words_ok := words.size() == states.size()
+		for i in states.size():
+			if words_ok and states[i] != "*" and words[i] != states[i]:
 				words_ok = false
 		_check(h.opt_panel.visible and words_ok, tag + " list %s" % str(words))
 		var pr: Rect2 = h.opt_panel.get_global_rect()
