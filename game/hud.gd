@@ -33,6 +33,7 @@ signal char_pressed(act: String)  # a character's act button: "sabotage", "attem
 signal withdraw_pressed
 signal withdraw_all_pressed
 signal group_pressed(kind: String)
+signal ability_pressed(ab: int)   # an ability chip (UT.AB_*): battle.gd cycles Auto / Hold / Use now
 signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
 signal paths_toggled(on: bool)
@@ -61,11 +62,15 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const RoleBadge := preload("res://game/role_badge.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const BTheme := preload("res://game/battle_theme.gd")
+const AbilityChip := preload("res://game/ability_chip.gd")
+const RoleTile := preload("res://game/role_tile.gd")
 const CONFIRM_SEC := 3.0
 const BANNER_SIZE := 30   # the end banner (Cinzel); the pursuit line is 20
 const LONG_PRESS_SEC := 0.5
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
 const BTN_H := 42.0
+## The phone capsule's glyph for each role group (the group's lead role).
+const ROLE_OF_GROUP := {"line": "line", "skirmish": "skirmish", "shock": "shock", "horse": "horse_shock", "guns": "guns_field"}
 const MARGIN := 6.0
 const GAP := 5.0
 const FONT := 15
@@ -77,7 +82,19 @@ const CARD_MAX_W := 136.0
 const CARD_GAP := 2.0
 
 var stats_label: Label
-var _toggles := {}  # order toggle button -> [order word, state word]
+var chips_box: HBoxContainer      # the chips that fit the bar (after Halt / Run / Withdraw)
+var more_button: AbilityChip           # More: opens the popover with the chips that did not fit
+var more_panel: PanelContainer
+var more_box: GridContainer       # (one column; more columns when the list is taller than the room above the bar)
+var ab_chips := {}                # UT.AB_* -> its chip
+var _chip_order: Array = []       # every chip, in the bar's fixed order
+var _sel: Array[int] = []         # the selection as last set
+var _refit_pending := false
+## Set by battle.gd: unit -> Array of [glyph, word] for the card's state strip and tip (the chips not at their default).
+var card_states := Callable()
+var _card_key := {}               # unit -> the strip's last key (redraw and re-tip only on change)
+var _cap_tiles := {}              # group key -> the role glyph shown in the phone capsule
+var _cap_words := {}              # group key -> the segment's word
 var stats_button: Button
 var stats_panel: PanelContainer
 var stats_expanded := false
@@ -112,28 +129,28 @@ static func snap_speed(q: int) -> int:
 		if absi(int(c) - q) < absi(best - q):
 			best = int(c)
 	return best
-var run_button: Button
+var run_button: AbilityChip
 var halt_button: Button
-var fire_button: Button
-var skirm_button: Button
-var stance_button: Button
-var bounds_button: Button
-var occupy_button: Button
-var waypoints_button: Button  # Waypoints: taps and line drags add stops (battle.gd waypoint_mode; lit while on)
-var deploy_button: Button
-var refill_button: Button
-var ammo_button: Button
-var forage_button: Button
-var drop_button: Button
+var fire_button: AbilityChip
+var skirm_button: AbilityChip
+var stance_button: AbilityChip
+var bounds_button: AbilityChip
+var occupy_button: AbilityChip
+var waypoints_button: AbilityChip  # Waypoints: taps and line drags add stops (battle.gd waypoint_mode; lit while on)
+var deploy_button: AbilityChip
+var refill_button: AbilityChip
+var ammo_button: AbilityChip
+var forage_button: AbilityChip
+var drop_button: AbilityChip
 ## "Kill elephant": shown while a beast unit of the player's runs amok.
 var kill_button: Button
 ## "Release": handlers with dogs in the kennel selected; then a tap on an enemy.
-var release_button: Button
+var release_button: AbilityChip
 ## Heroes and agents: the selected character's acts ("sabotage", "attempt",
 ## "parley" -> Button; battle.gd shows them and arms the next tap).
-var char_buttons := {}
+var char_buttons := {}   # act -> its chip
 var withdraw_button: Button
-var gift_button: Button
+var gift_button: AbilityChip
 var withdraw_all_button: Button
 var add_button: Button
 var deselect_button: Button
@@ -309,15 +326,14 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	row.add_child(groups)
 	# All / Line / Skirm / Shock / Horse / Guns / None: one capsule (momentary segments, nothing stays lit).
 	# The groups are the roles' filter groups (UT.FILTER_GROUPS, UT.filter_group).
-	# On a phone width the seven segments are set a size smaller with narrower margins (the row has no spare room at 844 px).
-	var compact := not BTheme.desktop(get_viewport().get_visible_rect().size.x)
+	# On a phone width the role segments show the role badge glyphs, 34 px each (`_apply_capsule`; the row has no spare room at 844 px).
 	var gsel := BTheme.capsule([["All", "all"], ["Line", "line"], ["Skirm", "skirmish"], ["Shock", "shock"], ["Horse", "horse"],
 		["Guns", "guns"], ["None", "none"]],
 		func(kind: String):
 			if kind == "none":
 				deselect_pressed.emit()
 			else:
-				group_pressed.emit(kind), "group", FONT - 3 if compact else FONT, 30.0 if compact else 50.0, BTN_H)
+				group_pressed.emit(kind), "group", FONT, 50.0, BTN_H)
 	gsel.name = "group_capsule"
 	var gtips := {"all": ["Select all", "Every unit you command."],
 		"line": ["Line", "Select the line troops: swords, spears, pikes and musketeers. Generals on foot too."],
@@ -330,14 +346,25 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		var gk: String = str(gb.get_meta("seg_value"))
 		Kit.tip(gb, gtips[gk][0], gtips[gk][1])
 		gb.disabled = not interactive
-		if compact:
-			BTheme.trim_margins(gb, 2.0)
+		_cap_words[gk] = gb.text
+		if ROLE_OF_GROUP.has(gk):
+			var tile := RoleTile.new(str(ROLE_OF_GROUP[gk]), 24.0)
+			tile.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			tile.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+			tile.grow_horizontal = Control.GROW_DIRECTION_BOTH
+			tile.grow_vertical = Control.GROW_DIRECTION_BOTH
+			tile.tooltip_text = ""
+			tile.visible = false
+			gb.add_child(tile)
+			_cap_tiles[gk] = tile
 		if gk == "none":
 			deselect_button = gb
 			gb.name = "deselect"
 		else:
 			group_buttons[gk] = gb
 	groups.add_child(gsel)
+	_apply_capsule()
+	get_viewport().size_changed.connect(_apply_capsule)
 	add_button = _button("Add", Vector2(58, BTN_H), "plus")
 	add_button.toggle_mode = true
 	BTheme.plate(add_button, true)
@@ -386,88 +413,107 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	carry_note.visible = false
 	row.add_child(carry_note)
 	row.move_child(carry_note, actions.get_index())  # (left of the order buttons)
-	run_button = _button("Run: off", Vector2(0, BTN_H), "run")
-	Kit.tip(run_button, "Run", "Run or walk: the selection's pace.")
-	run_button.pressed.connect(func(): run_pressed.emit())
+	# The fixed three, always on the bar with a selection: Halt, Run (its state word), Withdraw.
 	halt_button = _button("Halt", Vector2(54, BTN_H), "cancel")
 	Kit.tip(halt_button, "Halt", "Stop where they stand and drop their orders.")
 	halt_button.pressed.connect(func(): halt_pressed.emit())
-	waypoints_button = _button("Waypoints", Vector2(0, BTN_H), "move")
-	waypoints_button.name = "waypoints"
-	waypoints_button.toggle_mode = true
-	BTheme.plate(waypoints_button, true)
-	Kit.tip(waypoints_button, "Waypoints", "While lit, each tap on the ground or line you drag adds a stop after the unit's current move: they march from one to the next (up to 8), the last one's facing kept. Tap a numbered dot to take that stop out. It goes off when the selection changes (or a two-finger tap). With a mouse: Shift + right click, Shift + right drag; Shift + left click a dot takes it out.")
-	waypoints_button.pressed.connect(func(): waypoints_pressed.emit())
-	fire_button = _button("Fire: at will", Vector2(0, BTN_H), "fire")
-	Kit.tip(fire_button, "Fire", "Missile troops fire at will, or hold fire.")
+	run_button = _chip("run", "Run", "run", "Run", "Run or walk: the selection's pace.", "off")
+	run_button.pressed.connect(func(): run_pressed.emit())
+	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
+	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge.")
+	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
+	# The chips, in the bar's fixed order (see _fit_actions: what does not fit goes under More).
+	var ab_tips := {
+		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it."],
+		UT.AB_CARACOLE: ["Caracole", "Horse with firearms. Auto: ride up, fire, wheel back and reload, again. Hold: an attack is a charge. Use now: tap an enemy unit and they caracole at it."],
+		UT.AB_GRENADE: ["Grenades", "Auto: thrown at formed blocks, held houses and shut gates in reach. Hold: never thrown, the unit fights as shock foot. Use now: tap an enemy unit or a shut gate and it is thrown at at once."],
+		UT.AB_PISTOL: ["Pistols", "Auto: a point-blank shot in each man's first rounds of a melee, the spent men changing places to reload. Hold: blades only."]}
+	var ab_icons := {UT.AB_BATTER: "target", UT.AB_CARACOLE: "caracole", UT.AB_GRENADE: "grenade", UT.AB_PISTOL: "pistol"}
+	for ab in [UT.AB_BATTER, UT.AB_CARACOLE, UT.AB_GRENADE, UT.AB_PISTOL]:
+		var abk: int = ab
+		var ac := _chip(UT.AB_NAMES[abk].to_lower(), "Target" if abk == UT.AB_BATTER else UT.AB_NAMES[abk],
+			str(ab_icons[abk]), str(ab_tips[abk][0]), str(ab_tips[abk][1]), "Auto", false, abk)
+		ac.pressed.connect(func(): ability_pressed.emit(abk))
+		ac.visible = false
+		ab_chips[abk] = ac
+	fire_button = _chip("fire", "Fire", "fire", "Fire", "Missile troops fire at will, or hold fire.", "at will")
 	fire_button.pressed.connect(func(): fire_pressed.emit())
-	skirm_button = _button("Skirmish: on", Vector2(0, BTN_H), "skirmish")
-	Kit.tip(skirm_button, "Skirmish", "Missile troops fall back from approaching melee troops.")
+	skirm_button = _chip("skirmish", "Skirmish", "skirmish", "Skirmish", "Missile troops fall back from approaching melee troops.", "on")
 	skirm_button.pressed.connect(func(): skirmish_pressed.emit())
-	stance_button = _button("Stance: Line", Vector2(0, BTN_H), "stance_line")
-	Kit.tip(stance_button, "Stance", "Line keeps the formation. Cover takes cover spots. Hold street fills the street.")
+	stance_button = _chip("stance", "Stance", "stance_line", "Stance", "Line keeps the formation. Cover takes cover spots. Hold street fills the street.", "Line")
 	stance_button.pressed.connect(func(): stance_pressed.emit())
 	stance_button.visible = false
-	bounds_button = _button("Bounds: off", Vector2(0, BTN_H), "bound")
-	Kit.tip(bounds_button, "Bounds", "Half the men run to the next cover while the others shoot, then they swap.")
-	bounds_button.pressed.connect(func(): bounds_pressed.emit())
-	bounds_button.visible = false
-	occupy_button = _button("Occupy", Vector2(0, BTN_H), "inside")
+	occupy_button = _chip("occupy", "Occupy", "inside", "Occupy", "Lights the buildings these men can hold: point at one to see what its windows and roof cover, then click it (tap twice on a touch screen) to send them in (I). Leave goes out by the door.", "", true)
 	occupy_button.name = "occupy"
-	occupy_button.toggle_mode = true
-	BTheme.plate(occupy_button, true)
-	Kit.tip(occupy_button, "Occupy", "Lights the buildings these men can hold: point at one to see what its windows and roof cover, then click it (tap twice on a touch screen) to send them in (I). Leave goes out by the door.")
 	occupy_button.pressed.connect(func(): occupy_pressed.emit())
 	occupy_button.visible = false
-	deploy_button = _button("Deploy: on", Vector2(0, BTN_H), "deploy")
-	Kit.tip(deploy_button, "Deploy", "Artillery sets up to shoot or packs up to move. Both take time.")
+	bounds_button = _chip("bounds", "Bounds", "bound", "Bounds", "Half the men run to the next cover while the others shoot, then they swap.", "off")
+	bounds_button.pressed.connect(func(): bounds_pressed.emit())
+	bounds_button.visible = false
+	deploy_button = _chip("deploy", "Deploy", "deploy", "Deploy", "Artillery sets up to shoot or packs up to move. Both take time.", "on")
 	deploy_button.pressed.connect(func(): deploy_pressed.emit())
-	refill_button = _button("Refill: off", Vector2(0, BTN_H), "pick_up")
-	Kit.tip(refill_button, "Refill", "Artillery brings up shots from the baggage; missile troops refill at an ammunition wagon. No moving or shooting meanwhile.")
-	refill_button.pressed.connect(func(): refill_pressed.emit())
-	ammo_button = _button("Ammo: arrows", Vector2(0, BTN_H), "ammo")
+	ammo_button = _chip("ammo", "Ammo", "ammo", "Ammunition", "Shoot the second kind (fire arrows, heavy bolts) or the standard one (V).", "arrows")
 	ammo_button.name = "ammo"
-	Kit.tip(ammo_button, "Ammunition", "Shoot the second kind (fire arrows, heavy bolts) or the standard one (V).")
 	ammo_button.pressed.connect(func(): ammo_pressed.emit())
-	forage_button = _button("Forage: off", Vector2(0, BTN_H), "forage")
+	refill_button = _chip("refill", "Refill", "pick_up", "Refill", "Artillery brings up shots from the baggage; missile troops refill at an ammunition wagon. No moving or shooting meanwhile.", "off")
+	refill_button.pressed.connect(func(): refill_pressed.emit())
+	forage_button = _chip("forage", "Forage", "forage", "Forage", "Missile troops in woods make arrows or javelins, slowly. No moving or shooting meanwhile (J).", "off")
 	forage_button.name = "forage"
-	Kit.tip(forage_button, "Forage", "Missile troops in woods make arrows or javelins, slowly. No moving or shooting meanwhile (J).")
 	forage_button.pressed.connect(func(): forage_pressed.emit())
-	drop_button = _button("Drop", Vector2(0, BTN_H), "drop")
-	Kit.tip(drop_button, "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.")
+	drop_button = _chip("drop", "Drop", "drop", "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.", "")
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
-	release_button = _button("Release: 0", Vector2(0, BTN_H), "release")
+	release_button = _chip("release", "Release", "release", "Release", "Let the war dogs loose, then tap an enemy unit within 80 m (U).", "0 dogs", true)
 	release_button.name = "release"
-	release_button.toggle_mode = true
-	BTheme.plate(release_button, true)
-	Kit.tip(release_button, "Release", "Let the war dogs loose, then tap an enemy unit within 80 m (U).")
+	release_button.low = true
 	release_button.pressed.connect(func(): release_pressed.emit())
 	release_button.visible = false
 	for a in [["sabotage", "Sabotage", "fire", "Assassin: tap an enemy battery to wreck its engines, or a shut gate to unbar it from inside (Shift+B)."],
 			["attempt", "Attempt", "dagger", "Assassin: tap an enemy hero or general. One strike: 40 % kills, 30 % wounds (T)."],
 			["parley", "Parley", "scroll", "Diplomat: tap a routing or wavering enemy unit. It may surrender (Shift+P)."]]:
 		var act: String = a[0]
-		var cb := _button(str(a[1]), Vector2(0, BTN_H), str(a[2]))
+		var cb := _chip("char_" + act, str(a[1]), str(a[2]), str(a[1]), str(a[3]), "", true)
 		cb.name = "char_" + act
-		cb.toggle_mode = true
-		BTheme.plate(cb, true)
-		Kit.tip(cb, str(a[1]), str(a[3]))
 		cb.pressed.connect(func(): char_pressed.emit(act))
 		cb.visible = false
 		char_buttons[act] = cb
-	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
-	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge.")
-	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
 	# Live co-op: give the selected units to the ally (hidden otherwise).
-	gift_button = _button("Gift", Vector2(0, BTN_H), "gift")
-	Kit.tip(gift_button, "Gift", "Give the selected units to your ally. They can give them back.")
+	gift_button = _chip("gift", "Gift", "gift", "Gift", "Give the selected units to your ally. They can give them back.", "")
 	gift_button.pressed.connect(func(): gift_pressed.emit())
 	gift_button.visible = false
-	for b in [run_button, halt_button, waypoints_button, fire_button, skirm_button, stance_button, bounds_button, occupy_button, ammo_button, deploy_button, refill_button,
-			forage_button, drop_button, release_button,
-			char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], withdraw_button, gift_button]:
+	waypoints_button = _chip("waypoints", "Waypoints", "move", "Waypoints", "While lit, each tap on the ground or line you drag adds a stop after the unit's current move: they march from one to the next (up to 8), the last one's facing kept. Tap a numbered dot to take that stop out. It goes off when the selection changes (or a two-finger tap). With a mouse: Shift + right click, Shift + right drag; Shift + left click a dot takes it out.", "", true)
+	waypoints_button.name = "waypoints"
+	waypoints_button.low = true
+	waypoints_button.pressed.connect(func(): waypoints_pressed.emit())
+	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, skirm_button, stance_button, occupy_button,
+		ab_chips[UT.AB_GRENADE], ab_chips[UT.AB_PISTOL], bounds_button, deploy_button, ammo_button, refill_button, forage_button,
+		drop_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
+	for b in [halt_button, run_button, withdraw_button]:
 		actions.add_child(b)
+	chips_box = HBoxContainer.new()
+	chips_box.name = "chips"
+	chips_box.add_theme_constant_override("separation", int(GAP))
+	chips_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	actions.add_child(chips_box)
+	for c in _chip_order:
+		chips_box.add_child(c)
+	more_button = _chip("more", "More", "more", "More", "The orders that did not fit the bar.", "", true)
+	more_button.name = "more"
+	more_button.visible = false
+	more_button.pressed.connect(func(): _set_more_open(more_button.button_pressed))
+	actions.add_child(more_button)
+	# The popover above More: every chip that did not fit, one under another (nothing is ever clipped).
+	more_panel = PanelContainer.new()
+	more_panel.name = "more_panel"
+	more_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.96), 8.0))
+	more_panel.visible = false
+	root.add_child(more_panel)
+	more_box = GridContainer.new()
+	more_box.columns = 1
+	more_box.add_theme_constant_override("h_separation", int(GAP))
+	more_box.add_theme_constant_override("v_separation", int(GAP))
+	more_panel.add_child(more_box)
+	_ui_controls.append(more_panel)
 	actions.visible = false
 	actions_box = actions
 	_ui_controls.append(actions)
@@ -1008,6 +1054,15 @@ func set_speed(q: int, slider_q: int) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# A press outside the open More popover (and its button) closes it.
+	if more_panel != null and more_panel.visible:
+		var mp := Vector2(-1, -1)
+		if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+			mp = (event as InputEventScreenTouch).position
+		elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+			mp = (event as InputEventMouseButton).position
+		if mp.x >= 0.0 and not more_panel.get_global_rect().has_point(mp) and not more_button.get_global_rect().has_point(mp):
+			_set_more_open(false)
 	# A press anywhere outside the open speed popover (and its button) closes it.
 	if speed_panel != null and speed_panel.visible and event is InputEventScreenTouch \
 			and (event as InputEventScreenTouch).pressed:
@@ -1048,7 +1103,8 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	stance_button.visible = stance >= 0
 	bounds_button.visible = bounds >= 0
 	occupy_button.visible = occupy >= 0
-	occupy_button.text = "Leave" if occupy > 0 else "Occupy"
+	occupy_button.label_name = "Leave" if occupy > 0 else "Occupy"
+	occupy_button.text = occupy_button.text_for(occupy_button.compact_mode)
 	var stance_word: String = ["Line", "Cover", "Hold"][clampi(stance, 0, 2)]
 	Kit.set_icon(stance_button, ["stance_line", "stance_cover", "stance_hold"][clampi(stance, 0, 2)])
 	deploy_button.visible = deploy >= 0
@@ -1058,35 +1114,228 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	release_button.visible = dogs >= 0
 	release_button.set_pressed_no_signal(release_armed)
 	Kit.set_icon(fire_button, "fire" if fire > 0 else "hold_fire")
-	_toggles = {run_button: ["Run", "on" if run > 0 else "off"], fire_button: ["Fire", "at will" if fire > 0 else "hold"],
-		skirm_button: ["Skirmish", "on" if skirm > 0 else "off"], stance_button: ["Stance", stance_word],
-		bounds_button: ["Bounds", "on" if bounds > 0 else "off"], deploy_button: ["Deploy", "on" if deploy > 0 else "off"],
-		refill_button: ["Refill", "on" if refill > 0 else "off"], ammo_button: ["Ammo", ammo_word],
-		forage_button: ["Forage", "on" if forage > 0 else "off"],
-		release_button: ["Release", "tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0)]}
+	run_button.set_state("on" if run > 0 else "off")
+	fire_button.set_state("at will" if fire > 0 else "hold")
+	skirm_button.set_state("on" if skirm > 0 else "off")
+	stance_button.set_state(stance_word)
+	bounds_button.set_state("on" if bounds > 0 else "off")
+	deploy_button.set_state("on" if deploy > 0 else "off")
+	refill_button.set_state("on" if refill > 0 else "off")
+	ammo_button.set_state(ammo_word)
+	forage_button.set_state("on" if forage > 0 else "off")
+	release_button.set_state("tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0))
+	if _sel != units:
+		_set_more_open(false)
+	_sel = units.duplicate()
+	_update_common()
 	_fit_actions()
 
 
-## The order toggles read "Fire: hold" etc.; when the bottom row would not
-## fit the screen (phones with several orders showing) they drop the order
-## word and keep the icon and the state ("hold").
+## Whether unit u is one the chip `c` is about (a chip that not every selected unit has is dimmed).
+## The situational chips (refill, forage, drop, release, the acts, gift, waypoints) are always common.
+func _chip_applies(c: Button, u: int) -> bool:
+	if _sim == null or u < 0 or u >= _sim.n_units:
+		return true
+	var ty: int = _sim.u_type[u]
+	var art := UT.cls(ty) == UT.CLS_ART
+	var ac := c as AbilityChip
+	if ac.ab >= 0:
+		return (_sim.t_abil[ty] & (1 << ac.ab)) != 0
+	match ac.key:
+		"fire":
+			return UT.stat(ty, "m_ammo") > 0
+		"skirmish":
+			return UT.stat(ty, "m_ammo") > 0 and not art
+		"run":
+			return not art
+		"stance", "bounds", "occupy":
+			return BattleSim.stance_ok(ty)
+		"deploy":
+			return art and UT.stat(ty, "fixed") == 0
+		"ammo":
+			return _sim.spec_kind(u) >= 0
+	return true
+
+
+## Dim the chips some of the selected units do not have (tip: not all selected units).
+func _update_common() -> void:
+	for c in _chip_order:
+		var ch := c as AbilityChip
+		var all := true
+		for u in _sel:
+			if not _chip_applies(ch, u):
+				all = false
+				break
+		ch.set_common(all)
+
+
+## The ability chips of the selection: info is UT.AB_* -> {"word": state word, "armed": bool}; an ability not in
+## it has no chip. Call before set_selection (which fits the bar).
+func set_abilities(info: Dictionary) -> void:
+	for ab in ab_chips:
+		var c: AbilityChip = ab_chips[ab]
+		c.visible = info.has(ab)
+		if c.visible:
+			c.set_state(str(info[ab]["word"]), bool(info[ab]["armed"]))
+	for c in _chip_order:
+		(c as AbilityChip).pinned = (c as AbilityChip).armed
+
+
+## The bottom bar's width the fit works with, logical px.
+func _bar_width() -> float:
+	return get_viewport().get_visible_rect().size.x - 2.0 * MARGIN
+
+
+## Fit the action row to the screen: Halt / Run / Withdraw are fixed; the chips follow in their fixed order (an armed
+## ability first, then the chips every selected unit has, then the rest); when the full texts do not fit they drop
+## their name and keep the state (the icon says which); what still does not fit goes under More. Nothing is clipped.
+## Measured from the texts' metrics at once and again one frame later (after the layout), and on a resize.
 func _fit_actions() -> void:
-	if actions_box == null or _toggles.is_empty():
+	if actions_box == null:
 		return
-	var need := group_box.get_combined_minimum_size().x + GAP
-	for b in actions_box.get_children():
-		var btn := b as Button
-		if not btn.visible:
-			continue
-		var t: String = btn.text
-		if _toggles.has(btn):
-			t = "%s: %s" % _toggles[btn]
-		need += _button_w(btn, t) + GAP
-	var compact := need > _bottom.size.x if _bottom.size.x > 0.0 else false
-	for b in _toggles:
-		var btn := b as Button
-		var tg: Array = _toggles[b]
-		btn.text = str(tg[1]) if compact else "%s: %s" % tg
+	_fit_now()
+	if not _refit_pending and is_inside_tree():
+		_refit_pending = true
+		get_tree().process_frame.connect(_refit_later, CONNECT_ONE_SHOT)
+
+
+func _refit_later() -> void:
+	_refit_pending = false
+	if actions_box == null:
+		return
+	_fit_now()
+	_place_more()
+
+
+func _fit_now() -> void:
+	var vw := get_viewport().get_visible_rect().size.x
+	var phone := not BTheme.desktop(vw)
+	# Room for the row: the bar less the selection capsule and the notes.
+	var avail := _bar_width() - group_box.get_combined_minimum_size().x - 2.0 * GAP - 4.0
+	for n in [engine_note, carry_note]:
+		if (n as Label).visible:
+			avail -= (n as Label).get_combined_minimum_size().x + GAP
+	var fixed: Array = []
+	for b in [halt_button, run_button, withdraw_button]:
+		if (b as Control).visible:
+			fixed.append(b)
+	# The chips that apply, in order: armed first, then common, then the rest (each group in the fixed order).
+	var vis: Array = []
+	for pass_k in 3:
+		for c in _chip_order:
+			var ch := c as AbilityChip
+			if not ch.visible:
+				continue
+			var k := 0 if ch.pinned else (1 if ch.common else 2)
+			if k == pass_k:
+				vis.append(ch)
+	# Where each chip stands now: a chip that is not visible goes home to the bar's box.
+	var in_bar: Array = []
+	var in_more: Array = []
+	var forced: Array = []
+	var rest: Array = []
+	for ch in vis:
+		if (ch as AbilityChip).low and phone and not (ch as AbilityChip).pinned:
+			forced.append(ch)
+		else:
+			rest.append(ch)
+	var mode_compact := false
+	var fixed_w := _row_w(fixed, false)
+	var all_w := fixed_w + _row_w(rest, false) + (GAP if not fixed.is_empty() and not rest.is_empty() else 0.0)
+	if forced.is_empty() and all_w <= avail:
+		in_bar = rest
+	else:
+		mode_compact = true
+		fixed_w = _row_w(fixed, true)
+		var more_w := more_button.width_for(false) + GAP
+		var used := fixed_w + more_w
+		var stop := false
+		for ch in rest:
+			var w := (ch as AbilityChip).width_for(true) + GAP
+			if not stop and (ch as AbilityChip).pinned and used + w <= avail:
+				in_bar.append(ch)
+				used += w
+			elif not stop and used + w <= avail and not (ch as AbilityChip).pinned:
+				in_bar.append(ch)
+				used += w
+			else:
+				stop = true
+				in_more.append(ch)
+		in_more.append_array(forced)
+	for b in fixed:
+		if b is AbilityChip:
+			(b as AbilityChip).set_mode(mode_compact)
+	for c in _chip_order:
+		(c as AbilityChip).set_mode(mode_compact)
+	# Put the chips where they go, in order.
+	for c in _chip_order:
+		var ch := c as Control
+		if in_bar.has(ch) or not (vis.has(ch)):
+			_home(ch, chips_box)
+	for ch in in_bar:
+		chips_box.move_child(ch, chips_box.get_child_count() - 1)
+	for ch in in_more:
+		_home(ch, more_box)
+		(ch as AbilityChip).set_mode(false)
+		more_box.move_child(ch, more_box.get_child_count() - 1)
+	chips_box.visible = not in_bar.is_empty()   # (an empty box would still cost a gap)
+	more_button.visible = not in_more.is_empty()
+	if not more_button.visible:
+		_set_more_open(false)
+	_place_more()
+
+
+func _row_w(items: Array, compact: bool) -> float:
+	var w := 0.0
+	for b in items:
+		w += (_chip_w(b, compact))
+	w += GAP * maxi(items.size() - 1, 0)
+	return w
+
+
+func _chip_w(b: Control, compact: bool) -> float:
+	if b is AbilityChip:
+		return (b as AbilityChip).width_for(compact)
+	return _button_w(b as Button, (b as Button).text)
+
+
+func _home(c: Control, box: Container) -> void:
+	if c.get_parent() == box:
+		return
+	if c.get_parent() != null:
+		c.get_parent().remove_child(c)
+	box.add_child(c)
+
+
+func _set_more_open(on: bool) -> void:
+	if more_panel == null:
+		return
+	on = on and more_button.visible and more_box.get_child_count() > 0
+	more_panel.visible = on
+	more_button.set_pressed_no_signal(on)
+	if on:
+		_place_more()
+
+
+## The popover sits above the More chip, right-aligned to it and kept on screen.
+func _place_more() -> void:
+	if more_panel == null or not more_panel.visible:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var r := more_button.get_global_rect()
+	# Columns: as many rows as fit between the top bar and the More chip, then another column.
+	var n := 0
+	for c in more_box.get_children():
+		if (c as Control).visible:
+			n += 1
+	var rows := maxi(int((r.position.y - GAP - (BTN_H + 3.0 * MARGIN) - 16.0) / (AbilityChip.H + GAP)), 1)
+	more_box.columns = maxi(ceili(float(n) / rows), 1)
+	more_panel.reset_size()
+	var sz := more_panel.get_combined_minimum_size()
+	var x := clampf(r.end.x - sz.x, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN))
+	var y := maxf(r.position.y - sz.y - GAP, MARGIN)
+	more_panel.position = Vector2(x, y)
+	more_panel.size = sz
 
 
 func _button_w(b: Button, t: String) -> float:
@@ -1098,6 +1347,28 @@ func _button_w(b: Button, t: String) -> float:
 	return maxf(w, b.custom_minimum_size.x)
 
 
+## The selection capsule: on a phone width the role segments show their badge glyph (34 px, the tip names the group),
+## on a desktop the words (50 px). All and None keep their words.
+func _apply_capsule() -> void:
+	var compact := not BTheme.desktop(get_viewport().get_visible_rect().size.x)
+	for k in _cap_words:
+		var gb: Button = deselect_button if k == "none" else group_buttons.get(k)
+		if gb == null:
+			continue
+		var glyph := compact and _cap_tiles.has(k)
+		gb.text = "" if glyph else str(_cap_words[k])
+		if _cap_tiles.has(k):
+			(_cap_tiles[k] as Control).visible = glyph
+		if compact:
+			gb.custom_minimum_size.x = 34.0
+			gb.add_theme_font_size_override("font_size", FONT - 3)
+			BTheme.trim_margins(gb, 2.0)
+		else:
+			gb.custom_minimum_size.x = 50.0
+			gb.add_theme_font_size_override("font_size", FONT)
+			BTheme.trim_margins(gb, 6.0)
+
+
 ## Heroes and agents: show the act buttons in `acts` (act names), the
 ## `armed` one pressed and reading "<Act>: tap".
 func set_char_buttons(acts: Dictionary, armed: String) -> void:
@@ -1105,7 +1376,8 @@ func set_char_buttons(acts: Dictionary, armed: String) -> void:
 		var b: Button = char_buttons[act]
 		b.visible = acts.has(act)
 		b.set_pressed_no_signal(armed == act)
-		b.text = str(act).capitalize() + (": tap" if armed == act else "")
+		(b as AbilityChip).label_name = str(act).capitalize()
+		(b as AbilityChip).set_state("tap" if armed == act else "")
 
 
 ## Siege equipment: "Drop" while a selected unit carries a piece (battle.gd
@@ -1115,6 +1387,13 @@ func set_carry_note(text: String) -> void:
 	if carry_note.text != text:
 		carry_note.text = text
 	carry_note.visible = text != ""
+
+
+## Gift's label ("Gift to Anna", "Gift to ...").
+func set_gift_text(t: String) -> void:
+	gift_button.label_name = t
+	gift_button.text = gift_button.text_for(gift_button.compact_mode)
+	_fit_actions()
 
 
 func set_drop_button(drop: bool) -> void:
@@ -1204,6 +1483,7 @@ func update_cards(sim) -> void:
 			if bpm < 1000:
 				f.summary += " | building %d%%" % (bpm / 10)
 		f.fighting = sim.u_fighting[u] > 0
+		_card_state_strip(u, f)
 		f.refilling = sim.u_refill[u] != 0 or sim.u_rprog[u] > 0 or sim.u_forage[u] != 0
 		if not art and (sim.u_refill[u] != 0 or sim.u_rprog[u] > 0):
 			f.state_text = "REFILLING" if sim.u_rprog[u] >= BattleSim.REFILL_FULL else "To refill"
@@ -1222,6 +1502,27 @@ func update_cards(sim) -> void:
 		if _tgroups.has(u):
 			_group_card(sim, u, f)
 		f.queue_redraw()
+
+
+## The card's state strip and tip: a glyph for each chip not at its default (battle.gd's card_states), the tip in words.
+func _card_state_strip(u: int, f: CardFace) -> void:
+	if not card_states.is_valid() or f.role == "":
+		return
+	var st: Array = card_states.call(u)
+	var key := str(st)
+	if _card_key.get(u, "") == key:
+		return
+	_card_key[u] = key
+	var glyphs: Array[String] = []
+	var words: Array[String] = []
+	for g in st:
+		glyphs.append(str(g[0]))
+		words.append(str(g[1]))
+	f.glyphs = glyphs
+	var body := RoleBadge.plays(f.role)
+	if not words.is_empty():
+		body += "\n" + ", ".join(words)
+	Kit.tip(_cards[u] as Button, str(UT.ROLES[f.role]["name"]), body)
 
 
 ## The units of the wall-engine card held by u ([u] alone for any other).
@@ -1468,6 +1769,19 @@ func _button(text: String, size: Vector2, icon: String = "") -> Button:
 	return b
 
 
+## A bar chip (game/ability_chip.gd): `state` its first state word; `toggle` a lit-when-on button; `ab` a UT.AB_* ability.
+func _chip(key: String, label: String, icon: String, title: String, tip_text: String, state: String,
+		toggle: bool = false, ab: int = -1) -> AbilityChip:
+	var c := AbilityChip.new()
+	c.setup(key, label, icon, title, tip_text, ab, toggle)
+	c.state_word = state
+	c.text = c.full_text()
+	c.pressed.connect(func():
+		if more_panel != null and c.get_parent() == more_box and c != more_button:
+			_set_more_open(false))
+	return c
+
+
 static func _box(col: Color, margin: float = 8.0) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = col
@@ -1516,6 +1830,9 @@ class CardFace extends Control:
 	var bld_pm := -1
 	## Poisoned men in it (poisoned arrows): a green strip down the right edge.
 	var poisoned := false
+	## The state strip (top right): a glyph per chip not at its default, "icon" (a state), "icon!" (on Hold: struck
+	## through) or "icon*" (a Use now waiting for its target, gold).
+	var glyphs: Array[String] = []
 
 	func _draw() -> void:
 		var sz := size
@@ -1556,13 +1873,32 @@ class CardFace extends Control:
 		var disc := Color(1.0, 0.9, 0.3) if state == ST_ROUT else (Color(0.45, 0.45, 0.45) if state == ST_GONE else side_col)
 		var font := ThemeDB.fallback_font
 		var x0 := r * 2 + 6
+		# The state strip: up to three 11 px glyphs at the top right (one on a narrow card), left of the general's mark.
+		var nglyph := mini(glyphs.size(), 1 if narrow else 3) if state != ST_GONE else 0
+		var strip_w := nglyph * 11.0
+		var strip_r := sz.x - 3.0 - (14.0 if (general or char_icon != "") else 0.0) - (11.0 if foreign else 0.0)
+		for gi in nglyph:
+			var gname := glyphs[gi]
+			var gcol := Color(0.95, 0.95, 0.9)
+			var gcross := false
+			if gname.ends_with("!"):
+				gname = gname.trim_suffix("!")
+				gcross = true
+				gcol = Color(0.95, 0.55, 0.45)
+			elif gname.ends_with("*"):
+				gname = gname.trim_suffix("*")
+				gcol = Kit.COL_GOLD
+			var grect := Rect2(strip_r - 11.0 * (gi + 1), 3, 11, 11)
+			Kit.UiIcons.draw_icon(self, gname, grect, gcol)
+			if gcross:
+				draw_line(grect.position + Vector2(1, 10), grect.position + Vector2(10, 1), Color(0.95, 0.35, 0.3), 1.4)
 		# Line 1: name and number (narrow cards: the number beside the symbol).
 		if narrow:
 			Icons.draw_marker(self, icon, Vector2(r + 3, r + 3), r, disc, glyph)
-			draw_string(font, Vector2(x0, 14), number_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2, 13, txt)
+			draw_string(font, Vector2(x0, 14), number_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2 - strip_w, 13, txt)
 		else:
 			Icons.draw_marker(self, icon, Vector2(r + 3, sz.y * 0.5), r, disc, glyph)
-			draw_string(font, Vector2(x0, 14), name_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2, 13, txt)
+			draw_string(font, Vector2(x0, 14), name_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2 - strip_w, 13, txt)
 		# Line 2: headcount bar with the count and state word; ammunition
 		# (artillery: shots + reserve) at its right end.
 		var bx := 3.0 if narrow else x0

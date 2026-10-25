@@ -31,6 +31,7 @@ const NAMES: Array[String] = [
 	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 	"details", "embark", "more",
+	"grenade", "pistol", "caracole", "target", "hand",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
 ## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
@@ -854,5 +855,30 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 		"more":  # three dots
 			for x in [-0.6, 0.0, 0.6]:
 				_dot(x, 0.0, 0.2)
+		"grenade":  # a round shell, its neck and a fuse with a spark
+			_ring(-0.1, 0.25, 0.5)
+			_l(-0.1, -0.25, -0.1, -0.5, 1.2)
+			_pl([-0.1, -0.5, 0.25, -0.7, 0.55, -0.55], false, 0.9)
+			_dot(0.7, -0.4, 0.14)
+		"pistol":  # a flintlock: barrel, grip, a ball
+			_l(-0.85, -0.3, 0.55, -0.3, 1.2)
+			_pl([0.55, -0.3, 0.55, -0.05, 0.1, -0.05, 0.1, 0.15, 0.55, 0.7], false, 1.0)
+			_dot(0.88, -0.3, 0.14)
+		"caracole":  # a loop: ride up, fire, wheel back
+			_arc(0.0, 0.0, 0.55, PI * 0.5, PI * 2.0, 0.95)
+			_arrow(0.55, 0.0, 0.55, 0.55, 0.4)
+			_l(-0.85, 0.55, -0.4, 0.55, 0.9)
+		"target":  # a ring with a dot and four ticks
+			_ring(0.0, 0.0, 0.58)
+			_dot(0.0, 0.0, 0.16)
+			_l(0.0, -0.95, 0.0, -0.58, 0.9)
+			_l(0.0, 0.58, 0.0, 0.95, 0.9)
+			_l(-0.95, 0.0, -0.58, 0.0, 0.9)
+			_l(0.58, 0.0, 0.95, 0.0, 0.9)
+		"hand":  # an open palm: stop
+			_pl([-0.55, 0.85, -0.55, 0.0, -0.7, -0.3], false, 0.9)
+			for x in [-0.3, 0.0, 0.3, 0.6]:
+				_l(x, 0.15, x, -0.8 + absf(x - 0.15) * 0.3, 0.9)
+			_pl([-0.55, 0.85, 0.6, 0.85, 0.6, 0.15], false, 0.9)
 		_:
 			_ring(0.0, 0.0, 0.5)

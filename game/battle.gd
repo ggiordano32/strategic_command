@@ -409,6 +409,8 @@ func _ready() -> void:
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
+	hud.ability_pressed.connect(_ability_pressed)
+	hud.card_states = _card_states
 	hud.add_toggled.connect(func(on: bool):
 		add_mode = on
 		_count("add_mode_on" if on else "add_mode_off"))
@@ -1315,6 +1317,7 @@ func _queue(order: Dictionary) -> void:
 		elif typ != BattleSim.ORDER_RUN and typ != BattleSim.ORDER_FIRE and typ != BattleSim.ORDER_SKIRMISH \
 				and typ != BattleSim.ORDER_DEPLOY and typ != BattleSim.ORDER_PLACE and typ != BattleSim.ORDER_READY \
 				and typ != BattleSim.ORDER_WORKS and typ != BattleSim.ORDER_DROP \
+				and not (typ == BattleSim.ORDER_ABILITY and int(order["state"]) != UT.AB_NOW) \
 				and not (typ == BattleSim.ORDER_PICKUP and order.has("equip")):
 			_count("order_in_deployment")
 			if selected >= 0:
@@ -1527,7 +1530,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
 	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works",
 	BattleSim.ORDER_SABOTAGE: "sabotage", BattleSim.ORDER_ATTEMPT: "attempt", BattleSim.ORDER_PARLEY: "parley",
-	BattleSim.ORDER_OCCUPY: "occupy"}
+	BattleSim.ORDER_OCCUPY: "occupy", BattleSim.ORDER_ABILITY: "ability"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -1573,6 +1576,8 @@ func _selection_changed() -> void:
 	overlay.selected_units = ordered
 	if occupy_mode:
 		_occupy_cancel(false)
+	if ability_armed >= 0:
+		_ability_cancel(false)
 	if waypoint_mode and _wp_sel != selection:
 		_count("wp_off_selection")
 		_waypoints_off()
@@ -1646,6 +1651,7 @@ func _refresh_actions() -> void:
 		if UT.stat(sim.u_type[u], "fixed") == 0:
 			only_fixed = false
 	hud.engine_only = only_fixed
+	hud.set_abilities(_ability_info())
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
 	hud.occupy_button.set_pressed_no_signal(occupy_mode and occupy == 0)
 	hud.waypoints_button.visible = not selection.is_empty() and not only_fixed and sim.phase == BattleSim.PHASE_BATTLE
@@ -1658,9 +1664,9 @@ func _refresh_actions() -> void:
 		var tos := _gift_targets()
 		hud.gift_button.visible = not selection.is_empty() and not tos.is_empty()
 		if tos.size() == 1:
-			hud.gift_button.text = "Gift to " + coop.player_name(int(tos[0]))
+			hud.set_gift_text("Gift to " + coop.player_name(int(tos[0])))
 		elif tos.size() > 1:
-			hud.gift_button.text = "Gift to..."
+			hud.set_gift_text("Gift to...")
 
 
 
@@ -2050,6 +2056,242 @@ func _occupy_send(b: int) -> void:
 			_queue({"type": BattleSim.ORDER_OCCUPY, "unit": u, "building": best, "run": orders.value(u, "run")})
 	_count("occupy_pick")
 	_occupy_cancel(false)
+
+
+# ------------------------------------------------------- ability chips ---
+# The bar's ability chips (docs/design/ui.md "The battle HUD pass"): Auto -> Hold -> Use now -> Auto per ability of
+# the selected units' roles (UT.abilities; Pistols only Auto <-> Hold). Auto and Hold are one ORDER_ABILITY per unit
+# through _queue; Use now arms a target pick on the field (as Occupy arms its building pick) and the tap sends the
+# order with its target (grenades: an enemy unit or a shut gate; caracole: an enemy unit; batter: a wall stretch, a
+# gate or a building). Nothing here touches the sim except by orders.
+const AB_ICONS := ["pistol", "grenade", "caracole", "target"]
+const AB_PRED_TICKS := 40      # a predicted state is trusted this long past its order's tick
+var ability_armed := -1        # the UT.AB_* waiting for its target (-1 none)
+var _ab_pred := {}             # unit * 8 + ability -> [state, tick queued]: what the chip shows before the sim applies it
+var _ab_lit: Array[int] = []   # a batter pick: the standing buildings lit for it
+
+
+## The selected units that have ability ab and may take its order.
+func _ability_units(ab: int) -> Array[int]:
+	var out: Array[int] = []
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY or not _mine(u):
+			continue
+		if BattleSim.ability_refusal(sim, u, ab, UT.AB_AUTO) != "":
+			continue
+		if ab == UT.AB_BATTER and (sim.city_on == 0 or sim.u_side[u] == sim.city_def):
+			continue
+		out.append(u)
+	return out
+
+
+## Unit u's state of ability ab as the player should see it: a just-ordered one before the sim has applied it.
+func _ab_state(u: int, ab: int) -> int:
+	var k := u * 8 + ab
+	if _ab_pred.has(k):
+		var pr: Array = _ab_pred[k]
+		if sim.ability_state(u, ab) == int(pr[0]) or sim.tick > int(pr[1]) + AB_PRED_TICKS:
+			_ab_pred.erase(k)
+		else:
+			return int(pr[0])
+	return sim.ability_state(u, ab)
+
+
+## The chips' info for the HUD: UT.AB_* -> {"word", "armed"} for each ability some selected unit has.
+func _ability_info() -> Dictionary:
+	var info := {}
+	for ab in UT.AB_N:
+		var us := _ability_units(ab)
+		if us.is_empty():
+			continue
+		var seen := {}
+		for u in us:
+			seen[_ab_state(u, ab)] = true
+		var word := "Mixed"
+		if seen.size() == 1:
+			word = UT.AB_STATE_NAMES[int(seen.keys()[0])]
+		info[ab] = {"word": "Use now" if ability_armed == ab else word, "armed": ability_armed == ab}
+	return info
+
+
+func _queue_ability(u: int, ab: int, st: int, tgt: int) -> void:
+	_queue(BattleSim.make_ability_order(0, u, ab, st, tgt))
+	_ab_pred[u * 8 + ab] = [st, sim.tick]
+
+
+## An ability chip was tapped: cycle its state; Use now arms the pick.
+func _ability_pressed(ab: int) -> void:
+	if not interactive:
+		return
+	if ability_armed == ab:
+		_ability_cancel(true)
+		return
+	if ability_armed >= 0:
+		_ability_cancel(true)
+	var us := _ability_units(ab)
+	if us.is_empty():
+		return
+	var nxt := (_ab_state(us[0], ab) + 1) % 3
+	if nxt == UT.AB_NOW and ab == UT.AB_PISTOL:
+		nxt = UT.AB_AUTO   # (no target to give a brace of pistols)
+	if nxt == UT.AB_NOW and sim.phase != BattleSim.PHASE_BATTLE:
+		nxt = UT.AB_AUTO
+		overlay.flash("Use now: not before the battle starts", Vector2(sim.u_cx[us[0]], sim.u_cy[us[0]]) / M * PX_PER_M)
+	if nxt == UT.AB_NOW:
+		_ability_arm(ab, us)
+		return
+	for u in us:
+		_queue_ability(u, ab, nxt, -1)
+	_count("ability_%s_%s" % [UT.AB_NAMES[ab].to_lower(), UT.AB_STATE_NAMES[nxt].to_lower().replace(" ", "_")])
+	_refresh_actions()
+
+
+func _ability_arm(ab: int, us: Array[int]) -> void:
+	ability_armed = ab
+	var hint := {UT.AB_GRENADE: "Tap an enemy unit or a shut gate to throw at", UT.AB_CARACOLE: "Tap an enemy unit to caracole at",
+		UT.AB_BATTER: "Tap a wall stretch, a gate or a building to batter"}
+	_count("ability_arm_" + UT.AB_NAMES[ab].to_lower())
+	var lit: Array[int] = []
+	if ab == UT.AB_BATTER:
+		for b in sim.ob_state.size():
+			if sim.ob_state[b] == BattleSim.WS_STANDING:
+				lit.append(b)
+		_ab_lit = lit
+		overlay.occ_mode = true
+		overlay.occ_lit = lit
+		overlay.occ_focus = -1
+	else:
+		var tl: Array[int] = []
+		for t in sim.n_units:
+			if sim.u_side[t] != player_side and sim.u_state[t] < BattleSim.U_DESTROYED:
+				tl.append(t)
+		overlay.target_lit = tl
+	overlay.flash(str(hint.get(ab, "Tap a target")), Vector2(sim.u_cx[us[0]], sim.u_cy[us[0]]) / M * PX_PER_M)
+	_refresh_actions()
+	overlay.queue_redraw()
+
+
+## Leave the armed pick; counted (Esc, the chip again): the units go back to Auto.
+func _ability_cancel(counted: bool) -> void:
+	var ab := ability_armed
+	if ab < 0:
+		return
+	ability_armed = -1
+	_ab_lit = []
+	overlay.target_lit = []
+	if overlay.occ_mode and not occupy_mode:
+		overlay.occ_mode = false
+		overlay.occ_lit = []
+	if counted:
+		_count("ability_cancel")
+		for u in _ability_units(ab):
+			if _ab_state(u, ab) != UT.AB_AUTO:
+				_queue_ability(u, ab, UT.AB_AUTO, -1)
+	_refresh_actions()
+	overlay.queue_redraw()
+
+
+## The armed pick on what is under w (world px).
+func _ability_tap(w: Vector2) -> void:
+	var ab := ability_armed
+	var tgt := -999
+	var p := w / PX_PER_M
+	var t := _pick_unit(w)
+	var enemy := t >= 0 and sim.u_side[t] != player_side and sim.u_state[t] < BattleSim.U_DESTROYED
+	match ab:
+		UT.AB_GRENADE:
+			if enemy:
+				tgt = t
+			elif sim.city_on != 0 and _gate_at(w) >= 0:
+				tgt = -2 - _gate_at(w)
+		UT.AB_CARACOLE:
+			if enemy:
+				tgt = t
+		UT.AB_BATTER:
+			var b := _ab_building_at(p)
+			if b >= 0:
+				tgt = -2 - b
+			elif _gate_at(w) >= 0:
+				tgt = -1   # (the stretch the destruction AI batters by that gate)
+			else:
+				var sg := BattleSim.wall_stretch_at(sim, int(p.x * M), int(p.y * M))
+				if sg >= 0:
+					tgt = sg
+	if tgt == -999:
+		_count("ability_pick_miss")
+		overlay.flash("Not a target for it (Esc cancels)", w)
+		return
+	var sent := 0
+	var why := ""
+	for u in _ability_units(ab):
+		var r := BattleSim.ability_refusal(sim, u, ab, UT.AB_NOW)
+		if r != "":
+			why = r
+			continue
+		_queue_ability(u, ab, UT.AB_NOW, tgt)
+		sent += 1
+	_count("ability_use_" + UT.AB_NAMES[ab].to_lower())
+	ability_armed = -1
+	_ab_lit = []
+	overlay.target_lit = []
+	if overlay.occ_mode and not occupy_mode:
+		overlay.occ_mode = false
+		overlay.occ_lit = []
+	overlay.flash("%s: Use now" % ("Target" if ab == UT.AB_BATTER else UT.AB_NAMES[ab]) if sent > 0 else "Cannot: " + why, w)
+	_refresh_actions()
+	overlay.queue_redraw()
+
+
+## The lit (standing) building under p (metres), -1 none.
+func _ab_building_at(p: Vector2) -> int:
+	var best := -1
+	var bd := 1e18
+	var hit_r := minf(float(_marker_hit_r()) / M, 6.0)
+	for b in _ab_lit:
+		var q := OccView.quad(sim, b)
+		if q.size() < 4:
+			continue
+		var mid := (q[0] + q[1] + q[2] + q[3]) * 0.25
+		if Geometry2D.is_point_in_polygon(p, q) or p.distance_to(mid) < hit_r:
+			var d := p.distance_squared_to(mid)
+			if d < bd:
+				bd = d
+				best = b
+	return best
+
+
+## The card's state strip: [glyph, word] for each chip of unit u not at its default (the HUD draws and tips them).
+## Glyph "icon" a state, "icon!" an ability on Hold, "icon*" a Use now (or its pick armed).
+func _card_states(u: int) -> Array:
+	var out := []
+	if sim.u_state[u] != BattleSim.U_READY or sim.u_side[u] != player_side:
+		return out
+	var ty: int = sim.u_type[u]
+	if UT.stat(ty, "m_ammo") > 0 and orders.value(u, "fire") == 0:
+		out.append(["hold_fire", "Fire: hold"])
+	if BattleSim.stance_ok(ty):
+		var dflt := BattleSim.STANCE_COVER if sim.t_cover[ty] != 0 else BattleSim.STANCE_LINE
+		var stn: int = orders.value(u, "stance")
+		if stn != dflt:
+			if stn == BattleSim.STANCE_COVER:
+				out.append(["stance_cover", "Stance: Cover"])
+			elif stn == BattleSim.STANCE_HOLD:
+				out.append(["stance_hold", "Stance: Hold street"])
+			else:
+				out.append(["stance_line", "Stance: Line"])
+	if sim.t_abil[ty] != 0:
+		for ab in UT.AB_N:
+			if (sim.t_abil[ty] & (1 << ab)) == 0:
+				continue
+			var st := _ab_state(u, ab)
+			var nm: String = UT.AB_NAMES[ab]
+			if ability_armed == ab and selection.has(u):
+				out.append(["target*", "%s: Use now, waiting for a target" % nm])
+			elif st == UT.AB_HOLD:
+				out.append([str(AB_ICONS[ab]) + "!", "%s: Hold" % nm])
+			elif st == UT.AB_NOW:
+				out.append(["target*", "%s: Use now" % nm])
+	return out
 
 
 ## Bounds: a view-side mode that adds "bound" to the player's move orders.
@@ -2765,6 +3007,9 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	if occupy_mode:
 		_occupy_tap(w)
 		return
+	if ability_armed >= 0:
+		_ability_tap(w)
+		return
 	if waypoint_mode and not _rmb_order:
 		var hit := _wp_dot_at(w)
 		if hit.x >= 0:
@@ -3297,7 +3542,7 @@ func _right_release(pos: Vector2) -> void:
 ## deployment works and the gates / engines / equipment keep the tap rules.
 func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 	var w := _screen_to_world(pos)
-	var armed := char_armed != 0 or release_armed or (works_mode != "" and sim.phase == BattleSim.PHASE_DEPLOY)
+	var armed := char_armed != 0 or release_armed or ability_armed >= 0 or (works_mode != "" and sim.phase == BattleSim.PHASE_DEPLOY)
 	if _exit_timer > 0.0 or not interactive or armed or _gate_doorway(w) >= 0:
 		_tap(pos, double, long_press)
 		return
@@ -3363,6 +3608,8 @@ func _on_key(e: InputEventKey) -> void:
 		"deselect":
 			if occupy_mode:
 				_occupy_cancel(true)
+			elif ability_armed >= 0:
+				_ability_cancel(true)
 			elif _gm or _gm_pending:
 				_count("group_move_cancelled")
 				_gm_cancel()

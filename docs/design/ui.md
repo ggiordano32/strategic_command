@@ -806,3 +806,56 @@ chip is either visible or in More. `input_test` and `battle_screen_test` keep pa
 segments keep the same keys 1-6 and the same `group_buttons` names).
 
 **Out of scope.** The sea battle HUD; the campaign bar; new abilities; the AI's use of Hold / Use now.
+
+### The battle HUD pass (as built, 2026-10-24; roles step 3 folded in)
+
+View only: nothing under `sim/` changed (the determinism hashes are as before). Code: `game/ability_chip.gd` (new, the chip),
+`game/hud.gd` (the bar, the fit, the capsule, the cards' strip), `game/battle.gd` (the ability orders and the Use now pick),
+`game/overlay.gd` (`target_lit`), `game/ui_icons.gd` (new icons `grenade`, `pistol`, `caracole`, `target`, `hand`),
+`game/controls.gd` (the Keys "Chips" section), `tests/hud_fit_test.gd`. What differs from the plan, and why:
+- **The bar.** Halt, Run (its state word), Withdraw are fixed in that order, then `chips_box`, then **More**. Run stays hidden
+  when only guns are selected (they cannot run; `input_test` asserts it), so "the fixed three" is Halt and Withdraw always and
+  Run unless guns only. The Withdraw army button of the top bar is unchanged.
+- **Chips.** Every old toggle button (`fire_button`, `skirm_button`, ... `waypoints_button`, the act buttons, `gift_button`) is
+  now an `AbilityChip` (a `Button`, so the names and tests hold); its text stays "Name: state" on one line (the plan's "state
+  under or after the name": after), the state-only text on a tight bar. An ability chip is the same widget with `ab` set; its
+  state word is Auto / Hold / Use now (Mixed when the selection differs). Chips are 42 px high and at least 56 wide.
+- **Order and common chips.** One global order (Target, Caracole, Fire, Skirmish, Stance, Occupy, Grenades, Pistols, Bounds,
+  Deploy, Ammo, Refill, Forage, Drop, Release, the acts, Gift, Waypoints) rather than a list per role: a role shows the chips
+  that apply to it in that order, which gives the plan's per-role lists. A chip some selected units lack is dimmed (alpha 0.55,
+  tip "Not all selected units have it") and sorted after the common ones; it still works for the units that have it.
+- **Fit.** `Hud._fit_now` works from the texts' metrics (the same as before) at once and again one frame later (`_refit_later`,
+  after the layout) and on a resize, not from the laid-out widths: the metrics need no layout and cannot disagree with it.
+  Step 1: full texts; step 2: state-only texts; step 3: what still does not fit goes under More (in order: an armed ability
+  first, the common chips, the rest). Waypoints and Release always go to More on a phone width. The popover is a grid
+  (`more_box`): one column, more columns when the list is taller than the room between the top bar and the More chip, so it is
+  never clipped even in the worst case (all 20 chips under More on a phone: 4 columns). A tap outside, a tap on a chip in it or a
+  new selection closes it (`_input`).
+- **Capsule.** `_apply_capsule` (at build and on every resize): on a compact width (`BTheme.desktop` false) the Line, Skirm,
+  Shock, Horse, Guns segments show the role badge (24 px glyph in a 34 px segment, text empty) and All / None keep their words;
+  on a desktop the words at 50 px. `group_buttons` keys, `deselect_button` and the keys 1-6 are as before. The glyph of Horse
+  is the horse_shock badge, of Guns the guns_field badge.
+- **Ability chips** (`battle.gd`, section "ability chips"). A tap cycles Auto -> Hold -> Use now -> Auto for the selected units that
+  have the ability and are ours (`_ability_units`); orders are `make_ability_order` through `_queue` (so lockstep, co-op ownership
+  and the deployment whitelist: Auto and Hold pass in the deployment, Use now is not offered there). A view-side prediction
+  (`_ab_pred`) shows the new state before the sim applies it (the sim's own state once it equals it, or 40 ticks later). Use now arms
+  `ability_armed` (cancelled by a selection change, Esc, the chip again; Esc or the chip sends Auto back to the units): grenades
+  pick an enemy unit (a ring on every enemy unit, `overlay.target_lit`) or a shut gate (-2 - g); the caracole an enemy unit; the
+  batter lights the standing buildings (the Occupy outline, `overlay.occ_lit`) and takes a building (-2 - b), a wall stretch (the
+  stretch index) or a gate (-1: the stretch the destruction AI would batter beside it). A tap that hits no target keeps the pick
+  armed and says so. **Pistols are Auto <-> Hold only**: the sim accepts Use now for pistols but nothing reads it, so a pick
+  would do nothing. **Field guns have no Target chip** (the sim has the batter for `guns_siege` only, and for attackers at a
+  walled town); the plan's list gave `guns_field` a Target.
+- **Cards.** The state strip is at the top right of the card (the card is 34 px: no row under the count), up to three 11 px glyphs
+  (one on a narrow card) left of the general / hero mark: hold fire (`hold_fire`), a stance that is not the unit's default (Cover
+  for a unit whose default is Line, Line for a cover unit, Hold street), an ability on Hold (its icon struck through, red), a Use now
+  (a gold target). Defaults show nothing, so a skirmisher in its default Cover stance is quiet. The card's tip lists the same in
+  words under the role's "plays as" (`Hud._card_state_strip`, fed by `Battle._card_states`).
+- **Keys.** The Keys page has a "Chips" section (the fixed three, the chips, Auto / Hold / Use now, More, the phone capsule, the card
+  strip) before the Roles section. No new key binding.
+- **Tests.** `tests/hud_fit_test.gd` (headless works, about 8 s; windowed about 4 min with the screenshots): 844x390 (touch,
+  dpr 3), 1180x820, 1280x720; a selection of each role present in the test field, everything, line + skirmish + guns, a stress
+  selection with every chip applicable, a siege field with the Target chip, the chips' states and the card strip, a resize
+  with a selection standing. It asserts nothing past the viewport, Halt / Withdraw (Run unless guns) on the bar, every applicable
+  chip on the bar xor under More, the popover inside the viewport, no capsule / actions overlap. `input_test` and `battle_screen_test`
+  were not changed (the `Run`, `Halt` order on the bar and the popover are not asserted there).

@@ -314,7 +314,29 @@ func _fill() -> void:
 				if c == "mouse" and not (b["keys"] as Array).is_empty():
 					text = (text + "; " if text != "-" else "") + "key " + key_text(b)
 				g.add_child(_cell(text, Color(1, 0.95, 0.8) if c == cols[0] else Color(0.8, 0.8, 0.78)))
+	_fill_chips()
 	_fill_roles()
+
+
+## The Chips section (battle HUD pass): what the bottom bar's chips and fixed buttons mean.
+func _fill_chips() -> void:
+	var head := UiKit.label("Chips", 18, UiKit.COL_GOLD)
+	head.name = "chips_head"
+	_grid_box.add_child(head)
+	for line in [
+		["Halt, Run, Withdraw", "Always on the bar with a selection (Run is hidden when only guns are selected): stop and drop orders, walk or run, leave the battle."],
+		["Chips", "The bar's other buttons are chips, one per order the selected units can take, in a fixed order. A tap cycles a toggle (Fire: at will / hold). A chip dimmed with 'not all selected units' only works for some of the selection."],
+		["Auto / Hold / Use now", "Abilities (Grenades, Pistols, Caracole, Target) have three states. Auto: the unit decides. Hold: it never uses it. Use now: tap a target on the field (lit when armed); Esc or the chip again cancels back to Auto. Pistols have Auto and Hold only."],
+		["More", "A chip that does not fit the bar is under More, which opens a list above it. Nothing is ever cut off."],
+		["Phone capsule", "On a phone the selection capsule shows the role badges: Line (bars), Skirm (scatter), Shock (sword), Horse (horseshoe), Guns (a gun on a wheel). Keys 1-6 are the same."],
+		["Card strip", "A card shows a small glyph for each chip that is not at its default: hold fire, an ability on Hold or armed, the Cover stance. Its tip lists them in words."]]:
+		var row := UiKit.hbox(10)
+		var v := UiKit.vbox(2)
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(v)
+		v.add_child(UiKit.label(str(line[0]), 15, Color(1, 0.95, 0.7)))
+		v.add_child(UiKit.label(str(line[1]), 14, Color(0.9, 0.9, 0.85), true))
+		_grid_box.add_child(row)
 
 
 ## The Roles page: the ten roles, each with its badge and the two lines of how it plays.

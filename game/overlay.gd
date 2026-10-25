@@ -54,6 +54,8 @@ var match_v := 0
 ## The Occupy flow (game/battle.gd): the buildings the selection may be sent into (lit), the one shown
 ## (its sight fans, its places, a tip) and the tip's last line; the fan cache is per (building, range).
 var occ_mode := false
+## The ability chips' Use now pick (battle.gd): the enemy units that may be picked, ringed.
+var target_lit: Array[int] = []
 var occ_lit: Array[int] = []
 var occ_focus := -1
 var occ_range_m := 60.0
@@ -579,6 +581,11 @@ func _draw() -> void:
 	if sim.sg_on != 0:
 		_draw_free_towers(r, lw)
 	_draw_markers(r, lw)
+	for tu in target_lit:
+		if tu < sim.n_units and sim.u_state[tu] < BattleSim.U_DESTROYED:
+			var tp := to_px(sim.u_cx[tu], sim.u_cy[tu])
+			draw_arc(tp, r * 1.45, 0.0, TAU, 28, Color(0, 0, 0, 0.6), lw * 2.2)
+			draw_arc(tp, r * 1.45, 0.0, TAU, 28, Color(1.0, 0.82, 0.25, 0.95), lw * 1.2)
 	var primary := selected_units[0] if not selected_units.is_empty() else -1
 	for u in selected_units:
 		if u >= 0 and u < sim.n_units and sim.u_state[u] < BattleSim.U_DESTROYED:
