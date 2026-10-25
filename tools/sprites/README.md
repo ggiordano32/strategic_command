@@ -107,6 +107,11 @@ Caribbean batch 2 (2026-10-24, ids 34-40): 34 mounted_arquebusiers (mounted, rid
 (default melee pose, machete, a short musket slung), 39 atlatl (pose `javelin`: atlatl and dart hidden after the cast), 40
 w_slingers (pose `sling`, native body). Atlas 1024x2460, 1.4 MB of PNG. No new poses.
 
+Caribbean batch 3 (2026-10-24, ids 41-44, the characters, melee pose): 41 sea_captain (plumed hat, laced coat, cutlass, two
+pistols), 42 privateer (tricorn, dark coat, knife and pistol), 43 missionary (brown habit, cord, cross, unarmed), 44 shaman
+(native body, tall feather fan, rattled staff). Characters are drawn procedurally in Rome (`"sprite": 0`); these sets are for
+the rows to point at. Atlas 1024x2540. Re-rendering old units shifts a few noise pixels: restore the old rects after packing.
+
 Rigs name their animation set (`anim`: humanoid, horse (also the camel
 rig), elephant, bolt / scorpion / onager (engines), cart / wagon (props)).
 A unit may carry `riders` (a list: prefix, rig, body, seat, parent_bone,

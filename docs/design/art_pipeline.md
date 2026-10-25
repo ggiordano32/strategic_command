@@ -454,3 +454,19 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
   Atlas 1024x2460, 1.4 MB of PNG. Build: the seven units about 2 s each; the new sets need `sprite_set` (and `engine_set` for
   the naval gun) on their unit rows in `sim/unit_types.gd`, not done here.
 
+### Four character sets, batch 3 (2026-10-24)
+
+- **Characters are not drawn by a set in Rome**: `UT.CHARS` rows carry `"sprite": 0` and no `sprite_set`, and are drawn
+  by the procedural path (their story busts / figures are the view-only art of "Characters (as built)"). These four sets
+  exist so the batch-3 rows can point at them with `"sprite_set": N`; none is wired here.
+- **Sets** (ids appended; 44 of 63 used; one man each, no new poses, default melee pose with the right forearm holding the
+  weapon): 41 sea_captain (broad hat with plume, long laced sea coat, sash, crossbelt, two pistols at the belt, drawn
+  cutlass), 42 privateer (dark coat, tricorn with cockade, sash and neck scarf, knife in the right hand and a pistol in the
+  left), 43 missionary (brown hooded habit with a rope cord, tonsured bare head, book and a tall cross held up; unarmed),
+  44 shaman (bare painted torso, tall fan of eleven feathers, bone necklace, feathered cape, a rattled staff and a gourd
+  rattle). The musket / pistol and assassin / diplomat / chieftain poses the plan hoped for do not exist; the melee pose is used.
+- Sets 1-40 are pixel-identical: Blender re-renders of old units differ by a few EEVEE noise pixels (max channel delta 9 in
+  archers, gastraphetes, crew, atlatl), so the new atlas has every old frame rect overwritten with the old pixels (a Godot
+  script, kept out of the repo) after pack.py; 2236 shade and mask rects compared, 0 differ. Atlas 1024x2540, 1.4 MB of PNG.
+
+
