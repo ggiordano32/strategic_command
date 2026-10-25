@@ -2337,6 +2337,53 @@ Seven rows after the mortar in `UnitTypes.WEST_LATE` (every earlier index unchan
 - **Tests.** `pack_test _batch2` (rosters, exact buildings, indices, sets, the gun's wall damage, costs, ability bits,
   garrison, picker, mixes), `roles_test` (the seven roles).
 
+## The Caribbean roster, batch 3: the characters (plan, 2026-10-24)
+
+The West has no characters: the six rows of `UT.CHARS` (the four heroes, the assassin, the diplomat; "Heroes
+and agents (as built)") carry no pack and the campaign's character rules (`campaign/cchars.gd`, `CHAR_NEEDS`,
+the AI's heroes and diplomats) are Rome's. Batch 3 gives the West four characters of its own on the same
+machinery, one per kind of side, judged against the asymmetry principle; the sim gains two small generic fields
+and the rest is data. Every row is a West character row (`"char": 1`, `"pack": "west"`, appended after the
+existing CHARS so no index moves), a sprite set through the pipeline, a `CHAR_NEEDS` entry, a book page, a
+custom battle toggle, and the campaign AI raising it as it raises Rome's.
+
+- **Sea Captain** (England, France, the Dutch, the Brethren; Shipyard 1; hero, `CK_FOOT`'s rules with a role
+  filter): the Champion's body (46 / 40 / armour 10, hp 600, `duel`, never breaks) in a sea coat with a cutlass
+  and a pistol brace (the pistols ability); his aura (40 m) reaches only units whose role is `skirmish` or
+  `shock` and the marines (new row field `au_roles`: a list of roles the aura applies to; empty = every unit as
+  today): +15 % to-hit, +3 morale a second. On the campaign, a fleet carrying him sails with its captain's quality
+  one step higher (`CCaptain` reads the army's characters; auto-resolve at sea too), `char_pct` 6. Played: the
+  pirates' and the nations' landing-party leader; useless to a pike block.
+- **Privateer** (England, France, the Dutch, the Brethren; Market 2; agent, the assassin's rules unchanged:
+  hidden, Sabotage of batteries and gates, Attempt on a general or hero, taken by a crowd): the assassin row
+  re-skinned (a hat, a dark coat, a knife and a pistol); price 800. Played: ashore before the assault, he spikes
+  the fort's guns and unbars the gate for the boarders.
+- **Missionary** (New Spain, Tierra Firme, France; Market 1; agent, the diplomat's rules): the diplomat row in a
+  robe with a cross, unarmed, the steadying aura (30 m, fear losses halved); his Parley succeeds more often
+  against native units (new row field `parley_vs`: a list of packs or roles, here the natives' rows, with
+  `parley_bonus` +25 points on both rolls), and on the campaign a missionary standing in a native region of ours
+  adds public order as a Market does (if the campaign has public order; else nothing and say so). Played: the
+  Spanish answer to a native war party that will not stand: talk it off the field.
+- **Shaman** (Itza "Ah Kin", Miskito "Sukia", one row `shaman`; Barracks 1; hero, `CK_FOOT`'s rules with the role
+  filter): a weak body (30 / 25 / armour 0, hp 300, no `duel`, never breaks), feathers and a staff; his aura
+  (40 m, `au_roles` `skirmish` and `shock`) +15 % to-hit and +3 morale a second, and a second effect the Champion
+  lacks: enemy units within 30 m of him take the elephants' kind of fright, +1 fear a second (`au_fear`: a new
+  aura bit on the rout test, the steadying aura halves it as it halves the beasts'). `char_pct` 4. Played: in the
+  trees behind the war party; the natives' morale answer to the tercio's.
+
+**The AI.** `CData.CHAR_NEEDS` for the West rows; `cai.gd`'s hero kinds map the West: a sea captain to the
+armies of the coast nations and the Brethren, a shaman to the natives' war parties, a missionary at Skilled as
+the diplomat is raised; privateers never (as assassins). The battle AI's character use (docs/AI.md 27) applies by
+kind unchanged.
+
+**Order of work.** (1) Sprites for the four (Sonnet) and (2) the sim fields `au_roles`, `au_fear`, `parley_vs` /
+`parley_bonus`, and the campaign hooks (the fleet captain's quality from a sea captain aboard; the missionary's
+public order if the rule exists) on Opus, in parallel; then (3) the rows, `CHAR_NEEDS`, the AI's kinds, the book
+pages, the custom battle toggles, tests and the West pins (Sonnet). Then the campaign_sim pacing on 72 seeds and
+a probe battle each: a shaman with the natives in `asym_field2` (does the Spanish edge narrow a little without
+flipping), a sea captain with the pirates on a deck, a missionary's parley against a wavering war party.
+
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus
