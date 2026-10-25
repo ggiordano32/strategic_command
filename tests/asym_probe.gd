@@ -28,8 +28,9 @@ func _init() -> void:
 			sim.step()
 		var r: int = sim.winner if sim.winner == 0 or sim.winner == 1 else 2
 		w[r] += 1
-		print("BATTLE %s seed %d winner %d tick %d alive %d/%d pistols %d car %d drift %d" % [scen, sd, r, sim.tick,
+		print("BATTLE %s seed %d winner %d tick %d alive %d/%d pistols %d car %d drift %d parley %d/%d pris %d,%d" % [scen, sd, r, sim.tick,
 			sim.alive_count(0), sim.alive_count(1), sim.stat_pis_shots if "stat_pis_shots" in sim else -1,
-			sim.stat_car_volleys if "stat_car_volleys" in sim else -1, sim.stat_skd_men if "stat_skd_men" in sim else -1])
+			sim.stat_car_volleys if "stat_car_volleys" in sim else -1, sim.stat_skd_men if "stat_skd_men" in sim else -1,
+			sim.stat_parley_ok, sim.stat_parley_ok + sim.stat_parley_fail, sim.ch_pris[0], sim.ch_pris[1]])
 	print("SUMMARY %s seeds %d spanish %d natives %d draws %d" % [scen, seeds, w[0], w[1], w[2]])
 	quit()

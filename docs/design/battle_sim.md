@@ -2486,6 +2486,32 @@ ignores `parley_bonus`; no probe battles yet (a shaman with the natives in `asym
 a deck, a missionary against a wavering war party); the sets have only the melee pose (no pistol or staff poses).
 
 
+### Batch 3 measured (2026-10-24)
+
+Three probes with new scenario ids only (`asym_field2s`, `asym_woods2s`, `probe_parley`, `probe_parley0`, `probe_deck`,
+`probe_deck0` in `sim/scenarios.gd`; `tests/asym_probe.gd` forwards `--scen` and now prints parley tries and prisoners);
+no existing scenario or hash moved.
+
+- **The shaman in the field.** `asym(woods, true)` plus Ah Kin with the natives, 48 seeds (seed0 16), Spanish /
+  natives / draws: field 45 / 3 / 0 without him, 37 / 10 / 1 with him; woods 1 / 46 / 1 without, 1 / 47 / 0 with
+  him. He narrows the field edge from 94 % to 77 % and does not flip it; in the woods he adds one win to a side that
+  already takes 96 %.
+- **The missionary against a wavering war party.** `probe_parley`: Spanish 120 pikes, 100 musketeers, 60 lancers
+  (plus Fray Tomas) against 3 x 100 warriors and 2 x 80 bowmen, flat, both AI Average, 24 seeds. With him: Spanish
+  20 / natives 4; natives surrendered in 20 of 24 battles (1,441 men, 36 parley tries, 28 succeeded, tries in 23
+  battles). Without him (`probe_parley0`): Spanish 17 / natives 7, no surrender, no parley. The battle AI does send the
+  missionary to parley (its rolls carry the bonus because `_ch_parley` applies `parley_bonus` to whatever target the AI picked; only the
+  AI's choice of target ignores it, still an open item).
+- **The sea captain.** Decks are the sea sim's own (`sim/sea_sim.gd`), which takes no `"chars"`, so `probe_deck` runs
+  on flat open ground: Brethren (2 cutlass, 2 buccaneers, 1 boarding grenadiers: 2,260) against 2 marines and
+  musketeers 100 + 90 (2,260), both AI, 24 seeds. Brethren / marines+shot / draws: 6 / 17 / 1 with Calico Jack, 7 /
+  16 / 1 without. The captain's champion aura makes no measurable difference (his sea_cq only works at sea).
+
+Reading against the asymmetry principle: the one character who moves the field is the shaman, and the
+move is the right size (the Spanish keep a clear edge in the open, the natives keep the woods); the missionary is the
+strongest piece measured, a campaign-scale prisoner machine rather than a battle-winner (+3 Spanish wins, 20 of 24
+battles with prisoners); the sea captain is neutral in a land fight, as designed.
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus

@@ -431,6 +431,42 @@ static func _make(id: String) -> Dictionary:
 				unit(1, UT.index_of("musketeers"), 100, 200, 150, FACE_DOWN)],
 				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
 				"orders": [{"tick": 0, "type": ORDER_SKIRMISH, "unit": 0, "on": 0}, attack(0, 1, 0, 0)]}
+		"asym_woods2s", "asym_field2s":
+			# Batch 3 probe: the batch-2 pair with a shaman (Ah Kin) with the natives.
+			var sc2 := asym(id.begins_with("asym_woods"), true)
+			sc2["chars"] = [[], [{"key": "shaman", "name": "Ah Kin"}]]
+			return sc2
+		"probe_parley", "probe_parley0":
+			# Batch 3 probe: a Spanish army (with Fray Tomas, a missionary, unless
+			# probe_parley0) against a native war party, flat 400 x 400, both AI.
+			var pu: Array = []
+			for r in [["w_pikemen", 120, 200, 340], ["musketeers", 100, 140, 340], ["lancers", 60, 300, 345]]:
+				pu.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))
+			for r in [["native_warriors", 100, 200, 110], ["native_warriors", 100, 130, 110], ["native_warriors", 100, 270, 110],
+					["native_bowmen", 80, 165, 128], ["native_bowmen", 80, 235, 128]]:
+				pu.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
+			var scp := {"width_m": 400, "height_m": 400, "ai_sides": [0, 1], "units": pu,
+				"terrain": {"kind": Terrain.K_FLAT}}
+			if id == "probe_parley":
+				scp["chars"] = [[{"key": "missionary", "name": "Fray Tomas"}], []]
+			return scp
+		"probe_deck", "probe_deck0":
+			# Batch 3 probe (decks are the sea sim's, which takes no characters, so
+			# this is flat open ground): Brethren (2 cutlass, 2 buccaneers, 1 boarding
+			# grenadiers: 2,260) with Calico Jack, a sea captain (unless probe_deck0),
+			# against 2 marines, musketeers 100 and 90 (2,260).
+			var du: Array = []
+			for r in [["cutlass", 100, 130, 300], ["cutlass", 100, 270, 300], ["boarding_grenadiers", 60, 200, 300],
+					["buccaneers", 60, 80, 320], ["buccaneers", 60, 320, 320]]:
+				du.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))
+			for r in [["marines", 80, 140, 110], ["marines", 80, 260, 110], ["musketeers", 100, 200, 125],
+					["musketeers", 90, 200, 95]]:
+				du.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
+			var scd := {"width_m": 400, "height_m": 400, "ai_sides": [0, 1], "units": du,
+				"terrain": {"kind": Terrain.K_FLAT}}
+			if id == "probe_deck":
+				scd["chars"] = [[{"key": "sea_captain", "name": "Calico Jack"}], []]
+			return scd
 		"asym_woods", "asym_field", "asym_woods2", "asym_field2":
 			# The asymmetry probe (roles step 2, docs/design/battle_sim.md
 			# "Roles, step 2"): a Spanish army (side 0) and a native war party
