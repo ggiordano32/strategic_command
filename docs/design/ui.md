@@ -755,3 +755,54 @@ View only: the data is the `role` key on every unit row (docs/design/battle_sim.
 - **Keys.** The Keys page ends with a Roles section: the ten roles, each a badge, the name and its two lines.
 Tests: `tests/roles_test.gd` (every row has a role in the table, the roster by role, filter groups), `battle_theme_test`
 and `input_test` (the capsule and the group steps).
+
+### The battle HUD pass (plan, 2026-10-24; roles step 3 folded in)
+
+The owner, 2026-10-23: "our combat UI is getting crowded"; the reorganisation is done once, now that the roles'
+behaviours, the destruction AI and batch 2 have landed. One pass over the bottom bar, the filters, the order
+buttons and the cards; the sim is untouched (abilities already take `ORDER_ABILITY` from roles step 2).
+
+**The bottom bar, left to right.** (1) The selection capsule: All / the role groups / None, with **Add**. On a
+compact width (phone) its segments show the role badge glyphs (`game/role_badge.gd`) instead of words, 34 px
+each, with the tip naming the group; on a desktop width the words stay. (2) The fixed three, always visible with a
+selection: **Halt**, **Run**, **Withdraw** (Run keeps its on / off state word). (3) The **ability chips** of the
+selected units' roles, in a fixed order per role, only the chips every selected unit's role has (a mixed
+selection shows the common chips, then the rest greyed with the tip "not all selected units"). Then (4) **More**:
+a single chip at the end that opens a vertical popover with every chip that did not fit, so nothing is ever
+clipped (the half-a-button overflow on phones goes away); the fit is measured from the laid-out widths one frame
+after the selection changes and again on a resize (`_fit_actions` grows into this).
+
+**Chips.** One widget (`game/ability_chip.gd`): an icon, a short name, a state word under or after it, 42 px
+high, 56-96 px wide. Two kinds:
+- **Toggles** (the orders that exist today, unchanged in the sim): Fire (at will / hold), Skirmish (on / off),
+  Stance (Line / Cover / Hold street), Bounds, Deploy, Refill, Forage, Ammo (the kind), Occupy / Leave, Release
+  (dogs), Drop, the heroes' acts, Gift, Waypoints. A tap cycles.
+- **Abilities** (roles step 2's table: pistols, grenades, caracole, batter): three states **Auto / Hold / Use
+  now**; a tap cycles Auto -> Hold -> Use now -> Auto; **Use now** arms a target pick on the field (the chip reads
+  "Use now: tap a target", the cursor as Occupy's, the valid targets lit: units for grenades and pistols, a
+  stretch or a building for batter, the enemy unit for caracole), and the pick sends `make_ability_order`; Esc or
+  the chip again cancels back to Auto. The chip's state word shows the current state; a unit with no such
+  ability shows no chip.
+Chips per role (in order): `line` Fire, Stance, Occupy; `skirmish` Fire, Skirmish, Stance, Occupy, Grenades (if
+the row has them), Pistols (if the row has them); `missile` Fire, Skirmish, Ammo; `shock` Occupy, Grenades,
+Pistols (if the row has them); `horse_shock` Bounds; `horse_skirmish` Caracole, Fire, Pistols, Bounds;
+`guns_field` Fire, Deploy, Ammo, Target (men / walls / buildings: Target is the batter ability's Use now with a
+pick, plus "men" as Auto); `guns_siege` Target, Fire, Deploy, Ammo; `command` the acts, Gift; `beast` Release where
+it applies. Wagons: Refill, Forage, Drop. Waypoints and the dogs' Release go to More on a compact width.
+
+**Cards.** The unit card keeps the role badge and the colour band; it gains a thin state strip under the count:
+one glyph per chip whose state is not the default (a hand for Hold fire, a crossed grenade for Grenades on Hold,
+a target ring for an armed Use now, a cover glyph for the Cover stance); nothing when all is default, so the cards
+stay quiet. The card tip lists the states in words.
+
+**Keys and the book.** The Keys page gets a "Chips" section (what Auto / Hold / Use now mean, the three fixed
+buttons, More, the compact capsule's glyphs); the Controls table gains the chip actions where they have keys
+(the existing keys for fire / skirmish / stance / run / halt stay; no new key bindings in this pass).
+
+**Fit rule and test.** A new `tests/hud_fit_test.gd` lays the HUD out at 844 x 390 (phone landscape), 1180 x 820
+(tablet) and 1280 x 720 (desktop) with selections of each role, a mixed selection and a wagon, and asserts that
+no visible child of the bottom bar extends past the viewport, that the fixed three are visible, and that every
+chip is either visible or in More. `input_test` and `battle_screen_test` keep passing (the capsule's glyph
+segments keep the same keys 1-6 and the same `group_buttons` names).
+
+**Out of scope.** The sea battle HUD; the campaign bar; new abilities; the AI's use of Hold / Use now.
