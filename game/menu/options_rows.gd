@@ -9,7 +9,7 @@ extends RefCounted
 ##   rows.build(parent, {"prefix": "home", "narrow": false, "title": true, "dev": false, "win": get_window(),
 ##       "on_size": Callable, "on_controls": Callable, "on_book": Callable, "on_tests": Callable})
 ##   rows.refresh()   # the controls show the stored values again
-## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, map_style,
+## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, map_view, map_style,
 ## menu_emblems; audio_mute and audio_master / audio_effects / audio_ambient (sliders).
 
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -59,13 +59,21 @@ func build(parent: Control, o: Dictionary) -> void:
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
 	_section(parent, "Looks", true)
-	_choice(parent, "battle_look", "Battle look", "The look of the battle map.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
-		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge). " \
-		+ "Painterly: the softer, grounded look. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
+	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
+		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
+		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
 	MapView.load_view_pref()
-	_choice(parent, "map_style", "Campaign map", "The style of the campaign map.", [["Auto", "auto"], ["Table", "table"], ["Relief", "relief"]],
-		MapView.style_pref, "Campaign map", "Auto: the map table (painted miniatures, banded relief and sea) for the Caribbean, the relief map for Rome. " \
-		+ "Table and Relief force one. Takes effect on the next map.", func(v): MapView.set_style(str(v)))
+	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
+		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",
+		"Terrain: the land and sea drawn with the Map style below. Political: flat owner colours and hatch marks, the cheapest map. " \
+		+ "Takes effect at once.", func(v): MapView.set_terrain_view(str(v) == "terrain"))
+	_choice(parent, "map_style", "Map style", "For the Terrain view. Table is the heaviest, Relief lighter.", [["Auto", "auto"], ["Table", "table"], ["Relief", "relief"]],
+		MapView.style_pref, "Map style", "Auto: the map table for the Caribbean, the relief map for Rome. Table: painted miniatures, trees and a banded sea " \
+		+ "(the heaviest). Relief: shaded land (lighter). Picking Table or Relief also switches the Map view to Terrain. Takes effect at once.", func(v):
+			MapView.set_style(str(v))
+			if (str(v) == "table" or str(v) == "relief") and not MapView.terrain_view:
+				MapView.set_terrain_view(true)
+				refresh())
 	if title:
 		_choice(parent, "menu_emblems", "Emblems", "The marks of the two settings.", [["Drawn", "drawn"], ["Painted", "painted"]],
 			MenuPrefs.stored_emblems(), "Emblems", "Drawn in code, or painted pictures (when the files are installed).", func(v):
@@ -133,7 +141,7 @@ func fit(fits: Callable) -> int:
 
 func _apply_level(lv: int) -> void:
 	level = lv
-	_parent.add_theme_constant_override("separation", 8 if lv == 0 else 3)
+	_parent.add_theme_constant_override("separation", 8 if lv == 0 else (3 if lv < 3 else 1))
 	for k in descs:
 		var d := descs[k] as Label
 		d.visible = lv < 3
@@ -264,6 +272,7 @@ func refresh() -> void:
 	put.call("fullscreen", 1 if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else 0)
 	put.call("battle_look", BattleLook.pref())
 	MapView.load_view_pref()
+	put.call("map_view", "terrain" if MapView.terrain_view else "political")
 	put.call("map_style", MapView.style_pref)
 	put.call("menu_emblems", MenuPrefs.stored_emblems())
 	var a = AudioFx.inst()

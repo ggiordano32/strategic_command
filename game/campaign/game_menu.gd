@@ -77,6 +77,8 @@ func close() -> void:
 	if _fade != null and _fade.is_valid():
 		_fade.kill()
 	modulate.a = 1.0
+	if s != null and s.get("map_key") != null:
+		s.map_key.refresh_view()   # (Options may have switched the map view)
 
 
 ## One step back: Options / the confirm to the entries, the entries to the map.

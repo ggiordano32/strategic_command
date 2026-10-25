@@ -601,10 +601,21 @@ a long string").** View only.
 - *Options* (`game/menu/options_rows.gd`, one builder for the title screen's page and the in-game Menu's): each setting is a
   row, the label (16, bone) with a one-line description (13, dim) left and a capsule right (under the label on phones and
   in the 440 px in-game column): UI size S / M / L, Graphics Auto / High / Low (the description says what Auto is now),
-  Soldiers Auto / Compatible, Fullscreen, Battle look Diorama / Painterly, Campaign map Auto / Table / Relief; the title
+  Soldiers Auto / Compatible, Fullscreen, Battle look Diorama / Painterly, Map view Terrain / Political, Map style Auto / Table / Relief (see "Map view switch" below); the title
   page adds Emblems Drawn / Painted (the menu picture moved to the title screen's selector) and its Help section (Controls, Unit book,
   Tests with `--dev`). Audio: a Sound On / Off capsule and three sliders (master, effects, ambient) with their percent.
   The page sits in a trim panel so it reads over any picture; it scrolls (the Help buttons are at the bottom).
+
+**Map view switch and the Looks rows (as built, 2026-10-25).** The campaign map's bottom-left button showed the
+*current* view ("Political" or "Terrain"); on the owner's phone "Political" read as "switch to Political", so the map
+looked stuck and he tried the Options "Campaign map" row, which does nothing in the Political view. Now
+`map_key.gd` `view_button` (node `map_view_button`) is a two-segment capsule, Terrain | Political (`MapKey.VIEW_W`, two
+button widths), the lit segment the current view; the hint clears the wider control. The key list's row reads "Map view:
+Terrain". Options (`options_rows.gd`) gains a **Map view** row (same switch, `MapView.set_terrain_view`) and the old
+Campaign map row is **Map style** (Auto / Table / Relief, for the Terrain view); picking Table or Relief while Political
+switches the view to Terrain. The Looks descriptions and tips now say which setting costs more: Political lightest,
+Table heaviest, Relief lighter; Diorama (splatted ground, full-strength shadows) the heavier battle look, Painterly the
+lighter. View only; no hashes move.
 - *Grand Campaign page* (`main.gd`): the heading and a line, then two trim cards side by side (stacked under 640
   logical wide or on a phone). **Host a grand campaign**: the two settings as mini-cards (emblem, name, year; the lit one
   gold), the **Host** hero button (opens the faction page in online mode for the picked setting), and under it the

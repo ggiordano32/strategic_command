@@ -126,6 +126,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Characters wired in: no figure until the Brethren land an army; Hunyuan models: the captain's plume and hat, the licence before release, silhouette fit, the rest of the cast. [rows "Characters wired in", "Hunyuan3D character models"]
 
 ### UI
+- Options Looks rows (2026-10-25): Map view Terrain / Political and Map style Auto / Table / Relief (was Campaign map); the map's view button is now a Terrain | Political switch. Not yet seen on the owner's phone.
 - Menu pass 2: a real-touch long-press and a desktop hover pass; the campaign top bar and command bar tips are boxed but untitled. [row "Menu pass 2"]
 - In-game UI theme: the land campaign battle has no name for the top bar; the Options cycles duplicated from `main.gd`; the 800x450 phone top row ~20 px too wide. [rows "In-game UI theme, pass 1", "In-game UI theme, pass 2"]
 - Main menu: the owner picks the background and emblem style; the owner's cleaned-up emblems to swap in; title background swipe tested with mouse events only. [rows "Main menu rebuild", "Title screen background selector"]

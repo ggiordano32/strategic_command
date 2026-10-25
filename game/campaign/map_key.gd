@@ -28,6 +28,7 @@ const FogView := preload("res://game/campaign/fog_view.gd")
 const SETTINGS := "user://settings.cfg"
 const BUTTON_W := 76.0
 const BUTTON_H := 48.0
+const VIEW_W := BUTTON_W * 2.0  # the Terrain | Political switch
 const PANEL_W := 300.0
 const SAMPLE := Vector2(66, 30)
 const MARGIN := 8.0
@@ -43,7 +44,7 @@ var enemy_col := CData.faction_color(1)
 var fog := false  # the fog rows are shown (FogView.on at the last set_format)
 
 var button: Button
-var view_button: Button     # Terrain / Political, above the Key button
+var view_button: Control    # Terrain | Political segmented switch, above the Key button
 var view_row: Button        # the same toggle inside the open key
 var panel: PanelContainer
 var header: Button
@@ -66,13 +67,13 @@ func _init() -> void:
 	button.offset_top = -MARGIN - BUTTON_H
 	add_child(button)
 	MapView.load_view_pref()
-	view_button = Kit.button("", func(): _toggle_view(), BUTTON_W, Kit.FONT_SMALL)
-	view_button.name = "map_view_button"
-	view_button.custom_minimum_size = Vector2(BUTTON_W, 40.0)
+	view_button = Kit.segmented([["Terrain", "terrain"], ["Political", "political"]],
+		"terrain" if MapView.terrain_view else "political", _on_view_picked, "map_view_button")
+	view_button.custom_minimum_size = Vector2(VIEW_W, 40.0)
 	view_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
 	view_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	view_button.offset_left = MARGIN
-	view_button.offset_right = MARGIN + BUTTON_W
+	view_button.offset_right = MARGIN + VIEW_W
 	view_button.offset_bottom = -MARGIN - BUTTON_H - 4.0
 	view_button.offset_top = -MARGIN - BUTTON_H - 4.0 - 40.0
 	add_child(view_button)
@@ -116,11 +117,20 @@ func _toggle_view() -> void:
 	_refresh_view_buttons()
 
 
+func _on_view_picked(v) -> void:
+	MapView.set_terrain_view(str(v) == "terrain")
+	_refresh_view_buttons()
+
+
+## The switch shows the stored view again (the Options rows may have changed it).
+func refresh_view() -> void:
+	_refresh_view_buttons()
+
+
 func _refresh_view_buttons() -> void:
 	var t := "Terrain" if MapView.terrain_view else "Political"
-	view_button.text = t
-	view_row.text = "Map view: %s (tap to switch to %s)" % [t, "Political" if MapView.terrain_view else "Terrain"]
-	view_button.tooltip_text = "Switch the map between Terrain and Political view"
+	(view_button as Kit.Segmented).set_value("terrain" if MapView.terrain_view else "political")  # silent: no changed signal
+	view_row.text = "Map view: %s" % t
 
 
 static func load_pref() -> bool:

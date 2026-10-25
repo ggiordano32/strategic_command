@@ -1422,7 +1422,7 @@ func _build_ui() -> void:
 	hint.add_theme_constant_override("outline_size", 5)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	# Right of the map key's button.
-	hint.offset_left = MapKey.MARGIN * 2.0 + MapKey.BUTTON_W
+	hint.offset_left = MapKey.MARGIN * 2.0 + maxf(MapKey.BUTTON_W, MapKey.VIEW_W)
 	hint.offset_right = hint.offset_left + 412
 	ui.add_child(hint)
 	map_key = MapKey.new()

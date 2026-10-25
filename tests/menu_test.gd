@@ -383,7 +383,7 @@ func _options_fit() -> void:
 		var rows = m._opts
 		var tag := "%dx%d %s" % [case[0].x, case[0].y, case[1]]
 		if bool(case[2]):
-			_check(fits.call(), "Options needs no scroll at %s (viewport %s, fit level %d)" % [tag, str(m.get_viewport_rect().size), rows.level])
+			_check(fits.call(), "Options needs no scroll at %s (viewport %s, fit level %d, need %d have %d)" % [tag, str(m.get_viewport_rect().size), rows.level, int(m._options_box.get_combined_minimum_size().y), int(m._options_box.get_parent().get_parent().size.y)])
 		else:
 			_check(rows.level >= 0, "Options builds at %s (fit level %d)" % [tag, rows.level])
 		_check(rows.seg.size() >= 8 and rows.sliders.size() == 3 and _btn("home_controls") != null and _btn("home_unit_book") != null,
@@ -415,6 +415,7 @@ func _options_page() -> void:
 		"quality": func(): return Quality.load_pref(),
 		"soldiers": func(): return SoldierLayer.load_pref(),
 		"battle_look": func(): return BattleLook.pref(),
+		"map_view": func(): return "terrain" if MapView.terrain_view else "political",
 		"map_style": func(): return MapView.style_pref,
 		"menu_emblems": func(): return MenuPrefs.stored_emblems(),
 	}
