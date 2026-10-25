@@ -764,6 +764,8 @@ const AU_FOOT := 1        # u_aura bits: in a foot hero's aura this second
 const AU_MIS := 2         # ... a missile hero's
 const AU_CAV := 4         # ... a cavalry hero's
 const AU_STEADY := 8      # ... a diplomat's (fear losses cut)
+const AU_FEAR := 16       # ... an ENEMY hero's fright (au_fear: fear a second, as the beasts'; batch 3)
+const AU_FEAR_R := 30 * M # an au_fear row without its own au_fear_r frightens this far (box to box)
 const CV_HIT := 0         # t_chv: the character rows' aura values (the best of each field)
 const CV_MOR := 1
 const CV_RNG := 2
@@ -1395,6 +1397,13 @@ var t_fall_gain := PackedInt32Array()
 var t_duel := PackedInt32Array()
 var t_unarmed := PackedInt32Array()
 var t_hidden := PackedInt32Array()
+# Batch 3 hooks (docs/design/battle_sim.md "Batch 3 sim and campaign hooks"): static, rebuilt by _load_types.
+var t_au_fear := PackedInt32Array()   # fear a second the row's hero puts on enemy units near him (0 none)
+var t_au_fear_r := PackedInt32Array() # ... this near (box to box)
+var t_aur_i := PackedInt32Array()     # the row's au_roles: offset of its row-match table in ch_match (-1: every unit)
+var t_pv_i := PackedInt32Array()      # the row's parley_vs: offset of its row-match table (-1: none)
+var t_pv_b := PackedInt32Array()      # ... its parley_bonus (points on both parley rolls)
+var ch_match := PackedByteArray()     # row-match tables, nt bytes each: 1 = the list names that type
 # Firearms (docs/DESIGN.md "Firearms"; _gun_arrays hashed only in battles
 # with a gun unit, gun_on): volleys and their fright.
 var t_m_gun := PackedInt32Array()     # 1: a powder weapon (UT "m_gun")
@@ -2364,7 +2373,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		if t_body_r[bty] > 0:
 			big_on = 1
 		_hit_rmax = maxi(_hit_rmax, t_hit_r[bty])
-		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0 or t_cmd_r[bty] > 0 or t_ch_r[bty] > 0 \
+		if t_scare_r[bty] > 0 or t_fear_r[bty] > 0 or t_cmd_r[bty] > 0 or t_ch_r[bty] > 0 or t_au_fear[bty] > 0 \
 				or (t_char[bty] != 0 and t_char_kind[bty] == UT.CK_SIEGE):
 			aura_src.append(u)
 
@@ -2652,6 +2661,18 @@ static func _engines_for(ty: int, count: int) -> int:
 	return maxi(count / crew, 1)
 
 
+## A row-match table for the list `lst` (role keys, pack names, row keys:
+## UT.row_named) appended to ch_match: its offset, -1 for an empty list.
+func _match_table(lst: Array, nt: int) -> int:
+	if lst.is_empty():
+		return -1
+	var off := ch_match.size()
+	ch_match.resize(off + nt)
+	for tu in nt:
+		ch_match[off + tu] = 1 if UT.row_named(lst, tu) else 0
+	return off
+
+
 func _projectile_arrays() -> Array:
 	return [pr_sx, pr_sy, pr_x, pr_y, pr_t0, pr_t1, pr_unit, pr_tu, pr_next, pr_ty, pr_ak]
 
@@ -2722,6 +2743,21 @@ func _load_types() -> void:
 		if t_char[t] != 0:
 			for f in CH_FIELDS.size():
 				t_chv[f] = maxi(t_chv[f], UT.stat(t, CH_FIELDS[f]))
+	# Batch 3 hooks: the aura's role filter, the hero's fright, the parley bonus (all 0 / -1 in today's rows).
+	t_au_fear.resize(nt)
+	t_au_fear_r.resize(nt)
+	t_aur_i.resize(nt)
+	t_pv_i.resize(nt)
+	t_pv_b.resize(nt)
+	ch_match = PackedByteArray()
+	for t in nt:
+		t_au_fear[t] = UT.stat(t, "au_fear") if t_char[t] != 0 else 0
+		t_au_fear_r[t] = UT.stat(t, "au_fear_r")
+		if t_au_fear[t] > 0 and t_au_fear_r[t] <= 0:
+			t_au_fear_r[t] = AU_FEAR_R
+		t_aur_i[t] = _match_table(UT.TYPES[t].get("au_roles", []), nt) if t_char[t] != 0 else -1
+		t_pv_b[t] = UT.stat(t, "parley_bonus") if t_char[t] != 0 else 0
+		t_pv_i[t] = _match_table(UT.TYPES[t].get("parley_vs", []), nt) if t_pv_b[t] != 0 else -1
 	var ka := [t_k_base, t_k_share, t_k_dmg, t_k_obj, t_k_ap, t_k_pierce, t_k_range, t_k_rate, t_k_fear,
 		t_k_blast, t_k_fire, t_k_aoe, t_k_poison]
 	var na := UT.AMMO.size()
@@ -14848,10 +14884,16 @@ func _update_auras() -> void:
 			if u_side[src] == u_side[u]:
 				if t_cmd_r[sty] > 0 and t_cmd_mor[sty] > held and u_cmdgone[src] == 0 and _box_gap(src, u) <= t_cmd_r[sty]:
 					held = t_cmd_mor[sty]
-				if ch_on != 0 and t_ch_r[sty] > 0 and _box_gap(src, u) <= _ch_reach(src):
+				if ch_on != 0 and t_ch_r[sty] > 0 and _ch_serves(sty, tu) and _box_gap(src, u) <= _ch_reach(src):
 					bits |= _ch_bit(u_char[src], tu)
 				continue
 			var gap := _box_gap(src, u)
+			if ch_on != 0 and t_au_fear[sty] > 0 and u_char[u] == 0 and gap <= _fear_reach(src):
+				# An enemy hero's fright (batch 3, the shaman): the beasts' kind of fear,
+				# halved by a diplomat's steadying aura below as theirs is.
+				loss += t_au_fear[sty]
+				feared = true
+				bits |= AU_FEAR
 			var scared := horse if t_scare_am[sty] < 0 else t_armour[tu] <= t_scare_am[sty]
 			if scared and t_scare_r[sty] > 0 and gap <= t_scare_r[sty]:
 				keep = t_scare_pct[sty] if keep == 0 else mini(keep, t_scare_pct[sty])
@@ -15869,6 +15911,9 @@ func _ch_parley(u: int) -> void:
 	var pct := 0
 	if open:
 		pct = PARLEY_PCT if u_state[t] == U_ROUTING else PARLEY_PCT_W
+		var pb := parley_bonus(u_type[u], u_otype[t])
+		if pb != 0 and pct > 0:
+			pct = clampi(pct + pb, 0, maxi(95, pct))  # (batch 3: a missionary's word with the natives)
 	if _rand() % 100 < pct:
 		_surrender(t, u_side[u])
 	else:
@@ -15947,6 +15992,27 @@ func _ch_bit(k: int, tu: int) -> int:
 	return 0
 
 
+## The aura of a character of row sty reaches a friendly unit of type tu: his
+## row's au_roles names tu (its role, pack or key), or he has no au_roles.
+func _ch_serves(sty: int, tu: int) -> bool:
+	var off := t_aur_i[sty]
+	return off < 0 or ch_match[off + tu] != 0
+
+
+## Character src's fright radius (au_fear_r), half once an attempt has
+## wounded him, as his aura's.
+func _fear_reach(src: int) -> int:
+	var r := t_au_fear_r[u_type[src]]
+	return r / 2 if (u_chf[src] & CHF_WOUNDED) != 0 else r
+
+
+## The points a diplomat of row dty adds to both parley rolls against a unit
+## of type tu (his row's parley_bonus when its parley_vs names tu; else 0).
+func parley_bonus(dty: int, tu: int) -> int:
+	var off := t_pv_i[dty]
+	return t_pv_b[dty] if off >= 0 and ch_match[off + tu] != 0 else 0
+
+
 ## Riders (horse, camel, elephant; not dogs).
 func _ch_mounted(tu: int) -> bool:
 	var mt := t_mount[tu]
@@ -15964,7 +16030,7 @@ func _ch_reach(src: int) -> int:
 func _ch_near(u: int, k: int) -> bool:
 	for src in aura_src:
 		if src != u and u_char[src] == k and u_side[src] == u_side[u] and u_state[src] == U_READY \
-				and u_alive[src] > 0 and _box_gap(src, u) <= _ch_reach(src):
+				and u_alive[src] > 0 and _ch_serves(u_type[src], u_otype[u]) and _box_gap(src, u) <= _ch_reach(src):
 			return true
 	return false
 

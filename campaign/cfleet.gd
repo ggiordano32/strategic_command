@@ -1513,7 +1513,10 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	var loss_pct := clampi(LOSS_BASE + 2 * (share - 50), LOSS_BASE, LOSS_MAX)
 	# (N2b) A Feared captain among the winners: his foes strike sooner.
 	var wcap: Dictionary = _capt().top_of(st, win)
-	if not wcap.is_empty() and _capt().tier(int(wcap["fame"])) >= 2:
+	var wtier := 0
+	for fl in win:
+		wtier = maxi(wtier, _capt().fleet_tier(st, fl))  # (batch 3: a sea captain aboard steps his fleet's up)
+	if wtier >= 2:
 		loss_pct = mini(loss_pct + int(CData.ship_const("STRIKE_LOSS", 0)), LOSS_MAX)
 		cap_pct += int(CData.ship_const("STRIKE_TAKEN", 0))
 	for fl in lose:

@@ -80,8 +80,7 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 	var feared := [false, false]
 	for k in 2:
 		for fl in sdz[k]:
-			var cp := CCaptain.of_fleet(st, int(fl["id"]))
-			if not cp.is_empty() and CCaptain.tier(int(cp["fame"])) >= 2:
+			if CCaptain.fleet_tier(st, fl) >= 2:  # (a Feared captain; batch 3: a sea captain aboard steps it up)
 				feared[k] = true
 	for k in 2:
 		for fl in sdz[k]:
@@ -91,8 +90,7 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 			var fear := CCaptain.fear_pct(st, fl)
 			var men := _carried_men(fl)
 			var tk := troop_kits(fl)
-			var cpt := CCaptain.of_fleet(st, int(fl["id"]))
-			var capq := 100 + (CAPT_CQ * CCaptain.tier(int(cpt["fame"])) if not cpt.is_empty() else 0)
+			var capq := 100 + CAPT_CQ * CCaptain.fleet_tier(st, fl)
 			var cap := maxi(CFleet.capacity(fl), 1)
 			var list: Array = fl["ships"]
 			for i in list.size():

@@ -148,6 +148,7 @@ func _init() -> void:
 	_sea_lanes()
 	_amphibious()
 	_rome_fleets()
+	_sea_cq()
 	_ai_sea_garrison()
 	_docking()
 	_sortie()
@@ -4518,6 +4519,90 @@ func _rome_fleets() -> void:
 		var ap := CTurn.apply_battle(s3, int(pend[0]["id"]), oc)
 		_check(sim.ended != 0 and not ap.is_empty(), "Rome fleets: the galley battle is decided (%d s) and written back" % (sim.tick / 10))
 	CData.use_pack("rome")
+
+
+## Batch 3 hook (docs/design/battle_sim.md "Batch 3 sim and campaign hooks"): a fleet carrying an
+## army with a fit character whose row has "sea_cq" fights with its captain's quality a fame tier
+## higher (CCaptain.fleet_tier: the sea battle's "cq" and its Feared test, fear_pct in the sea
+## auto-resolve's power and the scenario's morale, the winners' strike rule), clamped at Legend; a
+## wounded one, or none, changes nothing. The Champion's row is given sea_cq for the run (no row
+## has it yet).
+func _sea_cq() -> void:
+	var CCapt := load("res://campaign/ccaptain.gd")
+	var hrow: Dictionary = UT.TYPES[UT.index_of("hero_foot")]
+	CData.use_pack("west")
+	var syn := {"turn": 5, "chars": [{"id": 1, "kind": "hero_foot", "f": 0, "name": "Drake", "army": 77, "r": 0, "wounded": 0}]}
+	var fl := {"id": 31, "f": 0, "carry": [{"id": 77}], "ships": []}
+	var t0: int = CCapt.fleet_tier(syn, fl)
+	var f0: int = CCapt.fear_pct(syn, fl)
+	hrow["sea_cq"] = 1
+	var t1: int = CCapt.fleet_tier(syn, fl)
+	var f1: int = CCapt.fear_pct(syn, fl)
+	syn["captains"] = [{"id": 1, "f": 0, "nm": "Morgan", "fame": 50, "fl": 31, "born": 0, "pz": 0, "sk": 0}]
+	var t2: int = CCapt.fleet_tier(syn, fl)
+	syn["captains"][0]["fame"] = 90
+	var t3: int = CCapt.fleet_tier(syn, fl)
+	var f3: int = CCapt.fear_pct(syn, fl)
+	syn["chars"][0]["wounded"] = 7
+	var t4: int = CCapt.fleet_tier(syn, fl)
+	syn.erase("captains")
+	syn["chars"][0]["wounded"] = 0
+	syn["chars"][0]["army"] = 78
+	var t5: int = CCapt.fleet_tier(syn, fl)
+	_check(t0 == 0 and f0 == 0 and t1 == 1 and f1 == 5 and t2 == 3 and t3 == 3 and f3 == 20 and t4 == 3 and t5 == 0,
+		"sea_cq: a sea captain aboard: no captain 0 -> 1 (West fear 0 -> 5 %%), Feared 2 -> 3, Legend stays 3 (fear 20 %%), wounded or not aboard nothing (%d %d %d %d %d %d, fear %d %d %d)" % [
+			t0, t1, t2, t3, t4, t5, f0, f1, f3])
+	erase_sea_cq(hrow)
+	# A Roman fleet carrying an army with the Champion meets a Punic one: the scenario's "cq".
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var car := _f("carthage")
+	var st := CState.new_campaign("cq", 77, [rome])
+	var open := -1
+	for c in CGrid.count():
+		if CFleet.is_sea(c) and CFleet.coast_dist(c) >= 3:
+			var ok := true
+			for dx in range(-8, 9):
+				var j := CGrid.at(CGrid.cx(c) + dx, CGrid.cy(c))
+				if j < 0 or not CFleet.is_sea(j):
+					ok = false
+			if ok:
+				open = c
+				break
+	CState.set_dip(st, rome, car, CState.WAR)
+	st["fleets"] = [
+		{"id": 900, "f": rome, "x": CGrid.cx(open) + 5, "y": CGrid.cy(open), "ships": [{"t": "quinquereme", "h": 100, "c": 100}, {"t": "corbita", "h": 100, "c": 100}], "carry": [], "moved": 0},
+		{"id": 901, "f": car, "x": CGrid.cx(open) - 5, "y": CGrid.cy(open), "ships": [{"t": "trireme", "h": 100, "c": 100}], "carry": [], "moved": 0}]
+	var a: Dictionary = CState.armies_of(st, rome)[0]
+	a["units"] = (a["units"] as Array).slice(0, 2)
+	(st["armies"] as Array).erase(a)
+	(st["fleets"][0]["carry"] as Array).append(a)
+	st["chars"] = [{"id": 1, "kind": "hero_foot", "f": rome, "name": "Duilius", "army": int(a["id"]), "r": int(a["r"]), "wounded": 0}]
+	st["next_char"] = 2
+	var s3 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "fmove", "fleet": 900, "x": CGrid.cx(open) - 5, "y": CGrid.cy(open), "tgt": 901}])])
+	var pend := CTurn.pending_for(s3, rome)
+	if pend.is_empty() or int(pend[0].get("sea", 0)) != 1:
+		_check(false, "sea_cq: a voyage into a Punic fleet leaves a pending sea battle")
+		return
+	var cq0 := _cq_of(CBattle.build(s3, pend[0], rome))
+	hrow["sea_cq"] = 1
+	var bt1: Dictionary = CBattle.build(s3, pend[0], rome)
+	var cq1 := _cq_of(bt1)
+	erase_sea_cq(hrow)
+	_check(cq0 == [100, 100, 100] and cq1 == [120, 120, 100],
+		"sea_cq: the Roman ships carrying the Champion with sea_cq fight at cq 120 (CAPT_CQ a tier), the Punic at 100 (%s -> %s)" % [cq0, cq1])
+	CData.use_pack("rome")
+
+
+func erase_sea_cq(row: Dictionary) -> void:
+	row.erase("sea_cq")
+
+
+func _cq_of(bt: Dictionary) -> Array:
+	var out: Array = []
+	for u in bt["scenario"]["units"]:
+		out.append(int(u["cq"]))
+	return out
 
 
 ## Garrisons against landings (docs/AI.md 12.2): a coastal city of an AI

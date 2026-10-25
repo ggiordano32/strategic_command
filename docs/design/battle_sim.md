@@ -2383,6 +2383,55 @@ pages, the custom battle toggles, tests and the West pins (Sonnet). Then the cam
 a probe battle each: a shaman with the natives in `asym_field2` (does the Spanish edge narrow a little without
 flipping), a sea captain with the pirates on a deck, a missionary's parley against a wavering war party.
 
+### Batch 3 sim and campaign hooks (as built, 2026-10-24)
+
+Step (2) of the order of work: generic fields only, no West rows (the rows come next). Every field defaults to
+today's behaviour (no row sets one), so every hash, golden and pin is unmoved. Tests: `tests/chars_test.gd` (Rome's
+Champion and Diplomat given the fields for the run: roles, fear, parley, snapshot) and `campaign_test` `_sea_cq`.
+
+- **`au_roles`** (character row, an Array; default empty = every unit as before). A list of role keys
+  (`UT.ROLES`), and, beyond the plan, pack names and row keys (a unit's own key or its base row's: the sea
+  captain's "and the marines", whose role is `line`); `UT.row_named(lst, ty)` decides. The sim builds a row-match
+  table per listing row in `_load_types` (`t_aur_i` offsets into `ch_match`, nt bytes a table, static) and
+  `_ch_serves(sty, tu)` (the unit's own type, `u_otype`) gates the friendly aura bit in `_update_auras` and
+  `_ch_near` (the cavalry hero's rally of routing riders). The kind's own filter (`_ch_bit`: foot for `CK_FOOT`)
+  still applies on top: a `CK_FOOT` row's `au_roles` can only narrow it among foot.
+- **`au_fear`** / **`au_fear_r`** (character row, ints; default 0). A new bit `AU_FEAR` 16 in `u_aura`, set in
+  `_update_auras` on every ready ENEMY unit that is not a character within `au_fear_r` (box to box; 30 m, `AU_FEAR_R`,
+  when a row gives `au_fear` without a radius; half for a wounded hero, as his aura's) of a ready hero with
+  `au_fear` > 0: `au_fear` is added to the second's aura loss beside the elephants' / camels' `fear_foot` /
+  `fear_horse`, and it counts as feared (`u_awe`: no recovery of heart meanwhile, `stat_feared`), as the beasts'
+  fright does. The diplomat's steadying aura halves that loss as it halves the beasts' (the same line). A row with
+  `au_fear` is an aura source (`aura_src`). Hashed through `u_aura` (only with `ch_on`); the static `t_au_fear`
+  / `t_au_fear_r` are rebuilt by setup. Morale scale: the elephants' `fear_foot` is 2 a second.
+- **`parley_vs`** (an Array: role keys, pack names, row keys, as `au_roles`) and **`parley_bonus`** (points;
+  default 0) on a diplomat-kind row. `BattleSim.parley_bonus(dty, tu)`: the bonus when the row's list names the
+  target's own type (`u_otype`), else 0 (`t_pv_i` / `t_pv_b`, static). In `_ch_parley` it is added to the roll's
+  percentage, routing (`PARLEY_PCT` 60) or wavering (`PARLEY_PCT_W` 35), and clamped to 95 (a recovered unit's 0
+  stays 0). The roll itself is the same draw of the sim's RNG, so on a given seed the bonus only turns refusals into
+  surrenders. The book's parley text (`game/unit_book.gd`) still quotes the plain 60 / 35: the rows' pages should add
+  the bonus. Note: the natives are no pack of their own (their rows are `"pack": "west"`), so the missionary's list
+  names their row keys (or roles).
+- **`sea_cq`** (character row, campaign; default absent). `CCaptain.sea_step(st, fl)`: the best `sea_cq` among the
+  fit characters (`CChars.fit`) attached to the armies a fleet carries (`fl["carry"]`, `CChars.of_army`; the
+  character travels with his army as before, `sweep` keeps a carried army's characters). `CCaptain.fleet_tier(st,
+  fl)`: the captain's fame tier (0 without a captain: the nations' fleets) plus that step, at most the top tier
+  (`FAME_TIERS.size()`, Legend). Every read of the captain's quality for a sea battle now goes through it:
+  `cseabattle.build` (a fleet counts as Feared for `SEA_FEAR_FOE` at tier 2+; the ships' `"cq"` = 100 + `CAPT_CQ` 20
+  x tier, the deck melee's captain's fighting %; the ships' `"mor"` through `fear_pct`), `CCaptain.fear_pct` (the
+  power % in the sea auto-resolve, `CFleet._side_power`, and the morale above; `FEAR_PCT` by `fleet_tier`, still 0
+  for a fleet with neither captain nor step, and for a state without captains unless a step applies) and
+  `CFleet.resolve`'s strike rule (the winners' best `fleet_tier` 2+: `STRIKE_LOSS` / `STRIKE_TAKEN`; the most famous
+  captain still names the prize money). The player's and the AI's fleets alike (both build or auto-resolve here).
+  Fame, bounties and the view's tier names read the captain alone, unchanged.
+- **`order_bonus`** (the missionary's public order): not built. The campaign has no public order or unrest rule
+  per region (a Market gives income and trade only, `crules.gd`), so there is nothing to add to; the plan's "if the
+  rule exists" applies.
+
+Open for the rows step: the battle AI places a `CK_FOOT` hero in "the second line" behind the line centre
+(`battle_ai.gd`, docs/AI.md 27) whatever his `au_roles`; a sea captain or shaman wants the AI to post him behind
+units his list names. The AI's parley pick does not weigh `parley_bonus`.
+
 
 ## Roles and abilities (plan, agreed 2026-10-23)
 

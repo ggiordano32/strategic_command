@@ -18,6 +18,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CChars := preload("res://campaign/cchars.gd")
 
 
 static func _rules() -> GDScript:
@@ -84,15 +85,42 @@ static func best_fame(st: Dictionary, f: int) -> int:
 	return b
 
 
-## Percent more power fleet fl brings to a sea battle (its captain's fear).
+## Batch 3 (docs/design/battle_sim.md "Batch 3 sim and campaign hooks"): the
+## fame-tier steps fleet fl's captain fights higher for a fit character aboard
+## (with an army it carries) whose row has "sea_cq" (the best of them; 0 none).
+static func sea_step(st: Dictionary, fl: Dictionary) -> int:
+	if not st.has("chars"):
+		return 0
+	var best := 0
+	for a in fl.get("carry", []):
+		for c in CChars.of_army(st, int(a["id"])):
+			if CChars.fit(st, c):
+				best = maxi(best, CChars.stat(str(c["kind"]), "sea_cq"))
+	return best
+
+
+## Fleet fl's captain's quality in a sea battle: his fame tier (0 without a
+## captain) plus sea_step, at most the top tier (Legend).
+static func fleet_tier(st: Dictionary, fl: Dictionary) -> int:
+	var c := of_fleet(st, int(fl["id"]))
+	var t := tier(int(c["fame"])) if not c.is_empty() else 0
+	var step := sea_step(st, fl)
+	if step > 0:
+		t = mini(t + step, (CData.ship_const("FAME_TIERS", [20, 45, 75]) as Array).size())
+	return t
+
+
+## Percent more power fleet fl brings to a sea battle (its captain's fear;
+## his quality is fleet_tier).
 static func fear_pct(st: Dictionary, fl: Dictionary) -> int:
-	if not st.has("captains"):
+	var step := sea_step(st, fl)
+	if not st.has("captains") and step == 0:
 		return 0
 	var c := of_fleet(st, int(fl["id"]))
-	if c.is_empty():
+	if c.is_empty() and step == 0:
 		return 0
 	var fp: Array = CData.ship_const("FEAR_PCT", [0, 5, 10, 20])
-	return int(fp[mini(tier(int(c["fame"])), fp.size() - 1)])
+	return int(fp[mini(fleet_tier(st, fl), fp.size() - 1)])
 
 
 ## The most famous captain among fleets `side` ({} none).
