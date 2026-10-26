@@ -367,9 +367,9 @@ func _card(ty: int, men: int, full: int, fac: int) -> UnitCard:
 	c.full = maxi(full, 1)
 	c.faction = fac
 	c.col = CData.faction_color(fac) if fac >= 0 else Color(0.5, 0.5, 0.5)
-	c.title = str(UT.TYPES[ty].get("short", UT.TYPES[ty]["name"]))   # the card is narrow: the short name
+	c.title = CData.unit_short(UT.key_of(ty), fac)   # the card is narrow: the short name
 	c.pips = UT.tier_of(ty)
-	c.tooltip_text = str(UT.TYPES[ty]["name"])
+	c.tooltip_text = CData.unit_name(UT.key_of(ty), fac)
 	return c
 
 
@@ -518,7 +518,7 @@ func _build_army(id: int) -> void:
 		reorder.name = "unit_reorder"
 		reorder.vertical = false
 		reorder.moved.connect(func(from: int, to: int): s.panels._arrange(id, from, to))
-		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), ""))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af))
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
@@ -529,7 +529,7 @@ func _build_army(id: int) -> void:
 		var kk := k
 		c.pressed.connect(func():
 			if not mine or busy:
-				s.open_unit_page(ty, Callable(), "")
+				s.open_unit_page(ty, Callable(), "", af)
 				return
 			var cur_sel: Array = s.panels._split_sel.get(id, [])
 			if cur_sel.has(kk):
@@ -542,7 +542,7 @@ func _build_army(id: int) -> void:
 			reorder.items.append(c)
 			c.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af))
 		cards.append(c)
 	for k in arriving.size():
 		var rty := UT.index_of(str(arriving[k]["unit"]))
@@ -551,11 +551,11 @@ func _build_army(id: int) -> void:
 		ac.custom_minimum_size.x = cw
 		ac.dim = true
 		ac.sub = "joins"
-		ac.tooltip_text = "%s: joins at the end of the turn" % str(UT.TYPES[rty]["name"])
+		ac.tooltip_text = "%s: joins at the end of the turn" % CData.unit_name(UT.key_of(rty), af)
 		var ro: Dictionary = arriving[k]
 		ac.tooltip_text += " (tap to cancel the recruit)"
 		ac.pressed.connect(func(): s.remove_orders(func(o): return is_same(o, ro)))
-		ac.long_pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		ac.long_pressed.connect(func(): s.open_unit_page(rty, Callable(), "", af))
 		cards.append(ac)
 	var extra: Array = []
 	if reorder != null:
@@ -690,8 +690,8 @@ func _build_region(r: int) -> void:
 		var c := _card(ty, int(g["n"]), int(g["full"]), o)
 		c.name = "garrison_card_%d" % k
 		c.custom_minimum_size.x = cw
-		c.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
-		c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		c.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", o))
+		c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", o))
 		cards.append(c)
 	var extra: Array = []
 	if mine and grid:
@@ -869,6 +869,7 @@ class UnitCard extends Control:
 		p.add_theme_stylebox_override("panel", Kit.box(Kit.PANEL_BG, 6.0, 6))
 		var row := Kit.UnitRow.new(ty, men, col)
 		row.faction = faction
+		row.name_f = faction
 		p.add_child(row)
 		return p
 

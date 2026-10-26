@@ -285,6 +285,21 @@ const ROSTERS := {
 		"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""]},
 }
 
+## Per-faction display names (view only; CData.unit_name / unit_short): faction
+## key -> unit row key -> [name, short]. The native and pirate rows are shared by
+## two factions and carry a bare name, so a card said nothing of whose unit it
+## was. A batab was a Maya town lord; the Miskito king was crowned under
+## English patronage from the 1680s (the King's Guard); the Brethren's
+## "general" is a pirate captain. Rows not listed keep their own name.
+const UNIT_NAMES := {
+	"itza": {"native_warriors": ["Itza Warriors", "Warriors"], "native_bowmen": ["Itza Bowmen", "Bowmen"],
+		"w_slingers": ["Itza Slingers", "Slingers"], "chieftain": ["Batab's Guard", "Batab"], "shaman": ["Ah Kin", "Ah Kin"]},
+	"miskito": {"native_warriors": ["Miskito Warriors", "Warriors"], "native_bowmen": ["Miskito Bowmen", "Bowmen"],
+		"w_slingers": ["Miskito Slingers", "Slingers"], "musketeers": ["Miskito Musketmen", "Musketmen"],
+		"chieftain": ["King's Guard", "King's Guard"], "shaman": ["Sukia", "Sukia"]},
+	"brethren": {"general": ["Captain's Crew", "Captain"], "musketeers": ["Ship's Musketeers", "Musketeers"]},
+}
+
 ## The campaign AI (CData.AI_BUILDUP_LINES / AI_SPECIALISTS; docs/AI.md 34):
 ## the mortars need a Workshop 3 and England's grenadiers a Barracks 3, past
 ## the AI's usual build-up; the canoe raiders, boarding grenadiers and

@@ -2281,6 +2281,21 @@ func _j_ship() -> void:
 			if tab != "army":
 				var s0 = cs.dialog_box.find_child("ship_sloop", true, false)
 				_check(s0 != null and s0 is Kit.ShipRow and (s0 as Control).size.y >= 72.0 and (s0 as Control).size.y <= 73.0, tag + "the sloop is a 72 px ShipRow")
+	# Per-faction names (UNIT_NAMES): the Miskito's raise rows say whose unit they are.
+	cs.close_dialog()
+	cs.panels._raise = {}
+	cs.panels.show_raise(r, "army")
+	for k in 4:
+		await process_frame
+	var mrow = cs.dialog_box.find_child("raise_row_musketeers", true, false)
+	var wrow = cs.dialog_box.find_child("raise_row_native_warriors", true, false)
+	_check(mrow != null or wrow != null, "unit names: the Miskito raise dialog lists musketeers or warriors")
+	if mrow != null:
+		_check((mrow as Kit.UnitRow).display_name() == "Miskito Musketmen", "unit names: the Miskito musketeers row reads Miskito Musketmen (%s)" % (mrow as Kit.UnitRow).display_name())
+	if wrow != null:
+		_check((wrow as Kit.UnitRow).display_name() == "Miskito Warriors", "unit names: the Miskito warriors row reads Miskito Warriors (%s)" % (wrow as Kit.UnitRow).display_name())
+	# (No Itza city is set up in this step: the Itza's "Batab's Guard" is checked in pack_test through CData.unit_name.)
+	cs.panels._raise = {}
 	var sl = cs.dialog_box.find_child("ship_sloop", true, false)
 	if sl != null:
 		_tap_control(sl)

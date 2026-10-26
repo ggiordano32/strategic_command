@@ -406,7 +406,7 @@ static func _toggle_kills(card: Control, detail: Label, cards: Array) -> void:
 		c.queue_redraw()
 	detail.set_meta("card", card)
 	card.picked = true
-	detail.text = Kit.kills_detail("%s (%d men)" % [UT.TYPES[card.ty]["name"], card.men], card.kills, card.dead, card.kills_by)
+	detail.text = Kit.kills_detail("%s (%d men)" % [CData.unit_name(UT.key_of(card.ty), card.name_f), card.men], card.kills, card.dead, card.kills_by)
 	detail.visible = true
 	card.queue_redraw()
 
@@ -467,6 +467,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 		var gcards: Array = []
 		for u in g["units"]:
 			var card := UnitCard.new(int(u["ty"]), int(u["n"]), int(u["full"]), CData.faction_color(int(g["f"])))
+			card.name_f = int(g["f"])
 			card.fielded = int(u["on"]) != 0
 			card.ak = UT.ammo_index(str(u.get("ak", "")))
 			var key := "%d:%d" % [int(g["army"]), int(u["unit"])]
@@ -699,6 +700,7 @@ class UnitCard extends Control:
 	var ak := -1  # its special ammunition kind (UT.AMMO row), -1 none
 	var fielded := true
 	var col := Color.WHITE
+	var name_f := -1  # the card's faction, for its display name (CData.unit_name)
 
 	func _init(p_ty: int, p_men: int, p_full: int, p_col: Color) -> void:
 		ty = p_ty
@@ -720,7 +722,7 @@ class UnitCard extends Control:
 		custom_minimum_size = Vector2(W, H + (12.0 if k >= 0 else 0.0))
 
 	func describe() -> String:
-		var t := "%s (tier %d): %d of %d men" % [UT.TYPES[ty]["name"], UT.tier_of(ty), men, full]
+		var t := "%s (tier %d): %d of %d men" % [CData.unit_name(UT.key_of(ty), name_f), UT.tier_of(ty), men, full]
 		if not fielded:
 			return t + ", not fielded (the side is full)"
 		if back >= 0:
@@ -779,7 +781,7 @@ class UnitCard extends Control:
 			# Its special ammunition kind (fire, heavy, pots, blast).
 			draw_string(font, Vector2(x0, 31), "+" + UT.ammo_text(ak, "short"), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
 				Color(1.0, 0.62, 0.3))
-		var nm := str(UT.TYPES[ty].get("short", UT.TYPES[ty]["name"]))
+		var nm := CData.unit_short(UT.key_of(ty), name_f)
 		if not fielded:
 			nm = "(reserve)"
 		draw_string(font, Vector2(4, sz.y - 15), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - 8, 11, txt)

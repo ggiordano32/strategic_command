@@ -95,6 +95,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 
 ### Sea
 - Sea look: other towns' forts / batteries in sea battles; the shore foam to the owner's eye. [row "Sea battle look"]
+- Per-faction unit names (built 2026-10-26, `docs/design/ui.md` "Per-faction unit names"): `west.gd UNIT_NAMES` + `CData.unit_name / unit_short`; Itza / Miskito / Brethren rows named per nation (Batab's Guard, King's Guard, Ah Kin, Sukia, Miskito Musketmen, Captain's Crew, Ship's Musketeers). Open: the main-menu unit book and Roles pages keep the row names.
 - Launches and boarding (built 2026-10-26, `docs/design/sea.md` "Launches per turn and boarding on arrival"): war canoes launch 4 a turn per port (`"launch"` on the ship row, `sq` is a list), a march with `"fleet"` boards on arrival (`dest_fleet`, `CFleet.boarding_cells` / `pickup_cells` for the view); the view is built (teal boarding / pickup cells, tap a fleet to march and board, grouped Shipyard queue; `docs/design/ui.md` "Boarding indicator and the Shipyard queue").
 - Flight rule: gauge / camp layouts; a scripted player who never flees wins 15-19 of 24 against the AI in `order` mode (the AI's flight rule is the suspect); the AI's beat to windward stays slow. [row "Sea battle AI: the flight rule", paragraph "Sea pass 4: the leeward fleet"]
 - Sea follow-ons: drop the two `online_ui.gd` gates, head-to-head humans at sea, smoke blocking aim, shore batteries, the formula fitted to fought results, balance of the deck melee. [paragraph "Sea follow-ons built 2026-10-16"]

@@ -56,6 +56,7 @@ const DragReorder := preload("res://game/drag_reorder.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CData := preload("res://campaign/cdata.gd")
 const Icons := preload("res://game/unit_icons.gd")
 const UnitBook := preload("res://game/unit_book.gd")
 const Controls := preload("res://game/controls.gd")
@@ -115,6 +116,9 @@ var banner: Label
 var arriving_label: Label
 var arrival_note: Label
 var unit_labels := {}
+## Campaign faction index per sim unit (battle.gd copies its unit_faction; view
+## only, [] outside a campaign battle): the units' display names (CData.unit_name).
+var unit_faction: Array = []
 var _note_left := 0.0
 var _arr_seen := 0
 var pause_button: Button
@@ -1619,7 +1623,7 @@ func update_cards(sim) -> void:
 		var f: CardFace = _faces[u]
 		var mstate := morale_text(sim, u)
 		var art := UT.cls(ty) == UT.CLS_ART
-		f.name_text = "%s %d" % [UT.TYPES[sim.u_otype[u]]["short"], u + 1]
+		f.name_text = "%s %d" % [CData.unit_short(UT.key_of(sim.u_otype[u]), _uf(u)), u + 1]
 		f.number_text = str(u + 1)
 		f.alive = sim.u_alive[u]
 		f.count0 = sim.u_count0[u]
@@ -1639,7 +1643,7 @@ func update_cards(sim) -> void:
 				summary += " returning"
 		if art:
 			f.ammo_text = "%d+%d" % [maxi(sim.u_ammo[u], 0), maxi(sim.u_reserve[u], 0)]
-			summary = art_card_text(sim, u).replace("\n", " | ")
+			summary = art_card_text(sim, u, _uf(u)).replace("\n", " | ")
 		elif UT.stat(ty, "m_ammo") > 0:
 			var per: int = (sim.u_ammo[u] + maxi(sim.u_alive[u], 1) - 1) / maxi(sim.u_alive[u], 1)
 			f.ammo_text = "%d" % per
@@ -1776,14 +1780,19 @@ func _group_card(sim, u: int, f: CardFace) -> void:
 
 ## Battery card: crew, engines still working, shots left, set-up state (the
 ## caller adds the morale word after it).
-static func art_card_text(sim, u: int) -> String:
+static func art_card_text(sim, u: int, fac: int = -1) -> String:
 	var ok := 0
 	for k in sim.u_neng[u]:
 		if sim.e_state[sim.u_eng0[u] + k] == 0:
 			ok += 1
-	return "%s %d  %d/%d\neng %d/%d  %d shots +%d\n%s" % [UT.TYPES[sim.u_otype[u]]["short"], u + 1,
+	return "%s %d  %d/%d\neng %d/%d  %d shots +%d\n%s" % [CData.unit_short(UT.key_of(sim.u_otype[u]), fac), u + 1,
 		sim.u_alive[u], sim.u_count0[u], ok, sim.u_neng[u], maxi(sim.u_ammo[u], 0),
 		maxi(sim.u_reserve[u], 0), deploy_text(sim, u)]
+
+
+## The campaign faction of sim unit u (-1 unknown).
+func _uf(u: int) -> int:
+	return int(unit_faction[u]) if u >= 0 and u < unit_faction.size() else -1
 
 
 ## Siege equipment a unit carries: "carrying ladders" / "carrying ram" /
@@ -1876,9 +1885,9 @@ func _update_arriving(sim) -> void:
 				last = u
 		if last >= 0:
 			var who := str(unit_labels.get(last, ""))
-			arrival_note.text = "Reinforcements: %s" % (who if who != "" else UT.TYPES[sim.u_otype[last]]["name"])
+			arrival_note.text = "Reinforcements: %s" % (who if who != "" else CData.unit_name(UT.key_of(sim.u_otype[last]), _uf(last)))
 			if sim.u_side[last] != me:
-				arrival_note.text = "Enemy reinforcements: %s" % (who if who != "" else UT.TYPES[sim.u_otype[last]]["name"])
+				arrival_note.text = "Enemy reinforcements: %s" % (who if who != "" else CData.unit_name(UT.key_of(sim.u_otype[last]), _uf(last)))
 			arrival_note.visible = true
 			_note_left = 3.0
 
@@ -1928,7 +1937,7 @@ func show_result(res: Dictionary, title: String, player_side: int) -> void:
 		for r in res["units"]:
 			if int(r["side"]) != side:
 				continue
-			_cell("%s %d" % [UT.TYPES[int(r["type"])]["short"], int(r["unit"]) + 1], Color.WHITE)
+			_cell("%s %d" % [CData.unit_short(UT.key_of(int(r["type"])), _uf(int(r["unit"]))), int(r["unit"]) + 1], Color.WHITE)
 			for k in ["started", "killed", "routed_off", "withdrawn", "remaining"]:
 				_cell(str(r[k]), Color.WHITE)
 			var ef := Kit.effect_short(int(r.get("kills", 0)), int(r["killed"]))
@@ -1955,7 +1964,7 @@ func _kills_tap(e: InputEvent, r: Dictionary, cell: Label) -> void:
 
 ## Under the table: unit r's kills by enemy type (top 5) and effectiveness.
 func show_kills(r: Dictionary) -> void:
-	result_detail.text = Kit.kills_detail("%s %d" % [UT.TYPES[int(r["type"])]["short"], int(r["unit"]) + 1],
+	result_detail.text = Kit.kills_detail("%s %d" % [CData.unit_short(UT.key_of(int(r["type"])), _uf(int(r["unit"]))), int(r["unit"]) + 1],
 		int(r.get("kills", 0)), int(r["killed"]), r.get("kills_by", []))
 
 

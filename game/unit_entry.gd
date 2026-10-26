@@ -133,12 +133,12 @@ func _init() -> void:
 	_box.add_child(_grid)
 
 
-func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0)) -> void:
+func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_faction: int = -1) -> void:
 	unit_type = ty
 	side_color = p_side_color
 	scroll_vertical = 0
 	_icon.set_icon(Icons.icon_of(ty), side_color)
-	_name.text = str(UT.TYPES[ty]["name"])
+	_name.text = CData.unit_name(UT.key_of(ty), p_faction)
 	var role := UT.text(ty, "what")
 	var cname := _class_name(UT.cls(ty))
 	_role.text = role if role.to_lower() == cname else "%s  -  %s" % [role, cname]

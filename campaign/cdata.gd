@@ -24,6 +24,7 @@ extends RefCounted
 
 const E := preload("res://campaign/data/cenums.gd")
 const _ROME := preload("res://campaign/data/rome.gd")
+const UT := preload("res://sim/unit_types.gd")
 ## Scripts whose derived caches depend on the pack (pack_reset() on a
 ## switch). Loaded at switch time, not preloaded: they preload this file.
 const _DERIVED: Array[String] = ["res://campaign/cgrid.gd", "res://campaign/crules.gd",
@@ -106,6 +107,8 @@ static var AI_SPECIALISTS: Array = []
 ## AI_LIVE_MIX (1: the West): recruiting skips the mix lines no recruiting
 ## centre can raise yet (cai.gd _next_line, CP.MIX_LIVE; docs/AI.md 37).
 static var AI_LIVE_MIX := 0
+## View-only display names (west.gd UNIT_NAMES): faction key -> unit key -> [name, short].
+static var UNIT_NAMES: Dictionary = {}
 
 const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"
@@ -399,6 +402,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	AI_BUILDUP_LINES = c.get("AI_BUILDUP_LINES", [])
 	AI_SPECIALISTS = c.get("AI_SPECIALISTS", [])
 	AI_LIVE_MIX = int(c.get("AI_LIVE_MIX", 0))
+	UNIT_NAMES = c.get("UNIT_NAMES", {})
 	SHIPS = c.get("SHIPS", null)
 	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}
@@ -578,6 +582,26 @@ static func roster(f: int) -> Dictionary:
 	if f < 0:
 		return ROSTERS["independent"]
 	return ROSTERS[FACTIONS[f]["key"]]
+
+
+## Display name of unit row `key` for faction f (the pack's UNIT_NAMES; f < 0
+## or no entry: the row's own name). View only.
+static func unit_name(key: String, f: int) -> String:
+	if f >= 0 and not UNIT_NAMES.is_empty():
+		var e = UNIT_NAMES.get(str(FACTIONS[f]["key"]), {}).get(key)
+		if e != null:
+			return e[0]
+	return str(UT.TYPES[UT.index_of(key)]["name"])
+
+
+## The short display name (unit cards) of unit row `key` for faction f.
+static func unit_short(key: String, f: int) -> String:
+	if f >= 0 and not UNIT_NAMES.is_empty():
+		var e = UNIT_NAMES.get(str(FACTIONS[f]["key"]), {}).get(key)
+		if e != null:
+			return e[1]
+	var row: Dictionary = UT.TYPES[UT.index_of(key)]
+	return str(row.get("short", row["name"]))
 
 
 static func faction_name(f: int) -> String:

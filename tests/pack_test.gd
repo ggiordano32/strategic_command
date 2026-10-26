@@ -169,8 +169,29 @@ func _west() -> void:
 		b = CTurn.resolve_turn(b, [])
 	_check(CState.hash_text(a) == CState.hash_text(b) and int(a["turn"]) == 5 and a.get("pack", "") == "west",
 		"West: 5 turns, deterministic twice (%s)" % CState.hash_text(a))
+	# Per-faction unit names (west.gd UNIT_NAMES; view only).
+	var un: Dictionary = CData.UNIT_NAMES
+	var un_ok := not un.is_empty()
+	for fk in un:
+		un_ok = un_ok and CData.faction_index(str(fk)) >= 0
+		for uk in un[fk]:
+			var e = un[fk][uk]
+			un_ok = un_ok and UT.index_of(str(uk)) >= 0 and e is Array and e.size() == 2 and str(e[0]) != "" and str(e[1]) != ""
+	_check(un_ok, "UNIT_NAMES: every faction and unit key exists, each entry is [name, short]")
+	var itza := CData.faction_index("itza")
+	var miskito := CData.faction_index("miskito")
+	_check(CData.unit_name("chieftain", itza) == "Batab's Guard" and CData.unit_short("chieftain", itza) == "Batab",
+		"unit_name(chieftain, itza) is Batab's Guard")
+	_check(CData.unit_name("chieftain", miskito) == "King's Guard" and CData.unit_name("musketeers", miskito) == "Miskito Musketmen",
+		"the Miskito's King's Guard and Musketmen")
+	_check(CData.unit_name("chieftain", -1) == "Chieftain's Guard" and CData.unit_short("chieftain", -1) == "Chieftain",
+		"unit_name with no faction is the row's own")
+	_check(CData.unit_name("musketeers", CData.faction_index("england")) == "Musketeers",
+		"a faction without an entry keeps the row name (%s)" % CData.unit_name("musketeers", CData.faction_index("england")))
 	CData.use_pack("rome")
 	_check(CData.pack == "rome" and CData.gen > g0, "back to Rome after West")
+	_check(CData.UNIT_NAMES.is_empty() and CData.unit_name("chieftain", 0) == "Chieftain's Guard" and CData.unit_name("general", 1) == UT.TYPES[UT.index_of("general")]["name"],
+		"Rome has no UNIT_NAMES: a Rome faction gets the row name")
 	var r := _rome20()
 	_check(CState.hash_text(r) == ROME_20 and CState.hash_text(CState.as_format(r, 7)) == ROME_20_V7,
 		"Rome golden after a West campaign (%s)" % CState.hash_text(r))

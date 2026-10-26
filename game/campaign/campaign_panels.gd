@@ -196,6 +196,7 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 	for g in gar:
 		var gty := UT.index_of(str(g["t"]))
 		var row := Kit.UnitRow.new(gty, int(g["n"]), _fc(o))
+		row.name_f = o
 		row.full = int(g["full"])
 		box.add_child(row)
 
@@ -884,6 +885,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 	for k in q.size():
 		var ty := UT.index_of(str(q[k]))
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), "planned")
+		row.name_f = f
 		row.sub_text = "arrives next turn"
 		var h := Kit.hbox(4)
 		h.add_child(row)
@@ -904,7 +906,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 			row.modulate = Color(1, 1, 1, 0.82)
 		var open_page := func(): s.open_unit_page(ty,
 			(func(): s.add_order({"t": "recruit", "r": r, "unit": key})) if o["ok"] else Callable(),
-			"Recruit (%d)" % int(o["price"]))
+			"Recruit (%d)" % int(o["price"]), f)
 		row.pressed.connect(open_page)
 		row.long_pressed.connect(open_page)
 		var h := Kit.hbox(4)
@@ -1070,7 +1072,7 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 	if not raising.is_empty():
 		var names: Array[String] = []
 		for o in raising:
-			names.append(str(UT.TYPES[UT.index_of(str(o["unit"]))]["name"]))
+			names.append(CData.unit_name(str(o["unit"]), f))
 		var h := Kit.hbox(6)
 		var l := Kit.label("Raising a new army: %d unit%s (%s), inside the walls at the end of the turn." % [raising.size(),
 			"" if raising.size() == 1 else "s", ", ".join(names)], Kit.FONT, Kit.COL_GOOD, true)
@@ -1086,6 +1088,7 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 		if str(o["t"]) == "recruit" and int(o.get("r", -1)) == r and not o.has("army") and int(o.get("new", 0)) == 0:
 			var oty := UT.index_of(str(o["unit"]))
 			var orow := Kit.UnitRow.new(oty, -1, _fc(f), "planned")
+			orow.name_f = f
 			orow.sub_text = "arrives at the end of the turn"
 			var oh := Kit.hbox(4)
 			oh.add_child(orow)
@@ -1159,13 +1162,14 @@ func _trains(box: VBoxContainer, r: int) -> void:
 		var ty := UT.index_of(best)
 		var nd2 := CRules.needs(best)
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(UT.price_of(ty)))
+		row.name_f = f
 		row.name = "trains_" + best
 		var sub := "Tier %d (%s %d)" % [UT.tier_of(ty), CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
 		if next != "":
 			var nn := CRules.needs(next)
 			sub += "; tier %d needs %s %d" % [UT.tier_of(UT.index_of(next)), CData.CHAINS[int(nn[0])]["name"], int(nn[1])]
 		row.sub_text = sub
-		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", f))
 		box.add_child(row)
 	if not any:
 		box.add_child(Kit.label("No military buildings yet: build barracks, a range or stables to train units.", Kit.FONT_SMALL, Kit.COL_DIM, true))
@@ -1208,7 +1212,7 @@ func show_raise(r: int, tab: String = "") -> void:
 	if not raising.is_empty():
 		var names: Array[String] = []
 		for o in raising:
-			names.append(str(UT.TYPES[UT.index_of(str(o["unit"]))]["name"]))
+			names.append(CData.unit_name(str(o["unit"]), f))
 		var rh := Kit.hbox(6)
 		var rl := Kit.label("Raising a new army: %d unit%s (%s), inside the walls at the end of the turn." % [raising.size(),
 			"" if raising.size() == 1 else "s", ", ".join(names)], Kit.FONT, Kit.COL_GOOD, true)
@@ -1237,7 +1241,7 @@ func show_raise(r: int, tab: String = "") -> void:
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
 		if ok and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
-		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", f))
 		var h := Kit.hbox(4)
 		h.add_child(row)
 		var minus := Kit.icon_button("", "minus", func(): _raise_pick(key, -1), 44)
@@ -1427,7 +1431,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		reorder.scroll = s.side_scroll
 		box.add_child(reorder)
 		reorder.moved.connect(func(from: int, to: int): _arrange(id, from, to))
-		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), ""))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af))
 	# Composition strip: class glyphs with unit counts; a tap shows / hides the
 	# unit rows (state per army for the session; small armies start open).
 	var host: Control = Kit.vbox(0)
@@ -1467,6 +1471,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
 		var row := Kit.UnitRow.new(ty, int(u["n"]), _fc(af), "", mine)
+		row.name_f = af
 		row.selected = sel.has(k)
 		row.name = "unit_%d" % k
 		var kk := k
@@ -1474,7 +1479,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			reorder.items.append(row)
 			row.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), ""))
+			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af))
 		row.pressed.connect(func():
 			var cur: Array = _split_sel.get(id, [])
 			if cur.has(kk):
@@ -1489,10 +1494,11 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		var ro: Dictionary = arriving[k]
 		var rty := UT.index_of(str(ro["unit"]))
 		var arow := Kit.UnitRow.new(rty, -1, _fc(af).darkened(0.35), "arriving")
+		arow.name_f = af
 		arow.sub_text = "joins at the end of the turn"
 		arow.modulate = Color(1, 1, 1, 0.65)
 		arow.name = "arriving_%d" % k
-		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), "", af))
 		var ah := Kit.hbox(4)
 		ah.add_child(arow)
 		var xb := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)
@@ -1515,7 +1521,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 	fl.add_child(dis)
 	fl.add_child(Kit.icon_button("Book", "units", func():
 		var ty := CState.unit_type(units[sel[0]] if nsel > 0 else units[0])
-		s.open_unit_page(ty, Callable(), ""), 0))
+		s.open_unit_page(ty, Callable(), "", af), 0))
 	var near := CState.armies_in(ps, r)
 	if CState.grid_on(ps):
 		near = []  # version 6: Merge and Exchange are at the top of the card
@@ -1596,7 +1602,7 @@ func _char_row(c: Dictionary, mine: bool, with_detach: bool = true) -> Control:
 	var col := _fc(int(c["f"])).lightened(0.5)
 	var txt := "%s  %s" % [CChars.display(str(c["kind"])), str(c["name"])]
 	var left := CChars.wounded_left(ps, c)
-	var b := Kit.button(txt, func(): s.open_unit_page(ty, Callable(), ""), 0.0, Kit.FONT_SMALL)
+	var b := Kit.button(txt, func(): s.open_unit_page(ty, Callable(), "", int(c["f"])), 0.0, Kit.FONT_SMALL)
 	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.clip_text = true
@@ -1719,7 +1725,7 @@ func _char_recruit_row(r: int, army: int, kind: String) -> Control:
 		if army >= 0:
 			order["army"] = army
 		var add_it := func(): s.add_order(order.duplicate())
-		var open_page := func(): s.open_unit_page(ty, add_it if why == "" else Callable(), "Recruit (%d)" % CChars.price_of(kind))
+		var open_page := func(): s.open_unit_page(ty, add_it if why == "" else Callable(), "Recruit (%d)" % CChars.price_of(kind), f)
 		row.pressed.connect(open_page)
 		row.long_pressed.connect(open_page)
 		var h := Kit.hbox(4)
@@ -1783,7 +1789,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		var add_it := func():
 			if s.add_order(order.duplicate()) == "":
 				s._t("campaign_input", {"what": "recruit_army"})
-		var open_page := func(): s.open_unit_page(ty, add_it if ok else Callable(), "Recruit (%d)" % int(o["price"]))
+		var open_page := func(): s.open_unit_page(ty, add_it if ok else Callable(), "Recruit (%d)" % int(o["price"]), f)
 		row.pressed.connect(open_page)
 		row.long_pressed.connect(open_page)
 		var h := Kit.hbox(4)
@@ -1941,6 +1947,7 @@ func show_exchange(id: int, other: int) -> void:
 
 func _xc_row(u: Dictionary, uf: int, tag: String, nm: String, active: bool, cb: Callable) -> Control:
 	var row := Kit.UnitRow.new(CState.unit_type(u), int(u["n"]), _fc(uf), tag, false)
+	row.name_f = uf
 	row.name = nm
 	row.selected = tag != ""
 	if active:
@@ -3045,7 +3052,7 @@ func event_text(e: Dictionary, f: int) -> String:
 				return ""
 			var names: Array[String] = []
 			for k in e["units"]:
-				names.append(str(UT.TYPES[UT.index_of(str(k))]["name"]))
+				names.append(CData.unit_name(str(k), int(e["f"])))
 			return "%s: recruited %s." % [city.call(e["r"]), ", ".join(names)]
 		"char_recruited":
 			if int(e["f"]) != f:
@@ -4230,10 +4237,11 @@ func show_army_recruit(id: int) -> void:
 		var ro: Dictionary = arriving[k]
 		var rty := UT.index_of(str(ro["unit"]))
 		var arow := Kit.UnitRow.new(rty, -1, _fc(int(a["f"])).darkened(0.35), "arriving")
+		arow.name_f = int(a["f"])
 		arow.sub_text = "joins at the end of the turn"
 		arow.modulate = Color(1, 1, 1, 0.65)
 		arow.name = "arriving_%d" % k
-		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), ""))
+		arow.pressed.connect(func(): s.open_unit_page(rty, Callable(), "", int(a["f"])))
 		var ah := Kit.hbox(4)
 		ah.add_child(arow)
 		var xb := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return is_same(o, ro)), 44)

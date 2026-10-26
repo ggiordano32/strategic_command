@@ -395,6 +395,23 @@ strip (class glyphs with unit counts) that folds the unit rows (armies of up
 to six units start open). Fold state is per session, never in the campaign
 state.
 
+### Per-faction unit names (as built, 2026-10-26)
+
+The West pack's native and pirate rows are shared by two factions and carry a bare name, so a card did not say
+whose unit it was. `campaign/data/west.gd` `UNIT_NAMES` ({faction key: {unit row key: [name, short]}}, view only; it
+moves the rules hash as a pack constant, nothing reads it in the rules) renames them per faction: Itza: Warriors,
+Bowmen, Slingers ("Itza ..."), the chieftain's guard "Batab's Guard" (short "Batab"; a batab was a Maya town lord),
+shaman "Ah Kin"; Miskito: Warriors, Bowmen, Slingers, musketeers "Miskito Musketmen", chieftain "King's Guard" (the
+Miskito king was crowned under English patronage from the 1680s), shaman "Sukia"; Brethren: general "Captain's Crew"
+(short "Captain"), musketeers "Ship's Musketeers". The lookup is `CData.unit_name(key, f)` / `CData.unit_short(key, f)`
+(a Dictionary lookup; f < 0, no entry or a pack without `UNIT_NAMES` such as Rome: the row's own name). Used by the
+unit rows (`Kit.UnitRow.name_f`, apart from `faction` so the fire trait is unchanged), the command bar's cards and
+tooltips, the unit page (`open_unit_page(..., fac)`, `UnitEntry.set_unit_type(..., faction)`), the recruit / raising
+event texts, the pre-battle and result cards (`battle_screen.gd UnitCard.name_f`) and the battle HUD (`Hud.unit_faction`,
+copied from the battle's `unit_faction`: card names, battery text, reinforcement note, result table). Left with the row
+name: the main-menu unit book and Roles pages (no faction), the "killed by" lists (`Kit.kills_detail`, enemy types), the
+engine-worker note ("on bolts") and the trait text of characters.
+
 ### The command bar (overworld selection, as built 2026-10-15)
 
 View only (`game/campaign/command_bar.gd`; no rules path, no `campaign/`

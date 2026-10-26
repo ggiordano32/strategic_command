@@ -991,6 +991,13 @@ class UnitRow extends PressRow:
 	## rows, the five pips (game/unit_traits.gd). faction: for the fire trait.
 	var detail := true
 	var faction := -1
+	## The faction whose display name the card shows (CData.unit_name); -1 the
+	## row's own name. Apart from `faction` so the fire trait is unchanged.
+	var name_f := -1
+
+	## The name the card shows: the faction's own (CData.unit_name).
+	func display_name() -> String:
+		return CData.unit_name(UT.key_of(ty), name_f if name_f >= 0 else faction)
 
 	func _init(p_ty: int, p_men: int, p_col: Color, p_right: String = "", p_toggle: bool = false) -> void:
 		ty = p_ty
@@ -1028,7 +1035,7 @@ class UnitRow extends PressRow:
 		if right_text != "":
 			rw = font.get_string_size(right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 8
 			draw_string(font, Vector2(sz.x - rw, 18.0 if detail else sz.y * 0.5 + 5.0), right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.55))
-		var nm := str(UT.TYPES[ty]["name"])
+		var nm := display_name()
 		var nw := minf(font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, sz.x - x0 - rw - 4)
 		draw_string(font, Vector2(x0, 16), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw - 4, 14, Color.WHITE)
 		if detail:

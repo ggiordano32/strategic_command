@@ -351,6 +351,7 @@ func _ready() -> void:
 		add_child(BattleDof.new())
 	hud = Hud.new()
 	add_child(hud)
+	hud.unit_faction = soldiers.unit_faction
 	hud.build(sim, player_side, interactive)
 	hud.set_title(_hud_title(), hud.book.pack)
 	var su: Array = scn.get("units", [])

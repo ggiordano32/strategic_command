@@ -2099,6 +2099,8 @@ each piece (grenades at a gate, dragoons on a flank, mortars at a siege) as foll
 
 ### The Caribbean roster, batch 1 (as built, 2026-10-23)
 
+Display names of the rows the Itza, Miskito and Brethren share are per faction (`UNIT_NAMES` in `campaign/data/west.gd`; `ui.md`, per-faction unit names).
+
 Seven rows after the heavy gun in `UnitTypes.WEST_LATE` (so every earlier index, the fort gun's and the heavy gun's
 included, is unchanged; `pack_test _batch1`), sprite sets 27-33 of `art_pipeline.md`, two new ammunition kinds appended
 to `AMMO` (indices 11 and 12; `grenade` and `shell`, both standard kinds, `base` -1, `aoe` 1: every man within the
