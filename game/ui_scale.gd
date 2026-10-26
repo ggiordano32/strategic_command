@@ -14,7 +14,7 @@ extends RefCounted
 
 const K_TOUCH := 0.88
 const K_MOUSE := 0.82
-const SIZES: Array[float] = [0.85, 1.0, 1.18]
+const SIZES: Array[float] = [0.72, 1.0, 1.4]  # S is small on a phone, L is large on a 1440p monitor
 const SIZE_NAMES: Array[String] = ["S", "M", "L"]
 const MIN_LOGICAL := Vector2(800, 400)  # never lay the HUD out smaller than this
 const SETTINGS := "user://settings.cfg"

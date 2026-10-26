@@ -2190,6 +2190,24 @@ func _j_barfit() -> void:
 		if cs.hint.text != "":
 			for b in [cs.map_key.view_button, cs.map_key.button]:
 				_check(not hr.intersects((b as Control).get_global_rect()), tag + "the hint is clear of the map key's buttons")
+		# the map can be panned until its foot clears the bar, and the fit zoom sits above it
+		var vpz: Vector2 = cs._vp()
+		var cover: float = cs._bar_lift()
+		var avail_y := vpz.y - cs.TOP_H - cover
+		var margin_y := maxf(60.0, avail_y * 0.33)
+		var z0: float = cs.zoom
+		var o0: Vector2 = cs.offset
+		cs.zoom = 100.0
+		cs.offset = Vector2(0, -100000.0)
+		cs._clamp_view()
+		var foot: float = cs.offset.y + Geo.SIZE.y * cs.zoom
+		_check(cover > 0.0 and foot <= vpz.y - cover - margin_y + 0.5, tag + "panned up, the map's foot (%.0f) rises %.0f above the bar's top (%.0f)" % [foot, margin_y, vpz.y - cover])
+		cs.zoom = 0.0
+		cs._clamp_view()
+		foot = cs.offset.y + Geo.SIZE.y * cs.zoom
+		_check(foot <= vpz.y - cover + 0.5, tag + "at the fit zoom the map's foot (%.0f) is not under the bar (%.0f)" % [foot, vpz.y - cover])
+		cs.zoom = z0
+		cs.offset = o0
 	cs.close_side()
 	root.content_scale_size = win
 	if DisplayServer.get_name() == "headless":

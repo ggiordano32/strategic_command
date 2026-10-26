@@ -363,7 +363,7 @@ func _battles_page() -> void:
 
 ## The Options page needs no scroll at 1024x576 with UI size M (tighter rows, sliders side by side, descriptions
 ## dropped when short of room); a roomy window keeps the full page; 844x390 and 1280x720 L still work (the page may
-## scroll on the phone; every row and button is there).
+## scroll on the phone and at L on a 720p window since L became 1.4, 2026-10-25; every row and button is there).
 func _options_fit() -> void:
 	var size0 := UiScale.size_name()
 	var old := DisplayServer.window_get_size()
@@ -371,7 +371,7 @@ func _options_fit() -> void:
 		var box: Control = m._options_box
 		var scroll: Control = box.get_parent().get_parent()
 		return box.get_combined_minimum_size().y <= scroll.size.y + 0.5
-	for case in [[Vector2i(1024, 576), "M", true], [Vector2i(1280, 720), "L", true], [Vector2i(1280, 720), "M", true], [Vector2i(844, 390), "M", false]]:
+	for case in [[Vector2i(1024, 576), "M", true], [Vector2i(1280, 720), "L", false], [Vector2i(1280, 720), "M", true], [Vector2i(844, 390), "M", false]]:
 		DisplayServer.window_set_size(case[0])
 		root.size = case[0]
 		await _frames(10)

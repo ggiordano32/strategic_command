@@ -1652,8 +1652,12 @@ func _refresh_bar() -> void:
 
 ## The bar is full width at the bottom: the hint line, the map key's buttons,
 ## the End turn row and the side panel's foot rise above it.
+func _bar_lift() -> float:
+	return cmd_bar.height() + 4.0 if cmd_bar.shown else 0.0   # the bottom corners rise above the bar
+
+
 func _layout_bottom() -> void:
-	var lift := cmd_bar.height() + 4.0 if cmd_bar.shown else 0.0   # the bottom corners rise above the bar
+	var lift := _bar_lift()
 	hint.offset_bottom = -12.0 - lift
 	# narrow screens: the hint wraps in the room between the map key's buttons and the End turn row
 	var room := _vp().x - hint.offset_left - bottom_bar.get_combined_minimum_size().x - 16.0 - 30.0   # (30: the fit button)
@@ -1663,6 +1667,11 @@ func _layout_bottom() -> void:
 	map_key.set_lift(lift)
 	_place_key()
 	_place_toast()
+	# the bar covers the map's foot: the pan limits and the fit zoom follow it
+	if overlay != null and map_view != null:
+		_clamp_view()
+		map_view.queue_redraw()
+		overlay.queue_redraw()
 
 
 ## Open the full panel for the selection (the old card), optionally scrolled
@@ -3228,21 +3237,23 @@ func _map_point(screen: Vector2) -> Vector2:
 
 func _clamp_view() -> void:
 	var vp := _vp()
-	var avail := vp - Vector2(0, TOP_H)
+	var bottom_cover := _bar_lift()   # the command bar hides the map's foot
+	var avail := vp - Vector2(0, TOP_H + bottom_cover)
 	var fit := minf(avail.x / Geo.SIZE.x, avail.y / Geo.SIZE.y)
-	zoom = clampf(zoom, fit, ZOOM_MAX)  # never smaller than the whole map
+	zoom = clampf(zoom, fit, ZOOM_MAX)  # never smaller than the whole map (above the bar)
 	var mapsz := Geo.SIZE * zoom
-	var margin := 60.0
-	# Along each axis: centred if the map fits, else kept on screen with a margin.
+	var margin_x := maxf(60.0, avail.x * 0.25)
+	var margin_y := maxf(60.0, avail.y * 0.33)
+	# Along each axis: centred if the map fits, else kept on screen with a real buffer.
 	if mapsz.x <= avail.x:
 		offset.x = (vp.x - mapsz.x) * 0.5
 	else:
 		# The right edge may come in past the side panel.
-		offset.x = clampf(offset.x, vp.x - mapsz.x - minf(PANEL_W, vp.x * 0.48) - margin, margin)
+		offset.x = clampf(offset.x, vp.x - mapsz.x - minf(PANEL_W, vp.x * 0.48) - margin_x, margin_x)
 	if mapsz.y <= avail.y:
 		offset.y = TOP_H + (avail.y - mapsz.y) * 0.5
 	else:
-		offset.y = clampf(offset.y, vp.y - mapsz.y - margin, TOP_H + margin)
+		offset.y = clampf(offset.y, vp.y - bottom_cover - mapsz.y - margin_y, TOP_H + margin_y)
 
 
 func _zoom_at(p: Vector2, factor: float) -> void:

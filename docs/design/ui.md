@@ -20,12 +20,12 @@ stack the cards"): the UI is laid out in logical pixels and
 `game/ui_scale.gd` sets the window's logical size from the device: one
 logical pixel is 0.88 CSS px on a touch screen (a 42 px button is ~37 CSS
 px, ~7 mm on the user's phone) and 0.82 CSS px with a mouse (normal
-desktop sizes on any monitor), times an S / M / L setting (0.85 / 1 / 1.18,
+desktop sizes on any monitor), times an S / M / L setting (0.72 / 1 / 1.4,
 menu "UI size", saved in `user://settings.cfg`). CSS size and touch come
 from `window.innerWidth` and `matchMedia("(pointer: coarse)")` on the web,
 the screen scale and DisplayServer natively; stretch stays canvas_items, so
 the battlefield is drawn at full window resolution. Never laid out smaller
-than 800 x 400 logical. A 780 x 360 CSS phone is 886 x 409 logical; a
+than 800 x 400 logical (a 780 x 360 phone at DPR 3 is 1231 x 568 at S, 886 x 409 at M, 866 x 400 at L: the floor caps L). A 780 x 360 CSS phone is 886 x 409 logical; a
 1920 x 1080 desktop 2341 x 1317; 3840 x 2160 at DPR 1 4682 x 2634.
 Top bar (right): Withdraw army (tap twice), Units, Orders, Pause, speed,
 Menu (the speed button shows the speed in force and opens a popover with a
@@ -426,6 +426,14 @@ about 148), so the map key buttons, the End turn row, the hint and the toasts
 rise above it by what it really takes while it shows; the hint wraps in the
 room left between the key buttons and the End turn row. Versions before 6 keep the side
 panel only. Testing aids: `--details` / `--no-bar` (the old behaviour).
+
+**Map pan limits and the UI size steps (as built, 2026-10-25).** *Pan:* `_clamp_view()` counts the
+command bar (`_bar_lift()`, also the lift of the bottom corners) as covered: the fit zoom and the
+centring use the band above it, and when the map is larger the margin is a buffer (a third of the
+uncovered height, a quarter of the width, 60 px at least), so the southern strip can be brought
+above the bar. `_layout_bottom()` re-clamps when the bar shows or hides. *Sizes:* S / M / L are
+0.72 / 1 / 1.4 (M unchanged; S was not small on a phone, L not large on a 1440p monitor). Logical
+size of a 2560 x 1440 mouse screen at DPR 1: 4336 x 2439 (S), 3122 x 1756 (M), 2230 x 1254 (L).
 
 **Round 2 (2026-10-16, owner's tablet playtest).** *Recruit popup tabs:* the
 city's Recruit opens `show_raise` on **Army** or, with nothing to raise and a
