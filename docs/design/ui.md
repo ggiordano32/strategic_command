@@ -458,6 +458,26 @@ shipyard are on the bar or in a popup, each order in one place. A planned new
 army's X is in the Recruit popup; a planned recruit into an army is a dimmed
 card (tap cancels). Testing aid `--popup=build:key|raise:key|ship:key|recruit:N`.
 
+**Shipyard rows and the dialog height (as built, 2026-10-26).** The Shipyard
+tab's rows are `Kit.ShipRow`, a drawn row of the soldier row's shape and
+height (200 x 72, both on the base `Kit.PressRow` that holds the press /
+long-press / hint-zone code): the ship glyph in the side colour, name and
+price, the row's `"role"` sentence (`west_ships.gd`; the `desc` when a row
+has none), five pips G H C P L (Guns, Hull, Crew, Pace, Load; thresholds
+2/10/25/45, 15/35/70/110, 30/80/180/300, 250/300/350/390, 1/2/3/5, each stat
+in its colour; a tap on them hints the exact numbers), and the sub line
+(upkeep, Shipyard level, coastal, rowed, or the reason in red; "not enough
+money" stays dim and the row stays pickable). A long press shows the `desc`.
+The dialog's height: `show_dialog` measured the content in `_center_dialog`
+before the first layout, when the new content's wrapped labels are measured at
+their 40 px minimum width (the Shipyard intro 564 px high, the content 1645
+against 315 laid out); the scroll area took its cap and the dialog, which never
+shrinks by itself, kept it, with empty space inside and the buttons pushed
+down. `_center_dialog` now fits again after the next two layouts, and
+`_fit_dialog` limits the scroll area to what is left of the screen after the
+title, rule and buttons (`campaign_input_test` `_j_ship`: both tabs inside the
+viewport with the buttons visible at 844x390 S / M and 1231x568 S).
+
 **Tap latency (2026-10-16, owner's Tab S7: "almost any selection has a visible
 delay").** A tap is answered in the frame it lands in, and that frame only does
 what the tap changed; the rest follows in later frames. Rules of the view

@@ -910,51 +910,20 @@ static func show_hint(text: String) -> void:
 		hint_cb.call(text)
 
 
-## A unit as one drawn row: symbol (with tier mark) in the side colour, name,
-## strength bar with men / full, and optional right-hand text. Toggleable
-## (selected rows are framed). Emits `pressed`.
-class UnitRow extends Control:
+## A drawn row that takes a press (on release, if the pointer is still on it),
+## a long press and taps on its hint zones (`_hits`: [Rect2, text]). UnitRow
+## and ShipRow draw on it.
+class PressRow extends Control:
 	const KitSelf := preload("res://game/campaign/ui_kit.gd")
 	signal pressed
 	signal long_pressed
 	const LONG_PRESS_SEC := 0.5
 	var _press_t := -1.0
 	var _long_fired := false
-	var ty := 0
-	var men := 0
-	var full := 1
-	var col := Color(0.35, 0.6, 1.0)
-	var right_text := ""
-	var sub_text := "":
-		set(v):
-			sub_text = v
-			update_minimum_size()
 	var selected := false
 	var toggle := false
-	## Compact card: trait glyphs after the name, good / weak against class
-	## rows, the five pips (game/unit_traits.gd). faction: for the fire trait.
-	var detail := true
-	var faction := -1
 	var _hits: Array = []  # [Rect2, hint text] of the glyphs drawn last
 	var _tap_hint := ""
-
-	func _init(p_ty: int, p_men: int, p_col: Color, p_right: String = "", p_toggle: bool = false) -> void:
-		ty = p_ty
-		men = p_men
-		full = maxi(UT.size_of(p_ty), 1)
-		col = p_col
-		right_text = p_right
-		toggle = p_toggle
-		size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		mouse_filter = Control.MOUSE_FILTER_STOP
-
-	func _get_minimum_size() -> Vector2:
-		if not detail:
-			return Vector2(200, 40)
-		var h := 56.0
-		if men >= 0 or sub_text != "":
-			h += 16.0
-		return Vector2(200, h)
 
 	## Press on release, only if the pointer is still on the row (a touch
 	## that became a scroll is moved far away by TouchScroll, which cancels
@@ -1003,6 +972,43 @@ class UnitRow extends Control:
 			_press_t = -1.0
 			queue_redraw()
 			long_pressed.emit()
+
+
+## A unit as one drawn row: symbol (with tier mark) in the side colour, name,
+## strength bar with men / full, and optional right-hand text. Toggleable
+## (selected rows are framed). Emits `pressed`.
+class UnitRow extends PressRow:
+	var ty := 0
+	var men := 0
+	var full := 1
+	var col := Color(0.35, 0.6, 1.0)
+	var right_text := ""
+	var sub_text := "":
+		set(v):
+			sub_text = v
+			update_minimum_size()
+	## Compact card: trait glyphs after the name, good / weak against class
+	## rows, the five pips (game/unit_traits.gd). faction: for the fire trait.
+	var detail := true
+	var faction := -1
+
+	func _init(p_ty: int, p_men: int, p_col: Color, p_right: String = "", p_toggle: bool = false) -> void:
+		ty = p_ty
+		men = p_men
+		full = maxi(UT.size_of(p_ty), 1)
+		col = p_col
+		right_text = p_right
+		toggle = p_toggle
+		size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	func _get_minimum_size() -> Vector2:
+		if not detail:
+			return Vector2(200, 40)
+		var h := 56.0
+		if men >= 0 or sub_text != "":
+			h += 16.0
+		return Vector2(200, h)
 
 	func _draw() -> void:
 		var sz := size
@@ -1075,6 +1081,88 @@ class UnitRow extends Control:
 			draw_string(font, Vector2(x0 + bw + 6, by + 9), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COL_DIM)
 		elif sub_text != "":
 			draw_string(font, Vector2(x0, by + 9), sub_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw, 12, COL_DIM)
+
+
+## A ship (a CData.ship_rows() row) as a drawn row of the soldier row's shape:
+## the ship glyph in the side colour, name and price, the row's role, the five
+## pips G H C P L (Guns, Hull, Crew, Pace, Load; each stat in its colour) and
+## a sub line (upkeep, Shipyard level, coastal / rowed, or the reason she
+## cannot be built). A tap on the pips shows the exact numbers.
+class ShipRow extends PressRow:
+	const PIPS := [["G", "guns", [2, 10, 25, 45], Color(0.95, 0.55, 0.3)], ["H", "hull", [15, 35, 70, 110], Color(0.8, 0.65, 0.4)],
+		["C", "crew", [30, 80, 180, 300], Color(0.5, 0.7, 1.0)], ["P", "speed", [250, 300, 350, 390], Color(0.55, 0.85, 0.5)],
+		["L", "cap", [1, 2, 3, 5], Color(0.95, 0.8, 0.4)]]
+	var row: Dictionary = {}
+	var col := Color(0.35, 0.6, 1.0)
+	var right_text := ""
+	var sub_col := COL_DIM
+	var sub_text := "":
+		set(v):
+			sub_text = v
+			queue_redraw()
+
+	func _init(p_row: Dictionary, p_col: Color, p_right: String = "") -> void:
+		row = p_row
+		col = p_col
+		right_text = p_right
+		toggle = false
+		sub_text = sub_line(p_row)
+		size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mouse_filter = Control.MOUSE_FILTER_STOP
+
+	static func sub_line(r: Dictionary) -> String:
+		var t := "upkeep %d  -  Shipyard %d" % [int(r.get("upkeep", 0)), int(r.get("yard", 0))]
+		if int(r.get("coastal", 0)) == 1:
+			t += "  -  coastal"
+		if int(r.get("oars", 0)) == 1:
+			t += "  -  rowed"
+		return t
+
+	## Pips lit: how many of the four thresholds the value reaches.
+	static func pips_of(v: int, th: Array) -> int:
+		var n := 0
+		for t in th:
+			if v >= int(t):
+				n += 1
+		return n
+
+	static func numbers_text(r: Dictionary) -> String:
+		return "%d guns, hull %d, crew %d, pace %d, carries %d" % [int(r.get("guns", 0)), int(r.get("hull", 0)), int(r.get("crew", 0)),
+			int(r.get("speed", 0)) / 10, int(r.get("cap", 0))]
+
+	func _get_minimum_size() -> Vector2:
+		return Vector2(200, 72)
+
+	func _draw() -> void:
+		var sz := size
+		_hits = []
+		var bg := Color(1, 1, 1, 0.13) if selected else Color(1, 1, 1, 0.05)
+		if _press_t >= 0.0:
+			bg = Color(1, 1, 1, 0.22)
+		draw_rect(Rect2(Vector2.ZERO, sz), bg)
+		if selected:
+			draw_rect(Rect2(Vector2(1, 1), sz - Vector2(2, 2)), Color(1, 0.95, 0.5), false, 2.0)
+		var r := 15.0
+		IconRaster.draw_icon(self, "ship", Rect2(5, 9, r * 2, r * 2), col)
+		var font := ThemeDB.fallback_font
+		var x0 := r * 2 + 12
+		var rw := 0.0
+		if right_text != "":
+			rw = font.get_string_size(right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 8
+			draw_string(font, Vector2(sz.x - rw, 18.0), right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.55))
+		draw_string(font, Vector2(x0, 16), str(row.get("name", "")), HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw - 4, 14, Color.WHITE)
+		var role := str(row.get("role", row.get("desc", "")))
+		draw_string(font, Vector2(x0, 33), role, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 6, 12, COL_DIM)
+		var px := x0
+		var y3 := 43.0
+		for p in PIPS:
+			var v := pips_of(int(row.get(p[1], 0)), p[2])
+			draw_string(font, Vector2(px, y3 + 8), str(p[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, COL_DIM)
+			for sg in 4:
+				draw_rect(Rect2(px + 9 + sg * 6, y3, 5, 8), p[3] if sg < v else Color(1, 1, 1, 0.14))
+			px += 38
+		_hits.append([Rect2(x0, y3, px - x0, 10), numbers_text(row)])
+		draw_string(font, Vector2(x0, sz.y - 5), sub_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 6, 12, sub_col)
 
 
 ## Balance of power: a two-colour bar split at the attackers' share of the

@@ -13,33 +13,40 @@ extends RefCounted
 ## not change its pace), yard (Shipyard level needed; 0: any port of ours,
 ## no shipyard), storm (N2b: % chance a hurricane's core sinks it at sea),
 ## factions (faction keys that build it; captured ships of other kinds are
-## kept); fire (1: a fire ship, N3c), power (the formula's worth of a ship
+## kept); role (one sentence, how the fleet uses her: the Shipyard rows);
+## fire (1: a fire ship, N3c), power (the formula's worth of a ship
 ## without guns).
 
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "cost": 300, "upkeep": 15, "guns": 8, "hull": 30, "crew": 60, "speed": 400,
 		"cap": 1, "coastal": 0, "oars": 0, "yard": 1, "storm": 8,
 		"factions": ["new_spain", "tierra_firme", "england", "france", "dutch", "brethren", "miskito"],
+		"role": "Scout, raider and ferry for one company; runs from anything bigger.",
 		"desc": "Fast and handy, a few light guns: scouting, raiding and one company of men."},
 	{"key": "brigantine", "name": "Brigantine", "cost": 500, "upkeep": 25, "guns": 14, "hull": 45, "crew": 90, "speed": 370,
 		"cap": 2, "coastal": 0, "oars": 0, "yard": 1, "storm": 12,
 		"factions": ["england", "france", "dutch", "brethren"],
+		"role": "The cruiser: chases merchantmen, lands two companies, outguns a sloop.",
 		"desc": "Two masts and a long reach: the pirates' and the traders' favourite."},
 	{"key": "frigate", "name": "Frigate", "cost": 900, "upkeep": 45, "guns": 30, "hull": 70, "crew": 200, "speed": 340,
 		"cap": 3, "coastal": 0, "oars": 0, "yard": 2, "storm": 16,
 		"factions": ["new_spain", "tierra_firme", "england", "france", "dutch"],
+		"role": "The navy's workhorse: wins gun duels, escorts the flota, carries three.",
 		"desc": "A fast warship with a full gun deck: the workhorse of every navy."},
 	{"key": "galleon", "name": "Galleon", "cost": 1400, "upkeep": 70, "guns": 40, "hull": 110, "crew": 300, "speed": 240,
 		"cap": 6, "coastal": 0, "oars": 0, "yard": 3, "storm": 35,
 		"factions": ["new_spain", "tierra_firme"],
+		"role": "The treasure hauler: a regiment in the hold, slow, fights only when cornered.",
 		"desc": "Slow, high-castled and heavy: a treasure hold and room for a regiment."},
 	{"key": "ship_of_the_line", "name": "Ship of the line", "cost": 2000, "upkeep": 100, "guns": 70, "hull": 150, "crew": 500,
 		"speed": 280, "cap": 4, "coastal": 0, "oars": 0, "yard": 3, "storm": 18,
 		"factions": ["england", "dutch"],
+		"role": "The fleet's anchor: breaks any line it meets, too dear to risk alone.",
 		"desc": "Two gun decks and a broadside nothing else on these seas can answer."},
 	{"key": "war_canoe", "name": "War canoe", "cost": 120, "upkeep": 5, "guns": 2, "hull": 10, "crew": 40, "speed": 300,
 		"cap": 1, "coastal": 1, "oars": 1, "yard": 0, "storm": 45,
 		"factions": ["itza", "miskito"],
+		"role": "The coast raider: lands a war party on any beach, hugs the shallows, dies to a broadside.",
 		"desc": "Piraguas and dugouts: rowed, fast along the shore whatever the wind, never out of sight of land."},
 	# (N3c) A fire ship: no guns, a skeleton crew; in a sea battle she is sailed
 	# at an enemy, lit and abandoned, and burns what she touches (spent when
@@ -49,6 +56,7 @@ const ROWS: Array[Dictionary] = [
 	{"key": "fire_ship", "name": "Fire ship", "cost": 160, "upkeep": 8, "guns": 0, "hull": 25, "crew": 14, "speed": 380,
 		"cap": 0, "coastal": 0, "oars": 0, "yard": 1, "storm": 20, "fire": 1, "power": 120,
 		"factions": ["england", "france", "dutch", "brethren"],
+		"role": "One shot: sailed into a stronger enemy and lit; keep her behind the line until then.",
 		"desc": "An old hull packed with tar, brimstone and brushwood. In a sea battle her dozen volunteers sail her at the enemy, light her and take to the boat; whatever she grapples burns. Spent once lit."},
 ]
 

@@ -4061,22 +4061,21 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 		if on:
 			cost = int(row["cost"])
 			picked_name = str(row["name"])
-		var col := VBoxContainer.new()
-		col.add_theme_constant_override("separation", 0)
-		var b := Kit.icon_button("%s    %d" % [str(row["name"]), int(row["cost"])], "ship", func():
-			_raise["ship"] = "" if on else key
-			show_raise(r), 0)
-		b.name = "ship_" + key
-		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		b.toggle_mode = true
-		b.button_pressed = on
-		b.disabled = why != "" and not on
-		b.tooltip_text = str(row["desc"])
-		col.add_child(b)
-		var sub := "%s, hull %d, crew %d, carries %d, pace %d%s, upkeep %d, needs Shipyard %d" % [CFleet.arms_text(row), int(row["hull"]), int(row["crew"]),
-			int(row["cap"]), int(row["speed"]) / 10, ", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"]), int(row["yard"])]
-		col.add_child(Kit.label(sub if why == "" else "%s  -  %s" % [why, sub], Kit.FONT_SMALL, Kit.COL_DIM if why == "" or why == "not enough money" else Kit.COL_BAD, true))
-		v.add_child(col)
+		var sr := Kit.ShipRow.new(row, _fc(f), str(int(row["cost"])))
+		sr.name = "ship_" + key
+		sr.selected = on
+		var blocked := why != "" and why != "not enough money"
+		if why != "":
+			sr.sub_text = why
+			sr.sub_col = Kit.COL_DIM if not blocked else Kit.COL_BAD
+		if blocked and not on:
+			sr.modulate = Color(1, 1, 1, 0.82)
+		else:
+			sr.pressed.connect(func():
+				_raise["ship"] = "" if on else key
+				show_raise(r))
+		sr.long_pressed.connect(func(): Kit.show_hint(str(row.get("desc", ""))))
+		v.add_child(sr)
 	var fl_here: Array = []
 	for fl in CFleet.fleets(ps):
 		if CGrid.cheb(CFleet.cell(fl), CFleet.harbour(r)) <= CFleet.PORT_CELLS:

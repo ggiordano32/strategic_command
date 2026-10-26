@@ -1494,6 +1494,11 @@ func _build_ui() -> void:
 	dialog_box = Kit.vbox(6)
 	dialog_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	dialog_scroll.add_child(dialog_box)
+	# The content's wrapped labels settle a frame or more after the dialog opens (slower on a phone): refit when its
+	# minimum size changes, so the dialog is its content's height and never taller than the screen.
+	dialog_box.minimum_size_changed.connect(func():
+		if dialog.visible:
+			_fit_dialog())
 	dialog_buttons = Kit.hbox(8)
 	dialog_buttons.alignment = BoxContainer.ALIGNMENT_END
 	dv.add_child(dialog_buttons)
@@ -1564,10 +1569,31 @@ static func _dialog_icon(text: String) -> String:
 	return ""
 
 
+## Fit and centre the open dialog. Run once at once and again after the next
+## two layouts: before the first layout the new content's wrapped labels are
+## measured at their minimum width (a 40 px column: an intro label 564 px high,
+## the content 1645), so the scroll area would take its cap and the dialog,
+## which never shrinks by itself, kept that height with empty space inside
+## and its buttons pushed down.
 func _center_dialog() -> void:
-	# The scroll area takes the content's height, up to the screen.
+	var gen := _dlg_gen
+	_fit_dialog()
+	for i in 2:
+		await get_tree().process_frame
+		if gen != _dlg_gen or not dialog.visible:
+			return
+		_fit_dialog()
+
+
+func _fit_dialog() -> void:
+	# The scroll area takes the content's height, up to the cap and up to what
+	# is left of the screen once the title, rule and buttons are counted.
 	var want := dialog_box.get_combined_minimum_size().y
-	dialog_scroll.custom_minimum_size.y = minf(want, float(dialog_scroll.get_meta("max_h", 400.0)))
+	dialog_scroll.custom_minimum_size.y = 0.0
+	dialog.reset_size()
+	var overhead := dialog.get_combined_minimum_size().y
+	var room := _vp().y - 16.0 - overhead
+	dialog_scroll.custom_minimum_size.y = maxf(minf(want, minf(float(dialog_scroll.get_meta("max_h", 400.0)), room)), 0.0)
 	dialog.reset_size()
 	dialog.position = (_vp() - dialog.size) * 0.5
 

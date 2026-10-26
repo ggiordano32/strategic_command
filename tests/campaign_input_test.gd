@@ -72,6 +72,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Kit := preload("res://game/campaign/ui_kit.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -137,7 +138,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_done, _s_done,
 	]
 
 
@@ -2215,6 +2216,85 @@ func _j_barfit() -> void:
 	cs.no_bar = true
 	cs.details_on_select = true
 	await process_frame
+	hold = false
+
+
+## The Shipyard dialog (Miskito, a port with a yard and a fleet in the harbour) and the Army tab fit the screen at
+## phone sizes: inside the viewport, the buttons row visible; the ship rows are drawn rows with the pip hint; and the
+## dialog's fit is right even when it was first measured before the layout (the wrapped labels at 40 px).
+func _j_ship() -> void:
+	hold = true
+	cs.queue_free()
+	await process_frame
+	var CFleet := preload("res://campaign/cfleet.gd")
+	var mk := CData.faction_index("miskito")
+	var st := CState.new_campaign("Yard", 3, [mk], {}, [], "west")
+	cs = CampaignScreen.new()
+	cs.no_bar = true
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_yard")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	cs.close_dialog()
+	cs.cover.visible = false
+	var r := -1
+	for i in CData.region_count():
+		if int(cs.ps["regions"][i]["owner"]) == cs.f and CFleet.dock(i) >= 0:
+			r = i
+			break
+	_check(r >= 0, "ship dialog: the Miskito own a port")
+	if r < 0:
+		hold = false
+		return
+	(cs.st["regions"][r]["slots"] as Array).append([CData.SHIPYARD, 1])
+	var hc: int = CFleet.harbour(r)
+	cs.st["fleets"].append({"id": 777, "f": cs.f, "x": CGrid.cx(hc), "y": CGrid.cy(hc), "ships": [{"t": "sloop", "h": 100, "c": 100}], "carry": [], "moved": 0})
+	cs._replan()
+	var win := root.content_scale_size
+	var root_size := root.size
+	for cfg in [["S", Vector2i(844, 390)], ["M", Vector2i(844, 390)], ["S", Vector2i(1231, 568)]]:
+		var vp: Vector2i = cfg[1]
+		root.content_scale_size = vp
+		if DisplayServer.get_name() == "headless":
+			root.size = vp
+		for k in 3:
+			await process_frame
+		for tab in ["army", "ship", "ship_early"]:
+			var tag := "ship dialog %s %dx%d %s: " % [cfg[0], vp.x, vp.y, tab]
+			cs.close_dialog()
+			cs.panels._raise = {}
+			cs.panels.show_raise(r, "army" if tab == "army" else "ship")
+			if tab == "ship_early":
+				cs._center_dialog()   # measured before the layout (the race)
+			for k in 4:
+				await process_frame
+			var dr: Rect2 = cs.dialog.get_global_rect()
+			_check(cs.dialog.position.y >= 0.0 and cs.dialog.position.y + cs.dialog.size.y <= float(vp.y),
+				tag + "the dialog (%s at %s) is inside the viewport" % [str(cs.dialog.size), str(cs.dialog.position)])
+			_check(dr.size.y <= cs.dialog.get_combined_minimum_size().y + 1.0,
+				tag + "no empty height: the dialog %.0f is its content's %.0f" % [dr.size.y, cs.dialog.get_combined_minimum_size().y])
+			var bt: Control = cs.dialog_buttons
+			var br: Rect2 = bt.get_global_rect()
+			_check(bt.is_visible_in_tree() and br.position.y >= 0.0 and br.end.y <= float(vp.y) and br.size.y > 0.0,
+				tag + "the buttons row is visible inside the viewport (%s)" % str(br))
+			if tab != "army":
+				var s0 = cs.dialog_box.find_child("ship_sloop", true, false)
+				_check(s0 != null and s0 is Kit.ShipRow and (s0 as Control).size.y >= 72.0 and (s0 as Control).size.y <= 73.0, tag + "the sloop is a 72 px ShipRow")
+	var sl = cs.dialog_box.find_child("ship_sloop", true, false)
+	if sl != null:
+		_tap_control(sl)
+		await process_frame
+		await process_frame
+		_check(str(cs.panels._raise.get("ship", "")) == "sloop", "ship dialog: a tap on a ship row picks it")
+		_check(Kit.ShipRow.numbers_text(CData.ship_row("sloop")) == "8 guns, hull 30, crew 60, pace 40, carries 1",
+			"ship dialog: the pip hint reads %s" % Kit.ShipRow.numbers_text(CData.ship_row("sloop")))
+		var wc = cs.dialog_box.find_child("ship_war_canoe", true, false)
+		_check(wc != null and (wc as Kit.ShipRow).sub_text.ends_with("coastal  -  rowed"), "ship dialog: the war canoe's sub line says coastal and rowed")
+	cs.close_dialog()
+	root.content_scale_size = win
+	if DisplayServer.get_name() == "headless":
+		root.size = root_size
 	hold = false
 
 
