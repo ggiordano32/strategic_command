@@ -820,3 +820,27 @@ fleet (<n> ships) at <nearest city>: attack it with a stronger fleet, blockade i
 lane (a trade route, its gold paid to both ports), Sea lane at war, Raided lane. The Realm panel adds "Stop a raid: attack the
 raiding fleet, blockade its home port, or make peace." while a lane paying us is cut. The chronicle row was left as it is
 (naming the raider's fleet size would put it in the event, hence in the hashed state).
+
+### Launches per turn and boarding on arrival (as built, 2026-10-26)
+
+Owner, phone playtest of the Miskito: a port could order one ship a turn, too little for war canoes (tiny, one unit each, a war
+party needs one per unit), and getting an army beside a fleet took turns of guessing.
+
+Launches: a ship row may carry `"launch"` (ships of this kind one port launches in a turn, default 1); the war canoe has 4.
+`regions[r]["sq"]` is now a list that grows: `CFleet.ship_check` refuses an order when the queue already holds as many ships as
+the smallest `launch` among the queued keys and the key ordered, with "launching a ship already" (limit 1: a sloop behind canoes
+or a canoe behind a sloop) or "the yard launches N of these a turn". So a queue is one ship of any kind, or up to `launch` of a
+multi-launch kind. `end_of_turn` already launched every queued key. The AI's `_build` repeats its one ship order for a
+multi-launch kind when it wants transport, while the check passes, the cost fits what is left of its budget and fewer than
+`launch` were ordered.
+
+Boarding: `CFleet.boarding_cells(st, fl)` (the passable cells beside the fleet plus the site of every region whose harbour is
+beside it) and `CFleet.pickup_cells(st, a)` (the open-sea cells beside the army, or beside the harbour of the settlement it
+holds) are pure helpers for the view; both agree with `near_fleet` (tested). The version 6 move order takes an optional
+`"fleet"` (id of the faction's own fleet; the view sends x, y of a boarding cell and persist 1): refused up front when the fleet
+is not ours, the army is in a battle or a siege, or the fleet could never carry it ("not enough room aboard"). The march rows
+carry the fleet as an eighth element and a stored march keeps it as the army's `dest_fleet`. Right after the players' moves
+`CFleet.board_on_arrival` (in index order) boards every army with `dest_fleet` that passes `embark_check` (event `embarked`);
+one whose march has ended without that forgets the plan (event `board_missed {f, army, fleet}`); the rest march on. A fleet
+that sails away meanwhile is not chased: the army walks to the old cell and reports the miss. Optional keys only, no
+`CState.VERSION` change. Tests: `campaign_test` `_launches`, `_board_march`.

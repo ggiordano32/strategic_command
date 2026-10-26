@@ -215,12 +215,13 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 					if a6.is_empty():
 						continue
 					mv6.append([int(a6["id"]), CRules.order_cell(st, a6, o), int(s["f"]), int(o.get("mode", CData.MODE_SIEGE)),
-						int(o.get("persist", 0)), int(o.get("tgt", -1)), int(o.get("join", -1))])
+						int(o.get("persist", 0)), int(o.get("tgt", -1)), int(o.get("join", -1)), int(o.get("fleet", -1))])
 		for a in st["armies"]:
 			if not seen.has(int(a["id"])) and CState.is_human(st, int(a["f"])) and (int(a.get("dest_x", -1)) >= 0 or int(a.get("tgt", -1)) >= 0):
 				var dc := CGrid.at(int(a["dest_x"]), int(a["dest_y"]))
-				mv6.append([int(a["id"]), dc, int(a["f"]), int(a["mode"]), 1, int(a.get("tgt", -1)), int(a.get("dest_army", -1))])
+				mv6.append([int(a["id"]), dc, int(a["f"]), int(a["mode"]), 1, int(a.get("tgt", -1)), int(a.get("dest_army", -1)), int(a.get("dest_fleet", -1))])
 		CRules.execute_moves6(st, mv6)
+		CFleet.board_on_arrival(st)
 		moves = []
 	elif CState.moves_on(st):
 		# Version 5: the orders, plus the players' armies still marching to a

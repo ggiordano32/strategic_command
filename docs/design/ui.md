@@ -478,6 +478,30 @@ down. `_center_dialog` now fits again after the next two layouts, and
 title, rule and buttons (`campaign_input_test` `_j_ship`: both tabs inside the
 viewport with the buttons visible at 844x390 S / M and 1231x568 S).
 
+**Boarding indicator and the Shipyard queue (as built, 2026-10-26).** The
+overlay's `set_landing` (called as before after a selection or an order; it
+still returns "changed") also fills `board_cells` and `pickup_cells`
+(`landing_cells` keeps its meaning, the sand-gold beaches), drawn in teal
+(`COL_BOARD`) as a rounded cell outline with a small boat at the cell's centre.
+With an army of ours selected (no fleet), the cells of `CFleet.boarding_cells`
+of every fleet of ours with room for the whole army are lit. With a fleet of
+ours that has room selected, the `CFleet.pickup_cells` of every army of ours
+that is not busy, not in a siege and not already beside it are lit (a tap on
+one sails there, as before). Tap order with an army selected and a fleet of
+ours tapped: beside it (or `embark_check` clean) the army boards now; else, if
+`CFleet.board_order_check` is clean, `set_board` sends a persisting move with
+`"fleet"` to the boarding cell with the fewest march turns (ties: Chebyshev
+distance, then cell index), toast "Marching to board the fleet: N turn(s),
+boards on arriving."; the same fleet tapped again cancels it; a refusal flashes
+"Cannot board: why." The planned path ends in the boat mark, the command bar's
+status line reads "Boarding fleet on arriving" (`plan6` carries `"fleet"` from
+the order or a stored `dest_fleet`), and Cancel clears the order, or sends
+`cancel_move` for a stored march. The Shipyard tab's intro names the batch
+kind from the data ("one ship a turn; war canoe: 4 a turn"); the queue is
+grouped by kind with a count ("War canoe x3: launched at the end of the turn")
+and each group's close button removes only that kind's orders for the port; the
+rows show the rules' reason (red) when the batch rule blocks them.
+
 **Tap latency (2026-10-16, owner's Tab S7: "almost any selection has a visible
 delay").** A tap is answered in the frame it lands in, and that frame only does
 what the tap changed; the rest follows in later frames. Rules of the view

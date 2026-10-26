@@ -372,7 +372,16 @@ static func _build(st: Dictionary, f: int) -> void:
 				best_k = str(key)
 				best_r = r
 	if best_r >= 0:
-		CRules.apply_order(st, f, {"t": "ship", "r": best_r, "ship": best_k})
+		var lim := int(CData.ship_row(best_k).get("launch", 1))
+		var cost := int(CData.ship_row(best_k)["cost"])
+		var left := budget
+		var made := 0
+		while CRules.apply_order(st, f, {"t": "ship", "r": best_r, "ship": best_k}) == "":
+			made += 1
+			left -= cost
+			if lim <= 1 or not transport or made >= lim or left < cost \
+					or CFleet.ship_check(st, f, best_r, best_k) != "":
+				break
 
 
 # -------------------------------------------------------------- transport ---

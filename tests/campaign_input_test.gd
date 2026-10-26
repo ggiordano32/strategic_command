@@ -138,7 +138,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _j_done, _s_done,
 	]
 
 
@@ -2295,6 +2295,123 @@ func _j_ship() -> void:
 	root.content_scale_size = win
 	if DisplayServer.get_name() == "headless":
 		root.size = root_size
+	hold = false
+
+
+func _j_board() -> void:
+	hold = true
+	var CFleet := preload("res://campaign/cfleet.gd")
+	cs.queue_free()
+	await process_frame
+	var mk := CData.faction_index("miskito")
+	var st := CState.new_campaign("Board", 3, [mk], {}, [], "west")
+	cs = CampaignScreen.new()
+	cs.no_bar = false
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_board")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	cs.close_dialog()
+	cs.cover.visible = false
+	var armies: Array = CState.armies_of(cs.ps, cs.f)
+	_check(not armies.is_empty(), "boarding: the Miskito have an army")
+	if armies.is_empty():
+		hold = false
+		return
+	var a: Dictionary = armies[0]
+	var aid := int(a["id"])
+	var ac := CState.cell(a)
+	var fid := 778
+	var fl := {}
+	var placed := false
+	for r in CData.region_count():
+		var hc: int = CFleet.harbour(r)
+		if hc < 0 or CGrid.cheb(hc, ac) < 3:
+			continue
+		var ships: Array = []
+		for k in 8:
+			ships.append({"t": "sloop", "h": 100, "c": 100})
+		fl = {"id": fid, "f": cs.f, "x": CGrid.cx(hc), "y": CGrid.cy(hc), "ships": ships, "carry": [], "moved": 0}
+		cs.st["fleets"].append(fl)
+		cs._replan()
+		cs.select_army(aid)
+		await process_frame
+		cs._tap_fleets(cs.overlay.fleet_positions()[fid])
+		await process_frame
+		if not _move_order(aid).is_empty():
+			placed = true
+			break
+		cs.st["fleets"].erase(fl)
+		cs.orders = []
+		cs._replan()
+	_check(placed, "boarding: a fleet 3+ cells from the army can be marched to")
+	if not placed:
+		hold = false
+		return
+	var o := _move_order(aid)
+	var bcells := CFleet.boarding_cells(cs.ps, CFleet.fleet(cs.ps, fid))
+	_check(int(o.get("fleet", -1)) == fid and bcells.has(CGrid.at(int(o["x"]), int(o["y"]))) and int(o["persist"]) == 1,
+		"boarding: the tap queued a move with fleet %d to a boarding cell" % fid)
+	_check(cs._toast != null and "Marching to board the fleet" in str(cs._toast.find_children("*", "Label", true, false)[0].text),
+		"boarding: the toast says it marches to board")
+	var bar_txt := ""
+	for l in cs.cmd_bar.find_children("leader_status", "Label", true, false):
+		bar_txt = (l as Label).text
+	_check(bar_txt.begins_with("Boarding fleet on arriving"), "boarding: the bar says '%s'" % bar_txt)
+	cs.select_army(-1)
+	cs.select_army(aid)
+	await process_frame
+	var pc: Dictionary = cs.plan6(aid)
+	cs.set_move6(aid, int(pc["cell"]), -1)
+	await process_frame
+	_check(_move_order(aid).is_empty(), "boarding: cancelling the move removes the order")
+	cs.orders = []
+	cs._replan()
+	cs.select_army(aid)
+	cs._refresh_map()
+	await process_frame
+	_check(not cs.overlay.board_cells.is_empty() and cs.overlay.board_cells == bcells,
+		"boarding: the army selected lights the fleet's boarding cells (%d)" % cs.overlay.board_cells.size())
+	cs.select_fleet(fid)
+	cs._refresh_map()
+	await process_frame
+	_check(cs.overlay.board_cells.is_empty() and cs.overlay.pickup_cells == CFleet.pickup_cells(cs.ps, CState.army(cs.ps, aid)),
+		"boarding: the fleet selected lights the army's pickup cells (%d)" % cs.overlay.pickup_cells.size())
+	cs.select_fleet(-1)
+	# The Shipyard tab after one war canoe.
+	var r := -1
+	for i in CData.region_count():
+		if int(cs.ps["regions"][i]["owner"]) == cs.f and CFleet.dock(i) >= 0:
+			r = i
+			break
+	(cs.st["regions"][r]["slots"] as Array).append([CData.SHIPYARD, 1])
+	cs._replan()
+	_check(cs.add_order({"t": "ship", "r": r, "ship": "war_canoe"}) == "", "boarding: a war canoe is ordered")
+	cs.panels._raise = {}
+	cs.panels.show_raise(r, "ship")
+	for k in 4:
+		await process_frame
+	var wc = cs.dialog_box.find_child("ship_war_canoe", true, false)
+	var sl = cs.dialog_box.find_child("ship_sloop", true, false)
+	_check(wc != null and CFleet.ship_check(cs.ps, cs.f, r, "war_canoe") == "" and (wc as Kit.ShipRow).modulate.a >= 1.0,
+		"shipyard: the canoe row stays orderable after one canoe")
+	_check(sl != null and (sl as Kit.ShipRow).sub_text == CFleet.ship_check(cs.ps, cs.f, r, "sloop") and (sl as Kit.ShipRow).sub_text != "",
+		"shipyard: the sloop row shows the yard reason (%s)" % (sl as Kit.ShipRow).sub_text)
+	var q = cs.dialog_box.find_child("ship_queued", true, false)
+	var q_text: String = (q as Label).text if q is Label else ""
+	_check(q_text.begins_with("War canoe x1"), "shipyard: the queue group reads War canoe x1 ('%s')" % q_text)
+	_tap_control(wc)
+	await process_frame
+	await process_frame
+	var okb = cs.dialog_buttons.find_child("ship_confirm", true, false)
+	_check(okb != null and not (okb as Button).disabled, "shipyard: OK is enabled with a canoe picked")
+	var x = cs.dialog_box.find_child("ship_cancel", true, false)
+	if x != null:
+		(x as Button).pressed.emit()
+		await process_frame
+	_check((cs.ps["regions"][r].get("sq", []) as Array).is_empty(), "shipyard: the group's close button removes the order")
+	cs.close_dialog()
 	hold = false
 
 

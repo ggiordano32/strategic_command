@@ -152,6 +152,8 @@ func _init() -> void:
 	_breached_walls()
 	_ai_sea_garrison()
 	_docking()
+	_launches()
+	_board_march()
 	_sortie()
 	_sight()
 	_town_plan()
@@ -6017,3 +6019,186 @@ func _sortie() -> void:
 	_check(fs.size() == 1 and int(fs[0][4]) == 961, "sortie: Skilled hunts it at SORTIE_HUNT_PCT %d (%s)" % [CP.of(sp, syr)[CP.SORTIE_HUNT_PCT], str(fs)])
 	CAIFleet._pw = {}
 	CData.use_pack("rome")
+
+
+## Launches per turn (west_ships "launch"): a yard launches a batch of war canoes.
+func _launches() -> void:
+	CData.use_pack("west")
+	var mi := _f("miskito")
+	var cg := _r("cabo_gracias")
+	var st := CState.new_campaign("launch", 41, [mi], {}, [], "west")
+	st["factions"][mi]["treasury"] = 2000
+	var t0 := int(st["factions"][mi]["treasury"])
+	var ships0 := 0
+	for fl in CFleet.fleets_of(st, mi):
+		ships0 += (fl["ships"] as Array).size()
+	var ok := true
+	for i in 4:
+		ok = ok and CRules.apply_order(st, mi, {"t": "ship", "r": cg, "ship": "war_canoe"}) == ""
+	var sq: Array = st["regions"][cg].get("sq", [])
+	_check(ok and sq.size() == 4 and int(st["factions"][mi]["treasury"]) == t0 - 480,
+		"launches: four war canoes ordered at one port (queue %d, treasury -%d)" % [sq.size(), t0 - int(st["factions"][mi]["treasury"])])
+	var why5 := CRules.apply_order(st, mi, {"t": "ship", "r": cg, "ship": "war_canoe"})
+	_check(why5.contains("a turn"), "launches: a fifth canoe is refused (%s)" % why5)
+	var whys := CRules.apply_order(st, mi, {"t": "ship", "r": cg, "ship": "sloop"})
+	_check(whys != "" and (st["regions"][cg]["sq"] as Array).size() == 4, "launches: a sloop behind canoes is refused (%s)" % whys)
+	var s2 := CState.copy(st)
+	var s3 := CState.copy(st)
+	var g := CTurn.resolve_turn(st, [CTurn.submission(st, mi, [])])
+	var ships1 := 0
+	for fl in CFleet.fleets_of(g, mi):
+		ships1 += (fl["ships"] as Array).size()
+	_check(ships1 == ships0 + 4 and not g["regions"][cg].has("sq"),
+		"launches: the four canoes join the fleets at the dock (ships %d -> %d), the queue is cleared" % [ships0, ships1])
+	var g2 := CTurn.resolve_turn(s2, [CTurn.submission(s2, mi, [])])
+	_check(CState.state_hash(g) == CState.state_hash(g2), "launches: resolving twice gives the same hash")
+	# A sloop then a canoe, and the other way round.
+	var sb := CState.copy(s3)
+	sb["regions"][cg].erase("sq")
+	_check(CRules.apply_order(sb, mi, {"t": "ship", "r": cg, "ship": "sloop"}) == "", "launches: a sloop is ordered")
+	var w1 := CRules.apply_order(sb, mi, {"t": "ship", "r": cg, "ship": "war_canoe"})
+	var w2 := CRules.apply_order(sb, mi, {"t": "ship", "r": cg, "ship": "sloop"})
+	_check(w1 == "launching a ship already" and w2 == "launching a ship already",
+		"launches: nothing joins a sloop in the queue (%s / %s)" % [w1, w2])
+	# The AI orders more than one canoe when it wants transport (money for two canoes, not a sloop).
+	var sa := CState.new_campaign("launch_ai", 42, [], {}, [], "west")
+	var keep: Array = []
+	for fl in sa["fleets"]:
+		if int(fl["f"]) != mi:
+			keep.append(fl)
+	sa["fleets"] = keep
+	sa["factions"][mi]["treasury"] = CAI._reserve(sa, mi) + 270
+	CAIFleet._build(sa, mi)
+	var aq: Array = sa["regions"][cg].get("sq", [])
+	_check(aq.size() == 2 and not aq.has("sloop"), "launches: the AI Miskito orders a batch of canoes when it wants transport and money allows two (%d)" % aq.size())
+
+
+## A march with "fleet": boards on arriving (CFleet.board_on_arrival).
+func _board_march() -> void:
+	CData.use_pack("west")
+	var mi := _f("miskito")
+	var cg := _r("cabo_gracias")
+	var st := CState.new_campaign("board", 43, [mi], {}, [], "west")
+	var keep: Array = []
+	for a in st["armies"]:
+		if int(a["f"]) != mi:
+			keep.append(a)
+	st["armies"] = keep
+	st["fleets"] = []
+	var dkc := CFleet.dock(cg)
+	var fl := _dk_fleet(st, mi, dkc, ["sloop", "war_canoe", "war_canoe"])
+	var fid := int(fl["id"])
+	var cells := CFleet.boarding_cells(st, fl)
+	# Agreement with near_fleet over the land around the fleet and the start fleets.
+	var agree := true
+	var n_cells := 0
+	for f2 in CFleet.fleets(st):
+		var bc := CFleet.boarding_cells(st, f2)
+		for c in CGrid.disc(CFleet.cell(f2), 4):
+			if not CGrid.passable(c):
+				continue
+			var probe := {"x": CGrid.cx(c), "y": CGrid.cy(c)}
+			if CFleet.near_fleet(probe, f2) != bc.has(c):
+				agree = false
+			n_cells += 1
+	_check(agree and n_cells > 0 and cells.size() > 0, "board march: boarding_cells agrees with near_fleet (%d cells, %d boarding)" % [n_cells, cells.size()])
+	var sample := 0
+	var pagree := true
+	var fl_all := CFleet.fleets(st)
+	for f2 in fl_all:
+		for c in CGrid.disc(CFleet.cell(f2), 3):
+			if not CGrid.passable(c):
+				continue
+			var probe := {"x": CGrid.cx(c), "y": CGrid.cy(c)}
+			for pc in CFleet.pickup_cells(st, probe):
+				var fake: Dictionary = f2.duplicate()
+				fake["x"] = CGrid.cx(pc)
+				fake["y"] = CGrid.cy(pc)
+				sample += 1
+				if not CFleet.near_fleet(probe, fake) or not CFleet.is_sea(pc):
+					pagree = false
+	_check(pagree and sample > 0, "board march: pickup_cells agrees with near_fleet (%d pairs)" % sample)
+	# A near army: two cells from a boarding cell.
+	var target := -1
+	var start := -1
+	for b in cells:
+		for c in CGrid.disc(b, 2):
+			if CGrid.passable(c) and CGrid.cheb(c, b) == 2 and not cells.has(c) and CGrid.cheb(c, CFleet.cell(fl)) >= 3:
+				target = b
+				start = c
+				break
+		if target >= 0:
+			break
+	_check(target >= 0 and cells.has(target), "board march: setup, army two cells from boarding cell %d" % target)
+	var a1 := _army(st, mi, "cabo_gracias", ["canoe_raiders"])
+	CState.place(a1, start)
+	var order := {"t": "move", "army": int(a1["id"]), "x": CGrid.cx(target), "y": CGrid.cy(target), "persist": 1, "fleet": fid, "mode": CData.MODE_MARCH}
+	_check(CRules.apply_order(st, mi, order) == "", "board march: the order is accepted")
+	var bad := order.duplicate()
+	bad["fleet"] = 9999
+	_check(CRules.apply_order(st, mi, bad) != "", "board march: another's / unknown fleet is refused")
+	# A far army.
+	var a2 := _army(st, mi, "cabo_gracias", ["canoe_raiders"])
+	var far := -1
+	for c in CGrid.disc(target, 45):
+		if CGrid.passable(c) and CGrid.cheb(c, target) >= 30 and c % 5 == 0:
+			CState.place(a2, c)
+			var fp := CRules.plan_path(st, a2, target)
+			if not fp.has("why") and (fp["path"] as Array).size() >= 30:
+				far = c
+				for pc in fp["path"]:  # (the whole way is ours: no contact battle on the march)
+					if CGrid.region(int(pc)) >= 0:
+						st["regions"][CGrid.region(int(pc))]["owner"] = mi
+				st["regions"][CGrid.region(far)]["owner"] = mi
+				break
+	_check(far >= 0, "board march: setup, a far army at %d" % far)
+	var order2 := {"t": "move", "army": int(a2["id"]), "x": CGrid.cx(target), "y": CGrid.cy(target), "persist": 1, "fleet": fid, "mode": CData.MODE_MARCH}
+	var s0 := CState.copy(st)
+	var g := CTurn.resolve_turn(st, [CTurn.submission(st, mi, [order, order2])])
+	var g_b := CTurn.resolve_turn(s0, [CTurn.submission(s0, mi, [order, order2])])
+	_check(CState.state_hash(g) == CState.state_hash(g_b), "board march: resolving twice gives the same hash")
+	var gf := CFleet.fleet(g, fid)
+	var carried: Array = []
+	for u in gf["carry"]:
+		carried.append(int(u["id"]))
+	_check(carried.has(int(a1["id"])) and CState.army(g, int(a1["id"])).is_empty(), "board march: the near army is aboard after one turn")
+	var far_a := CState.army(g, int(a2["id"]))
+	_check(not far_a.is_empty() and int(far_a.get("dest_fleet", -1)) == fid and int(far_a["dest_x"]) >= 0,
+		"board march: the far army still marches with dest_fleet set")
+	var turns := 0
+	while turns < 20 and not CState.army(g, int(a2["id"])).is_empty():
+		g = CTurn.resolve_turn(g, [CTurn.submission(g, mi, [])])
+		turns += 1
+	var aboard := false
+	for u in CFleet.fleet(g, fid).get("carry", []):
+		aboard = aboard or int(u["id"]) == int(a2["id"])
+	_check(aboard and turns > 0, "board march: the far army boards after %d more turns" % turns)
+	# No room.
+	var sn := CState.copy(st)
+	sn["fleets"] = []
+	var small := _dk_fleet(sn, mi, dkc, ["war_canoe"])
+	var big := CState.army(sn, int(a1["id"]))
+	(big["units"] as Array).append({"t": "canoe_raiders", "n": UT.size_of(UT.index_of("canoe_raiders"))})
+	var no_room := {"t": "move", "army": int(a1["id"]), "x": CGrid.cx(target), "y": CGrid.cy(target), "persist": 1, "fleet": int(small["id"])}
+	var wr := CRules.apply_order(sn, mi, no_room)
+	_check(wr.contains("room"), "board march: a fleet with no room is refused (%s)" % wr)
+	# The fleet sails away first.
+	var sm := CState.copy(st)
+	var mfl := CFleet.fleet(sm, fid)
+	var away := _dk_far(sm, mi, mfl, dkc, 6)
+	_check(away >= 0, "board march: setup, a sea cell away from the dock")
+	var sm2 := CState.copy(st)
+	CFleet.place(CFleet.fleet(sm2, fid), away)
+	CFleet.fleet(sm2, fid).erase("in")
+	var gm2 := sm2
+	var missed := 0
+	var o4 := [order]
+	for i in 6:
+		gm2 = CTurn.resolve_turn(gm2, [CTurn.submission(gm2, mi, o4)])
+		o4 = []
+		for e in gm2["events"]:
+			if str(e["k"]) == "board_missed":
+				missed = 1  # (the log is kept across turns: a flag, not a count)
+	var am := CState.army(gm2, int(a1["id"]))
+	_check(missed == 1 and not am.is_empty() and not am.has("dest_fleet"),
+		"board march: a fleet that sailed away: the army arrives, board_missed, dest_fleet gone (%d events)" % missed)

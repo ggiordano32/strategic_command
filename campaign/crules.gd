@@ -16,7 +16,11 @@ extends RefCounted
 ##        keeps marching on later turns: the army stores dest and mode)
 ##        (version 6: "x", "y" the destination cell, or "tgt" an enemy army;
 ##        "to" still means that region's settlement; see "the continuous
-##        overworld (v6)" at the end of this file)
+##        overworld (v6)" at the end of this file; optional "fleet": id of a
+##        fleet of the faction, with x, y a boarding cell of it
+##        (CFleet.boarding_cells) and persist 1: the army boards it on
+##        arriving (army key "dest_fleet", CFleet.board_on_arrival; event
+##        board_missed if the march ends without boarding))
 ##   {"t": "assault", "r": region}  (version 4: the besiegers storm it;
 ##        version 5 also from inside the region without a siege)
 ##   {"t": "sally", "r": region}    (version 4: the besieged ride out)
@@ -131,6 +135,10 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 					return "no such army"
 				if mustering(st, int(ma["id"])):
 					return "mustering"
+				if int(o.get("fleet", -1)) >= 0:
+					var bw := CFleet.board_order_check(st, f, ma, int(o["fleet"]))
+					if bw != "":
+						return bw
 				return _can_move6(st, ma, order_cell(st, ma, o), int(o.get("tgt", -1)), int(o.get("mode", CData.MODE_SIEGE)),
 					true, int(o.get("join", -1)))
 			return can_move(st, CState.army(st, int(o.get("army", -1))), int(o.get("to", -1)), f)
@@ -3645,6 +3653,7 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			continue
 		var tgt := int(mv[5]) if (mv as Array).size() > 5 else -1
 		var join := int(mv[6]) if (mv as Array).size() > 6 else -1
+		var bfleet := int(mv[7]) if (mv as Array).size() > 7 else -1
 		var dest := int(mv[1])
 		if join >= 0:
 			var jt := CState.army(st, join)
@@ -3670,7 +3679,7 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			# turns is kept.
 			event(st, {"k": "move_failed", "f": int(a["f"]), "army": id, "to": CGrid.region(dest) if dest >= 0 else -1, "why": "mustering"})
 			if persist != 0 and dest >= 0:
-				_store_march(a, dest, tgt, mode, join)
+				_store_march(a, dest, tgt, mode, join, int(mv[7]) if (mv as Array).size() > 7 else -1)
 			else:
 				_drop_march(a)
 			continue
@@ -3683,7 +3692,7 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 		if why == "" and int(aim["adjacent"]) != 0 and CGrid.cheb(CState.cell(a), int(aim["cell"])) <= 1:
 			# Already next to what it means to act on.
 			plans.append({"id": id, "path": [], "k": 0, "aim": aim, "mode": mode, "persist": persist, "stop": 0,
-				"dest": dest, "tgt": tgt, "join": join})
+				"dest": dest, "tgt": tgt, "join": join, "fleet": bfleet})
 			continue
 		var pp := {}
 		if why == "":
@@ -3696,7 +3705,7 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			_drop_march(a)
 			continue
 		plans.append({"id": id, "path": pp["path"], "k": 0, "aim": pp["aim"], "mode": mode, "persist": persist,
-			"stop": 0, "dest": dest, "tgt": tgt, "join": join})
+			"stop": 0, "dest": dest, "tgt": tgt, "join": join, "fleet": bfleet})
 	# Armies already next to what they mean to act on.
 	for p in plans:
 		if (p["path"] as Array).is_empty():
@@ -3734,13 +3743,15 @@ static func execute_moves6(st: Dictionary, moves: Array) -> void:
 			done = false  # a merge that did not happen yet: keep following the army
 		if done or int(p["persist"]) == 0:
 			_drop_march(a)
+			if int(p.get("fleet", -1)) >= 0 and int(p["persist"]) != 0:
+				a["dest_fleet"] = int(p["fleet"])  # (board_on_arrival boards it or reports the miss, then it is gone)
 		else:
-			_store_march(a, int(p["dest"]), int(p["tgt"]), int(p["mode"]), int(p["join"]))
+			_store_march(a, int(p["dest"]), int(p["tgt"]), int(p["mode"]), int(p["join"]), int(p.get("fleet", -1)))
 
 
 ## Keep a march for the next turns (dest cell, enemy army tgt, mode, the
 ## army it marches to merge into).
-static func _store_march(a: Dictionary, dc: int, tgt: int, mode: int, join: int) -> void:
+static func _store_march(a: Dictionary, dc: int, tgt: int, mode: int, join: int, fleet: int = -1) -> void:
 	a["dest_x"] = CGrid.cx(dc)
 	a["dest_y"] = CGrid.cy(dc)
 	a["tgt"] = tgt
@@ -3749,6 +3760,10 @@ static func _store_march(a: Dictionary, dc: int, tgt: int, mode: int, join: int)
 		a["dest_army"] = join
 	else:
 		a.erase("dest_army")
+	if fleet >= 0:
+		a["dest_fleet"] = fleet
+	else:
+		a.erase("dest_fleet")
 
 
 static func _drop_march(a: Dictionary) -> void:
@@ -3756,6 +3771,7 @@ static func _drop_march(a: Dictionary) -> void:
 	a["dest_y"] = -1
 	a["tgt"] = -1
 	a.erase("dest_army")
+	a.erase("dest_fleet")
 
 
 static var _mlog: Array = []

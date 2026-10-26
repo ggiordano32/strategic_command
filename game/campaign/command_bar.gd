@@ -391,6 +391,8 @@ func _status(a: Dictionary) -> Array:
 	var kind: String = s.move_kind(id)
 	var verb: String = {"inside": "Going inside", "siege": "Laying siege", "join": "Joining the siege", "assault": "Storming",
 		"relief": "Relieving", "merge": "Marching to merge", "attack": "Attacking", "sally": "Sallying", "raid": "Raiding"}.get(kind, "Marching")
+	if int(p6.get("fleet", -1)) >= 0:
+		verb = "Boarding fleet on arriving"
 	var rt: Dictionary = s.route6(id)
 	var when := ""
 	if rt.has("why"):

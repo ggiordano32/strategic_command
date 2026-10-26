@@ -23,7 +23,11 @@ extends RefCounted
 ##     in region r's port, on dock(r); "dk": r on a stored voyage: dock there on
 ##     arriving)}] sorted by id,
 ##   next_fleet, regions[r]["sq"] [ship keys] (ordered this turn, launched
-##   at the end of it), stats["sea_battles"].
+##   at the end of it; one kind, or a batch of a kind whose row has "launch" > 1
+##   (war canoes: 4 a turn); ship_check), stats["sea_battles"]. An army's
+##   optional dest_fleet (a march with "fleet": boards that fleet on arriving,
+##   board_on_arrival after the players' moves; event board_missed if the march
+##   ends without boarding).
 ## Orders (crules.apply_order): ship {r, ship}, embark {army, fleet}, land
 ## {fleet, army (-1 all), x, y}, fraid {fleet, lane} / fblockade {fleet, r}
 ## (lanes: a voyage to the lane's / the harbour's station, kept till it gets
@@ -591,8 +595,13 @@ static func ship_check(st: Dictionary, f: int, r: int, key: String) -> String:
 		return "besieged"
 	if not CState.battle_at(st, r).is_empty():
 		return "battle pending there"
-	if not (st["regions"][r].get("sq", []) as Array).is_empty():
-		return "already launching a ship"
+	var q: Array = st["regions"][r].get("sq", [])
+	if not q.is_empty():
+		var lim := int(row.get("launch", 1))
+		for k in q:
+			lim = mini(lim, int(CData.ship_row(str(k)).get("launch", 1)))
+		if q.size() >= lim:
+			return "launching a ship already" if lim == 1 else "the yard launches %d of these a turn" % lim
 	if int(row["cost"]) > int(st["factions"][f]["treasury"]):
 		return "not enough money"
 	return ""
@@ -709,7 +718,9 @@ static func _order_ship(st: Dictionary, f: int, r: int, key: String) -> String:
 	if why != "":
 		return why
 	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - int(CData.ship_row(key)["cost"])
-	st["regions"][r]["sq"] = [key]
+	if not st["regions"][r].has("sq"):
+		st["regions"][r]["sq"] = []
+	(st["regions"][r]["sq"] as Array).append(key)
 	return ""
 
 
@@ -741,6 +752,96 @@ static func near_fleet(a: Dictionary, fl: Dictionary) -> bool:
 		return true
 	var r := CGrid.site_region(ac)
 	return r >= 0 and harbour(r) >= 0 and CGrid.cheb(harbour(r), fc) <= 1
+
+
+## The land cells an army may stand on to board fleet fl, ascending: the
+## passable cells beside it (Chebyshev 1) and the site of every region whose
+## harbour lies beside it. Agrees with near_fleet.
+static func boarding_cells(_st: Dictionary, fl: Dictionary) -> PackedInt32Array:
+	var fc := cell(fl)
+	var seen := {}
+	for c in _ring1(fc):
+		if CGrid.passable(c):
+			seen[c] = 1
+	for r in CData.region_count():
+		var h := harbour(r)
+		if h >= 0 and CGrid.cheb(h, fc) <= 1 and CGrid.site(r) >= 0:
+			seen[CGrid.site(r)] = 1
+	var out := PackedInt32Array()
+	for c in seen.keys():
+		out.append(int(c))
+	out.sort()
+	return out
+
+
+## The open-sea cells a fleet may lie on to take army a aboard, ascending:
+## beside the army, and beside the harbour of the region whose site it holds.
+## Agrees with near_fleet.
+static func pickup_cells(_st: Dictionary, a: Dictionary) -> PackedInt32Array:
+	var ac := CState.cell(a)
+	var seen := {}
+	for c in _ring1(ac):
+		if is_sea(c):
+			seen[c] = 1
+	var r := CGrid.site_region(ac)
+	if r >= 0 and harbour(r) >= 0:
+		for c in _ring1(harbour(r)):
+			if is_sea(c):
+				seen[c] = 1
+	var out := PackedInt32Array()
+	for c in seen.keys():
+		out.append(int(c))
+	out.sort()
+	return out
+
+
+## Cell c and its eight neighbours that are on the grid.
+static func _ring1(c: int) -> Array:
+	var out: Array = [c]
+	for k in 8:
+		var j := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+		if j >= 0:
+			out.append(j)
+	return out
+
+
+## A move order's "fleet" (board on arriving): "" if army a of faction f may
+## march to board it, else why not.
+static func board_order_check(st: Dictionary, f: int, a: Dictionary, fid: int) -> String:
+	var fl := fleet(st, fid)
+	if fl.is_empty() or int(fl["f"]) != f:
+		return "no such fleet"
+	if int(a["busy"]) != 0 or _rules().in_battle(st, int(a["id"])):
+		return "in a battle"
+	if _rules().siege_role(st, a) != 0:
+		return "in a siege"
+	if CState.unit_count(a) > capacity(fl):
+		return "not enough room aboard (%d of %d)" % [CState.unit_count(a), capacity(fl)]
+	return ""
+
+
+## After the players' moves: armies marching to board a fleet (dest_fleet) that
+## stand beside it go aboard; one whose march ended without it (or whose fleet
+## is gone) forgets the plan (event board_missed); the rest march on.
+static func board_on_arrival(st: Dictionary) -> void:
+	if not on(st):
+		return
+	var ids: Array = []
+	for a in st["armies"]:
+		if int(a.get("dest_fleet", -1)) >= 0:
+			ids.append(int(a["id"]))
+	for id in ids:
+		var a := CState.army(st, id)
+		if a.is_empty():
+			continue
+		var fid := int(a["dest_fleet"])
+		if embark_check(st, int(a["f"]), id, fid) == "":
+			_embark(st, int(a["f"]), id, fid)
+		elif int(a.get("dest_x", -1)) < 0 or fleet(st, fid).is_empty():
+			a.erase("dest_fleet")
+			if int(a.get("dest_x", -1)) >= 0:
+				_rules()._drop_march(a)
+			_rules().event(st, {"k": "board_missed", "f": int(a["f"]), "army": id, "fleet": fid})
 
 
 static func _embark(st: Dictionary, f: int, id: int, fid: int) -> String:

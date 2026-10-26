@@ -3947,10 +3947,11 @@ func _shipyard(box: VBoxContainer, r: int) -> void:
 	sec.name = "shipyard_section"
 	box.add_child(sec)
 	var sq: Array = ps["regions"][r].get("sq", [])
-	for key in sq:
+	for g in _sq_groups(sq):
+		var gk := str(g[0])
 		var h := Kit.hbox(6)
-		h.add_child(Kit.label("%s: launched at the end of the turn" % CData.ship_row(str(key)).get("name", key), Kit.FONT, Kit.COL_GOOD, true))
-		h.add_child(Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r), 44))
+		h.add_child(Kit.label(_sq_text(gk, int(g[1])), Kit.FONT, Kit.COL_GOOD, true))
+		h.add_child(Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r and str(o.get("ship", "")) == gk), 44))
 		box.add_child(h)
 	var fk := str(CData.FACTIONS[f]["key"])
 	for row in CData.ship_rows():
@@ -4028,6 +4029,24 @@ func _raise_tabs(v: VBoxContainer, r: int) -> void:
 	v.add_child(h)
 
 
+## The ship orders queued at a port as [[key, count]] in first-queued order.
+func _sq_groups(sq: Array) -> Array:
+	var out: Array = []
+	for k in sq:
+		var hit := false
+		for g in out:
+			if str(g[0]) == str(k):
+				g[1] = int(g[1]) + 1
+				hit = true
+		if not hit:
+			out.append([str(k), 1])
+	return out
+
+
+func _sq_text(key: String, n: int) -> String:
+	return "%s x%d: launched at the end of the turn" % [CData.ship_row(key).get("name", key), n]
+
+
 ## The Shipyard tab: the ship rows to pick (one a turn), the queue, the fleets
 ## in the harbour; the dialog's button orders the ship.
 func _ship_tab(v: VBoxContainer, r: int) -> void:
@@ -4037,14 +4056,20 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 	var yard := CState.building(ps, r, CData.SHIPYARD)
 	var money := int(ps["factions"][f]["treasury"])
 	var picked := str(_raise.get("ship", ""))
-	v.add_child(Kit.label("Choose a ship: it is built at the Shipyard (%s) and launched into the harbour at the end of the turn; one ship a turn." % (
-		"level %d" % yard if yard > 0 else "none yet"), Kit.FONT_SMALL, Kit.COL_DIM, true))
-	for key in rs.get("sq", []):
+	var batch := ""
+	var fk0 := str(CData.FACTIONS[f]["key"])
+	for row0 in CData.ship_rows():
+		if (row0["factions"] as Array).has(fk0) and int(row0.get("launch", 1)) > 1 and batch == "":
+			batch = "%s: %d a turn" % [str(row0["name"]).to_lower(), int(row0["launch"])]
+	v.add_child(Kit.label("Choose a ship: it is built at the Shipyard (%s) and launched into the harbour at the end of the turn; %s." % [
+		"level %d" % yard if yard > 0 else "none yet", "one ship a turn" if batch == "" else "one ship a turn; " + batch], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	for g in _sq_groups(rs.get("sq", [])):
+		var gk := str(g[0])
 		var h := Kit.hbox(6)
-		var l := Kit.icon_label("%s: launched at the end of the turn" % CData.ship_row(str(key)).get("name", key), "ship", Kit.FONT, Kit.COL_GOOD, true)
+		var l := Kit.icon_label(_sq_text(gk, int(g[1])), "ship", Kit.FONT, Kit.COL_GOOD, true)
 		l.name = "ship_queued"
 		h.add_child(l)
-		var x := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r), 44)
+		var x := Kit.icon_button("", "close", func(): s.remove_orders(func(o): return str(o["t"]) == "ship" and int(o["r"]) == r and str(o.get("ship", "")) == gk), 44)
 		x.name = "ship_cancel"
 		x.pressed.connect(func(): show_raise(r))
 		h.add_child(x)

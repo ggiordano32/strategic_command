@@ -15,7 +15,9 @@ extends RefCounted
 ## factions (faction keys that build it; captured ships of other kinds are
 ## kept); role (one sentence, how the fleet uses her: the Shipyard rows);
 ## fire (1: a fire ship, N3c), power (the formula's worth of a ship
-## without guns).
+## without guns); launch (optional, default 1: how many ships of this kind
+## one port launches in a turn; the orders queue is one kind, or a batch of a
+## multi-launch kind: war canoes, 4).
 
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "cost": 300, "upkeep": 15, "guns": 8, "hull": 30, "crew": 60, "speed": 400,
@@ -44,7 +46,7 @@ const ROWS: Array[Dictionary] = [
 		"role": "The fleet's anchor: breaks any line it meets, too dear to risk alone.",
 		"desc": "Two gun decks and a broadside nothing else on these seas can answer."},
 	{"key": "war_canoe", "name": "War canoe", "cost": 120, "upkeep": 5, "guns": 2, "hull": 10, "crew": 40, "speed": 300,
-		"cap": 1, "coastal": 1, "oars": 1, "yard": 0, "storm": 45,
+		"cap": 1, "coastal": 1, "oars": 1, "yard": 0, "storm": 45, "launch": 4,
 		"factions": ["itza", "miskito"],
 		"role": "The coast raider: lands a war party on any beach, hugs the shallows, dies to a broadside.",
 		"desc": "Piraguas and dugouts: rowed, fast along the shore whatever the wind, never out of sight of land."},

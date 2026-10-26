@@ -138,6 +138,9 @@ var sea_reach_rt := PackedInt32Array()   # the reach those outlines are of
 var landing_cells := PackedInt32Array()   # the beaches a loaded fleet can land on this turn (lit), or where an army boards
 var _landing_segs := PackedVector2Array()   # ... their coast as segment pairs (map px)
 const COL_LANDING := Color(1.0, 0.92, 0.5)
+var board_cells := PackedInt32Array()   # land cells where the selected army may stand to board one of our fleets (teal)
+var pickup_cells := PackedInt32Array()   # sea cells where our fleet may lie to take the armies of ours aboard (teal)
+const COL_BOARD := Color(0.25, 0.85, 0.8)
 
 
 ## The selected fleet's reach (CFleet.reach: 0 this turn), drawn over the
@@ -185,8 +188,37 @@ func set_landing(st: Dictionary, f: int, fleet: Dictionary, army: Dictionary) ->
 					if CFleet.embark_check(st, f, int(army["id"]), int(fl["id"])) == "":
 						lit.append(from)
 						break
+	var bc := PackedInt32Array()
+	var pc := PackedInt32Array()
+	if CFleet.on(st) and f >= 0:
+		if fleet.is_empty() and not army.is_empty() and int(army["f"]) == f and int(army["busy"]) == 0 \
+				and CRules.siege_role(st, army) == 0:
+			var cset := {}
+			for fl in CFleet.fleets_of(st, f):
+				if CFleet.carried_units(fl) + CState.unit_count(army) <= CFleet.capacity(fl):
+					for c in CFleet.boarding_cells(st, fl):
+						cset[int(c)] = 1
+			var ks := cset.keys()
+			ks.sort()
+			for c in ks:
+				bc.append(int(c))
+		elif not fleet.is_empty() and int(fleet["f"]) == f and CFleet.carried_units(fleet) < CFleet.capacity(fleet):
+			var set2 := {}
+			for a in CState.armies_of(st, f):
+				if int(a["busy"]) != 0 or CRules.siege_role(st, a) != 0 or CFleet.near_fleet(a, fleet) \
+						or CFleet.carried_units(fleet) + CState.unit_count(a) > CFleet.capacity(fleet):
+					continue
+				for c in CFleet.pickup_cells(st, a):
+					set2[int(c)] = 1
+			var ks2 := set2.keys()
+			ks2.sort()
+			for c in ks2:
+				pc.append(int(c))
+	var board_changed := bc != board_cells or pc != pickup_cells
+	board_cells = bc
+	pickup_cells = pc
 	if lit == landing_cells:
-		return false
+		return board_changed
 	landing_cells = lit
 	_landing_segs = PackedVector2Array()
 	for c in lit:
@@ -933,6 +965,9 @@ func _fleets_body() -> void:
 		_ci.draw_multiline(sp, Color(0, 0, 0, 0.4), 6.0, true)
 		_ci.draw_multiline(sp, Color(COL_LANDING.r, COL_LANDING.g, COL_LANDING.b, 0.5), 4.6, true)
 		_ci.draw_multiline(sp, Color(1.0, 0.98, 0.8, 0.95), 2.2, true)
+	for bcs in [board_cells, pickup_cells]:
+		for c in bcs:
+			_draw_board_cell(int(c))
 	if state.has("fleets"):
 		var fpos := fleet_positions()
 		for r in CData.region_count():
@@ -1657,7 +1692,34 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 		draw_path_step(_ci, a, b, col, k < now, m)
 	if now > 0 and now < pts.size() - 1:
 		draw_turn_end(_ci, sp[now], col, m)
+	if int(pth.get("board", 0)) != 0:
+		_ci.draw_circle(sp[-1], 9.0 * m, Color(0, 0, 0, 0.6))
+		draw_boat(_ci, sp[-1], COL_BOARD, m)
 	_tips.append([sp[-1], kind, col, str(pth.get("caption", ""))])
+
+
+## A boarding cell: a rounded teal outline over the cell with a small boat at its centre.
+func _draw_board_cell(c: int) -> void:
+	var m := mk()
+	var half := float(CGrid.cell_px()) * zoom * 0.5 - 1.0
+	var ctr := to_screen(cell_point(c))
+	var r := Rect2(ctr - Vector2(half, half), Vector2(half, half) * 2.0)
+	_ci.draw_rect(r, Color(COL_BOARD.r, COL_BOARD.g, COL_BOARD.b, 0.16), true)
+	_ci.draw_rect(r, Color(0, 0, 0, 0.45), false, 3.0 * m)
+	_ci.draw_rect(r, Color(COL_BOARD.r, COL_BOARD.g, COL_BOARD.b, 0.9), false, 1.6 * m)
+	draw_boat(_ci, ctr, COL_BOARD, m * 0.8)
+
+
+## A small boat glyph (hull and a sail) at p.
+static func draw_boat(ci: CanvasItem, p: Vector2, col: Color, m: float) -> void:
+	var hull := PackedVector2Array([p + Vector2(-6, 1) * m, p + Vector2(6, 1) * m, p + Vector2(3.5, 5) * m, p + Vector2(-3.5, 5) * m])
+	var sail := PackedVector2Array([p + Vector2(0.5, -7) * m, p + Vector2(5, 0) * m, p + Vector2(0.5, 0) * m])
+	for poly in [hull, sail]:
+		var o := PackedVector2Array(poly)
+		o.append(o[0])
+		ci.draw_polyline(o, Color(0, 0, 0, 0.7), 3.0, true)
+	ci.draw_colored_polygon(hull, col)
+	ci.draw_colored_polygon(sail, Color(0.97, 0.97, 0.9))
 
 
 ## A planned voyage: this turn's part solid, later turns dashed, a ring

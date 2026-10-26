@@ -1914,13 +1914,13 @@ func _update_hint() -> void:
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
 	elif sel_fleet >= 0 and _g() and last_mouse:
-		hint.text = "Right-click the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an enemy harbour to blockade it (a left click only selects). Left-click empty sea to deselect."
+		hint.text = "Right-click the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an enemy harbour to blockade it (a left click only selects). Left-click empty sea to deselect. Board: select an army and tap one of your fleets; beside it the army boards now, else it marches to a lit cell and boards on arriving."
 	elif sel_army >= 0 and _g() and last_mouse:
 		hint.text = "Right-click a spot inside the shaded area to march there this turn, further on for later turns; right-click an enemy army to attack it, a city to besiege it, your other army to merge. Same spot again: cancel. Left-click empty ground to deselect." + _paddle_hint()
 	elif _g() and last_mouse:
 		hint.text = "Left-click an army to move it or recruit into it (at a city), a city for buildings or a new army. Right-click orders, a right drag pans." + _fog_hint()
 	elif sel_fleet >= 0 and _g():
-		hint.text = "Tap the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an empty fleet on an enemy harbour to blockade it. Board: select an army beside the fleet and tap the fleet."
+		hint.text = "Tap the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an empty fleet on an enemy harbour to blockade it. Board: select an army and tap one of your fleets; beside it the army boards now, else it marches to a lit cell and boards on arriving."
 	elif sel_army >= 0 and _g():
 		hint.text = "Tap (or drag the army to) a spot inside the shaded area to march there this turn, further on for later turns; tap an enemy army to attack it, a city to besiege it. Same spot again: cancel." + _paddle_hint()
 	elif _g():
@@ -2050,12 +2050,17 @@ func _g() -> bool:
 
 
 ## Version 6: army's planned or stored march: {cell, tgt, mode, stored,
-## join (an army of ours it marches to merge into, -1)} ({} none).
+## join (an army of ours it marches to merge into, -1), fleet (a fleet of ours
+## it boards on arriving, -1)} ({} none).
 func plan6(army: int) -> Dictionary:
 	for m in moves:
 		if int(m[0]) == army:
+			var bf := -1
+			for o in orders:
+				if str(o["t"]) == "move" and int(o["army"]) == army:
+					bf = int(o.get("fleet", -1))
 			return {"cell": int(m[1]), "tgt": int(m[4]) if (m as Array).size() > 4 else -1, "mode": int(m[2]), "stored": false,
-				"join": int(m[5]) if (m as Array).size() > 5 else -1}
+				"join": int(m[5]) if (m as Array).size() > 5 else -1, "fleet": bf}
 	var a := CState.army(ps, army)
 	if a.is_empty() or int(a["busy"]) != 0:
 		return {}
@@ -2067,16 +2072,16 @@ func plan6(army: int) -> Dictionary:
 		var j := CState.army(ps, join)
 		if j.is_empty():
 			return {}
-		return {"cell": CState.cell(j), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": join}
+		return {"cell": CState.cell(j), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": join, "fleet": -1}
 	var tgt := int(a.get("tgt", -1))
 	if tgt >= 0:
 		var t := CState.army(ps, tgt)
 		if t.is_empty():
 			return {}
-		return {"cell": CState.cell(t), "tgt": tgt, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": -1}
+		return {"cell": CState.cell(t), "tgt": tgt, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true, "join": -1, "fleet": -1}
 	if int(a.get("dest_x", -1)) >= 0:
 		return {"cell": CGrid.at(int(a["dest_x"]), int(a["dest_y"])), "tgt": -1, "mode": int(a.get("mode", CData.MODE_SIEGE)), "stored": true,
-			"join": -1}
+			"join": -1, "fleet": int(a.get("dest_fleet", -1))}
 	return {}
 
 
@@ -2193,6 +2198,73 @@ func set_join(army: int, target: int) -> void:
 	_replan()
 	save_plan()
 	_t("campaign_input", {"what": "move", "join": target})
+
+
+## Version 6: army marches to the boarding cell of our fleet `fid` nearest it and boards on arriving (a move with
+## "fleet"; CFleet.board_order_check says if it may). The same fleet again cancels the march.
+func set_board(army: int, fid: int) -> void:
+	var a := CState.army(ps, army)
+	var fl := CFleet.fleet(ps, fid)
+	if a.is_empty() or fl.is_empty():
+		return
+	var why := CFleet.board_order_check(ps, f, a, fid)
+	if why != "":
+		_flash("Cannot board: %s." % why)
+		return
+	var cur := plan6(army)
+	var same := not cur.is_empty() and int(cur.get("fleet", -1)) == fid
+	if not same and _muster_guard(army, func(): set_board(army, fid)):
+		return
+	var had_order := false
+	for o in orders:
+		if str(o["t"]) == "move" and int(o["army"]) == army:
+			had_order = true
+	var before := orders.duplicate(true)
+	var keep: Array = []
+	for o in orders:
+		if not ((str(o["t"]) == "move" or str(o["t"]) == "cancel_move") and int(o["army"]) == army):
+			keep.append(o)
+	orders = keep
+	if same:
+		if not had_order and bool(cur["stored"]):
+			orders.append({"t": "cancel_move", "army": army})
+		_undo.append(before)
+		_replan()
+		save_plan()
+		_t("campaign_input", {"what": "move_cancel"})
+		return
+	# The boarding cell nearest the army by the march preview: fewest turns, then Chebyshev, then cell index.
+	var best := -1
+	var best_t := 1 << 30
+	var best_d := 1 << 30
+	var ac := CState.cell(a)
+	for c in CFleet.boarding_cells(ps, fl):
+		var pr := CRules.plan_path(ps, a, int(c), -1, CData.MODE_SIEGE, {}, 12, -1)
+		if pr.has("why") or (pr["t"] as Array).is_empty() and int(c) != ac:
+			continue
+		var tn := int(pr["t"][-1]) + 1 if not (pr["t"] as Array).is_empty() else 0
+		var d := CGrid.cheb(ac, int(c))
+		if tn < best_t or (tn == best_t and d < best_d):
+			best = int(c)
+			best_t = tn
+			best_d = d
+	if best < 0:
+		_flash("Cannot board: no way to a cell beside the fleet.")
+		return
+	var mo := {"t": "move", "army": army, "x": CGrid.cx(best), "y": CGrid.cy(best), "mode": CData.MODE_SIEGE, "persist": 1, "fleet": fid}
+	var pv := CTurn.preview(st, f, orders + [mo])
+	for e in pv["errors"]:
+		if int(e[0]) == orders.size():
+			orders = before
+			_replan()
+			explain_refusal(army, maxi(CGrid.region(best), 0), str(e[1]))
+			return
+	orders.append(mo)
+	_undo.append(before)
+	_replan()
+	save_plan()
+	_t("campaign_input", {"what": "move", "fleet": fid})
+	show_toast("Marching to board the fleet: %d turn(s), boards on arriving." % maxi(best_t, 1))
 
 
 ## First tap on another of our armies with one selected: preview the merge
@@ -2446,6 +2518,8 @@ func path_entry(a: Dictionary, rt: Dictionary) -> Dictionary:
 		if now == cells.size():
 			now += 1  # reached this turn: the strike is this turn too
 	var out := {"army": int(a["id"]), "pts": pts, "now": now, "kind": kind}
+	if int(a["f"]) == f and int(plan6(int(a["id"])).get("fleet", -1)) >= 0:
+		out["board"] = 1
 	if kind == "merge":
 		var t := CState.army(ps, int(aim.get("join", -1)))
 		if not t.is_empty():
@@ -3675,7 +3749,10 @@ func _tap_fleets(p: Vector2) -> bool:
 			return true
 		var sa := CState.army(ps, sel_army) if sel_army >= 0 else {}
 		if not sa.is_empty() and int(sa["f"]) == f and int(fl["f"]) == f:
-			embark(sel_army, fid)
+			if CFleet.embark_check(ps, f, sel_army, fid) == "" or CFleet.near_fleet(sa, fl):
+				embark(sel_army, fid)
+			else:
+				set_board(sel_army, fid)
 			return true
 		if mine_f and int(fl["f"]) == f and not fl.has("flota"):
 			join_fleet(sel_fleet, fid)
