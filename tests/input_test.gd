@@ -27,6 +27,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const UiScale := preload("res://game/ui_scale.gd")
 
 var battle: Battle
 var frame := 0
@@ -47,6 +48,10 @@ func _initialize() -> void:
 	# Unfocused windows can stall on vsync (Wayland); the test needs real
 	# frame timing for double taps.
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	# The taps are placed for UI size M: pin it without saving, whatever user://settings.cfg holds (a menu_test run that
+	# died before restoring the size once left S there and the waypoint taps landed off their marks).
+	UiScale.load_settings()
+	UiScale.size_idx = 1
 	battle = Battle.new()
 	battle.scenario_id = "skirmish"
 	battle.seed_value = 7
