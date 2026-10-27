@@ -335,6 +335,14 @@ not at war.
   none of its side; with the creation setting `ai_alliances` 0 it asks
   only players. Old formats (an unmigrated online campaign) keep the old
   rules.
+- Wars the AI can cover (format 10, 2026-10-27, section 43; Average and
+  Skilled, Easy unchanged): no war while a region of ours that the
+  target's armies (or a current enemy's) reach next turn holds less than
+  WAR_COVER_PCT (50 / 60) % of that strength; a trade partner needs
+  WAR_RATIO x WAR_PARTNER_PCT (105 / 110) % and, Skilled, no other war on;
+  a second war only while every war is winning; stretched (two wars or a
+  region lost in 5 turns) the war won least asks peace below
+  STRETCH_PEACE_PCT (100) % of the enemy after PEACE_MIN_TURNS.
 
 ### 4.9 Preservation and retreat
 Good: an army is worth more than a region; retreat from a lost battle to
@@ -3007,3 +3015,78 @@ in every cell (the rule plays for AI defenders only). Rome rows untouched.
 
 Open: walls 0 AI against AI is now 39 % (section 31 had it at 52); if the owner wants it back near half, the lever is
 `S_DEF_FIRE`'s fall back at walls 0 in AI-only battles, not the deployment rules.
+
+## 43. Wars the AI can cover (2026-10-27)
+
+Acting on section 41: the AI declared wars it could not cover (Rome on its trade partner Gaul with Roma empty, Gaul
+taking it the next turn; Rome's three wars on partners in a row, then Gaul on a Rome fighting two). Four rules in
+`CAI.diplomacy`, state format 10 only (`CDip.on`: formats 6-9 play as before, their pins unmoved), each behind a knob
+of `campaign/cai_profile.gd` that is 0 (or neutral) at Easy, so Easy's random-ish wars and its unwise-war mistake
+(which rolls before these rules and against its own candidates) are unchanged:
+
+1. **The core covered** (`war_covered`, after the war roll succeeds; a refusal is counted `wars_uncovered` and the
+   next candidate is tried): every region of ours whose settlement an army of the target, or of a faction already at
+   war with us, reaches within WAR_COVER_TURNS turns (the static distance fields and the army's default march, as the
+   threat by reach) holds WAR_COVER_PCT % of the strength reaching it: its garrison and the armies in it
+   (`defence`) and our free armies that reach it this turn. Average 50 % / 1 turn, Skilled 60 % / 1 turn.
+2. **A partner needs a better case**: a war on a trade partner (a treaty break, repute -30 with the unprovoked war)
+   needs WAR_RATIO (or WAR_RATIO_BUSY) x WAR_PARTNER_PCT / 100: Average 105, Skilled 110; Skilled also never starts
+   one while another war is on (WAR_PARTNER_SOLO).
+3. **One war at a time unless winning** (WAR_ONE_AT_A_TIME, Average and Skilled): no new war while any current war
+   is not winning: winning is a region taken from that enemy and none lost to it in the last 5 turns, or the enemy
+   under PEACE_ACCEPT_PCT (100) % of our strength. MAX_WARS stays the hard cap.
+4. **Peace when stretched** (STRETCH_PEACE_PCT 100, Average and Skilled): with two wars, or a region lost in the
+   last 5 turns, the war won least (the most regions lost to that enemy in 5 turns, then the strongest) asks peace
+   after PEACE_MIN_TURNS (not PEACE_ASK_TURNS) when we are below STRETCH_PEACE_PCT % of its strength; the other
+   side answers by its own rule (`why("peace")`). Skilled's `_one_front` stays as it was. Extending `_one_front` to
+   Average was measured and dropped: it keeps the war on the enemy pressed hardest, ties to the weakest, so it turned
+   the European nations of the West on the natives (eliminations 31 -> 45 over 48 West seeds, Itza 6 -> 11, Miskito
+   5 -> 10); the war-won-least ask did not.
+
+The brief's numbers (cover 60 / 80 % with 1 / 2 turns, partner 130 / 150) cut too many wars: Average Rome battles
+46.6 -> 32.9 a seed and the largest realm at 60 12.9 -> 10.7; Skilled battles 59 -> 34. The knobs above are where the
+deaths fall and the fighting holds best (Rome, 96 seeds, Average): cover 40 % gives battles -15 %, Rome 16, Epirus 66;
+50 % gives -18 %, Rome 11, Epirus 62; 60 % -20 %, Rome 13, Epirus 57. Partner 130 alone cost 7 battles a seed.
+
+Measured (`campaign_sim --format=10`, 60 turns, seeds 1000 + 77 n; before = c38c823):
+
+| Rome, Average, 96 seeds | before | after |
+|---|---|---|
+| eliminated: Rome | 20 | 11 |
+| Carthage | 12 | 7 |
+| Macedon | 35 | 34 |
+| Epirus | 73 | 62 |
+| Greeks | 10 | 7 |
+| Syracuse | 34 | 24 |
+| Iberia | 21 | 14 |
+| Gauls | 34 | 25 |
+| eliminations a seed | 2.49 | 1.92 |
+| battles a seed | 46.6 | 38.2 (-18 %) |
+| largest at 15 / 30 / 60 | 7.17 / 9.14 / 12.94 | 7.21 / 8.72 / 11.58 |
+| first win (20 regions, 3 key cities) | 4 seeds (median turn 59) | 2 (57) |
+
+The first 48 of those seeds: eliminations 121 -> 98 (Rome 10 -> 6, Epirus 36 -> 30, Macedon 19 -> 21), battles 46.0 ->
+38.2, largest at 60 13.6 -> 11.5.
+
+| West, Average, 48 seeds | before | after |
+|---|---|---|
+| eliminated: England / France / Dutch | 3 / 0 / 0 | 1 / 0 / 1 |
+| Brethren | 17 | 15 |
+| Itza | 6 | 7 |
+| Miskito | 5 | 3 |
+| eliminations a seed | 0.65 | 0.56 |
+| battles a seed | 52.1 | 46.7 (-10 %) |
+| largest at 15 / 30 / 60 | 9.77 / 12.44 / 14.81 | 9.83 / 12.31 / 13.96 |
+
+Skilled (Rome, 96 seeds, every faction Skilled): eliminations 2.35 -> 2.01 a seed (Rome 7 -> 11, Macedon 70 -> 61,
+Epirus 69 -> 59, Gauls 26 -> 16, Syracuse 16 -> 20), battles 59.2 -> 46.4 (-22 %), largest at 60 12.4 -> 10.8.
+Skilled at the brief's 80 % over 2 turns: battles 34, largest at 60 9.1, Rome 13 deaths.
+
+What it does and does not fix (traces, `--trace-faction`): Epirus's own over-reach deaths (Epirus declaring a war
+and dying in it) fell 8 -> 2 of 48 seeds, Macedon's 14 -> 7 of 96. The rest of Epirus's deaths (28 of 30 after) are
+wars made on it: the scenario war with Rome (Rome takes Ambracia by turn 11 and Tarentum by turn 17-22, 10 of the 30
+deaths, and refuses peace: it is the stronger) and later wars on a one-region rump by the Greeks, Macedon and
+Syracuse; Macedon's are mostly the Greeks' wars on it (13 -> 20 of 96, the Greeks no longer spending themselves
+elsewhere). The cover rule protects the side that
+declares, not its victim; Epirus needs the strategic fix of "Rome start budgets" (STATUS), not this. The format 6 and
+8 pins are unmoved; the format 10 pins, `ROME_20` and the AI goldens moved (STATUS "Verification pins").

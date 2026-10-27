@@ -42,7 +42,11 @@ extends RefCounted
 ## war on a faction it regards CDip.NO_WAR_REGARD or more, twice the chance
 ## on one it regards CDip.HATE_REGARD or less; a threatened AI proposes an
 ## alliance (CP.ALLY_PROPOSE, settings ai_alliances); answers (why()) need
-## the score regard + repute at each treaty's floor.
+## the score regard + repute at each treaty's floor. Wars the AI can cover
+## (format 10, docs/AI.md 43; knobs 0 at Easy): no war with a region of ours
+## open to the target (war_covered), a better ratio against a trade partner,
+## a second war only while every war is winning (_winning), and stretched
+## the war won least (_least_winning) asks peace sooner.
 ## Easy (docs/AI.md 9; knobs of campaign/cai_profile.gd, the overworld of
 ## version 6 mainly): cheapest building first, piecemeal recruiting leaning
 ## to the line it already has, the nearest targets first at lower odds,
@@ -1911,11 +1915,19 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 	var kn := CP.of(st, f)
 	if my_wars.size() >= 2:
 		CP.count(CP.C_TWO_FRONTS, f)
+	# (Format 10, docs/AI.md 43) stretched: two wars, or a region lost in
+	# the last 5 turns; the war we win least asks peace sooner.
+	var stretch := CDip.on(st) and kn[CP.STRETCH_PEACE_PCT] > 0
+	var least := _least_winning(st, f, my_wars) if stretch and (my_wars.size() >= 2 or _losing_war(st, f)) else -1
 	# Peace when losing a long war.
 	for g in my_wars:
+		var theirs := faction_strength(st, g)
+		if g == least and CState.dip_since(st, f, g) >= kn[CP.PEACE_MIN_TURNS] \
+				and mine * 100 < theirs * kn[CP.STRETCH_PEACE_PCT]:
+			_propose(st, f, g, "peace")
+			continue
 		if CState.dip_since(st, f, g) < kn[CP.PEACE_ASK_TURNS]:
 			continue
-		var theirs := faction_strength(st, g)
 		if mine * 100 < theirs * kn[CP.PEACE_ASK_PCT] or CState.dip_since(st, f, g) >= kn[CP.PEACE_ASK_LONG]:
 			_propose(st, f, g, "peace")
 	if kn[CP.SK_ONE_FRONT] != 0 and my_wars.size() >= 2 and CState.grid_on(st):
@@ -1949,6 +1961,12 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		return
 	if kn[CP.MK_BASE + CP.M_UNWISE_WAR] > 0 and _unwise_war(st, f, kn, mine):
 		return
+	var dip10 := CDip.on(st)
+	if dip10 and kn[CP.WAR_ONE_AT_A_TIME] != 0:
+		# (docs/AI.md 43) one war at a time unless every war is winning.
+		for g in my_wars:
+			if not _winning(st, f, g, kn, mine):
+				return
 	var aggr := _aggr(st)
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
@@ -1962,7 +1980,13 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		var theirs := bloc_strength(st, f, g)  # (format 10) with the allies a defensive call would bring
 		# Weaker neighbours, or ones already fighting someone else.
 		var busy := not wars(st, g).is_empty()
-		if mine * 100 < theirs * (kn[CP.WAR_RATIO_BUSY] if busy else kn[CP.WAR_RATIO]):
+		var need := kn[CP.WAR_RATIO_BUSY] if busy else kn[CP.WAR_RATIO]
+		if dip10 and CState.dip(st, f, g) == CState.TRADE:
+			# (docs/AI.md 43) a treaty break costs repute: a better case.
+			if kn[CP.WAR_PARTNER_SOLO] != 0 and not my_wars.is_empty():
+				continue
+			need = need * kn[CP.WAR_PARTNER_PCT] / 100
+		if mine * 100 < theirs * need:
 			continue
 		var chance := kn[CP.WAR_CHANCE] * aggr / 100
 		if CState.is_human(st, g):
@@ -1986,10 +2010,93 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			# hardly ever when they stand on it.
 			chance = chance * (kn[CP.SK_WAR_WEAK_PCT] if _border_weak(st, f, g, kn) else kn[CP.SK_WAR_GUARDED_PCT]) / 100
 		if CState.rand(st, 100) < chance:
+			if dip10 and kn[CP.WAR_COVER_PCT] > 0 and CState.grid_on(st) and not war_covered(st, f, g, kn):
+				CP.count(CP.C_WAR_UNCOVERED, f)
+				continue  # (docs/AI.md 43) a region of ours open to g: no war on g this turn
 			CRules.declare_war(st, f, g)
 			if CState.is_human(st, g):
 				st["stats"]["last_war_on_players"] = turn
 			return
+
+
+## (Format 10, docs/AI.md 43) Wars the AI can cover: every region of f whose
+## settlement an army of g, or of a faction already at war with f, reaches
+## within WAR_COVER_TURNS turns (the static fields, its default stance's
+## march) holds at least WAR_COVER_PCT % of the strength reaching it: its
+## garrison and the armies in it (defence()) and f's free armies that reach
+## it this turn.
+static func war_covered(st: Dictionary, f: int, g: int, kn: PackedInt32Array) -> bool:
+	var mine_r := CState.regions_of(st, f)
+	if mine_r.is_empty():
+		return true
+	if _sf.is_empty():
+		site_dist(0, 0, false)
+	var turns := maxi(kn[CP.WAR_COVER_TURNS], 1)
+	var thr: Array[int] = []
+	thr.resize(CData.region_count())
+	thr.fill(0)
+	for a in st["armies"]:
+		var h := int(a["f"])
+		if h == f or int(a["busy"]) != 0 or (h != g and not CState.at_war(st, f, h)):
+			continue
+		var s := CState.strength(a)
+		var reach := CState.max_mp6(_default_of(a)) * turns
+		var c := CState.cell(a)
+		var sf := _sf_of(st, a)
+		for r in mine_r:
+			var d: int = (sf[r] as PackedInt32Array)[c]
+			if d < CGrid.INF and d - int(_site_cost[r]) <= reach:
+				thr[r] += s
+	for r in mine_r:
+		if thr[r] <= 0:
+			continue
+		var d := defence(st, r)
+		for b in CState.armies_of(st, f):
+			if int(b["r"]) != r and int(b["busy"]) == 0 and CRules.siege_role(st, b) == 0 and _reaches(b, r):
+				d += CState.strength(b)
+		if d * 100 < thr[r] * kn[CP.WAR_COVER_PCT]:
+			return false
+	return true
+
+
+## (docs/AI.md 43) f's war on g is winning: g under PEACE_ACCEPT_PCT % of
+## f's strength (`mine`), or a region of g taken by f and none of f's taken
+## by g in the last 5 turns.
+static func _winning(st: Dictionary, f: int, g: int, kn: PackedInt32Array, mine: int) -> bool:
+	if faction_strength(st, g) * 100 < mine * kn[CP.PEACE_ACCEPT_PCT]:
+		return true
+	var gained := false
+	for e in st.get("chronicle", []):
+		if str(e.get("k", "")) != "captured" or int(e["turn"]) < int(st["turn"]) - 5:
+			continue
+		var by := int(e.get("f", -2))
+		var from := int(e.get("from", -2))
+		if by == g and from == f:
+			return false
+		if by == f and from == g:
+			gained = true
+	return gained
+
+
+## (docs/AI.md 43) Of f's wars the one it wins least: the most regions lost
+## to that enemy in the last 5 turns, then the strongest enemy (ties: the
+## lowest index).
+static func _least_winning(st: Dictionary, f: int, my_wars: Array[int]) -> int:
+	var best := -1
+	var best_lost := -1
+	var best_s := -1
+	for g in my_wars:
+		var lost := 0
+		for e in st.get("chronicle", []):
+			if str(e.get("k", "")) == "captured" and int(e.get("f", -2)) == g and int(e.get("from", -2)) == f \
+					and int(e["turn"]) >= int(st["turn"]) - 5:
+				lost += 1
+		var s := faction_strength(st, g)
+		if lost > best_lost or (lost == best_lost and s > best_s):
+			best = g
+			best_lost = lost
+			best_s = s
+	return best
 
 
 ## (N2) Pirates: never sue for peace or trade (a letter of marque is their

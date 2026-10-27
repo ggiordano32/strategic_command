@@ -207,7 +207,15 @@ const BU_LINE_TREASURY := SK_SUPPORT + 47 # a build-up step on the Barracks when
 # team rule of formats 7-9 only (format 10: CDip FLOOR_TEAM, allied, fought).
 const ALLY_PROPOSE := SK_SUPPORT + 48
 const ALLY_MAX := SK_SUPPORT + 49
-const N_KNOBS := SK_SUPPORT + 50
+# Wars the AI can cover (state format 10 only, docs/AI.md 43, 2026-10-27; 0 at
+# Easy: its random-ish wars and the unwise-war mistake stay as they were).
+const WAR_COVER_PCT := SK_SUPPORT + 50     # (6) no war on g unless every region of ours that g's armies (and our current enemies') reach within WAR_COVER_TURNS holds this % of that strength: its garrison, the armies in it and our free armies that reach it this turn (0 off)
+const WAR_COVER_TURNS := SK_SUPPORT + 51   # (6) ... the reach counted, in turns of march
+const WAR_PARTNER_PCT := SK_SUPPORT + 52   # war on a trade partner (a treaty break: repute) needs WAR_RATIO (or _BUSY) x this / 100
+const WAR_PARTNER_SOLO := SK_SUPPORT + 53  # ... and never while another war is on (1)
+const WAR_ONE_AT_A_TIME := SK_SUPPORT + 54 # a second war only while every current war is winning: a region gained and none lost to that enemy in the last 5 turns, or the enemy under PEACE_ACCEPT_PCT % of our strength (1)
+const STRETCH_PEACE_PCT := SK_SUPPORT + 55 # stretched (two wars, or a region lost in the last 5 turns): the war we win least asks peace below this % of the enemy's strength after PEACE_MIN_TURNS (in place of PEACE_ASK_PCT / _TURNS; 0 off)
+const N_KNOBS := SK_SUPPORT + 56
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -384,6 +392,16 @@ const KNOBS: Array = [
 	# Alliances (format 10, 2026-10-26): Easy never proposes one.
 	[ALLY_PROPOSE, 0, 15, 25],
 	[ALLY_MAX, 2, 2, 2],
+	# Wars the AI can cover (format 10, docs/AI.md 43, 2026-10-27): no war
+	# with a region of ours open to the enemy (Average: 60 % of what reaches
+	# it next turn; Skilled 80 % within two turns), a better case against a
+	# trade partner, one war at a time unless winning, peace when stretched.
+	[WAR_COVER_PCT, 0, 50, 60],
+	[WAR_COVER_TURNS, 0, 1, 1],
+	[WAR_PARTNER_PCT, 100, 105, 110],
+	[WAR_PARTNER_SOLO, 0, 0, 1],
+	[WAR_ONE_AT_A_TIME, 0, 1, 1],
+	[STRETCH_PEACE_PCT, 0, 100, 100],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -504,10 +522,12 @@ const C_SEA_HOLD := "sea_garrisons"          # armies kept in a coastal city of 
 const C_FERRY_REFUSED := "ferries_refused"   # transports called off: a city of ours left uncovered, or a stronger navy near the route
 # Sorties (docs/AI.md 12.4).
 const C_SORTIES := "sorties"                 # docked fleets sent out of port against an enemy fleet lying off it
+# Wars the AI can cover (docs/AI.md 43).
+const C_WAR_UNCOVERED := "wars_uncovered"    # war declarations called off: a region of ours open to the enemy
 const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
 	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON,
 	C_SK_TWO_TO_ONE, C_SK_HUNT_DECLINED, C_SK_INTERCEPT, C_SK_TIMED, C_SK_MERGE, C_SK_RALLY, C_SK_FALLBACK,
-	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES]
+	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES, C_WAR_UNCOVERED]
 
 static var _counters := {}
 

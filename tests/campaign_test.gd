@@ -146,6 +146,7 @@ func _init() -> void:
 	_dip_west()
 	_dip_ai_alliances()
 	_dip_deterrence()
+	_war_cover()
 	_team_battles()
 	_ai_skilled()
 	_chars()
@@ -3912,7 +3913,8 @@ func _ai_skilled() -> void:
 	# sees everything, so the play is the format 7 play.)
 	# (2026-10-26, format 10 (campaign/cdip.gd): trust, AI-AI alliances and
 	# the calls to arms change the play; were 9aca1fcc / 2580136663 and, Easy, f3b40674 / 1790012962.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "eb11d4a4" and int(g["rng"]) == 404660584,
+	# (2026-10-27, wars the AI can cover (docs/AI.md 43): were eb11d4a4 / 404660584 and, Easy, 7453315e / 2698612760.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "bac3b6c4" and int(g["rng"]) == 520790384,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3921,7 +3923,7 @@ func _ai_skilled() -> void:
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "7453315e" and int(ge["rng"]) == 2698612760,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "3ab3e567" and int(ge["rng"]) == 989255646,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -6793,6 +6795,12 @@ func _dip_deterrence() -> void:
 		"deterrence setup: Epirus alone is weak enough, with its ally not (%d vs %d / %d)" % [m, alone, bloc])
 	var wc0: int = kn[CP.WAR_CHANCE]
 	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)  # (every eligible war is declared)
+	# (The rules of docs/AI.md 43 off here: d2's Greeks, at war and doubled,
+	# would leave Macedon uncovered and its war not winning; _war_cover tests them.)
+	var cov0: int = kn[CP.WAR_COVER_PCT]
+	var one0: int = kn[CP.WAR_ONE_AT_A_TIME]
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, 0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, 0)
 	var d1 := CState.copy(st)
 	CAI.diplomacy(d1, mace)
 	_check(not CState.at_war(d1, mace, epir), "an AI does not attack a weaker neighbour whose ally makes the bloc too strong")
@@ -6805,3 +6813,155 @@ func _dip_deterrence() -> void:
 	var d3 := CState.as_format(st, 9)
 	_check(CAI.bloc_strength(d3, mace, epir) == CAI.faction_strength(d3, epir), "format 9: the target's own strength (no alliances)")
 	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, cov0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, one0)
+
+
+## (docs/AI.md 43) A Rome-pack state at turn 20 for Macedon's war rules:
+## every war ended, Macedon regards everyone but the Greeks too well for a
+## war, the armies of Macedon, the Greeks and Epirus removed, and Macedon's
+## field army (n_heavy units) far away in Iberia.
+func _cover_state(n_heavy: int) -> Dictionary:
+	CData.use_pack("rome")
+	var st := CState.new_campaign("test", 4242, [])
+	var n := CState.nf()
+	var mace := _f("macedon")
+	var gree := _f("greeks")
+	var epir := _f("epirus")
+	for g in n:
+		for h in n:
+			if g != h and CState.dip(st, g, h) == CState.WAR:
+				CState.set_dip(st, g, h, CState.PEACE)
+	st["turn"] = 20
+	for g in n:
+		if g != mace and g != gree:
+			st["regard"][mace * n + g] = CDip.NO_WAR_REGARD
+	var keep: Array = []
+	for a in st["armies"]:
+		if not [mace, gree, epir].has(int(a["f"])):
+			keep.append(a)
+	st["armies"] = keep
+	_put(st, mace, CGrid.site(CState.regions_of(st, _f("iberians"))[0]), _units("heavy", n_heavy))
+	return st
+
+
+func _units(t: String, k: int) -> Array:
+	var out: Array = []
+	for i in k:
+		out.append(t)
+	return out
+
+
+## Wars the AI can cover (docs/AI.md 43, format 10): no war with a region
+## open to the enemy; a better case against a trade partner (Skilled: never
+## while another war is on); a second war only while the first is winning;
+## stretched, the war won least asks peace sooner. Easy has none of it.
+func _war_cover() -> void:
+	var mace := _f("macedon")
+	var gree := _f("greeks")
+	var epir := _f("epirus")
+	var kn := CP.of(CState.new_campaign("test", 4242, []), mace)
+	var ke := CP.of({"factions": [{"ai_skill": CP.EASY}], "settings": {}}, 0)
+	_check(ke[CP.WAR_COVER_PCT] == 0 and ke[CP.WAR_PARTNER_PCT] == 100 and ke[CP.WAR_PARTNER_SOLO] == 0
+		and ke[CP.WAR_ONE_AT_A_TIME] == 0 and ke[CP.STRETCH_PEACE_PCT] == 0, "Easy: none of the war-cover rules (its unwise wars stay)")
+	var wc0: int = kn[CP.WAR_CHANCE]
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)  # (every eligible war is declared)
+	CP.set_knob(CP.SKILLED, CP.WAR_CHANCE, 100000)
+	# 1. The core covered: a Greek army at the border of a Macedonian region.
+	var x := -1
+	var y := -1
+	var st0 := _cover_state(40)
+	for r in CState.regions_of(st0, mace):
+		for e in CData.adjacent(r):
+			if x < 0 and CState.owner(st0, int(e[0])) == gree:
+				x = r
+				y = int(e[0])
+	var bc := -1
+	var bd := CGrid.INF
+	for c in CGrid.cells_of(y):
+		var d := CAI.site_dist(c, x, true)
+		if d < bd:
+			bd = d
+			bc = c
+	var st := CState.copy(st0)
+	_put(st, gree, bc, _units("spear", 12))
+	var m := CAI.faction_strength(st, mace)
+	var theirs := CAI.bloc_strength(st, mace, gree)
+	_check(x >= 0 and CAI._neighbours(st, mace, gree) and m * 100 >= theirs * kn[CP.WAR_RATIO],
+		"cover setup: Macedon (%d) strong enough for war on the Greeks (%d), a Greek army on the border of %s" % [m, theirs, str(CData.REGIONS[x]["key"]) if x >= 0 else "-"])
+	_check(not CAI.war_covered(st, mace, gree, kn), "a region of ours the Greek army reaches next turn is not covered")
+	var u0 := CP.counter(CP.C_WAR_UNCOVERED, mace)
+	var a1 := CState.copy(st)
+	CAI.diplomacy(a1, mace)
+	_check(not CState.at_war(a1, mace, gree) and CP.counter(CP.C_WAR_UNCOVERED, mace) == u0 + 1,
+		"no war while a region of ours is open to the enemy (counted)")
+	var a2 := CState.copy(st)
+	for r in CState.regions_of(a2, mace):
+		_put(a2, mace, CGrid.site(r), _units("heavy", 16))
+	_check(CAI.war_covered(a2, mace, gree, kn), "a garrison army in each region: covered")
+	CAI.diplomacy(a2, mace)
+	_check(CState.at_war(a2, mace, gree), "... and the war is declared")
+	var a3 := CState.as_format(st, 9)
+	CAI.diplomacy(a3, mace)
+	_check(not CAI.wars(a3, mace).is_empty(), "format 9: the old rules (no cover test): a war is declared")
+	# 2. A trade partner needs WAR_RATIO x WAR_PARTNER_PCT.
+	var pp0: int = kn[CP.WAR_PARTNER_PCT]
+	var sp := _cover_state(40)
+	var ratio := CAI.faction_strength(sp, mace) * 100 / CAI.bloc_strength(sp, mace, gree)
+	CP.set_knob(CP.AVERAGE, CP.WAR_PARTNER_PCT, ratio * 100 / kn[CP.WAR_RATIO] + 10)  # (just out of reach)
+	_check(ratio >= kn[CP.WAR_RATIO], "partner setup: Macedon at %d %% of the Greeks" % ratio)
+	var p1 := CState.copy(sp)
+	CState.set_dip(p1, mace, gree, CState.TRADE)
+	p1["turn"] = 40
+	CAI.diplomacy(p1, mace)
+	_check(not CState.at_war(p1, mace, gree), "no war on a trade partner below WAR_RATIO x WAR_PARTNER_PCT (%d %%)" % ratio)
+	var p2 := CState.copy(sp)
+	p2["turn"] = 40
+	CAI.diplomacy(p2, mace)
+	_check(CState.at_war(p2, mace, gree), "... the same odds on a neighbour merely at peace: war")
+	CP.set_knob(CP.AVERAGE, CP.WAR_PARTNER_PCT, pp0)
+	var p3 := CState.copy(sp)
+	p3["factions"][mace]["ai_skill"] = CP.SKILLED
+	CState.set_dip(p3, mace, gree, CState.TRADE)
+	p3["turn"] = 34
+	CState.set_dip(p3, mace, epir, CState.WAR)  # (a war Macedon wins: Epirus has no army)
+	p3["turn"] = 40
+	var p4 := CState.copy(p3)
+	CAI.diplomacy(p3, mace)
+	_check(not CState.at_war(p3, mace, gree), "Skilled: never a war on a trade partner while another war is on")
+	CState.set_dip(p4, mace, gree, CState.PEACE)
+	p4["turn"] = 46
+	CAI.diplomacy(p4, mace)
+	_check(CState.at_war(p4, mace, gree), "... on one merely at peace it is declared (the other war is winning)")
+	# 3. One war at a time unless winning: Epirus as strong as Macedon, far away.
+	var s3 := _cover_state(40)
+	_put(s3, epir, CGrid.site(CState.regions_of(s3, _f("iberians"))[0]), _units("heavy", 48))
+	s3["turn"] = 16
+	CState.set_dip(s3, mace, epir, CState.WAR)
+	s3["turn"] = 20
+	var mm := CAI.faction_strength(s3, mace)
+	_check(not CAI._winning(s3, mace, epir, kn, mm) and mm * 100 >= CAI.bloc_strength(s3, mace, gree) * kn[CP.WAR_RATIO],
+		"second-war setup: the war on Epirus (%d against %d) is not winning" % [mm, CAI.faction_strength(s3, epir)])
+	var w1 := CState.copy(s3)
+	CAI.diplomacy(w1, mace)
+	_check(not CState.at_war(w1, mace, gree), "no second war while the first is not winning")
+	var w2 := CState.copy(s3)
+	var er: int = CState.regions_of(w2, epir)[0]
+	w2["chronicle"] = (w2.get("chronicle", []) as Array) + [{"k": "captured", "r": er, "f": mace, "from": epir, "turn": 19}]
+	_check(CAI._winning(w2, mace, epir, kn, mm), "a region taken from Epirus in the last 5 turns, none lost: winning")
+	CAI.diplomacy(w2, mace)
+	_check(CState.at_war(w2, mace, gree), "... and the second war is declared")
+	# 4. Stretched: a region lost in the last 5 turns; the war won least asks
+	# peace after PEACE_MIN_TURNS (Epirus, down to 2 regions, accepts).
+	var w3 := CState.copy(s3)
+	var mr: int = CState.regions_of(w3, mace)[0]
+	w3["chronicle"] = (w3.get("chronicle", []) as Array) + [{"k": "captured", "r": mr, "f": epir, "from": mace, "turn": 19}]
+	_check(CState.dip_since(w3, mace, epir) < kn[CP.PEACE_ASK_TURNS] and CState.regions_of(w3, epir).size() <= kn[CP.PEACE_ACCEPT_REGIONS],
+		"stretch setup: a war of %d turns (asks wait %d), Epirus with %d regions" % [CState.dip_since(w3, mace, epir), kn[CP.PEACE_ASK_TURNS], CState.regions_of(w3, epir).size()])
+	var w4 := CState.copy(s3)
+	CAI.diplomacy(w4, mace)
+	_check(CState.at_war(w4, mace, epir), "not stretched: no peace asked before PEACE_ASK_TURNS")
+	CAI.diplomacy(w3, mace)
+	_check(not CState.at_war(w3, mace, epir), "stretched (a region lost): peace asked at once with the war won least")
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
+	CP.set_knob(CP.SKILLED, CP.WAR_CHANCE, wc0)
