@@ -8,6 +8,7 @@ const COL_ENTRY := Color(0.86, 0.82, 0.70)
 const COL_ENTRY_HOT := Color(1.0, 0.95, 0.78)
 const COL_GOLD := Color(1.0, 0.85, 0.45)
 const SCALE_HOT := 1.03
+const RuleBox := preload("res://game/rule_box.gd")
 
 static var _fonts := {}
 
@@ -103,12 +104,17 @@ static func _grow_c(b: Control, k: float) -> void:
 
 ## The page buttons: an opaque dark plate with a thin gold edge, lighter on hover.
 static func button_style(b: Button) -> void:
-	var n := _flat(Color(0.11, 0.13, 0.12, 0.94), Color(0.55, 0.43, 0.2, 0.7), 1, 5, 8)
-	var h := _flat(Color(0.17, 0.19, 0.16, 0.97), Color(1.0, 0.85, 0.45, 0.95), 1, 5, 8)
-	var pr := _flat(Color(0.22, 0.22, 0.16, 1.0), Color(1.0, 0.9, 0.55, 1.0), 1, 5, 8)
-	var d := _flat(Color(0.09, 0.1, 0.1, 0.8), Color(0.3, 0.3, 0.3, 0.5), 1, 5, 8)
+	var n := _plate(Color(0.11, 0.13, 0.12, 0.94), Color(0.55, 0.43, 0.2, 0.7))
+	var h := _plate(Color(0.17, 0.19, 0.16, 0.97), Color(1.0, 0.85, 0.45, 0.95))
+	var pr := _plate(Color(0.22, 0.22, 0.16, 1.0), Color(1.0, 0.9, 0.55, 1.0))
+	var d := _plate(Color(0.09, 0.1, 0.1, 0.8), Color(0.3, 0.3, 0.3, 0.5))
 	b.add_theme_stylebox_override("normal", n)
 	b.add_theme_stylebox_override("hover", h)
 	b.add_theme_stylebox_override("pressed", pr)
 	b.add_theme_stylebox_override("focus", n)
 	b.add_theme_stylebox_override("disabled", d)
+
+
+## A page button's plate in the table's chrome (game/rule_box.gd): the fill, an inked double rule, the old 8 px margins.
+static func _plate(col: Color, edge: Color) -> StyleBox:
+	return RuleBox.new().setup(col, 8.0, 5, edge)

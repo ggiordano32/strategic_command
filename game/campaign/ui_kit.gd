@@ -38,6 +38,7 @@ const FactionCrest := preload("res://game/faction_crest.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const MenuEmblem := preload("res://game/menu/emblem.gd")
 const Quality := preload("res://game/quality.gd")
+const RuleBox := preload("res://game/rule_box.gd")
 
 const BTN_H := 40.0
 const FONT := 15
@@ -52,6 +53,7 @@ const COL_TEXT := Color(0.875, 0.875, 0.875)  # the default theme's button text
 const COL_RULE := Color(0.69, 0.54, 0.25)      # b08a40, the menu's gold
 const COL_BONE := Color(0.91, 0.86, 0.69)      # e8dcb0
 const COL_INK := Color(0.10, 0.08, 0.06)       # 1a1410
+const WOOD_BAND := Color(0.078, 0.048, 0.027, 0.97)  # the top bars' wood: the board's brown at a quarter to a third, as dark as the old flat bar
 const TITLE_MIN := 18                          # a display face is never used under this size
 const HOT_SCALE := 1.03
 const ICON_GAP := 6
@@ -616,9 +618,15 @@ class TrimBox extends StyleBox:
 
 	func _draw(ci: RID, r: Rect2) -> void:
 		RenderingServer.canvas_item_add_rect(ci, r, bg)
+		# The table's inked double rule: the ink line at the edge, a lighter line 2 px inside it, then the gold rule and
+		# the corner brackets (docs/design/ui.md "HUD chrome in the table's language").
 		var o := r.grow(-0.5)
 		RenderingServer.canvas_item_add_polyline(ci, PackedVector2Array([o.position, Vector2(o.end.x, o.position.y), o.end,
 			Vector2(o.position.x, o.end.y), o.position]), PackedColorArray([Color(COL_INK, 0.95)]), 1.0)
+		var i2 := r.grow(-2.5)
+		if i2.size.x > 4.0 and i2.size.y > 4.0:
+			RenderingServer.canvas_item_add_polyline(ci, PackedVector2Array([i2.position, Vector2(i2.end.x, i2.position.y), i2.end,
+				Vector2(i2.position.x, i2.end.y), i2.position]), PackedColorArray([Color(COL_RULE.lightened(0.2), 0.4)]), 1.0)
 		var ls := KitSelf.trim_lines(r, inset, blen)
 		RenderingServer.canvas_item_add_polyline(ci, ls[0], PackedColorArray([Color(COL_RULE, 0.6)]), 1.0)
 		for k in range(1, ls.size()):
@@ -674,10 +682,7 @@ static func nav_style(b: Button) -> void:
 	var cols := {"normal": [Color(0.11, 0.13, 0.12, 0.94), Color(COL_RULE, 0.6)], "hover": [Color(0.17, 0.19, 0.16, 0.97), COL_GOLD],
 		"pressed": [Color(0.22, 0.22, 0.16, 1.0), Color(1.0, 0.9, 0.55)], "disabled": [Color(0.09, 0.1, 0.1, 0.8), Color(0.3, 0.3, 0.3, 0.5)]}
 	for k in cols:
-		var sb := box(cols[k][0], 4.0, 5)
-		sb.set_border_width_all(1)
-		sb.border_color = cols[k][1]
-		b.add_theme_stylebox_override(k, sb)
+		b.add_theme_stylebox_override(k, rule_box(cols[k][0], 4.0, 5, cols[k][1]))
 	b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
 
 
@@ -830,9 +835,28 @@ static func box(col: Color = PANEL_BG, margin: float = 10.0, radius: int = 6) ->
 	return sb
 
 
+## The table's chrome (game/rule_box.gd): the fill `col`, an inked double rule in `edge`, the same content margin as box().
+## marks: corner ticks (panels and bars); plates leave them off.
+static func rule_box(col: Color = PANEL_BG, margin: float = 10.0, radius: int = 6, edge: Color = Color(COL_RULE, 0.6), marks: bool = false) -> StyleBox:
+	var sb := RuleBox.new().setup(col, margin, radius, edge)
+	sb.marks = marks
+	return sb
+
+
+## A bar's wood band: col over a wood-grain gradient (none on Quality Low), the double rule, corner ticks and a brass
+## rule along the bottom edge. Same margins as box().
+static func band_box(col: Color, margin: float = 4.0) -> StyleBox:
+	var sb := RuleBox.new().setup(col, margin, 0, Color(COL_RULE, 0.7))
+	sb.wood = true
+	sb.marks = true
+	sb.brass_bottom = true
+	sb.border_width_bottom = 1
+	return sb
+
+
 static func panel(col: Color = PANEL_BG, margin: float = 10.0) -> PanelContainer:
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", box(col, margin))
+	p.add_theme_stylebox_override("panel", rule_box(col, margin, 6, Color(COL_RULE, 0.6), true))
 	return p
 
 

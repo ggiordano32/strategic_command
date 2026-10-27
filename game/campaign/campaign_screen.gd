@@ -1337,11 +1337,8 @@ func _crossing_note(p: Vector2) -> bool:
 
 func _build_ui() -> void:
 	# Top bar.
-	var top := Kit.panel(Color(0.08, 0.09, 0.08, 0.92), 4)
-	var topsb := top.get_theme_stylebox("panel") as StyleBoxFlat
-	topsb.border_width_bottom = 1   # the gold rule under the bar
-	topsb.border_color = Color(Kit.COL_RULE, 0.8)
-	topsb.set_corner_radius_all(0)
+	var top := PanelContainer.new()
+	top.add_theme_stylebox_override("panel", Kit.band_box(Kit.WOOD_BAND, 4.0))   # the wood band with its brass rule (game/rule_box.gd)
 	top.name = "top_bar"
 	top.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	top.offset_bottom = TOP_H

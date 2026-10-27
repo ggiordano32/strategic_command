@@ -31,10 +31,7 @@ static func _build() -> void:
 	var cols := {"normal": Color(0.30, 0.22, 0.08, 1.0), "hover": Color(0.36, 0.27, 0.10, 1.0), "pressed": Color(0.40, 0.30, 0.11, 1.0),
 		"disabled": Color(0.2, 0.17, 0.1, 0.8)}
 	for k in cols:
-		var sb := Kit.box(cols[k], 4.0, 5)
-		sb.set_border_width_all(1)
-		sb.border_color = Kit.COL_GOLD if k != "disabled" else Color(0.4, 0.34, 0.2, 0.6)
-		_lit[k] = sb
+		_lit[k] = Kit.rule_box(cols[k], 4.0, 5, Kit.COL_GOLD if k != "disabled" else Color(0.4, 0.34, 0.2, 0.6))
 
 
 ## Dress a button: the nav plate, bone label, the kit's hover / press motion (once). toggle: its pressed state is the
@@ -108,11 +105,21 @@ static func title_block(pack: String, text: String) -> HBoxContainer:
 	return h
 
 
-## The gold hairline under a top bar.
+## The gold hairline under a top bar (brass, over the band's own rule).
 static func bar_rule() -> Control:
 	var r := Kit.rule(Color(Kit.COL_RULE, 0.5))
 	r.name = "bar_rule"
 	return r
+
+
+## The wood band behind a battle top bar (the campaign bar's twin): a Panel in the kit's band_box, mouse ignored. The
+## caller anchors it across the top and puts it behind the bar's buttons.
+static func bar_band() -> Control:
+	var p := Panel.new()
+	p.name = "bar_band"
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_theme_stylebox_override("panel", Kit.band_box(Color(Kit.WOOD_BAND, 0.88), 0.0))
+	return p
 
 
 ## Whether the desktop dressing (emblem, title face) shows: a wide window and no touch screen.

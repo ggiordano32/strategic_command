@@ -1122,3 +1122,30 @@ Line of sight (docs/design/battle_sim.md "Cover and line of sight") hides an ene
 Drawn by `Overlay._draw_last_seen` over the markers: the men as frozen grey dots and a faint grey footprint fill, 55 % alpha fading to nothing over `GHOST_FADE` 4 s; the footprint outline (55 % to 20 %) and a smaller grey marker with a "last seen" word under it stay until the record clears. The reveal ring (`REVEAL_FX`) is untouched. A ghost is never selectable and never a target: `_marker_unit` and `_pick_unit` still skip hidden units, so a tap on it is a tap on the ground; no order path changed. No sim read beyond `hidden_from`, the unit arrays and the soldier positions; no hash, no lockstep input.
 
 **As built, not as briefed.** The frozen men are dots drawn by the overlay, not sprites in the soldier layer: the layer's shaders (GPU texture path and the CPU path) have no grey or frozen flag, a third path-pair change was not worth the risk, and the overlay costs nothing while no unit is a ghost. No hover tip (the word on the marker carries it). Test: `tests/ghost_test.gd` (asym_woods: a ghost appears with its last place, stays through the fade, clears when seen again, destroyed or at the battle's end; Low keeps no men).
+
+### HUD chrome in the table's language (as built, 2026-10-27)
+
+Part 4 of the visual pass (`overworld_view.md`), one pass through the kit. The fills and contrast stay (phones over a busy
+map); no text size, padding or hit area changes: every line is drawn inside the old rect and the content margins are the
+ones the StyleBoxFlat had.
+
+- `game/rule_box.gd`: one StyleBox (the fill, an inked double rule: the 1 px edge line in the state colour and a lighter
+  line 2 px inside it, rounded like the old plate; optional 4.5 px diagonal corner ticks; optional wood band with a brass
+  bottom rule). Built by `Kit.rule_box(col, margin, radius, edge, marks)` and `Kit.band_box(col, margin)`.
+- Plate buttons (`Kit.nav_style`, the battle plates and lit plates in `battle_theme.gd`, the menu's page buttons in
+  `menu_style.button_style`): the double rule at 1 px, no ticks; hover / pressed keep their edge colours (dim gold, gold,
+  bright gold), disabled stays grey.
+- `Kit.panel` and the battle HUD's own boxes (stats panel, cards bar): the double rule with corner ticks.
+- Dialogs, the side panel, popovers (More, options, the chip explanation, confirmations) and tooltips use `Kit.TrimBox`
+  (already the trim): it gained the second, lighter rule 2 px inside the ink edge, ahead of the old gold rule and brackets.
+- Top bars: the campaign bar is a `band_box` on `Kit.WOOD_BAND` (the diorama board's brown, hue 7:4:2, at a quarter to a
+  third of its value) with horizontal grain: rows of 2 to 3 px cut into soft lighter and darker streaks along the bar
+  (a deterministic hash, no randomness), and a brightened brass rule on its bottom edge. The mean luminance is held at or
+  under the old flat bar's (measured on the screenshot: 0.0033 against 0.0043 relative), so the bar text keeps its contrast
+  (60 % of the board's tone would be three times as bright and cost contrast); the lighter and darker streaks balance.
+  The battle's bar is `BTheme.bar_band()`, a mouse-ignoring Panel in the same box (alpha 0.88) behind the buttons, down to
+  the old hairline. Quality Low draws the rules only (the fill and the rules, no grain).
+- Not changed: the segmented capsules (their own StyleBoxFlat, trimmed margins), the hero button (End turn, its 2 px gold
+  trim), the game / battle menu columns. `theme_test` reads the top bar's `border_width_bottom` from the RuleBox mirror.
+- Measured: `bar_room_probe` room numbers identical before and after; `hud_fit_test` as before (the 2 stress More-popover
+  FAILs at 780x360 / 844x390 are the same at the base commit).

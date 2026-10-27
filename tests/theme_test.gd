@@ -212,7 +212,7 @@ func _screen(pack: String) -> void:
 	var vp: Vector2 = cs._vp()
 	# Top bar.
 	var tb: Control = cs.find_child("top_bar", true, false)
-	var sbx := tb.get_theme_stylebox("panel") as StyleBoxFlat
+	var sbx = tb.get_theme_stylebox("panel")
 	_check(sbx.border_width_bottom == 1, "the top bar has a gold rule under it")
 	_check(cs.top_emblem != null and cs.top_emblem.visible and str(cs.top_emblem.get("pack")) == pack, "the top bar shows the %s emblem" % pack)
 	_check(cs.top_label.has_theme_font_override("font") and cs.top_label.get_theme_font_size("font_size") >= 18, "the faction name is in the display face at 18+ px")

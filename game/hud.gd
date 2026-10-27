@@ -347,6 +347,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	bar_rule.offset_top = MARGIN + BTN_H + 3.0
 	bar_rule.offset_bottom = bar_rule.offset_top + 1.0
 	root.add_child(bar_rule)
+	var bar_band := BTheme.bar_band()   # the wood band behind the buttons, under everything else
+	bar_band.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	bar_band.offset_bottom = bar_rule.offset_top + 1.0
+	root.add_child(bar_band)
+	root.move_child(bar_band, 0)
 	get_viewport().size_changed.connect(_layout_title)
 
 	# Bottom: a row with the group buttons (left) and the selection's
@@ -2469,12 +2474,8 @@ func _chip(key: String, label: String, icon: String, title: String, tip_text: St
 	return c
 
 
-static func _box(col: Color, margin: float = 8.0) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = col
-	sb.set_corner_radius_all(5)
-	sb.set_content_margin_all(margin)
-	return sb
+static func _box(col: Color, margin: float = 8.0) -> StyleBox:
+	return Kit.rule_box(col, margin, 5, Color(Kit.COL_RULE, 0.45), true)
 
 
 ## A compact unit card, drawn rather than laid out: side-coloured symbol,
