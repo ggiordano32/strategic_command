@@ -12,11 +12,16 @@ extends SceneTree
 ##   drift     native bowmen in the Cover stance at a wood's edge: their men go into the trees; in the
 ##             Line stance they stay.
 ##   snapshot  the ability table, the pistols and a caracole under way survive snapshot / restore.
+##   countermarch  musketeers (4 ranks of 25) shoot a standing pike block 70 m off (docs/AI.md 44.2): an opening
+##             full volley, then one rank every reload / 4 ticks in turn (the pointer walks the ranks), each man
+##             once a reload; as many shots as on Hold (volleys); each rank volley frightens at CM_FEAR_PCT; Use
+##             now rolls too; rodeleros charging home get the last volley within CM_CLOSE (Auto); an AI side at
+##             Easy (CM_AUTO 0) volleys; snapshot / restore mid-drill; Rome and the riders have no countermarch.
 ##   ai        the battle AI's Hold / Use now (docs/AI.md 39): grenadiers storming a walled town (AI, Average) Hold in
 ##             the approach, go up to the gate being hacked and are on Auto once it is down; put by a shut gate
 ##             they Use now at it; a mortar battery in a West town batters (Use now) a held building on the storm's
 ##             route, then Auto; Easy never gives an ability order.
-##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai]
+##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -24,6 +29,7 @@ const UT := preload("res://sim/unit_types.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const SiegeAI := preload("res://sim/siege_ai.gd")
+const AIProfile := preload("res://sim/ai_profile.gd")
 const M := 1024
 const UP := 768
 const DOWN := 256
@@ -71,6 +77,8 @@ func _init() -> void:
 		_snapshot()
 	if only == "" or only == "ai":
 		_ai()
+	if only == "" or only == "countermarch":
+		_countermarch()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL")
 	quit(0 if fails == 0 else 1)
 
@@ -413,7 +421,7 @@ func _bld_run(skill: int) -> Array:
 	var gu := _of_type(sim, 0, "mortar")
 	var now_bld := false
 	var back := false
-	for t in 1500:
+	while sim.tick < 3000 and not back:  # (1500 ticks before the countermarch: the storm takes longer with it)
 		sim.step()
 		var st: int = sim.ability_state(gu, UT.AB_BATTER)
 		if st == UT.AB_NOW and sim.u_abt[gu] <= -2:
@@ -485,3 +493,173 @@ func _ai() -> void:
 		b1[0], str(b1[1]), str(b1[2]), b1[3], b0[0], b0[3]])
 	_check(b1[0] > 0 and b1[1] and b1[2], "ai: a mortar battery batters a held building on the storm's route (Use now), then Auto")
 	_check(b0[0] == 0 and b0[3] == 0, "ai: Easy batters no building")
+
+
+# ---------------------------------------------------------- countermarch ---
+
+## 100 musketeers (25 files, 4 ranks) facing up at y 200, a block of 300 pikemen (side 1, no missiles) 70 m off;
+## extra orders appended; side 1 the AI at `ai_skill` when >= 0.
+func _cm_sc(orders: Array, ai_skill: int = -1) -> Dictionary:
+	var sc := _sc([Scenarios.unit(0, UT.index_of("musketeers"), 100, 150, 200, UP, 25),
+		Scenarios.unit(1, UT.index_of("w_pikemen"), 300, 150, 130, DOWN, 30)], orders)
+	if ai_skill >= 0:
+		sc["ai_sides"] = [0]
+		sc["ai_skill"] = [ai_skill, ai_skill]
+	return sc
+
+
+## Run a countermarch set piece `ticks` ticks: per tick the shots fired; the rank pointer before each rank
+## volley; the biggest fright jump the pikes took in one tick.
+func _cm_run(sc: Dictionary, ticks: int) -> Dictionary:
+	var sim := BattleSim.new()
+	sim.setup(sc, 31)
+	var shots := PackedInt32Array()
+	var ranks_seen: Array[int] = []
+	var rank_ticks: Array[int] = []
+	var jump := 0
+	var jump_r := 0
+	var men_twice := 0
+	var last := PackedInt32Array()
+	last.resize(sim.u_count0[0])
+	last.fill(-100000)
+	var b0: int = sim.u_slot_base[0]
+	for t in ticks:
+		var sh0: int = sim.stat_shots
+		var r0: int = sim.u_cmr[0] if sim.cm_on != 0 else -1
+		var rk0: int = sim.stat_cm_rank
+		var f0: int = sim.u_fright[1]
+		var am := sim.ammo.slice(b0, b0 + sim.u_count0[0])
+		sim.step()
+		shots.append(sim.stat_shots - sh0)
+		if sim.stat_cm_rank != rk0:
+			ranks_seen.append(r0)
+			rank_ticks.append(sim.tick)
+		var jp: int = sim.u_fright[1] - f0 + 1  # (the decay of the tick)
+		if rank_ticks.is_empty():
+			jump = maxi(jump, jp)
+		else:
+			jump_r = maxi(jump_r, jp)
+		for k in sim.u_count0[0]:
+			if sim.ammo[b0 + k] < am[k]:
+				if sim.tick - last[k] < sim.t_m_reload[sim.u_type[0]]:
+					men_twice += 1
+				last[k] = sim.tick
+	return {"sim": sim, "shots": shots, "ranks": ranks_seen, "rank_ticks": rank_ticks, "jump": jump, "jump_r": jump_r, "twice": men_twice}
+
+
+func _countermarch() -> void:
+	var mus := UT.index_of("musketeers")
+	_check((UT.abilities(mus) & (1 << UT.AB_ROLL)) != 0, "countermarch: musketeers have it")
+	for key in ["pistoleers", "dragoons", "light_gun", "buccaneers", "w_pikemen"]:
+		_check((UT.abilities(UT.index_of(key)) & (1 << UT.AB_ROLL)) == 0, "countermarch: %s have none" % key)
+	for ty in UT.ROME_N:
+		if (UT.abilities(ty) & (1 << UT.AB_ROLL)) != 0:
+			_check(false, "countermarch: Rome row %d has it" % ty)
+	var reload := UT.stat(mus, "m_reload")
+	var step := (reload + 3) / 4
+	var auto := _cm_run(_cm_sc([]), 900)
+	var sa: BattleSim = auto["sim"]
+	var hold := _cm_run(_cm_sc([BattleSim.make_ability_order(0, 0, UT.AB_ROLL, UT.AB_HOLD)]), 900)
+	var sh: BattleSim = hold["sim"]
+	var now := _cm_run(_cm_sc([BattleSim.make_ability_order(5, 0, UT.AB_ROLL, UT.AB_NOW)]), 900)
+	var sn: BattleSim = now["sim"]
+	var ranks: Array[int] = auto["ranks"]
+	var rt: Array[int] = auto["rank_ticks"]
+	var gaps: Array[int] = []
+	for k in range(1, rt.size()):
+		gaps.append(rt[k] - rt[k - 1])
+	var walk := true
+	for k in ranks.size():
+		if ranks[k] != k % 4:
+			walk = false
+	var vol_a: Array[int] = []
+	for v in (auto["shots"] as PackedInt32Array):
+		if v > 0:
+			vol_a.append(v)
+	var vol_h: Array[int] = []
+	for v in (hold["shots"] as PackedInt32Array):
+		if v > 0:
+			vol_h.append(v)
+	print("countermarch: cm_on %d; Auto: %d rank volleys (pointer %s), gaps %s, full %d, fired %s, shots %d, fright jump %d / %d (%d rank frights); Hold: volleys %s, shots %d, jump %d; Use now: %d rank, %d full, shots %d" % [
+		sa.cm_on, sa.stat_cm_rank, str(ranks.slice(0, 9)), str(gaps.slice(0, 8)), sa.stat_cm_full, str(vol_a.slice(0, 7)),
+		sa.stat_shots, auto["jump"], auto["jump_r"], sa.stat_cm_fright, str(vol_h.slice(0, 5)), sh.stat_shots, hold["jump"],
+		sn.stat_cm_rank, sn.stat_cm_full, sn.stat_shots])
+	_check(sa.cm_on == 1, "countermarch: cm_on with musketeers")
+	_check(vol_a.size() > 0 and vol_a[0] >= 90, "countermarch: the opening is a full volley (%s)" % str(vol_a.slice(0, 1)))
+	_check(sa.stat_cm_rank >= 16, "countermarch: rank volleys fired (%d)" % sa.stat_cm_rank)
+	_check(walk, "countermarch: the pointer walks the ranks 0, 1, 2, 3, 0 ... (%s)" % str(ranks.slice(0, 9)))
+	var even := gaps.size() > 4
+	for g in gaps:
+		if g != step:
+			even = false
+	_check(even, "countermarch: a rank volley every reload / ranks = %d ticks (%s)" % [step, str(gaps.slice(0, 8))])
+	var rank_ok := vol_a.size() > 4
+	for k in range(1, vol_a.size()):
+		if vol_a[k] > 25:
+			rank_ok = false
+	_check(rank_ok, "countermarch: a rank volley is one rank (<= 25 shots) (%s)" % str(vol_a.slice(0, 7)))
+	_check(int(auto["twice"]) == 0, "countermarch: no man fires twice within a reload (%d)" % int(auto["twice"]))
+	# (Over the same ticks the rolling fire is behind by at most the ranks still to fire of its last cycle.)
+	_check(sh.stat_shots - sa.stat_shots >= 0 and sh.stat_shots - sa.stat_shots <= 75, "countermarch: shots as many as by volleys (%d / %d)" % [sa.stat_shots, sh.stat_shots])
+	var per_cycle := 0
+	for k in range(1, 5):
+		per_cycle += vol_a[k]
+	_check(per_cycle == vol_h[1], "countermarch: a cycle of four ranks fires a volley's shots (%d / %d)" % [per_cycle, vol_h[1]])
+	_check(sh.stat_cm_rank == 0 and vol_h.size() >= 7 and vol_h[1] >= 80, "countermarch: Hold gives volleys (%s)" % str(vol_h.slice(0, 5)))
+	var fear := UT.stat(mus, "m_fear")
+	_check(int(auto["jump_r"]) == fear * BattleSim.CM_FEAR_PCT / 100 and int(auto["jump"]) == fear, "countermarch: a rank volley frightens at CM_FEAR_PCT (%d), the opening at m_fear (%d)" % [int(auto["jump_r"]), int(auto["jump"])])
+	_check(sa.stat_cm_fright >= sa.stat_cm_rank - 2 and sa.stat_cm_fright > 0, "countermarch: every rank volley frightened (%d of %d)" % [sa.stat_cm_fright, sa.stat_cm_rank])
+	_check(int(hold["jump"]) == fear, "countermarch: a volley frightens at m_fear (%d)" % int(hold["jump"]))
+	_check(sn.stat_cm_rank >= 16, "countermarch: Use now rolls (%d)" % sn.stat_cm_rank)
+	# The last volley: rodeleros 75 m off take the opening and the rolling fire, then charge the line.
+	var lsc := _sc([Scenarios.unit(0, mus, 100, 150, 200, UP, 25), Scenarios.unit(1, UT.index_of("rodeleros"), 200, 150, 120, DOWN, 40)],
+		[Scenarios.attack(240, 1, 0, 1)])
+	var ls := BattleSim.new()
+	ls.setup(lsc, 41)
+	var last_d := -1
+	var full0 := 0
+	for t in 700:
+		var fl: int = ls.stat_cm_full
+		ls.step()
+		if ls.tick == 240:
+			full0 = ls.stat_cm_full
+		if ls.stat_cm_full > fl and ls.tick > 240 and last_d < 0:
+			last_d = ls._unit_dist(0, 1)
+	print("countermarch: the last volley at %d m (%d rank volleys, %d full)" % [last_d / M, ls.stat_cm_rank, ls.stat_cm_full])
+	_check(full0 >= 1 and last_d >= 0 and last_d <= BattleSim.CM_CLOSE, "countermarch: the last volley within CM_CLOSE (%d m)" % (last_d / M))
+	# An AI side at Easy (CM_AUTO 0) volleys; at Average it rolls (and counts it once).
+	for sk in [0, 1]:
+		var ai := BattleSim.new()
+		var asc := _cm_sc([], sk)
+		ai.setup(asc, 31)
+		for t in 600:
+			ai.step()
+		var cnt: int = ai.stat_aic[AIProfile.C_CM]
+		print("countermarch: AI skill %d: %d rank volleys, %d volleys, counted %d" % [sk, ai.stat_cm_rank, ai.stat_volleys, cnt])
+		if sk == 0:
+			_check(ai.stat_cm_rank == 0 and ai.stat_volleys > 0 and cnt == 0, "countermarch: Easy volleys")
+		else:
+			_check(ai.stat_cm_rank > 0 and cnt == 1, "countermarch: Average rolls, counted once (%d)" % cnt)
+	# Snapshot / restore mid-drill.
+	var sc := _cm_sc([BattleSim.make_ability_order(300, 0, UT.AB_ROLL, UT.AB_HOLD), BattleSim.make_ability_order(420, 0, UT.AB_ROLL, UT.AB_AUTO)])
+	var a := BattleSim.new()
+	a.setup(sc, 21)
+	for t in 250:
+		a.step()
+	var blob := a.snapshot()
+	var cmr0: int = a.u_cmr[0]
+	for t in 500:
+		a.step()
+	var h_a := a.state_hash()
+	var b := BattleSim.new()
+	b.setup(sc, 21)
+	_check(b.restore(blob) and b.u_cmr[0] == cmr0, "countermarch: snapshot restores the drill")
+	for t in 500:
+		b.step()
+	_check(b.state_hash() == h_a, "countermarch: same hash after restore (%08x / %08x)" % [b.state_hash(), h_a])
+	# Rome: nothing allocated or hashed.
+	var rs := BattleSim.new()
+	rs.setup(_sc([Scenarios.unit(0, UT.index_of("archer"), 60, 150, 200, UP), Scenarios.unit(1, UT.index_of("heavy"), 80, 150, 140, DOWN)], []), 5)
+	for t in 100:
+		rs.step()
+	_check(rs.cm_on == 0 and rs.u_cmr.is_empty() and rs.s_cms.is_empty(), "countermarch: a Rome battle has none")

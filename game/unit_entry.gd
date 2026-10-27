@@ -410,6 +410,8 @@ static func tags(ty: int) -> Array[String]:
 	if UT.stat(ty, "m_ammo") > 0:
 		out.append("Shoots over friends" if UT.stat(ty, "m_arc") != 0 else "Thrown flat: needs a clear line")
 		out.append("Fire at will / hold fire")
+		if (UT.abilities(ty) & (1 << UT.AB_ROLL)) != 0:
+			out.append("Countermarch: rolling fire by ranks")
 		out.append("Leads moving targets; keeps its chosen target")
 		out.append("Skirmish mode" + (" (on by default)" if UT.stat(ty, "skirm") != 0 else ""))
 		out.append("Weak in melee")

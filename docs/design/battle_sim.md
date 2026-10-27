@@ -2691,3 +2691,26 @@ uses the unit's missile weapon; pistol riders reload it on the way back. Chargin
 honoured on Auto (the player's explicit choice); Hold makes grenadiers shock foot. The batter order reuses the
 destruction AI's stretch choice; buildings needed their own target (no AI uses it). The drift radius is 8 m ("a few
 metres": 6 m left a front rank 7 m from a wood's cells out). No unit stat was changed for the probe.
+
+#### The countermarch (as built, 2026-10-27)
+
+docs/AI.md 44.2. Ability `UT.AB_ROLL` ("Countermarch") on the West gun foot rows that stand in a line (`m_gun`,
+missile class, foot, a man a weapon, not a skirmish row: musketeers and their tier, marines, colonial militia; not
+the buccaneers, coureurs or maroons, not riders, guns or any Rome row). Auto / Hold / Use now through
+`ORDER_ABILITY` as the others; Use now takes no target. Code: `sim/battle_sim.gd` `_setup_cm`, `_cm_rolls`,
+`_cm_unit`, hooks in `_gun_unit` and `_missile_hit`. State (`cm_on`: a unit with the ability in the battle; sized and
+hashed only then, so Rome battles hash as before; snapshot-covered as script variables): per unit `u_cmc` a reload
+clock (counts as `u_fire_acc` does, full speed standing, half on the move, uncapped), `u_cmr` the rank pointer,
+`u_cmt` the clock of its next rank volley, `u_cml` the clock of the line's last shot, `u_cmv` the tick of its last
+rank volley; per man `s_cms` the clock at his last shot (loaded `m_reload` after it). Not on Hold (and on an AI side
+only with `CM_AUTO`), with a fire target and standing: fire at will's held volley applies to every volley; a **full
+volley** of every loaded man (formed, a charge, loaded) when the line has stood loaded a full reload (its last shot
+two reloads ago: the opening volley) or, on Auto, when the target is within `CM_CLOSE` 40 m or the unit is in a melee
+(the last volley); after it the drill restarts from the front rank one reload on. Else the rank `u_cmr` (slots `s /
+files`, files as the formation stands) fires its loaded men when the clock reaches `u_cmt`, and the next rank comes
+`ceil(m_reload / ranks)` later: each man fires once a reload, a cycle of the ranks the shots of a volley. A rank
+volley frightens its target once (`u_vf_u` / `u_vf_t` as a volley) at `CM_FEAR_PCT` 50 % of `m_fear` (riders' +50 %
+first). Hold: the volleys as before (they also stamp `s_cms`, so a switch back to Auto does not fire men just fired).
+Per-man fire (`_pm_on`: in a building, on a wall, the Cover or Hold-street stance of cover troops) runs before
+`_gun_unit` and is untouched. Stats: `stat_cm_rank`, `stat_cm_full`, `stat_cm_fright`. Tests:
+`tests/roles_sim_test.gd --only=countermarch`.

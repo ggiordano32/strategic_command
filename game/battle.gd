@@ -2081,11 +2081,11 @@ func _occupy_send(b: int) -> void:
 
 # ------------------------------------------------------- ability chips ---
 # The bar's ability chips (docs/design/ui.md "The battle HUD pass"): Auto -> Hold -> Use now -> Auto per ability of
-# the selected units' roles (UT.abilities; Pistols only Auto <-> Hold). Auto and Hold are one ORDER_ABILITY per unit
+# the selected units' roles (UT.abilities; Pistols only Auto <-> Hold; the Countermarch's Use now takes no target). Auto and Hold are one ORDER_ABILITY per unit
 # through _queue; Use now arms a target pick on the field (as Occupy arms its building pick) and the tap sends the
 # order with its target (grenades: an enemy unit or a shut gate; caracole: an enemy unit; batter: a wall stretch, a
 # gate or a building). Nothing here touches the sim except by orders.
-const AB_ICONS := ["pistol", "grenade", "caracole", "target"]
+const AB_ICONS := ["pistol", "grenade", "caracole", "target", "countermarch"]
 const AB_PRED_TICKS := 40      # a predicted state is trusted this long past its order's tick
 var ability_armed := -1        # the UT.AB_* waiting for its target (-1 none)
 var _ab_pred := {}             # unit * 8 + ability -> [state, tick queued]: what the chip shows before the sim applies it
@@ -2168,9 +2168,9 @@ func _ability_set(ab: int, nxt: int) -> void:
 	if nxt == UT.AB_NOW and sim.phase != BattleSim.PHASE_BATTLE:
 		nxt = UT.AB_AUTO
 		overlay.flash("Use now: not before the battle starts", Vector2(sim.u_cx[us[0]], sim.u_cy[us[0]]) / M * PX_PER_M)
-	if nxt == UT.AB_NOW:
+	if nxt == UT.AB_NOW and ab != UT.AB_ROLL:
 		_ability_arm(ab, us)
-		return
+		return   # (the countermarch's Use now has no target: rolling fire at any range, set at once)
 	for u in us:
 		_queue_ability(u, ab, nxt, -1)
 	_count("ability_%s_%s" % [UT.AB_NAMES[ab].to_lower(), UT.AB_STATE_NAMES[nxt].to_lower().replace(" ", "_")])

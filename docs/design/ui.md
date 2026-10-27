@@ -1052,6 +1052,11 @@ action rather than a state) act at once as before.
   Stance / Run rows send their orders; Esc, a selection change, the speed popover, More and an outside press close it with no
   change; the ability tests choose rows. `tests/input_test.gd`: Fire, Skirmish, Deploy, Ammo, Forage, Refill and Release now
   tap the chip, then the row that is not the current state (`_step_opt_row`); their expectations are unchanged.
+- **The Countermarch chip (2026-10-27, docs/AI.md 44.2).** The ability chip of West musket lines (`UT.AB_ROLL`, glyph
+  `countermarch`: three ranks and an arrow from the front one round to the rear), in the bar's order right after Fire.
+  Auto / Hold / Use now as the others, but its Use now has no target: the row sets it at once (rolling fire at any range,
+  no last volley), no pick is armed; before the battle starts it falls back to Auto with the usual flash. The Keys
+  "Chips" section has a Countermarch line; the unit page lists "Countermarch: rolling fire by ranks".
 
 ### Withdraw at the right with a confirmation (as built, 2026-10-27)
 

@@ -473,9 +473,11 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it."],
 		UT.AB_CARACOLE: ["Caracole", "Horse with firearms. Auto: ride up, fire, wheel back and reload, again. Hold: an attack is a charge. Use now: tap an enemy unit and they caracole at it."],
 		UT.AB_GRENADE: ["Grenades", "Auto: thrown at formed blocks, held houses and shut gates in reach. Hold: never thrown, the unit fights as shock foot. Use now: tap an enemy unit or a shut gate and it is thrown at at once."],
-		UT.AB_PISTOL: ["Pistols", "Auto: a point-blank shot in each man's first rounds of a melee, the spent men changing places to reload. Hold: blades only."]}
-	var ab_icons := {UT.AB_BATTER: "target", UT.AB_CARACOLE: "caracole", UT.AB_GRENADE: "grenade", UT.AB_PISTOL: "pistol"}
-	for ab in [UT.AB_BATTER, UT.AB_CARACOLE, UT.AB_GRENADE, UT.AB_PISTOL]:
+		UT.AB_PISTOL: ["Pistols", "Auto: a point-blank shot in each man's first rounds of a melee, the spent men changing places to reload. Hold: blades only."],
+		UT.AB_ROLL: ["Countermarch", "Musket lines: rolling fire by ranks. Auto: an opening volley, then one rank fires after another, keeping the enemy shaken; the last volley of every loaded man when an enemy comes within 40 m. Hold: volleys only. Use now: rolling fire at any range."]}
+	var ab_icons := {UT.AB_BATTER: "target", UT.AB_CARACOLE: "caracole", UT.AB_GRENADE: "grenade", UT.AB_PISTOL: "pistol",
+		UT.AB_ROLL: "countermarch"}
+	for ab in [UT.AB_BATTER, UT.AB_CARACOLE, UT.AB_GRENADE, UT.AB_PISTOL, UT.AB_ROLL]:
 		var abk: int = ab
 		var ac := _chip(UT.AB_NAMES[abk].to_lower(), "Target" if abk == UT.AB_BATTER else UT.AB_NAMES[abk],
 			str(ab_icons[abk]), str(ab_tips[abk][0]), str(ab_tips[abk][1]), "Auto", false, abk)
@@ -535,7 +537,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	waypoints_button.name = "waypoints"
 	waypoints_button.low = true
 	waypoints_button.pressed.connect(func(): waypoints_pressed.emit())
-	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, skirm_button, stance_button, occupy_button,
+	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, ab_chips[UT.AB_ROLL], skirm_button, stance_button, occupy_button,
 		ab_chips[UT.AB_GRENADE], ab_chips[UT.AB_PISTOL], bounds_button, deploy_button, ammo_button, refill_button, forage_button,
 		drop_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
 	for b in [halt_button, run_button]:

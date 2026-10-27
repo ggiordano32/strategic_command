@@ -194,6 +194,9 @@ const CAR_RELOAD := 300          # riders with pistols (range <= CAR_PISTOL_R) r
 const CAR_PISTOL_R := 30 * M
 const CAR_WAIT_MIN := 30         # every rider waits at least this long back from a pass
 const SKD_R := 8 * M             # skirmishers standing in the Cover stance: each man takes a woods cell this near his place
+const CM_FEAR_PCT := 50          # the countermarch (docs/AI.md 44.2): a rank's volley frightens its target at this % of m_fear
+const CM_CLOSE := 40 * M         # ... and on Auto an enemy this near (or a melee) gets the last volley: every loaded man at once
+const CM_NEVER := 1 << 24        # (u_cml, s_cms at the start: long ago, loaded and rested)
 const BLD_TGT := -100000         # u_gtarget at or below this: a building (BLD_TGT - b; the batter order)
 const R_LINE := 0                # t_role: indices of UT.ROLE_ORDER
 const R_SKIRMISH := 1
@@ -1560,6 +1563,19 @@ var stat_car_volleys: int = 0         # caracole passes fired
 var stat_car_back: int = 0            # ... and ridden back
 var stat_skd_men: int = 0             # skirmishers' places drawn into the trees (layouts summed)
 var stat_bld_shots: int = 0           # shots at buildings (the batter order)
+# The countermarch (docs/AI.md 44.2; UT.AB_ROLL). Its own reload clock per unit so a man's reload runs as the
+# body's does (full speed standing, half on the move); allocated and hashed only with cm_on (a unit with the
+# ability in the battle, which needs a gun: Rome battles hash as before).
+var cm_on: int = 0                    # a unit with the countermarch in the battle (static)
+var u_cmc := PackedInt32Array()       # per unit: its reload clock (counts as u_fire_acc does, uncapped)
+var u_cmr := PackedInt32Array()       # ... the rank pointer: the rank that fires next
+var u_cmt := PackedInt32Array()       # ... the clock at which that rank fires
+var u_cml := PackedInt32Array()       # ... the clock of the line's last shot (a full reload loaded after it: the opening volley)
+var u_cmv := PackedInt32Array()       # ... the tick of its last rank volley (that volley's fright is CM_FEAR_PCT)
+var s_cms := PackedInt32Array()       # per man: his unit's clock at his last shot (loaded m_reload after it)
+var stat_cm_rank: int = 0             # rank volleys fired (rolling fire)
+var stat_cm_full: int = 0             # full volleys of a countermarch unit not on Hold (the opening, the last volley)
+var stat_cm_fright: int = 0           # rank volleys that frightened a unit
 # Poisoned arrows (Caribbean batch 2): hashed from the first poisoning on (a battle without one hashes as before).
 var poi_on: int = 0                   # a man was poisoned: u_poisoned, u_poison_t, u_poison_by hashed from then on
 var u_poisoned := PackedInt32Array()  # per unit: poisoned men (at most its alive)
@@ -12566,9 +12582,13 @@ func _gun_unit(u: int) -> void:
 	var ty := u_type[u]
 	var reload := t_m_reload[ty]
 	var acc := u_fire_acc[u]
-	if u_state[u] == U_READY and acc < reload and (u_moved[u] == 0 or (tick & 1) == 0):
-		acc += 1
-		u_fire_acc[u] = acc
+	var cm := cm_on != 0 and (t_abil[ty] & (1 << UT.AB_ROLL)) != 0
+	if u_state[u] == U_READY and (u_moved[u] == 0 or (tick & 1) == 0):
+		if acc < reload:
+			acc += 1
+			u_fire_acc[u] = acc
+		if cm:
+			u_cmc[u] += 1  # (the countermarch's clock: as the body's reload, uncapped)
 	var ft := u_ftarget[u]
 	if ft < 0:
 		return
@@ -12576,6 +12596,9 @@ func _gun_unit(u: int) -> void:
 		u_ftarget[u] = -1
 		return
 	var still := _bnd_still(u) if u_bnd[u] != 0 else -1
+	if cm and _cm_rolls(u):
+		_cm_unit(u, ft, still)
+		return
 	if acc < reload or (u_moved[u] != 0 and t_rider[ty] == 0 and still < 0):
 		return
 	if (u_order[u] != O_ATTACK or u_target[u] != ft) and _unit_dist(u, ft) > t_m_volley[ty] and not _closing(ft, u):
@@ -12590,12 +12613,19 @@ func _gun_unit(u: int) -> void:
 		var i := slot_soldier[base + s]
 		if state[i] != S_FORMED or ammo[i] <= 0 or (still >= 0 and (i & 1) != still):
 			continue
+		var sh := stat_shots
 		_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
+		if cm and stat_shots != sh:
+			s_cms[i] = u_cmc[u]  # (a countermarch unit on Hold: its men's reload for a later rolling fire)
 		if u_alive[ft] <= 0:
 			break
 	if stat_shots != shots0:
 		u_fire_acc[u] = 0
 		stat_volleys += 1
+		if cm:
+			u_cml[u] = u_cmc[u]
+			u_cmr[u] = 0
+			u_cmt[u] = u_cmc[u] + reload
 		if car_on != 0:
 			u_crv[u] = tick  # (a caracole's pass: fired)
 
@@ -12903,6 +12933,9 @@ func _missile_hit(p: int, d: int) -> void:
 		var mt := t_mount[td]
 		if mt == UT.MOUNT_HORSE or mt == UT.MOUNT_CAMEL or mt == UT.MOUNT_ELEPHANT:
 			fear = fear * 3 / 2
+		if cm_on != 0 and u_cmv[pr_unit[p]] == pr_t0[p]:
+			fear = fear * CM_FEAR_PCT / 100  # (a rank's volley of a rolling fire)
+			stat_cm_fright += 1
 		u_fright[ud] = mini(u_fright[ud] + fear, FRIGHT_MAX)
 		stat_volley_fright += 1
 	if _rand() % 100 >= MISSILE_HIT:
@@ -18311,6 +18344,10 @@ func state_hash() -> int:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if skd_on != 0:
 		ctx.update(u_skc.to_byte_array())
+	if cm_on != 0:
+		# The countermarch (a battle without a unit that has it hashes as before).
+		for arr in [u_cmc, u_cmr, u_cmt, u_cml, u_cmv, s_cms]:
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if poi_on != 0:
 		# Poisoned arrows (a battle where nobody was poisoned hashes as before).
 		for arr in [u_poisoned, u_poison_t, u_poison_by]:
@@ -20370,6 +20407,7 @@ func _setup_roles() -> void:
 			sk = true
 	if sk and veg_on != 0:
 		skd_on = 1
+	_setup_cm()
 
 
 ## An ability order (Auto / Hold / Use now; docs/design/battle_sim.md "Roles,
@@ -20610,6 +20648,107 @@ func _pistol_pass() -> void:
 					u_pptr[u] = (k0 + q + 1) % nr
 					stat_pis_swaps += 1
 					break
+
+
+# The countermarch (docs/AI.md 44.2, docs/design/battle_sim.md "The countermarch (as built)"): a West gun foot
+# line's ranks fire in turn, one rank every m_reload / ranks of its clock, so the fire rolls on where a volley
+# spikes and fades; the same shots a reload. Per-man fire (_pm_on: buildings, walls, cover) never reaches it.
+
+## The countermarch's state (setup, from _setup_roles): sized only with a unit that has the ability.
+func _setup_cm() -> void:
+	cm_on = 0
+	stat_cm_rank = 0
+	stat_cm_full = 0
+	stat_cm_fright = 0
+	for u in n_units:
+		if (t_abil[u_type[u]] & (1 << UT.AB_ROLL)) != 0:
+			cm_on = 1
+	var nu := n_units if cm_on != 0 else 0
+	for arr in [u_cmc, u_cmr, u_cmt, u_cmv]:
+		arr.resize(nu)
+		arr.fill(0)
+	u_cmv.fill(-1)
+	u_cml.resize(nu)
+	u_cml.fill(-CM_NEVER)
+	s_cms.resize(n if cm_on != 0 else 0)
+	s_cms.fill(-CM_NEVER)
+
+
+## Unit u (a countermarch row) fires by ranks now: the ability on Auto or Use now (Hold: volleys as before),
+## and on an AI side only with CM_AUTO (Easy: volleys) and the side's ai_plays bit for the countermarch
+## (docs/AI.md 44: the campaign's PLAYS table; a scenario without the key has every bit).
+func _cm_rolls(u: int) -> bool:
+	if ((u_abs[u] >> (UT.AB_ROLL * 2)) & 3) == UT.AB_HOLD:
+		return false
+	var side := u_side[u]
+	if ai_sides[side] == 0:
+		return true
+	return (ai_plays[side] >> Plays.P_COUNTERMARCH) & 1 != 0 and AIProfile.of(self, side)[AIProfile.CM_AUTO] != 0
+
+
+## The countermarch's fire (from _gun_unit, the unit ready with a live fire target ft): foot fire standing (a
+## bound's holding team as before); fire at will's held volley applies to every volley. A full volley of every
+## loaded man (each man loaded m_reload of the clock after his last shot, with a charge, formed): the opening one
+## of a line that has stood loaded a full reload (its last shot two reloads ago), and on Auto the last volley at
+## an enemy within CM_CLOSE or in a melee; after it the drill starts again from the front rank, one reload on.
+## Else the rank u_cmr fires its loaded men when the clock reaches u_cmt, and the next rank's turn comes
+## ceil(m_reload / ranks) later (ranks of the files the formation stands in); Use now rolls at any range.
+func _cm_unit(u: int, ft: int, still: int) -> void:
+	if u_moved[u] != 0 and still < 0:
+		return  # (foot stand to fire)
+	var ty := u_type[u]
+	var d := _unit_dist(u, ft)
+	if (u_order[u] != O_ATTACK or u_target[u] != ft) and d > t_m_volley[ty] and not _closing(ft, u):
+		stat_volley_held += 1
+		return
+	var reload := t_m_reload[ty]
+	var clk := u_cmc[u]
+	var alive := u_alive[u]
+	var now := ((u_abs[u] >> (UT.AB_ROLL * 2)) & 3) == UT.AB_NOW
+	var close := not now and (d <= CM_CLOSE or u_fighting[u] > 0 or u_contact[u] != 0)
+	var full := close or clk - u_cml[u] >= 2 * reload
+	var s0 := 0
+	var s1 := alive
+	if not full:
+		if clk < u_cmt[u]:
+			return
+		var files := maxi(mini(files_of(u), alive), 1)
+		var ranks := (alive + files - 1) / files
+		var r := u_cmr[u] % ranks
+		s0 = r * files
+		s1 = mini(s0 + files, alive)
+		u_cmr[u] = (r + 1) % ranks
+		u_cmt[u] = clk + (reload + ranks - 1) / ranks
+	var ks := u_sk[u]
+	var kstd := t_m_ak[ty]
+	var pref := ks >= 0 and u_akind[u] != 0
+	var base := u_slot_base[u]
+	var shots0 := stat_shots
+	for s in range(s0, s1):
+		var i := slot_soldier[base + s]
+		if state[i] != S_FORMED or ammo[i] <= 0 or clk - s_cms[i] < reload or (still >= 0 and (i & 1) != still):
+			continue
+		var sh := stat_shots
+		_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
+		if stat_shots != sh:
+			s_cms[i] = clk
+		if u_alive[ft] <= 0:
+			break
+	if stat_shots == shots0:
+		return
+	u_fire_acc[u] = 0  # (the body: loaded again a reload after its last shot, for Hold)
+	u_cml[u] = clk
+	stat_volleys += 1
+	if full:
+		u_cmr[u] = 0
+		u_cmt[u] = clk + reload
+		stat_cm_full += 1
+		return
+	u_cmv[u] = tick
+	stat_cm_rank += 1
+	var sd := u_side[u]
+	if ai_sides[sd] != 0 and stat_aic[sd * AIProfile.N_COUNTERS + AIProfile.C_CM] == 0:
+		BattleAI._count(self, sd, AIProfile.C_CM)  # (once a battle a side: its lines rolled)
 
 
 ## Grenades held (the ability on Hold): unit u throws none and fights as

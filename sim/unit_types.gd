@@ -2532,8 +2532,9 @@ const AB_PISTOL := 0    # pistols at contact: a point-blank shot in each of a ma
 const AB_GRENADE := 1   # grenades: thrown at a formed block, a held door or a gate in range
 const AB_CARACOLE := 2  # horse_skirmish riders with a firearm: ride to range, fire, retire; charge only when ordered
 const AB_BATTER := 3    # guns_siege: target walls or buildings when ordered
-const AB_N := 4
-const AB_NAMES: Array[String] = ["Pistols", "Grenades", "Caracole", "Batter"]
+const AB_ROLL := 4      # the countermarch (docs/AI.md 44.2): a West gun foot line's ranks fire in turn, a rolling fire
+const AB_N := 5
+const AB_NAMES: Array[String] = ["Pistols", "Grenades", "Caracole", "Batter", "Countermarch"]
 const AB_AUTO := 0
 const AB_HOLD := 1
 const AB_NOW := 2
@@ -2556,6 +2557,11 @@ static func abilities(ty: int) -> int:
 		m |= 1 << AB_CARACOLE
 	if role(ty) == "guns_siege":
 		m |= 1 << AB_BATTER
+	# The countermarch: West gun foot companies that stand in a line (a powder weapon, foot, a man a
+	# weapon, missile class, not a skirmish row: the drill is line drill; no gun, rider or Rome row).
+	if ty >= ROME_N and stat(ty, "m_gun") != 0 and cls(ty) == CLS_MISSILE and stat(ty, "mount") == MOUNT_FOOT \
+			and stat(ty, "crew") <= 1 and stat(ty, "skirm") == 0:
+		m |= 1 << AB_ROLL
 	return m
 
 

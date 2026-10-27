@@ -3309,6 +3309,78 @@ fire lands, not how many shots are fired.
   move is small and toward the shooters. `tests/defend_probe.gd` re-run: the
   owner's musket line is a player unit on Auto, so its numbers move; reported.
 
+### 44.2 The countermarch (as built, 2026-10-27)
+
+The sim rule in full: docs/design/battle_sim.md "The countermarch (as built)". Code: `sim/battle_sim.gd`
+(`_setup_cm`, `_cm_rolls`, `_cm_unit`; hooks in `_gun_unit`, `_missile_hit`, `state_hash`), `sim/unit_types.gd`
+(`AB_ROLL` 4, `AB_N` 5, `abilities()`), `sim/ai_profile.gd` (`CM_AUTO`, `C_CM`), the view (`game/hud.gd`,
+`game/battle.gd`, `game/ui_icons.gd` glyph `countermarch`, `game/controls.gd` Keys "Chips", `game/unit_entry.gd`),
+test `tests/roles_sim_test.gd --only=countermarch`.
+
+- **Who.** `UT.AB_ROLL` on West rows with `m_gun`, missile class, foot, crew <= 1 and **not a skirmish row**
+  (`skirm` 0): musketeers (and veterans), marines, colonial militia. Buccaneers, coureurs and maroons have none
+  (loose-order skirmishers; the asymmetry principle: no native or pirate line that trades volleys); riders, guns
+  and every Rome row none.
+- **Sim.** A reload clock per unit (`u_cmc`, counts as `u_fire_acc`: half speed on the move) and a per-man stamp
+  (`s_cms`) make "a man fires only loaded" exact: each man once a reload, ranks shuffled by casualties or not. Full
+  volley of every loaded man: the opening (the line's last shot two reloads ago: it has stood loaded a full reload)
+  and, on Auto, the last volley (fire target within `CM_CLOSE` or the unit in a melee; any target, which is the Auto
+  rule "rolling while the target is beyond CM_CLOSE"); then the drill restarts from the front rank a reload later.
+  Else one rank (slot / files) every `ceil(m_reload / ranks)` of the clock, front to rear. Rank volleys frighten at
+  `CM_FEAR_PCT`. Hold: the volleys as before. Use now: rolling at any range and in a melee (no last volley); it
+  takes no target. Per-man fire (`_pm_on`) untouched, so a company in a building, on a wall or a cover row in the
+  Cover / Hold-street stance does not roll; a street line in the open does.
+- **State.** `cm_on` (static: a unit with the ability); `u_cmc`, `u_cmr`, `u_cmt`, `u_cml`, `u_cmv`, `s_cms` sized
+  and hashed only with it (Rome: empty, unhashed). Snapshots carry them (script variables).
+- **AI.** No orders: the sim reads `CM_AUTO` for an AI side (`_cm_rolls`, as `R_SK_DRIFT` is read in `_skd_ok`), so
+  an AI line is on Auto unless the knob is 0 (then it volleys as on Hold); neither AI ever sets Hold on it. The
+  merge with 44.1 (2026-10-27) added the side's `ai_plays` bit 1 (`Plays.P_COUNTERMARCH`) to the same test: the
+  campaign's PLAYS table gives it to Spain, England, France and the Dutch, not to the natives or the Brethren. Counted once a battle a side (`C_CM`, "countermarch" in
+  `COUNTER_NAMES`) at the side's first rank volley.
+- **Player.** The ability chip right after Fire, Auto / Hold / Use now (Use now set at once, no pick), the Keys
+  "Chips" line, the unit page's "Countermarch: rolling fire by ranks". The custom battle needed nothing.
+
+| Knob / constant | Value |
+|---|---|
+| `CM_AUTO` (`ai_profile.gd` id 311) | Easy 0, Average 1, Skilled 1 |
+| `CM_FEAR_PCT` (`battle_sim.gd`) | 50 % of `m_fear` per rank volley |
+| `CM_CLOSE` | 40 m |
+| rank interval | `ceil(m_reload / ranks)`: musketeers 120 ticks / 4 ranks = 3 s |
+| ids 292-310 | no knob yet (`KNOB_GAPS`, filled 0; the tercio's 300-309 come with 44.1) |
+
+Set piece (100 musketeers, 25 x 4, at a pike block 70 m off, 90 s): Auto an opening of 100 shots, then 25 a rank
+every 30 ticks (pointer 0, 1, 2, 3, 0 ...), 750 shots against 800 by volleys over the same ticks (a cycle of four
+ranks = one volley's 100; the difference is the last cycle's ranks still to fire), fright jumps 60 (opening) / 30
+(each rank); rodeleros charging home take the last volley at 34 m; Easy AI 0 rank volleys, Average counted once.
+
+Measured, before (HEAD `e5dbd18`, sim hash `ee70ed3705`) -> after (`40eb64271d`):
+
+| Probe | Before | After |
+|---|---|---|
+| asym_field, Spanish wins of 48 | 39 (1 draw) | 42 (0 draws) |
+| open_town attacker wins % (8 seeds): Cartagena / Havana / Santo Domingo | 88 / 12 / 100 | 88 / 0 / 100 |
+| west_walls pooled attacker wins %, walls 0 / 1 / 2 (16 towns x 16) | 39 / 31 / 27 | 52* / 37 / 29 |
+| west_walls men lost a battle, walls 0: attackers / defenders | 462 / 433 | 439 / 432 |
+| defend_probe attacker wins of 24, walls 0 / 1 / 2 | 10 / 5 / 8 | 10 / 5 / 9 |
+| defend_probe defenders down before contact, walls 0 / 1 / 2 | 52 / 44 / 52 | 52 / 44 / 52 |
+
+west_walls cells beyond the interval: Santo Domingo walls 0 6 -> 44, Santiago de Cuba walls 0 50 -> 94, Cumana walls
+2 69 -> 94, St Augustine walls 2 88 -> 56. defend_probe per town (wins of 8, walls 0 / 1 / 2): Havana 0 / 1 / 2 ->
+0 / 1 / 2, Cartagena 5 / 0 / 0 -> 5 / 1 / 0, Cumana 5 / 4 / 6 -> 5 / 3 / 7; nothing before contact moved (the line
+stands out of the posts' reach since section 42, so it does not fire before the assault).
+
+**Diagnosis of west_walls walls 0 (+12, beyond the interval).** Not the fright: with `CM_FEAR_PCT` 100 walls 0 is 51 %.
+With the defenders never rolling (diagnostic only) it is 55 %: the gain is the attackers' field lines, which roll,
+against defenders who mostly fire per man from houses (no change) and whose pikes and shock charge the shooters
+(`S_DEF_FIRE`) into a fire with no reload gap and a last volley; the attackers lose 23 fewer men a battle, the
+defenders as many as before. That is the drill doing what it is for, toward the shooters. No fix was kept: the move
+puts AI-against-AI walls 0 back near section 31's 52 % (section 42 left 39 % as an open item). Walls 1-2 within the
+interval.
+
+Open: retiring fire at the walk (a line that gives ground firing); a Use now that fires the last volley on demand
+instead; if walls 0 should stay near 40 % the lever is the defenders' charge distance against a rolling line
+(`DF_CHARGE_PCT`), not the drill; the icon gallery (`tests/icon_gallery.gd`) is not regenerated.
+
 ### 44.3 Later plays (not yet)
 
 The Swedish salvo (three ranks firing as one, then the charge), the native

@@ -31,7 +31,7 @@ const NAMES: Array[String] = [
 	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 	"details", "embark", "more",
-	"grenade", "pistol", "caracole", "target", "hand",
+	"grenade", "pistol", "caracole", "target", "hand", "countermarch",
 	"hat", "knife", "cross", "feathers",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
@@ -876,6 +876,11 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_l(0.0, 0.58, 0.0, 0.95, 0.9)
 			_l(-0.95, 0.0, -0.58, 0.0, 0.9)
 			_l(0.58, 0.0, 0.95, 0.0, 0.9)
+		"countermarch":  # three ranks; the front one fires and files round to the rear
+			for y in [-0.55, 0.0, 0.55]:
+				_l(-0.85, y, 0.1, y, 1.1)
+			_arc(0.3, 0.0, 0.55, -PI * 0.5, PI * 0.5, 0.9)
+			_head(0.28, 0.55, -1.0, 0.0, 0.42)
 		"hand":  # an open palm: stop
 			_pl([-0.55, 0.85, -0.55, 0.0, -0.7, -0.3], false, 0.9)
 			for x in [-0.3, 0.0, 0.3, 0.6]:

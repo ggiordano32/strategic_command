@@ -375,10 +375,11 @@ const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits al
 const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
 const TERCIO_FILES := 302      # ... a block stands max(this, isqrt(men)) files wide
 const TERCIO_HORSE_R := 303    # ... riders this near a sleeve moving toward it (or with an attack order on it, twice this) send it behind the block
-const N_KNOBS := 304
+const CM_AUTO := 311           # 1: the side's West gun foot lines fire by ranks on Auto (the countermarch, UT.AB_ROLL; BattleSim _cm_rolls; ai_plays bit 1); 0 volleys
+const N_KNOBS := 312
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[292, 300]]
+const KNOB_GAPS: Array = [[292, 300], [304, 311]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -657,6 +658,8 @@ const KNOBS: Array = [
 	[TERCIO, 0, 1, 1],
 	[TERCIO_FILES, 8, 14, 14],
 	[TERCIO_HORSE_R, 80 * M, 80 * M, 80 * M],
+	# The countermarch (docs/AI.md 44.2): Easy volleys as before (a deliberate mistake).
+	[CM_AUTO, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -764,13 +767,14 @@ const C_CH_ATTEMPT := C_CAV_STAY + 11  # assassins' attempts ordered
 const C_CH_PARLEY := C_CAV_STAY + 12   # diplomats' parleys ordered
 const C_CH_SABOTAGE := C_CAV_STAY + 13  # assassins sent to sabotage a battery
 const C_PLAY_TERCIO := C_CAV_STAY + 14  # the tercio formed (docs/AI.md 44.1; once a battle per side)
-const N_COUNTERS := C_CAV_STAY + 15
+const C_CM := C_CAV_STAY + 15  # the countermarch: the side's lines fired by ranks (once a battle a side; docs/AI.md 44.2)
+const N_COUNTERS := C_CAV_STAY + 16
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
-	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio"]
+	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio", "countermarch"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.
@@ -818,6 +822,9 @@ static func _build() -> void:
 		var base := PackedInt32Array()
 		base.resize(N_KNOBS)
 		base.fill(-0x7FFFFFFF)
+		for g in KNOB_GAPS:
+			for k in range(int(g[0]), int(g[1])):
+				base[k] = 0
 		for r in KNOBS:
 			base[int(r[0])] = int(r[1 + s])
 		for g in KNOB_GAPS:

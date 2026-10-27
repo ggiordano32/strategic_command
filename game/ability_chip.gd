@@ -5,7 +5,7 @@ extends Button
 ##   cycles it, the owner (hud.gd) sets the state word;
 ## - an ability (`ab` a UT.AB_* id): Auto / Hold / Use now (roles step 2); a tap cycles Auto -> Hold -> Use now
 ##   -> Auto (Pistols: Auto <-> Hold), Use now arms a target pick on the field and the chip then reads
-##   "Use now: tap a target".
+##   "Use now: tap a target" (the Countermarch's Use now has no target: set at once).
 ## The chip knows nothing of the sim: hud.gd and battle.gd set `state_word`, `armed`, `common`.
 ## View only.
 
