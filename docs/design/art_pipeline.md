@@ -495,3 +495,63 @@ R channel, density / 3) and height grids and writes nothing; no file under `sim/
   a short ramp. The settlement's own streets and plaza keep the vegetation texture's linear edge.
 - Web: nothing beyond the existing shaders' set (no `textureQueryLod`, no bit ops, constant loop bounds, one extra
   `texture()` read for the shadow).
+
+### The tabletop battlefield (plan, 2026-10-27; agreed with the owner)
+
+The owner: "I really really like the direction toward miniatures on a
+tabletop" and, for the battlefield, "really focus on reworking the visuals
+to look like miniatures on a tabletop ... I assume it will take many passes".
+The overworld reached that reading with the painted-miniature towns, the
+chart sea and the parchment table (overworld_view.md, the visual pass of
+2026-10-27); the battlefield follows, in passes, each view only (no sim rule,
+no hash, no lockstep change) and each checked on the phone. Every soldier
+and every kit piece is rendered from our own Blender models (the sprite
+pipeline above), so an oblique view is a camera change in the build, not new
+art; that decides the order.
+
+1. **Trays and bases.** A thin movement tray (dark card edge, a faint
+   bevel) under every unit's formation footprint; a round base with a
+   faction-coloured rim under every figure (the basing convention), a soft
+   contact shadow; the unit's standard on a pole at the tray's corner (the
+   overworld's pennant language, with the unit number on a roundel); the
+   state tokens (shaken, disordered, out of ammunition, Hold / Use now) as
+   small plastic counters on the tray's edge instead of bars; casualties
+   as toppled figures left on the table (the death action's last frame,
+   kept, fading slowly); routed units lifted off the tray. The cheapest
+   pass and the strongest "these are miniatures" cue.
+2. **The terrain board.** Hills as stepped foam terraces with bevelled,
+   lit risers (the relief pass's bands and risers, made literal); flock and
+   static-grass texture on the ground pass of 2026-10-27; model trees on
+   felt patches; roads as sand strips, rivers as poured resin with a
+   painted bed, fields as flock squares with a card edge; the table's lamp
+   light (a warm key with a soft vignette and the tilt-shift of the
+   overworld frame); the board's bevelled edge and the wooden table beyond
+   it, already drawn, tied to the overworld's table tone.
+3. **The oblique camera.** Every sprite set re-rendered at about 40 degrees
+   elevation in 8 directions (the pipeline's `iso_` variant generalised;
+   the owner asked that the kit houses, walls, towers and gates be
+   re-rendered at the same angle, in the same build), figures drawn upright
+   on a foreshortened board (the ground, the decals and the overlay
+   squashed by the camera's cosine, heights lifting by its sine), taps and
+   drags mapped through the same transform, the HUD untouched. The big
+   pass; it waits for 1 and 2 and for the overworld's performance pass
+   (the West table at about 39 ms a frame on the desktop before any pass of
+   2026-10-27: profile and cut the polylines and whole-map redraws first).
+   Two characters are modelled in this build, for the asymmetry rather
+   than for flavour: a **native war chief** (an aura that hides and
+   ambushes harder near him; orders the feigned retreat once the native
+   ambush play exists) and a **European engineer** (faster siege works and
+   batteries, the only one who raises the star-fort tier).
+4. **Painted figures.** A shading pass in `build.py` / `pack.py`:
+   black-lining, edge highlights, a varnish gloss term, flock on the bases.
+5. **Furniture and motion.** A brass ruler for the deployment line and the
+   range rings, cotton smoke everywhere (the diorama's already is), the
+   dive from the overworld onto the table as the battle opens, and, rule of
+   cool, a die that rolls across the table on an auto-resolve.
+
+**Client (the owner deferred the decision; decided 2026-10-27).** Web first
+stays: the measured lag is our own drawing cost and a native build would
+carry it unchanged; the phone and friends joining by link are the loop. A
+native desktop export preset is added beside the web one (no code change)
+for the owner's desktop sessions and for profiling; a native-only direction
+reopens only if a pass needs true 3D that the phones cannot take.
