@@ -69,6 +69,12 @@ const COL_LANE_TABLE := Color(0.93, 0.97, 1.0, 0.38)
 const LANE_TABLE_DASH := 6.0
 const LANE_TABLE_GAP := 5.0
 const LANE_TABLE_W := 1.5
+## Rhumb lines (visual pass part 2): in the Terrain view of the table style the sea lanes are faint chart lines,
+## thin and long-dashed; the Political view keeps the LANE_TABLE_* look above.
+const COL_RHUMB := Color(0.93, 0.97, 1.0, 0.35)
+const RHUMB_DASH := 16.0
+const RHUMB_GAP := 9.0
+const RHUMB_W := 1.0
 const LANE_DASH := 4.0
 const LANE_GAP := 3.5
 const COL_HILL := Color(0.25, 0.18, 0.08, 0.2)
@@ -481,6 +487,20 @@ static func table_on() -> bool:
 	if style_pref == "auto":
 		return CData.pack == "west"
 	return style_pref == "table"
+
+
+## True when the sea lanes are drawn as rhumb lines (the table style's Terrain view).
+static func rhumb_on() -> bool:
+	return table_on() and terrain_view
+
+
+## The dash and gap (before the line scale) of the pale sea lanes in the current style and view.
+static func lane_dash(tbl: bool) -> float:
+	return RHUMB_DASH if rhumb_on() else (LANE_TABLE_DASH if tbl else LANE_DASH)
+
+
+static func lane_gap(tbl: bool) -> float:
+	return RHUMB_GAP if rhumb_on() else (LANE_TABLE_GAP if tbl else LANE_GAP)
 
 
 static func set_style(v: String, save := true) -> void:
@@ -1020,16 +1040,19 @@ func _draw_coast_body() -> void:
 ## The sea lanes as dashed curves (dashes cut for this line scale and style, cached).
 static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 	var tbl := table_on()
+	var rh := rhumb_on()
 	var wk := LOD_LANE if far_lod else 1.0   # (zoomed out the lanes are thinner, the dashes the same)
-	var key := "%d:%.4f:%s" % [_gen, lw, "t" if tbl else "r"]
+	var key := "%d:%.4f:%s" % [_gen, lw, "h" if rh else ("t" if tbl else "r")]
 	if key != _lane_dash_key:
 		_lane_dash_key = key
 		_lane_dashes = []
 		for ln in _lane_lines:
-			_lane_dashes.append(dash_polyline(ln, (LANE_TABLE_DASH if tbl else LANE_DASH) * lw, (LANE_TABLE_GAP if tbl else LANE_GAP) * lw))
+			_lane_dashes.append(dash_polyline(ln, lane_dash(tbl) * lw, lane_gap(tbl) * lw))
 	for segs in _lane_dashes:
 		if (segs as PackedVector2Array).size() >= 2:
-			if tbl:
+			if rh:
+				ci.draw_multiline(segs, COL_RHUMB, RHUMB_W * lw * wk, true)
+			elif tbl:
 				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * lw * wk, true)
 				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw * wk, true)
 			else:
@@ -1814,9 +1837,12 @@ static func draw_bridge(ci: CanvasItem, p: Vector2, dir: Vector2, lw: float) -> 
 ## A sea lane (dashed, pale) as a polyline through the sea.
 static func draw_sea_lane_line(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
 	var tbl := table_on()
-	var segs := dash_polyline(pts, (LANE_TABLE_DASH if tbl else LANE_DASH) * lw, (LANE_TABLE_GAP if tbl else LANE_GAP) * lw)
+	var segs := dash_polyline(pts, lane_dash(tbl) * lw, lane_gap(tbl) * lw)
 	if segs.size() >= 2:
-		ci.draw_multiline(segs, COL_LANE_TABLE if tbl else COL_SEA_LANE, (LANE_TABLE_W if tbl else LANE_W) * lw, true)
+		if rhumb_on():
+			ci.draw_multiline(segs, COL_RHUMB, RHUMB_W * lw, true)
+		else:
+			ci.draw_multiline(segs, COL_LANE_TABLE if tbl else COL_SEA_LANE, (LANE_TABLE_W if tbl else LANE_W) * lw, true)
 
 
 ## A sea lane (versions 1-5: straight, dotted, light blue) between two ports.

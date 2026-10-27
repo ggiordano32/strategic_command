@@ -2492,7 +2492,7 @@ func _refresh_map6() -> void:
 	# armies with the merge glyphs) and the map's reach / selected-region nodes (map_view.set_reach /
 	# set_selected_region): the map's territories and edges are not drawn again for a tap.
 	var p_paths := fresh or paths != overlay.paths6 or zones != overlay.zones or links != overlay.links
-	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap   # (the halo is its own node)
+	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap or int(was_sel[0]) != sel_army   # (the halo is its own node; the selected standard lifts and has a gold rim, so the armies redraw)
 	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed or raid_changed
 	overlay.paths6 = paths
 	overlay.zones = zones

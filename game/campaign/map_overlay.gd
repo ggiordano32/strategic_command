@@ -855,8 +855,10 @@ func _glow_body() -> void:
 		return
 	var c: Vector2 = _army_pos[sel]
 	var m := _mk_of(_dz[P_ARMIES])
-	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
-	_ci.draw_rect(rect.grow(3.0 + 1.5 * sin(pulse * 5.0)), COL_SELECTED)
+	var hc := c + Vector2(-2.0, -2.0) * maxf(m, 0.8)
+	var hr := 21.0 * maxf(m, 0.8) + 1.5 * sin(pulse * 5.0)
+	_ci.draw_circle(hc, hr, Color(COL_SELECTED, 0.26))
+	_ci.draw_arc(hc, hr, 0, TAU, 32, Color(COL_SELECTED, 0.7), 1.6, true)
 
 
 func _tips_body() -> void:
@@ -910,18 +912,18 @@ func _sites_body() -> void:
 		# every settlement has a marker that is its tap target: the relief style's, and over a table-style model that
 		# is small or sparse (a bare name over a hut was hard to hit); the harbour mark for a port
 		var big := CData.is_capital(r) or CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"]))   # (capitals and key cities keep their look when far)
-		var dot := MapView.far_lod and not big and (not Minis.on_sites or zoom < Minis.SITE_MIN_ZOOM)   # zoomed out: an ordinary settlement is a small dot
-		if not Minis.on_sites or Minis.weak(zoom, r) or dot:
-			var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
-			if dot:
-				draw_site(_ci, p, rad * 0.5, oc, 0, m, false)
-			else:
-				draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
+		var far_sym := MapView.far_lod and (not Minis.on_sites or zoom < Minis.SITE_MIN_ZOOM)   # zoomed out: an ink symbol by level
+		var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
+		if far_sym:
+			draw_far_site(_ci, p, lvl, CData.is_capital(r) or big, CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])),
+					FogView.shown_owner(state, r) >= 0, oc, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
+		elif not Minis.on_sites or Minis.weak(zoom, r):
+			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
 		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
 		if not sg.is_empty():
 			var sr := siege_ring_radius(r)   # (round the ring the besiegers stand on)
 			draw_siege_ring(_ci, p, sr, CData.faction_color(int(sg["f"])), m)
-		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
+		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])) and not far_sym:
 			draw_key_city(_ci, p, rad)
 		if (show_names or lvl == CData.CITY) and (not MapView.far_lod or big) and not FogView.never(r):
 			var nm := str(CData.REGIONS[r]["city"])
@@ -1220,6 +1222,46 @@ static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, 
 		draw_harbour_mark(ci, p + Vector2(rad + (6.5 + 1.2 * w) * m, rad * 0.5 + 1.0), m)
 
 
+const INK := Color(0.13, 0.08, 0.04)
+const PARCH := Color(0.93, 0.87, 0.7)
+
+
+## A settlement below the miniatures' zoom (visual pass part 2): an ink symbol by level over a tiny parchment disc,
+## the owner's colour a thin ring round it. Level 0 a small circle, 1 a circle with a tick (a tiny tower), 2 a ring
+## with battlement notches; a capital a star, a key city the white star; a port gets a small ink anchor.
+static func draw_far_site(ci: CanvasItem, p: Vector2, lvl: int, star: bool, key: bool, owned: bool, owner_col: Color, port: bool) -> void:
+	var r: float = [3.0, 4.0, 5.0][clampi(lvl, 0, 2)] + (2.0 if star else 0.0)
+	var dr := r + 2.2
+	ci.draw_circle(p, dr + 0.8, Color(0.08, 0.05, 0.03, 0.5))
+	ci.draw_circle(p, dr, Color(PARCH.r, PARCH.g, PARCH.b, 0.92))
+	ci.draw_arc(p, dr - 0.4, 0, TAU, 24, owner_col if owned else Color(0.62, 0.6, 0.55), 1.6, true)
+	if star:
+		var pts := PackedVector2Array()
+		for k in 10:
+			var a := -PI * 0.5 + PI * k / 5.0
+			pts.append(p + Vector2(cos(a), sin(a)) * (r if k % 2 == 0 else r * 0.45))
+		ci.draw_colored_polygon(pts, Color.WHITE if key else INK)
+		var o := pts.duplicate()
+		o.append(pts[0])
+		ci.draw_polyline(o, INK, 1.2, true)
+	elif lvl <= 0:
+		ci.draw_arc(p, r * 0.6, 0, TAU, 14, INK, 1.5, true)
+	elif lvl == 1:
+		ci.draw_arc(p, r * 0.75, 0, TAU, 16, INK, 1.5, true)
+		ci.draw_line(p + Vector2(0, -r * 0.75), p + Vector2(0, -r * 1.35), INK, 1.8, true)
+	else:
+		ci.draw_arc(p, r * 0.75, 0, TAU, 18, INK, 1.8, true)
+		for k in 6:
+			var a2 := TAU * k / 6.0 - PI * 0.5
+			var d := Vector2(cos(a2), sin(a2))
+			ci.draw_line(p + d * r * 0.75, p + d * r * 1.25, INK, 1.6, true)
+	if port:
+		var q := p + Vector2(dr + 3.5, dr * 0.5)
+		ci.draw_line(q + Vector2(0, -3.0), q + Vector2(0, 3.0), INK, 1.4, true)
+		ci.draw_line(q + Vector2(-2.0, -1.5), q + Vector2(2.0, -1.5), INK, 1.2, true)
+		ci.draw_arc(q + Vector2(0, 0.5), 2.6, 0.15 * PI, 0.85 * PI, 8, INK, 1.3, true)
+
+
 ## A harbour mark: a small white anchor on a dark disc (a settlement with a port).
 static func draw_harbour_mark(ci: CanvasItem, p: Vector2, m: float) -> void:
 	var s := maxf(m, 0.7) * 4.1   # (75 % of its first size, and a quieter disc: owner 2026-10-23)
@@ -1317,8 +1359,7 @@ func _draw_lanes(m: float) -> void:
 		if wp.size() < 2:
 			continue
 		var wl: PackedVector2Array = xform * wp
-		var wd := MapView.dash_polyline(wl, (MapView.LANE_TABLE_DASH if tbl else MapView.LANE_DASH),
-				(MapView.LANE_TABLE_GAP if tbl else MapView.LANE_GAP))
+		var wd := MapView.dash_polyline(wl, MapView.lane_dash(tbl), MapView.lane_gap(tbl))
 		draw_war_dashes(_ci, wd, tbl)
 	var rt := CLanes.raiders(state)
 	for id in CLanes.count():
@@ -1564,28 +1605,42 @@ func _flota_course(fpos: Dictionary) -> void:
 ## badge there). Returns the banner's rect.
 static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human: bool, count: int, frac: float,
 		glow: float = 0.0, moved: bool = false, emblem: String = "") -> Rect2:
-	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)
-	if glow > 0.0:
-		ci.draw_rect(rect.grow(glow), COL_SELECTED)
-	# A shield shape (rect with a pointed foot).
-	var pts := PackedVector2Array([rect.position, rect.position + Vector2(rect.size.x, 0),
-		rect.position + Vector2(rect.size.x, rect.size.y - 6 * m), c + Vector2(0, rect.size.y * 0.5 + 3 * m),
-		rect.position + Vector2(0, rect.size.y - 6 * m)])
+	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)   # (the tap area: unchanged)
+	var sel := glow > 0.0
+	var sm := maxf(m, 0.8)   # the standard keeps a readable size when zoomed out (the hit rect shrinks, it does not)
+	var o := c + Vector2(0, -3.0 * sm if sel else 0.0)   # the selected standard lifts a little
+	var rim := COL_SELECTED if sel else Color(1, 1, 1)
+	var pole_x := o.x - 9.0 * sm
+	# The pole, then the swallow-tailed pennant in the faction colour with the crest.
+	var top := o.y - 17.0 * sm
+	ci.draw_line(Vector2(pole_x, top - 4.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), COL_OUTLINE, 3.2, true)
+	ci.draw_line(Vector2(pole_x, top - 3.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), Color(0.55, 0.42, 0.26), 1.5, true)
+	ci.draw_circle(Vector2(pole_x, top - 4.0 * sm), 2.0, COL_OUTLINE)
+	ci.draw_circle(Vector2(pole_x, top - 4.0 * sm), 1.0, Color(0.85, 0.7, 0.35))
+	var pw := 27.0 * sm
+	var pts := PackedVector2Array([Vector2(pole_x, top), Vector2(pole_x + pw, top), Vector2(pole_x + pw - 6.0 * sm, top + 8.0 * sm),
+		Vector2(pole_x + pw, top + 16.0 * sm), Vector2(pole_x, top + 16.0 * sm)])
 	ci.draw_colored_polygon(pts, col)
 	var outline := pts.duplicate()
 	outline.append(pts[0])
-	ci.draw_polyline(outline, COL_OUTLINE, 3.5 if human else 1.8, true)
-	if human:
-		ci.draw_polyline(outline, Color(1, 1, 1), 1.8, true)
+	ci.draw_polyline(outline, COL_OUTLINE, 3.5 if (human or sel) else 1.8, true)
+	if human or sel:
+		ci.draw_polyline(outline, rim, 1.8, true)
 	if emblem != "" and FactionEmblem.has(emblem):
-		# the faction's emblem as a little flag on the banner's top edge
-		var es := 15.0 * maxf(m, 0.8)
-		FactionEmblem.draw(ci, emblem, Rect2(Vector2(c.x - es * 0.5, rect.position.y - es * 0.62), Vector2(es, es)))
+		var es := 13.0 * sm
+		FactionEmblem.draw(ci, emblem, Rect2(Vector2(pole_x + 3.0 * sm, top + 8.0 * sm - es * 0.5), Vector2(es, es)))
+	# The strength on a parchment roundel with an ink rim at the pole's foot.
+	var rc := Vector2(pole_x + 4.0 * sm, o.y + 6.0 * sm)
+	var rr := 9.0 * sm
+	ci.draw_circle(rc, rr + 1.6, COL_OUTLINE)
+	if human or sel:
+		ci.draw_arc(rc, rr + 1.2, 0, TAU, 24, rim, 1.4, true)
+	ci.draw_circle(rc, rr, Color(0.93, 0.87, 0.7))
 	var n := str(count)
-	var afs := int(round(15 * maxf(m, 0.75)))
-	var tw := text_w(n, afs)
-	var tp := c + Vector2(-tw * 0.5, afs * 0.3)
-	put(ci, tp, n, afs, Color.WHITE, 4, Color(0, 0, 0, 0.8))
+	var afs := int(round(14 * maxf(m, 0.75)))
+	if text_w(n, afs) > rr * 1.75:
+		afs = maxi(int(afs * rr * 1.75 / text_w(n, afs)), 9)
+	put(ci, rc + Vector2(-text_w(n, afs) * 0.5, afs * 0.34), n, afs, Color(0.1, 0.06, 0.03))
 	var by := rect.end.y + 5.0 * m
 	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x, 4 * m), Color(0, 0, 0, 0.7))
 	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), BAR_GOOD if frac > 0.6 else BAR_LOW)
@@ -1802,35 +1857,39 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 	if sel:
 		_ci.draw_circle(c, s * 1.45 + 2.0 * sin(pulse * 5.0), Color(COL_SELECTED, 0.55))
 	if not Minis.on_ships:
-		# Hull.
+		# A sail glyph: a triangular sail in the faction colour on a dark hull.
 		var hull := PackedVector2Array([Vector2(-s, 0.15 * s), Vector2(s, 0.15 * s), Vector2(0.62 * s, 0.62 * s), Vector2(-0.7 * s, 0.62 * s)])
-		var sail := PackedVector2Array([Vector2(0.05 * s, -0.95 * s), Vector2(0.7 * s, 0.05 * s), Vector2(0.05 * s, 0.05 * s)])
-		var sail2 := PackedVector2Array([Vector2(-0.08 * s, -0.7 * s), Vector2(-0.62 * s, 0.05 * s), Vector2(-0.08 * s, 0.05 * s)])
+		var sail := PackedVector2Array([Vector2(0.05 * s, -1.0 * s), Vector2(0.8 * s, 0.05 * s), Vector2(0.05 * s, 0.05 * s)])
+		var jib := PackedVector2Array([Vector2(-0.08 * s, -0.62 * s), Vector2(-0.66 * s, 0.05 * s), Vector2(-0.08 * s, 0.05 * s)])
 		var shadow := Transform2D(roll, c + Vector2(1.5, 2.0 + bob))
-		_ci.draw_colored_polygon(shadow * hull, Color(0, 0, 0, 0.35))
-		for poly in [sail, sail2]:
-			var pw: PackedVector2Array = xf * poly
-			_ci.draw_colored_polygon(pw, Color(0.96, 0.94, 0.86))
-			var o := pw.duplicate()
-			o.append(pw[0])
-			_ci.draw_polyline(o, COL_OUTLINE, 1.2, true)
-		_ci.draw_line(xf * Vector2(0, -1.05 * s), xf * Vector2(0, 0.15 * s), COL_OUTLINE, 1.6, true)
+		_ci.draw_colored_polygon(shadow * hull, Color(0, 0, 0, 0.3))
 		var hw: PackedVector2Array = xf * hull
-		_ci.draw_colored_polygon(hw, col)
+		_ci.draw_colored_polygon(hw, Color(0.2, 0.14, 0.09))
 		var ho := hw.duplicate()
 		ho.append(hw[0])
-		_ci.draw_polyline(ho, COL_OUTLINE, 3.0 if human else 1.8, true)
+		_ci.draw_polyline(ho, COL_OUTLINE, 2.4 if human else 1.6, true)
 		if human:
-			_ci.draw_polyline(ho, Color(1, 1, 1), 1.4, true)
+			_ci.draw_polyline(ho, Color(1, 1, 1), 1.2, true)
+		_ci.draw_line(xf * Vector2(0, -1.05 * s), xf * Vector2(0, 0.15 * s), COL_OUTLINE, 1.6, true)
+		for poly in [sail, jib]:
+			var pw: PackedVector2Array = xf * poly
+			_ci.draw_colored_polygon(pw, col if poly == sail else col.lightened(0.25))
+			var o := pw.duplicate()
+			o.append(pw[0])
+			_ci.draw_polyline(o, COL_OUTLINE, 1.4, true)
 	elif human:
 		_ci.draw_arc(c + Vector2(0, 2), s * 0.8, 0, TAU, 20, Color(1, 1, 1, 0.85), 1.6, true)
-	# Pennant with the ship count.
+	# The ship count on a parchment roundel (as the armies').
 	var txt := str((fl["ships"] as Array).size())
-	var fs := int(round(13 * maxf(m, 0.75)))
-	var tw := text_w(txt, fs)
-	var tp := xf * Vector2(0, -1.05 * s - (Minis.label_lift() * 0.5 if Minis.on_ships else 0.0)) + Vector2(4.0 * m, fs * 0.2)
-	_ci.draw_rect(Rect2(tp + Vector2(-3, -fs + 1), Vector2(tw + 6, fs + 3)), Color(0, 0, 0, 0.7))
-	put(_ci, tp, txt, fs, col.lightened(0.55))
+	var fs := int(round(14 * maxf(m, 0.75)))
+	var rr := 8.5 * maxf(m, 0.8)
+	var tp := xf * Vector2(0, -1.05 * s - (Minis.label_lift() * 0.5 if Minis.on_ships else 0.0)) + Vector2(4.0 * m + rr, fs * 0.2 - rr * 0.6)
+	_ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr + 1.6, COL_OUTLINE)
+	if human:
+		_ci.draw_arc(tp + Vector2(0, -fs * 0.34), rr + 1.2, 0, TAU, 24, Color(1, 1, 1), 1.3, true)
+	_ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr, Color(0.93, 0.87, 0.7))
+	put(_ci, tp + Vector2(-text_w(txt, fs) * 0.5, 0), txt, fs, Color(0.1, 0.06, 0.03))
+	tp += Vector2(-rr, rr * 0.4)
 	if _raider_ids.has(int(fl["id"])):   # (lanes) the fleet raiding a lane
 		var rfs := int(round(10 * maxf(m, 0.8)))
 		var rw := text_w("raider", rfs)
@@ -1877,7 +1936,7 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 		men += int(u["n"])
 		full += preload("res://sim/unit_types.gd").size_of(CState.unit_type(u))
 	var frac := clampf(float(men) / maxf(full, 1), 0.0, 1.0)
-	var glow := 0.0   # (the selected army's glow pulses: its own part, _draw_glow_part)
+	var glow := 1.0 if int(a["id"]) == selected_army else 0.0   # (the selected standard lifts and has a gold rim; its halo pulses: its own part)
 	var rect := draw_banner(_ci, c, CData.faction_color(f), m, human, CState.unit_count(a), frac, glow,
 		int(a["moved"]) != 0 and human and not grid, CData.FACTIONS[f]["key"] if f >= 0 else "")
 	if grid:

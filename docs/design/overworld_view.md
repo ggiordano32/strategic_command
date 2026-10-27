@@ -266,3 +266,29 @@ no sim or campaign change, no hash moves; each part its own build and commit.
 Each part is measured for cost on the desktop benchmarks (`tests/look_bench.gd`
 for the overworld; the battle's `--bench` run for the ground) and ships with
 before / after screenshots for the owner's eye.
+
+### Markers in the chart's language (as built, 2026-10-27)
+
+Part 2 of the visual pass, view only (`map_overlay.gd`, a few lines in `map_view.gd`).
+
+- **Army standards.** `draw_banner` (same signature, same returned hit rect, so taps and the map key do not
+  move) draws a thin pole with a gold finial, a swallow-tailed pennant in the faction colour (27 x 16 px, about
+  1.6 times the old emblem flag's area) carrying the crest at 13 px (was 15 px above the shield's edge, now
+  inside the pennant), and the strength on a parchment roundel with an ink rim (radius 9, 14 px ink figures
+  instead of 15 px white outlined ones; wider counts shrink to fit) at the pole's foot. The size floor is
+  `max(m, 0.8)` so the standard stays as readable at the phone's zoom as the shield was; the strength bar
+  stays under it. A player's army has a white rim on the pennant and roundel, the AI's is ink only. The
+  selected army (`glow > 0`, passed by `_army_marker` and the map key) lifts 3 px and gets a gold rim; the
+  pulsing halo is now a gold disc behind it instead of the old rectangle. Because the lift needs a redraw,
+  `campaign_screen.gd` redraws the armies part when the selected army changes (one condition added).
+- **Fleets** (without a painted ship): a triangular sail in the faction colour (and a lighter jib) on a dark
+  hull with the same roundel for the ship count; with a painted ship the roundel replaces the black count plate.
+- **Last-seen markers** are unchanged (faded shield / hull, dashed edge, "seen tN").
+- **Towns far away** (`far_lod` where the minis do not draw): `draw_far_site`, an ink symbol over a tiny parchment
+  disc with the owner's colour as a thin ring (grey when unowned): level 0 a small circle, 1 a circle with a
+  tick, 2 a ring with six battlement notches, a capital a star (a key city the white star as before), a port a
+  small ink anchor. There is no hamlet level in the data, so the plan's dot is not used. Names stay for
+  capitals and key cities. Walls are not drawn when far (the dots had none).
+- **Sea lanes** in the table style's Terrain view are rhumb lines (`MapView.rhumb_on()`): 1 px, dashes 16 / 9,
+  alpha 0.35, no shadow; the Political view and the relief style keep their old look; the lanes at war cut
+  their dashes the same way (`MapView.lane_dash` / `lane_gap`); raided lanes and the flota route are unchanged.
