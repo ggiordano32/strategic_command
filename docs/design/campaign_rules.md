@@ -63,6 +63,109 @@ original art.
 - AI accepts or refuses proposals from a simple score (relative strength, war weariness, shared enemies).
 - Team victory option (2026-10-23, owner: a few AI team-ups ended the game early): the creation setting `team_regions` (1 default, the old rule: the regions of every member of the players' team count toward the regions and key cities to win; 0: only the regions the human players hold count, AI factions that joined the team do not; co-op players always count). Stored in `settings` only when 0 (absent reads 1, no `CState.VERSION` bump); `CRules.victory_progress` / `_check_victory_teams` honour it; the Goals panel says which rule is on. The victory goal is otherwise `victory_regions` (default 20) with `victory_capitals` (default 3) key cities.
 
+### Diplomacy: trust, alliances and passage (plan, 2026-10-26; agreed with the owner)
+
+The owner's brief (phone playtests, 2026-10-26): a light version of Rome 2's
+trust, where what you do on the board changes how the AI answers you and it
+fades with time; a little gold sways it, but only so much; a way to cross a
+peaceful faction's land; alliances below the team; the Caribbean's asymmetry
+carried by starting treaties. All of it is campaign rules (`campaign/`,
+hashed, state format 10) plus the diplomacy screen; the sim is untouched.
+
+**Trust: two numbers, both fading.** Integers in the state, moved by the
+rules only, read by the AI's answers and shown on the diplomacy screen.
+
+- `repute [n]`: one number per faction that everyone reads, how it keeps
+  its word. Clamped -50..50, moves 1 toward 0 a turn. Falls for a broken
+  treaty (war on a trade partner or an ally: -20), an unprovoked war (-10;
+  a war joined on an ally's call costs nothing), a sack (-5), a call to arms
+  refused or sat out (-5). Rises +2 for a battle fought beside an ally.
+- `regard [n*n]`: `regard[a*n+b]` is how `a` regards `b`, what `b` did to
+  `a`. Clamped -100..100, moves 1 toward 0 a turn. War declared on us -40
+  (and the treaty break above when it was a partner), a city of ours taken
+  -15, a town of ours sacked -20, a trespass -2 per army per turn, a call to
+  arms refused or sat out -20, trade cancelled -10, an alliance left while
+  we are at war -20, peace made +5, a battle fought beside us +10, a gift
+  as below. A starting treaty sets +30 both ways.
+- Gifts: an order `{"t": "gift", "to": g, "gold": x}` (x >= 50, from the
+  treasury) raises `regard[g][f]` by x / 50; the gift share is kept apart in
+  `gift [n*n]`, capped at +25 standing, and fades 2 a turn instead of 1, so a
+  gift opens a door and cannot hold it open. Nothing to a faction at war.
+- `regard_log [n*n]`: the last 4 entries `[turn, delta, why]` per pair, so
+  the screen can say why ("they took Trujillo, -15, turn 31").
+- Everything that moves a number is an event `{"k": "regard", "a", "b",
+  "d", "why"}` / `{"k": "repute", "f", "d", "why"}` for the chronicle.
+
+**How the AI answers (`CAI.why`, the one place the rule is).** The score is
+`regard[to][from] + repute[from]`; each treaty needs a floor, and the
+existing strength and timing tests stay as a second gate unless said
+otherwise: trade >= 0 (its turn and strength tests kept); passage >= 10 and
+at peace or trade; alliance >= 25, at peace or trade, and the answering AI
+threatened (at war, or a neighbour stronger than it that is not its ally);
+team: already allied, regard >= 50 and a battle fought side by side
+(`fought [n*n]` counts resolved battles with armies or fleets of both on
+one side); the turn count and the strength test of the old team rule go.
+Peace keeps its rule. An AI never declares war on a faction it regards >= 30
+except by the trespass line below, and its war chance doubles on one it
+regards <= -30. Pirates keep the marque as their only peace.
+
+**Alliance** (`dip` value 3, ALLIED, between factions not on one team; team
+mates stay ALLIED and on a team). Shared sight (`csight`: the sight of allies
+is shared as a team's is), `friendly()` (free entry, docking and repair in
+each other's ports, reinforcing each other's battles within range), no
+regions counted for victory, no shared victory. Orders: propose
+`"alliance"` (needs peace or trade, no war between the two sides),
+`{"t": "leave_alliance", "with": g}` with 5 turns' notice (`aleaving [[a, b,
+turn]]` like `leaving`); after the notice `dip` falls to TRADE.
+
+- **Call to arms.** When `c` declares war on `a`, or `a` on `c`, every ally
+  `b` of `a` gets a proposal `{"what": "call", "from": a, "to": b, "vs": c}`
+  the next turn (a human answers in the inbox, an AI by score: it joins when
+  its wars are under its MAX_WARS and its strength is at least WAR_RATIO_BUSY
+  % of `c`'s, else refuses). Accepting declares war on `c` as "called" (no
+  repute loss). Refusing: regard -20, repute -5. Sitting out: an ally `b`
+  still at peace with `c` 5 turns after the call, while `a` is at war with
+  `c`, counts as refused (same costs) and an AI `a` then leaves the alliance
+  at once (event `alliance_left`). Voluntary with a trust cost, as agreed:
+  no hard obligation an army four turns away could never meet.
+- **AI-to-AI alliances**: creation setting `ai_alliances` (1 default, stored
+  only when 0). An AI that is threatened proposes an alliance to the
+  neighbour it regards best that is not at war with it or its allies, at
+  most 2 allies each, ALLY_PROPOSE % a turn (0 at Easy). The same score
+  answers.
+
+**Military passage.** `passage [n*n]`: `passage[a*n+b]` the turn until which
+`b` may cross `a`'s land (0 none); proposal `"passage"` grants 10 turns. A
+human army may march into a peaceful faction's land without one (today
+`can_enter` refuses): a **trespass**, -2 regard per army per turn it stands
+there (one event per pair per turn), shown when the move is planned ("a
+trespass: -2 a turn, war at -40") and on the map; once `regard[g][f]` is
+below -40 an AI `g` declares war on `f` (event `war` with `"why":
+"trespass"`). The AI never trespasses: its `can_enter` stays strict, it uses
+only passage it holds (asking for passage itself is a later item).
+
+**Starting treaties and the Caribbean asymmetry** (West pack data,
+`START_TREATIES` in `west.gd`; Rome has none): the Miskito begin allied and
+trading with England, France holds a marque on the Brethren, the Itza begin
+with nobody. The Miskito musket line (`TREATY_LINES` in `west.gd`: faction
+key -> line -> the faction keys any trade agreement with which unlocks it)
+needs a trade agreement with a European nation, so Miskito Musketmen are
+there from turn one and lost only by breaking with England ("needs a trade
+agreement with a European nation" in the raise dialog). Later item, not in
+this build: a European allied with a native faction recruiting that
+faction's rows at a shared-border city.
+
+**Build order.** Rules with tests first (state format 10 with a migration
+that fills the new arrays with zeros; `campaign_test` cases for every delta,
+the fade, the gift cap, each answer floor, the call to arms including
+sitting out, leaving with notice, trespass and the trespass war, passage,
+the starting treaties, the musket gate, AI-AI alliances on and off; the
+determinism check; `campaign_sim` pins move), then the diplomacy screen
+(regard and repute per faction with the log lines, Propose trade / passage /
+alliance / team, Gift with 100 / 250 / 500, Call to arms when at war, Leave
+alliance, the inbox answering calls and alliances, the creation setting, the
+trespass toast and map marking, the raise-dialog refusal).
+
 ### Settlement attacks
 
 - v1: attacking a settlement is a field battle in which the garrison joins the defender.
