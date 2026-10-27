@@ -11,6 +11,7 @@ const UIIcons := preload("res://game/ui_icons.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
 const Quality := preload("res://game/quality.gd")
+const LastSeen := preload("res://game/last_seen.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -116,6 +117,9 @@ const FX_RUIN := 5     # a wall stretch breached or a building fallen (destructi
 const FX_LIFE := [0.0, 2.0, 3.0, 0.8, 1.6, 10.0]
 const COL_SMOKE := Color(0.22, 0.2, 0.19)
 var _clock := 0.0
+## Enemy units that dropped out of sight (the last-seen ghost, game/last_seen.gd).
+var last_seen := LastSeen.new()
+const COL_GHOST := Color(0.6, 0.62, 0.66)
 var fx_trk_us := 0
 var fx_us := 0                         # view cost of the effects (track + draw), microseconds, for benchmarks
 var _fx_kind := PackedInt32Array()
@@ -159,6 +163,11 @@ func _process(delta: float) -> void:
 	if sim == null:
 		return
 	_clock += delta
+	if (sim.ch_on != 0 or sim.vis_on != 0) and player_side >= 0:
+		var now := Time.get_ticks_msec()
+		last_seen.update(sim, player_side, now, not Quality.is_low())
+		if last_seen.animating(now):
+			queue_redraw()
 	if sim.sg_on != 0:
 		if _props == null:
 			_props = Node2D.new()
@@ -588,6 +597,8 @@ func _draw() -> void:
 	if sim.sg_on != 0:
 		_draw_free_towers(r, lw)
 	_draw_markers(r, lw)
+	if not last_seen.recs.is_empty():
+		_draw_last_seen(r, lw)
 	for tu in target_lit:
 		if tu < sim.n_units and sim.u_state[tu] < BattleSim.U_DESTROYED:
 			var tp := to_px(sim.u_cx[tu], sim.u_cy[tu])
@@ -967,6 +978,34 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_line(c + Vector2(0, down * r), b, COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(-r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
+
+
+## The last-seen ghosts: the men frozen where they were, greyed and fading
+## over LastSeen.GHOST_FADE, then (and from the first moment) the footprint
+## outline and a small greyed marker that stay until the unit is seen again.
+## Never a target: nothing here is read by a tap. Low: no men.
+func _draw_last_seen(r: float, lw: float) -> void:
+	var now := Time.get_ticks_msec()
+	var men_r := maxf(1.2, px_per_m * 0.32)
+	for u in last_seen.recs:
+		var g: Dictionary = last_seen.recs[u]
+		var f: float = last_seen.fade(g, now)
+		var mxs: PackedInt32Array = g["mx"]
+		if f < 1.0 and not mxs.is_empty():
+			var mys: PackedInt32Array = g["my"]
+			var mc := Color(COL_GHOST, 0.55 * (1.0 - f))
+			for i in mxs.size():
+				draw_circle(to_px(mxs[i], mys[i]), men_r, mc)
+		var edge := Color(COL_GHOST, lerpf(0.55, 0.2, f))
+		_draw_footprint(u, to_px(g["ax"], g["ay"]), g["face"], g["files"], g["alive"], edge,
+			Color(COL_GHOST, 0.1 * (1.0 - f)), lw)
+		var c := to_px(g["x"], g["y"]) + Vector2(0, -r * 2.2)
+		var s := 0.8
+		Icons.draw_marker(self, _icon[u], c, r * s, Color(COL_GHOST, lerpf(0.55, 0.38, f)),
+			Color(1, 1, 1, lerpf(0.6, 0.45, f)))
+		var fs := _font_size(10.0)
+		draw_string(ThemeDB.fallback_font, c + Vector2(-r * 1.4, r * 2.0), "last seen", HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+			Color(COL_GHOST, lerpf(0.7, 0.4, f)))
 
 
 ## Own units (line of sight, docs/DESIGN.md "Cover and line of sight"): a
