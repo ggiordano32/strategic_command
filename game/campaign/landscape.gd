@@ -31,6 +31,11 @@ const BLUR := 2                # cells, box blur applied twice (land only)
 const SAND := Color(0.86, 0.76, 0.52)
 const TREES_PER_CELL := 7.0    # at 100 % forest, before clustering
 const MAX_TREES := 4500
+const POOL := 2.5              # candidate trees for the wood patches, as many times today's count
+const SINGLES := 0.10          # share of a region's trees left alone in the open
+const PATCH_PER := 22.0        # trees a patch holds, about
+const PATCH_SEP := 34.0        # map px between patch centres
+const PATCH_COL := Color(0.07, 0.20, 0.06, 0.14)   # the darker scalloped ground under a wood
 const MAX_SPECKS := 3500
 
 const COL_ROCK := Color(0.66, 0.63, 0.57)
@@ -44,6 +49,7 @@ static var ground_tex: ImageTexture = null
 static var mesh: ArrayMesh = null
 static var bake_ms := -1.0
 static var tree_count := 0
+static var patch_discs: Array = []   # [centre, radius, ring] of the shadow under each wood (the mesh holds them)
 ## Map-table style (town_plan.gd): the forest is cleared round each town and its fields; the trees in the ring
 ## just outside are not in the mesh but listed here (region -> [[x, y, kind, shade, radius, rot, palette]]) for
 ## the town layer to draw with the town's pieces in one y order. Set `clear_towns` before the bake.
@@ -753,11 +759,17 @@ static func _bake_glyphs() -> void:
 		var nt := int(want)
 		if _h(x, y, 33) < want - nt:
 			nt += 1
-		for q in nt:
-			var tx := ox + px * (0.12 + 0.76 * _h(x * 8 + q, y, 34))
-			var ty := oy + px * (0.12 + 0.76 * _h(x, y * 8 + q, 35))
-			var kd := _tree_kind(pi, _h(x * 8 + q, y * 8 + q, 36))
-			var rad := (2.8 + 1.7 * _h(x + q, y, 37)) * (0.75 if kd == 2 else (0.6 if kd == 3 else 1.0))
+		# (the candidate pool for the wood patches: the same trees, then more of them, see _patchify)
+		var wantp := want * POOL
+		var ntp := int(wantp)
+		if _h(x, y, 53) < wantp - ntp:
+			ntp += 1
+		for q in maxi(nt, ntp):
+			var qh := q if q < nt else q + 4099
+			var tx := ox + px * (0.12 + 0.76 * _h(x * 8 + qh, y, 34))
+			var ty := oy + px * (0.12 + 0.76 * _h(x, y * 8 + qh, 35))
+			var kd := _tree_kind(pi, _h(x * 8 + qh, y * 8 + qh, 36))
+			var rad := (2.8 + 1.7 * _h(x + qh, y, 37)) * (0.75 if kd == 2 else (0.6 if kd == 3 else 1.0))
 			var fx := int(tx / FPX)
 			var fy := int(ty / FPX)
 			var em := _elev_at(tx, ty)
@@ -767,7 +779,7 @@ static func _bake_glyphs() -> void:
 			var keep := 1.0 - smoothstep(1100.0, TREELINE, em)
 			keep *= 1.0 - smoothstep(45.0, 90.0, GeoFields.slope_pct(Vector2(tx, ty)))
 			keep *= 0.35 + 0.65 * _h(fx / 2, fy / 2, 51)
-			if _h(x * 8 + q, y * 8 + q, 52) > keep:
+			if _h(x * 8 + qh, y * 8 + qh, 52) > keep:
 				continue
 			if coastal:
 				var p := Vector2(tx, ty)
@@ -786,10 +798,12 @@ static func _bake_glyphs() -> void:
 						ringed = int(ri)
 				if gone:
 					continue
-				if ringed >= 0:
-					(town_trees[ringed] as Array).append([tx, ty, kd, int(_h(x + q, y + q, 38) * 3.0), rad, _h(x, y + q, 39) * TAU, pi])
+				if ringed >= 0 and qh >= 4099:
 					continue
-			trees_at.append([tx, ty, kd, int(_h(x + q, y + q, 38) * 3.0), rad, _h(x, y + q, 39) * TAU, pi])
+				if ringed >= 0:
+					(town_trees[ringed] as Array).append([tx, ty, kd, int(_h(x + qh, y + qh, 38) * 3.0), rad, _h(x, y + qh, 39) * TAU, pi])
+					continue
+			trees_at.append([tx, ty, kd, int(_h(x + qh, y + qh, 38) * 3.0), rad, _h(x, y + qh, 39) * TAU, pi, r, 1 if q < nt else 0])
 		# Speckles: rock on steep and rocky ground, scrub and small rocks on
 		# dry ground; the plains stay quiet.
 		var ns := 0
@@ -820,6 +834,11 @@ static func _bake_glyphs() -> void:
 				if cleared:
 					continue
 			specks.append([sx, sy, rock, 1.1 + 1.1 * _h(x + q, y, 46)])
+	patch_discs = []
+	trees_at = _patchify(trees_at)
+	_init_rings()
+	for d in patch_discs:
+		_fan(d[0], _rings[int(d[2])], d[1], d[1] * 0.92, PATCH_COL)
 	# Specks first (under), then trees by y.
 	var ns2 := 0
 	speck_list = []
@@ -838,7 +857,7 @@ static func _bake_glyphs() -> void:
 		if tree_count >= MAX_TREES:
 			break
 		if models:
-			tree_list.append(t)
+			tree_list.append(t.slice(0, 7))
 		else:
 			_tree(Vector2(t[0], t[1]), int(t[2]), int(t[3]), float(t[4]), float(t[5]), int(t[6]))
 		tree_count += 1
@@ -854,6 +873,80 @@ static func _bake_glyphs() -> void:
 	_v = PackedVector2Array()
 	_c = PackedColorArray()
 	_i = PackedInt32Array()
+
+
+## The woods as patches: per region the same number of trees as the plain scatter (the `base` trees), but chosen from the
+## larger candidate pool by closeness to the region's patch centres (about one per PATCH_PER trees, picked by hash,
+## apart from each other, each with its own reach), plus SINGLES of them left where the scatter put them. Fills
+## `patch_discs` (a darker ground under each kept patch tree, thinned so they do not stack to black).
+static func _patchify(trees: Array) -> Array:
+	var by_r := {}
+	for i in trees.size():
+		var rr: int = trees[i][7]
+		if not by_r.has(rr):
+			by_r[rr] = []
+		(by_r[rr] as Array).append(i)
+	var keep := PackedByteArray()
+	keep.resize(trees.size())
+	var occupied := {}
+	var regions: Array = by_r.keys()
+	regions.sort()
+	for r in regions:
+		var idx: Array = by_r[r]
+		var n_base := 0
+		for i in idx:
+			if int(trees[i][8]) == 1:
+				n_base += 1
+		var singles := 0
+		var cand: Array = []
+		for i in idx:
+			var t: Array = trees[i]
+			if int(t[8]) == 1 and _h(int(float(t[0]) * 2.0), int(float(t[1]) * 2.0), 61) < SINGLES:
+				keep[i] = 1
+				singles += 1
+			else:
+				cand.append(i)
+		var need := n_base - singles
+		if need <= 0 or cand.is_empty():
+			continue
+		# Patch centres: candidate trees in hash order, kept apart.
+		var order := cand.duplicate()
+		order.sort_custom(func(a, b): return _h(int(float(trees[a][0]) * 3.0), int(float(trees[a][1]) * 3.0), 62) < _h(int(float(trees[b][0]) * 3.0), int(float(trees[b][1]) * 3.0), 62))
+		var want_k := clampi(int(round(need / PATCH_PER)), 1, 24)
+		var ctrs: Array = []   # [centre, reach]
+		for i in order:
+			if ctrs.size() >= want_k:
+				break
+			var pp := Vector2(trees[i][0], trees[i][1])
+			var ok := true
+			for c in ctrs:
+				if pp.distance_to(c[0]) < PATCH_SEP:
+					ok = false
+					break
+			if ok:
+				ctrs.append([pp, 12.0 + 16.0 * _h(r, ctrs.size(), 63)])
+		var score := {}
+		for i in cand:
+			var pp2 := Vector2(trees[i][0], trees[i][1])
+			var a := 0.0
+			for c in ctrs:
+				var d: float = pp2.distance_to(c[0]) / float(c[1])
+				a = maxf(a, exp(-d * d))
+			score[i] = a + 0.25 * _h(int(pp2.x * 5.0), int(pp2.y * 5.0), 64)
+		cand.sort_custom(func(a, b): return score[a] > score[b] or (score[a] == score[b] and a < b))
+		for k in mini(need, cand.size()):
+			var i2: int = cand[k]
+			keep[i2] = 1
+			var tp := Vector2(trees[i2][0], trees[i2][1])
+			var ck := Vector2i(int(tp.x / 8.0), int(tp.y / 8.0))
+			if not occupied.has(ck):
+				occupied[ck] = true
+				patch_discs.append([tp, 8.0 + 1.0 * float(trees[i2][4]), int(_h(ck.x, ck.y, 65) * 3.0)])
+	var out: Array = []
+	for i in trees.size():
+		if keep[i] == 1:
+			out.append(trees[i])
+	return out
 
 
 ## Summit marks: only at strict local maxima of the fine field above

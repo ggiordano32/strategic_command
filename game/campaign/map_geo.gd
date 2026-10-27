@@ -25,6 +25,7 @@ static var RIVERS: Array = RomeGeo.RIVERS
 static var ROADS: Array = RomeGeo.ROADS
 
 static var _cells: Array = []
+static var _smooth: Array = []   # per region: the territory's pieces with the shared edges smoothed (see smooth_cell)
 static var _boxes: Array = []   # bounding Rect2 of each cell piece (region_at skips the polygon test outside it)
 static var _boxes_gen := -1
 static var _anchors: Array = []
@@ -58,6 +59,7 @@ static func use_pack(key: String) -> void:
 	RIVERS = g.RIVERS
 	ROADS = g.ROADS
 	_cells = []
+	_smooth = []
 	_anchors = []
 	_lands = []
 	_islands = []
@@ -102,6 +104,206 @@ static func cell(r: int) -> Array:
 	if _cells.is_empty():
 		_build_cells()
 	return _cells[r]
+
+
+const SMOOTH_ROUNDS := 2        # Chaikin rounds on a shared edge
+const RIVER_SNAP := 12.0        # map px: a border vertex this near a river moves onto it
+const SNAP_STEP := 10.0         # map px: a shared edge near a river is cut into pieces this long before the snap
+const BORDER_STEP := 24.0        # map px: a straight shared edge is cut into pieces this long, then waved
+const BORDER_WAVER := 4.0        # map px: the most a border vertex is moved sideways
+const JOIN_TOL := 2.0           # map px: two runs with ends this close are the same shared edge
+
+
+## Territory of region r for drawing (map pixels): the same pieces as `cell`, but each edge shared with another
+## region is a smoothed curve (two Chaikin rounds, junctions fixed; a vertex within RIVER_SNAP of a river is moved
+## onto it first). Both neighbours draw the identical curve, so no slivers open between them. Coast edges (against
+## the sea) are the real coastline, untouched. Built once per pack for all regions.
+static func smooth_cell(r: int) -> Array:
+	if _cells.is_empty():
+		_build_cells()
+	if _smooth.is_empty():
+		_build_smooth()
+	return _smooth[r]
+
+
+static func _build_smooth() -> void:
+	var n := CData.region_count()
+	var rivers: Array = []
+	for i in RIVERS.size():
+		rivers.append(river_line(i))
+	var joined := {}   # "lo:hi" -> Array of smoothed runs already made for that pair of regions
+	_smooth = []
+	for r in n:
+		var pieces: Array = []
+		for piece in _cells[r]:
+			pieces.append(_smooth_piece(r, piece, rivers, joined))
+		_smooth.append(pieces)
+
+
+static func _smooth_piece(r: int, piece: PackedVector2Array, rivers: Array, joined: Dictionary) -> PackedVector2Array:
+	var cnt := piece.size()
+	var ring := piece
+	# Label each segment: the neighbouring region it runs along, or -1 for the coast (the sea, or nothing).
+	var lab := PackedInt32Array()
+	lab.resize(cnt)
+	for i in cnt:
+		var a := ring[i]
+		var b := ring[(i + 1) % cnt]
+		var d := b - a
+		var m := (a + b) * 0.5
+		var nrm := Vector2(d.y, -d.x).normalized()
+		if Geometry2D.is_point_in_polygon(m + nrm * 0.6, piece):
+			nrm = -nrm   # (point it outward)
+		var q := region_at(m + nrm * 0.6)
+		if q == r:
+			q = -1   # (a sliver: treat as coast, left alone)
+		lab[i] = q
+	var start := -1
+	for i in cnt:
+		if lab[i] != lab[(i + cnt - 1) % cnt]:
+			start = i
+			break
+	if start < 0:
+		return piece   # one label all round (an island, or an odd enclave): as it is
+	var out := PackedVector2Array()
+	var i := 0
+	while i < cnt:
+		var k0 := (start + i) % cnt
+		var q := lab[k0]
+		var j := i
+		while j + 1 < cnt and lab[(start + j + 1) % cnt] == q:
+			j += 1
+		var run := PackedVector2Array()
+		for t in range(i, j + 2):
+			run.append(ring[(start + t) % cnt])
+		var done := run
+		if q >= 0 and run.size() >= 2:
+			done = _smooth_run(r, q, run, rivers, joined)
+		# (each run starts at the previous run's last point: leave that one out)
+		for t in done.size() - 1:
+			out.append(done[t])
+		i = j + 1
+	return out
+
+
+static func _smooth_run(r: int, q: int, run: PackedVector2Array, rivers: Array, joined: Dictionary) -> PackedVector2Array:
+	var key := "%d:%d" % [mini(r, q), maxi(r, q)]
+	var made: Array = joined.get(key, [])
+	for m in made:
+		var mm: PackedVector2Array = m
+		if mm[0].distance_to(run[0]) <= JOIN_TOL and mm[mm.size() - 1].distance_to(run[run.size() - 1]) <= JOIN_TOL:
+			return mm
+		if mm[0].distance_to(run[run.size() - 1]) <= JOIN_TOL and mm[mm.size() - 1].distance_to(run[0]) <= JOIN_TOL:
+			var rev := PackedVector2Array()
+			for t in range(mm.size() - 1, -1, -1):
+				rev.append(mm[t])
+			return rev
+	var pts := run
+	# Near a river: cut the edge into short pieces so there are vertices to snap, then snap the inner ones.
+	var near_river := false
+	for rl in rivers:
+		for k in pts.size() - 1:
+			if _seg_near_polyline(pts[k], pts[k + 1], rl, RIVER_SNAP):
+				near_river = true
+				break
+		if near_river:
+			break
+	if near_river:
+		var cut := PackedVector2Array([pts[0]])
+		for k in pts.size() - 1:
+			var seg := pts[k].distance_to(pts[k + 1])
+			var pieces := maxi(int(ceil(seg / SNAP_STEP)), 1)
+			for t in range(1, pieces + 1):
+				cut.append(pts[k].lerp(pts[k + 1], float(t) / pieces))
+		for k in range(1, cut.size() - 1):
+			var best := RIVER_SNAP
+			var at := cut[k]
+			for rl in rivers:
+				for s in (rl as PackedVector2Array).size() - 1:
+					var c := Geometry2D.get_closest_point_to_segment(cut[k], rl[s], rl[s + 1])
+					var dd := c.distance_to(cut[k])
+					if dd < best:
+						best = dd
+						at = c
+			cut[k] = at
+		pts = cut
+	# A hand-drawn meander: the Voronoi bisectors are ruler-straight between junctions, so each long shared edge
+	# is cut into BORDER_STEP pieces and its inner vertices moved sideways by up to BORDER_WAVER (hash of the two
+	# regions and the vertex index; the river snap above has priority: a snapped vertex stays on the river).
+	if not near_river:
+		var cut2 := PackedVector2Array([pts[0]])
+		for k in pts.size() - 1:
+			var seg2 := pts[k].distance_to(pts[k + 1])
+			var pc := maxi(int(round(seg2 / BORDER_STEP)), 1)
+			for t in range(1, pc + 1):
+				cut2.append(pts[k].lerp(pts[k + 1], float(t) / pc))
+		var wseed := mini(r, q) * 977 + maxi(r, q)
+		for k in range(1, cut2.size() - 1):
+			var dir := (cut2[k + 1] - cut2[k - 1]).normalized()
+			var u := _hash01(wseed, k) * 2.0 - 1.0
+			cut2[k] += Vector2(-dir.y, dir.x) * (u * BORDER_WAVER)
+		pts = cut2
+	for _round in SMOOTH_ROUNDS:
+		pts = chaikin_open(pts)
+	made.append(pts)
+	joined[key] = made
+	return pts
+
+
+static func _hash01(a: int, b: int) -> float:
+	var x := (a * 73856093) ^ (b * 19349663)
+	x = ((x ^ (x >> 13)) * 1274126177) & 0x7FFFFFFF
+	x = (x ^ (x >> 16)) & 0xFFFFFF
+	return float(x & 0xFFFF) / 65536.0
+
+
+static func _seg_near_polyline(a: Vector2, b: Vector2, line: PackedVector2Array, d: float) -> bool:
+	for s in line.size() - 1:
+		var c := Geometry2D.get_closest_point_to_segment(a, line[s], line[s + 1])
+		if c.distance_to(a) < d:
+			return true
+		c = Geometry2D.get_closest_point_to_segment(b, line[s], line[s + 1])
+		if c.distance_to(b) < d:
+			return true
+		c = Geometry2D.get_closest_point_to_segment((a + b) * 0.5, line[s], line[s + 1])
+		if c.distance_to((a + b) * 0.5) < d:
+			return true
+	return false
+
+
+## One Chaikin corner-cutting round over an open polyline (both ends kept).
+static func chaikin_open(pts: PackedVector2Array) -> PackedVector2Array:
+	if pts.size() < 3:
+		return pts
+	var out := PackedVector2Array([pts[0]])
+	for i in pts.size() - 1:
+		var a := pts[i]
+		var b := pts[i + 1]
+		if i > 0:
+			out.append(a.lerp(b, 0.25))
+		if i < pts.size() - 2:
+			out.append(a.lerp(b, 0.75))
+	out.append(pts[pts.size() - 1])
+	return out
+
+
+## A Catmull-Rom curve (centripetal-free, uniform) through `pts`, `per` samples a span, ends kept.
+static func catmull(pts: PackedVector2Array, per: int) -> PackedVector2Array:
+	var n := pts.size()
+	if n < 3:
+		return pts
+	var out := PackedVector2Array([pts[0]])
+	for i in n - 1:
+		var p0 := pts[maxi(i - 1, 0)]
+		var p1 := pts[i]
+		var p2 := pts[i + 1]
+		var p3 := pts[mini(i + 2, n - 1)]
+		for s in range(1, per + 1):
+			var t := float(s) / per
+			var t2 := t * t
+			var t3 := t2 * t
+			out.append(0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3))
+	return out
 
 
 ## Where a region's armies are drawn: inside its territory, a little

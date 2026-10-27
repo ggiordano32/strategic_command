@@ -62,6 +62,7 @@ const ROAD_W := 1.7
 const COL_TRACK := Color(0.50, 0.36, 0.17)
 const TRACK_CORE_W := 2.4
 const TRACK_EDGE_W := 4.6
+const ROAD_WAVER := 2.0           # map px, the most a road vertex is moved by hand
 const TRACK_GAP_VILLAGE := 8.0     # map px cleared round a settlement's centre
 const TRACK_GAP_TOWN := 11.0
 const TRACK_GAP_CITY := 14.0
@@ -770,7 +771,7 @@ static func _indep_dashes(r: int) -> Array:
 	if _indep_cache.has(r):
 		return _indep_cache[r]
 	var out: Array = []
-	for piece in Geo.cell(r):
+	for piece in Geo.smooth_cell(r):
 		var segs := PackedVector2Array()
 		var on := true
 		var left := 9.0
@@ -799,8 +800,12 @@ static func cell_meshes(r: int) -> Array:
 	_sync_gen()
 	if not _cell_meshes.has(r):
 		var ms: Array = []
-		for piece in Geo.cell(r):
-			var m := _poly_mesh(piece, Vector2.ONE)
+		var raw: Array = Geo.cell(r)
+		var sm: Array = Geo.smooth_cell(r)
+		for k in sm.size():
+			var m := _poly_mesh(sm[k], Vector2.ONE)
+			if m == null:
+				m = _poly_mesh(raw[k], Vector2.ONE)   # (a smoothed ring that does not triangulate: the plain one)
 			if m != null:
 				ms.append(m)
 		_cell_meshes[r] = ms
@@ -946,7 +951,7 @@ func _draw_edges() -> void:
 			continue
 		var ec := CData.faction_color(o)
 		ec.a = OWNER_EDGE_A
-		for piece in Geo.cell(r):
+		for piece in Geo.smooth_cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
 			if tbl:
@@ -957,18 +962,18 @@ func _draw_edges() -> void:
 	for r in CData.region_count():
 		if FogView.never(r):
 			continue
-		for piece in Geo.cell(r):
+		for piece in Geo.smooth_cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
 			_edges.draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), (1.8 if tbl else 1.2) * lw, true)
 	for r in targets:
 		var te := target_edge(attack_targets.has(r), int(target_turns.get(r, 0)))
-		for piece in Geo.cell(r):
+		for piece in Geo.smooth_cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
 			_edges.draw_polyline(closed, te[0], float(te[1]) * lw, true)
 	for r in blocked_targets:
-		for piece in Geo.cell(r):
+		for piece in Geo.smooth_cell(r):
 			var closed: PackedVector2Array = piece.duplicate()
 			closed.append(piece[0])
 			_edges.draw_polyline(closed, COL_BLOCKED_EDGE, 2.0 * lw, true)
@@ -982,7 +987,7 @@ func _draw_sel() -> void:
 	if selected_region < 0 or state.is_empty():
 		return
 	var lw := 1.0 / maxf(zoom, 0.05)
-	for piece in Geo.cell(selected_region):
+	for piece in Geo.smooth_cell(selected_region):
 		var closed: PackedVector2Array = piece.duplicate()
 		closed.append(piece[0])
 		_sel_node.draw_polyline(closed, Color(1, 1, 0.75, 1.0), 3.0 * lw, true)
@@ -1446,7 +1451,7 @@ static func geometry_lines() -> void:
 					continue
 			pts.append(Vector2((c % w + 0.5) * px, (c / w + 0.5) * px))
 		if pts.size() >= 2:
-			_road_lines.append(_smooth_open(_smooth_open(pts)))
+			_road_lines.append(road_curve(pts, ri))
 	_track_lines = _cut_at_towns(_road_lines)
 	_build_lanes()
 	_build_coast_dressing()
@@ -1466,6 +1471,22 @@ static func geometry_lines() -> void:
 					at = hit
 					break
 		_cross_marks.append([at, (b - a).normalized(), int(cr[2])])
+
+
+## A road as ink: a Catmull-Rom curve through its traced cell centres with a hand-drawn waver (a deterministic offset
+## of at most ROAD_WAVER map px per vertex, from the road and vertex index only; the ends stay put).
+static func road_curve(pts: PackedVector2Array, ri: int) -> PackedVector2Array:
+	var w := PackedVector2Array()
+	for k in pts.size():
+		var p := pts[k]
+		if k > 0 and k < pts.size() - 1:
+			var h := ((ri + 1) * 73856093) ^ ((k + 1) * 19349663)
+			h = ((h ^ (h >> 13)) * 1274126177) & 0x7FFFFFFF
+			var ux := float(h & 0xFF) / 255.0 - 0.5
+			var uy := float((h >> 8) & 0xFF) / 255.0 - 0.5
+			p += Vector2(ux, uy) * (2.0 * ROAD_WAVER)
+		w.append(p)
+	return Geo.catmull(w, 4)
 
 
 ## The road polylines with a gap round every settlement (the town models stand on the track).
@@ -1809,15 +1830,16 @@ static func draw_road(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> voi
 	if table_on():
 		draw_track(ci, pts, lw)
 		return
+	# Relief style: the curve with a dark edge and the brown centre.
+	ci.draw_polyline(pts, Color(0.16, 0.10, 0.04, 0.6), (ROAD_W + 1.5) * lw, true)
 	ci.draw_polyline(pts, COL_ROAD, ROAD_W * lw, true)
 
 
-## The table style's road: a dirt track, an ochre ribbon with a soft edge.
+## The table style's road: ink. A dark brown edge line with a lighter centre line in the table's brown.
 static func draw_track(ci: CanvasItem, pts: PackedVector2Array, lw: float) -> void:
 	var c := COL_TRACK
-	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.14), TRACK_EDGE_W * lw, true)
-	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.26), (TRACK_EDGE_W - 1.2) * lw, true)
-	ci.draw_polyline(pts, Color(c.r, c.g, c.b, 0.8), TRACK_CORE_W * lw, true)
+	ci.draw_polyline(pts, Color(c.r * 0.38, c.g * 0.34, c.b * 0.3, 0.62), (TRACK_CORE_W + 1.6) * lw, true)
+	ci.draw_polyline(pts, Color(c.lightened(0.38), 0.9), (TRACK_CORE_W - 0.5) * lw, true)
 
 
 ## A ford: the river broken by three pale stepping stones along the step.
