@@ -2106,6 +2106,17 @@ from measurements; the results are in docs/STATUS.md (balance pass T).
   holds the inner streets at `SP_PAL_LINE_PCT` 80 %. Measured choices: lines
   at the gaps (15 %) lost 16 of 16, at 40 / 50 / 60 % in the open towns the
   attackers won 69 / 12 / 31 %.
+  *As built 2026-10-27 (docs/AI.md 42, the defending pike under musket
+  fire):* in a battle with a deployment phase the AI defence sets its posts
+  in the deployment and its street units stand at them (they used to stand
+  at the scenario's places, the pike 18 m inside a mouth, until the first
+  tick), each post moved toward the plaza until it is beyond the attackers'
+  longest gun range + 15 m from their deployment zone (`S_DEF_ZONE`); in the
+  battle a street unit shot by shooters standing in the field answers from a
+  building (muskets), charges them within a charge's reach (pikes, shock
+  foot; none of their horse or pikes within 45 m) or falls back along its
+  street out of their reach or sight (`S_DEF_FIRE`, `_df_fire`). Average and
+  Skilled; Easy keeps them where they stand.
 - **Sieges: trapped routers do not rally** (`RALLY_TRAPPED`,
   `_update_morale`). Defenders routing inside the walls (`ROUT_INWARD`) do
   not rally while an attacking unit stands in the town's streets; the

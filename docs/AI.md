@@ -2925,3 +2925,85 @@ No rule changed; the format-10 pins stand (`5af35d0f 16aa22f3 97e93bf2 81dc9f4d 
 gained `--trace-faction=KEY` (that faction's wars, peace, trade, alliances, calls answered and sat out, cities
 gained and lost, and a line a turn: regions, treasury, armies, strength, repute, each enemy's strength / bloc
 strength, allies) and `--ai-alliances=0|1` (the creation setting); neither moves a hash.
+
+## 42. The defending pike under musket fire (2026-10-27)
+
+The owner (phone, West campaign, attacking Caribbean cities): "the standard city defenders position a pike out
+front, who just gets annihilated every time the player places a line of musketeers right at the front of his
+preparation zone."
+
+**Probe** (`tests/defend_probe.gd`): a West campaign town on its own plan (as `town_balance.gd --town=west:<key>`),
+the West sets' armies, the defenders the siege AI (Average), the attackers scripted like the owner: in the
+deployment phase every musket-armed foot company (2 musketeers, 2 buccaneers) is placed in one line along the front
+edge of the attackers' zone, fire at will, then Hold stance; the rest 40 m behind; nobody moves for 4 minutes, then
+the attackers become the AI and assault. Per battle: the defenders' men down before the first melee contact by class
+(pike, shock, line musket, skirmisher), how many street posts at the start lie within a line gun's range, the result.
+Havana, Cartagena, Cumana x walls 0 / 1 / 2 x 8 seeds.
+
+**Diagnosis.** Not the posts: the scenario's placement. `Scenarios.settlement` puts the solid units (pikes first:
+`_gate_rank`) 18 m inside each street mouth facing out ("street-mouth holders", phase W). The AI only sets the street
+posts (`_classify_defender` -> `_strongpoint`: line units `SP_LINE_PCT` 40 % / `SP_PAL_LINE_PCT` 80 % of the way to
+the plaza) at its first army think, which on a city map runs at the battle's first tick: `_setup_deploy` lets the field
+AI deploy (`city_on == 0`) but not the settlement AI, so through the whole deployment phase the defenders stand where
+the scenario dropped them. The attackers' zone (`Scenarios.settlement`: from 40 m ahead of their front) reaches the
+street mouths, so the player's line stood about 20 m from the pike. Traced (Cumana walls 1, seed 0): the first volleys
+of four companies at 21 m left the pike 30 of 120 and routing 2 s into the battle, its post 153 m behind it. The
+street posts themselves were also inside the guns' reach at walls 0 (7 of 7 units' posts within a line gun's range,
+the pike's 102-116 m from the line; at walls 1-2 3 of 6, the pike's 171-188 m out of it). Nothing then moved a unit
+out of the fire: the defenders' `_reserve` rule only looks at attackers inside the town (`V_URBAN`, within
+`S_RESERVE_R` 140 m of the post); missile units shoot from the post, the rest go back to it. The field AI's
+"shelled: get out of the arc" rule (`battle_ai.gd`, artillery only) never runs on a settlement map (`SiegeAI.think`
+replaces `BattleAI.think`), and nothing in either AI reads musket hits (`u_hit_t`).
+
+As built (`sim/siege_ai.gd` "defenders under musket fire", `sim/battle_sim.gd` `_setup_deploy`; West street defenders
+only: `_street_ai` and `_street_row`; Rome's sieges and the walls, gate, tower, fort and citadel rules untouched):
+
+- **Set out in the deployment** (`S_DEF_ZONE`): an AI town defence classifies its units in `_setup_deploy`
+  (`SiegeAI.deploy_defenders`, the orders a player gives: posts, buildings, stances) and its street units are placed
+  at their posts (open ground; not kept to the zone, which at walls 1-2 is the fort's box), as the field AI deploys.
+  Only battles with a deployment phase (a human in the battle); AI against AI never has one.
+- **Posts out of the zone's reach** (`S_DEF_ZONE`): a street post (`_strongpoint`, line and cover troops) is moved
+  toward the plaza in `DF_ZONE_STEP` 5 % steps (at most `SP_PCT_MAX` 95 %) until it is farther than the attackers'
+  longest foot / horse gun range + `DF_ZONE_PAD` 15 m from their deployment zone (`_df_zone_reach`, `_df_zone_d`);
+  a skirmisher's cover candidates (`_sp_cover`) within that reach are skipped. The section 31 stand-off reasoning,
+  mirrored: out of the reach of where the guns can stand.
+- **Under fire** (`S_DEF_FIRE`, `_df_fire` from `_reserve`): a street unit (not in a building, not at cover spots,
+  not fighting) hit by a missile within `DF_HIT_T` 15 s while enemy shooters stand in the field with it in range
+  (seen, ready, with shots, off the walls, not on urban ground, not moving: `_df_shooters`): a musket line answers
+  from the building nearest its post within `DF_OCC_R` 40 m (ORDER_OCCUPY; not one about to fall); a pike or shock
+  unit with `DF_CHARGE_MEN` 50 % of its men charges the nearest of them within its run x their reload (at most
+  `DF_RELOAD_MAX` 12 s) x `DF_CHARGE_PCT` 150 % (pikes 55 m, rodeleros 72 m, cutlass men 83 m) when no enemy horse or
+  pike stands within `DF_GUARD_R` 45 m of it (`A_DCHARGE` 39, its post kept in u_ai_x / u_ai_y; back to the post at
+  the run when its target breaks or goes, or after `DF_CHARGE_T` 45 s with no contact); else, when its post is in
+  their reach, it falls back along its street (`_df_back`: points `DF_FB_STEP` 8 m apart toward the plaza, and 6 /
+  12 m to either side, the first step with a point out of every shooter's range + `DF_PAD` 15 m or out of its sight,
+  the most cover there by `_cover_score`; none: the plaza), which becomes its post. Shooters coming into the town are
+  left to the reserve's own rule (they are attackers inside within 140 m).
+- **Knobs** (`ai_profile.gd` ids 290-291): `S_DEF_FIRE` and `S_DEF_ZONE`, Easy 0 / Average 1 / Skilled 1. Easy keeps
+  the old behaviour as a deliberate mistake (its defenders already had no street posts: `_street_ai` excludes Easy).
+  No new hashed state: the charge's memory is the unit's mode and post (`u_ai`, `u_ai_x`, `u_ai_y`, `u_ai_t`);
+  `stat_ai` grew one slot for the new mode (not hashed).
+
+Measured (probe, 24 battles a walls level, per battle; before -> after):
+
+| Walls | Attacker wins | Defenders down before contact | of them pikes / shock / musket / skirmish | Posts in a line gun's range | Attackers down before contact |
+|---|---|---|---|---|---|
+| 0 | 22 -> 10 of 24 | 207 -> 52 | 98 / 42 / 25 / 42 -> 0 / 20 / 23 / 8 | 6.7 of 7 -> 0 | 135 -> 61 |
+| 1 | 20 -> 5 of 24 | 196 -> 44 | 90 / 26 / 31 / 48 -> 1 / 10 / 24 / 9 | 3.0 of 6 -> 0 | 135 -> 89 |
+| 2 | 11 -> 8 of 24 | 160 -> 52 | 71 / 22 / 12 / 54 -> 1 / 10 / 23 / 17 | 3.0 of 6 -> 0 | 155 -> 95 |
+
+Per town (attacker wins of 8, walls 0 / 1 / 2): Havana 8 / 8 / 2 -> 0 / 1 / 2, Cartagena 7 / 4 / 1 -> 5 / 0 / 0,
+Cumana 7 / 8 / 8 -> 5 / 4 / 6. The posts now stand 162-200 m from the line. Traced with `--step=60` / `100` (the
+line walks in a minute after the start and halts; Havana walls 0, one seed): at 60 m the line stood 121-144 m from the
+posts and did not shoot; at 100 m it stood on the town's ground and the reserve's own rule went at it.
+
+AI against AI (`tools/balance`, west_walls, 16 Spanish towns x 16 seeds, attacker wins %; only `S_DEF_FIRE` acts
+there, no deployment phase): walls 0 / 1 / 2 49 / 37 / 28 -> 39 / 31 / 27 (pooled 38 -> 33; walls 0 beyond the
+interval, in the attackers' disfavour); cells beyond the interval: New Orleans walls 0 62 -> 6, Portobelo walls 1
+81 -> 50, Santiago de Cuba walls 2 88 -> 38, Port Royal walls 2 12 -> 50, St Augustine walls 2 19 -> 88. In AI
+battles the attackers' stand-off band (`A_COVER`) and the defenders' street units at their scenario places trade fire
+at the start; the defenders now fall back out of it or into a house. open_town (the scripted house defender): identical
+in every cell (the rule plays for AI defenders only). Rome rows untouched.
+
+Open: walls 0 AI against AI is now 39 % (section 31 had it at 52); if the owner wants it back near half, the lever is
+`S_DEF_FIRE`'s fall back at walls 0 in AI-only battles, not the deployment rules.

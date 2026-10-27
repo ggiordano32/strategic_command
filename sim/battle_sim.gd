@@ -1644,7 +1644,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -18376,6 +18376,27 @@ func _setup_deploy(sc: Dictionary) -> void:
 			if p.z != 0:
 				u_ax[u] = p.x
 				u_ay[u] = p.y
+				u_face[u] = u_dface[u]
+			u_order[u] = O_NONE
+			_place_unit(u, 0)
+	elif city_on != 0 and ai_sides[city_def] != 0 and SiegeAI.deploys_posts(self, city_def):
+		# An AI West town defence (docs/AI.md 41): its posts are set now and its
+		# street units placed at them, as the field AI deploys.
+		var keep2 := pending_orders
+		pending_orders = []
+		SiegeAI.deploy_defenders(self, city_def)
+		_apply_orders()
+		pending_orders.append_array(keep2)
+		for u in n_units:
+			if u_side[u] != city_def or u_state[u] != U_READY or not SiegeAI.placed_at_post(self, u):
+				continue
+			# (Its post is in the town, as the scenario's own placement is: not
+			# kept to the zone, which at walls 1-2 is the fort's box.)
+			if (nav_at(u_ai_x[u], u_ai_y[u]) & MapGen.NAV_GROUND) == 0 or (n_cmp > 0 and _piece0(u_ai_x[u], u_ai_y[u]) < 0):
+				continue  # (off the open ground: it walks there)
+			u_ax[u] = u_ai_x[u]
+			u_ay[u] = u_ai_y[u]
+			if u_order[u] == O_MOVE:
 				u_face[u] = u_dface[u]
 			u_order[u] = O_NONE
 			_place_unit(u, 0)

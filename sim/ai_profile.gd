@@ -364,7 +364,10 @@ const R_GREN_SIEGE := 286      # 1: grenade units attacking a town Hold their gr
 const R_BATTER_BLD := 287      # attacking siege batteries batter (Use now) a held building within this of the storm's route (entry to plaza) when no stretch needs battering (0 never)
 const S_PLUG_DEEP := 288       # at a breach in walls this thick or more (WALL_T: walls 3 12 m; Punic walls 2) the last of its plugs stands PLUG_BACK further in, a second line (0 never)
 const S_BATTER_OPEN := 289     # 1: the stretch battered must have open ground at its breach's outside point (not a tower's cells); 0 any
-const N_KNOBS := 290
+# The defending post under musket fire (docs/AI.md 41, 2026-10-27).
+const S_DEF_FIRE := 290        # 1: a West street defender shot by shooters standing in the field answers from a building, charges them or falls back out of their reach (SiegeAI._df_fire); 0 it holds its post
+const S_DEF_ZONE := 291        # 1: West street posts at the start stand out of the attackers' guns' reach from their deployment zone, and the defenders are placed at their posts in the deployment (0: as placed)
+const N_KNOBS := 292
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -636,6 +639,9 @@ const KNOBS: Array = [
 	[R_BATTER_BLD, 0, 40 * M, 40 * M],
 	[S_PLUG_DEEP, 0, 12 * M, 12 * M],
 	[S_BATTER_OPEN, 0, 1, 1],
+	# The defending post under musket fire (docs/AI.md 41): Easy keeps its men where they stand (a deliberate mistake).
+	[S_DEF_FIRE, 0, 1, 1],
+	[S_DEF_ZONE, 0, 1, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

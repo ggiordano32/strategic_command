@@ -87,6 +87,14 @@ extends RefCounted
 ##             or on the ladders, in reach (S_TOWER_FOCUS), else at will.
 ##   reply     (defenders, S_ESC_REPLY) a reserve foot unit goes up onto a
 ##             stretch where attackers climb or stand, and fights them.
+##   under fire (defenders, West street posts, S_DEF_ZONE / S_DEF_FIRE,
+##             docs/AI.md 41) posts at the start out of the reach of guns at
+##             the attackers' deployment zone's front, the units placed at
+##             them in the deployment; a unit shot by shooters standing in the
+##             field answers from a building (muskets), charges them (pikes
+##             and shock foot within a charge's reach, none of their horse or
+##             pikes beside them; A_DCHARGE, then back) or falls back along
+##             its street out of their reach or sight (its new post).
 ## With a working ram, the foot do not hack at the gate.
 ## Profiles: the distances, times and ratios above are knobs of the side's
 ## skill / personality profile (sim/ai_profile.gd, the S_* knobs and the
@@ -167,6 +175,21 @@ const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth;
 const S_BEATEN_TOWN_PCT := 25  # attackers in an open campaign town (a plan map, no outer gates) withdraw below this % of their start (and weaker; AP.S_BEATEN_PCT elsewhere)
 const S_ROME_STACK := 4  # a walled Rome town on its plan: the street stack behind the breached gate holds at most this many units, the rest (not fighting) hold the plaza (Rome walls pass, docs/AI.md 33)
 const SP_RUN_R := 30 * M   # a West defender further than this from its street post goes there at the run (balance T)
+## The defending post under musket fire (docs/AI.md 41, 2026-10-27; West street
+## defenders, Average and Skilled: AP.S_DEF_ZONE, AP.S_DEF_FIRE).
+const DF_ZONE_PAD := 15 * M   # a street post at the start stands beyond the attackers' longest gun range + this from their deployment zone ...
+const DF_ZONE_STEP := 5       # ... moved toward the plaza in steps of this % of the mouth-to-plaza way ...
+const SP_PCT_MAX := 95        # ... at most this far in (the plaza's edge)
+const DF_HIT_T := 150         # a defender hit by a missile within this (ticks: 15 s, more than a musket's 12 s reload) is under fire ...
+const DF_PAD := 15 * M        # ... and out of a shooter's reach beyond its range + this (or out of its sight)
+const DF_OCC_R := 40 * M      # a musket line under fire answers from the building nearest its post within this
+const DF_CHARGE_PCT := 150    # a pike or shock unit charges shooters within its run over this % of their reload (pike 3.0 m/s x 12 s x 150 % = 55 m)
+const DF_RELOAD_MAX := 120    # ... (a reload counted at most this: ticks, a musket's 12 s; a gun's long reload is no licence to charge across the field)
+const DF_CHARGE_MEN := 50     # ... with this % of its men or more ...
+const DF_GUARD_R := 45 * M    # ... and no enemy horse or pike within this of them
+const DF_CHARGE_T := 450      # a charge not in contact after this (ticks: 45 s) goes back to its post
+const DF_FB_STEP := 8 * M     # falling back: points this far apart along the post-to-plaza way ...
+const DF_FB_N := 24           # ... at most this many (192 m), then the plaza
 ## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
 ## fort as well as taking the town round it only with a ram, ladders or guns
 ## of their own, and only when the fort holds FORT_STORM_PCT % or more of the
@@ -650,9 +673,15 @@ static func _strongpoint(sim, u: int) -> void:
 		pct = mini((SP_PAL_COVER_PCT if cover else SP_PAL_LINE_PCT) + (k / ms.size()) * SP_STEP, 95)
 	var px: int = sim.plaza[0]
 	var py: int = sim.plaza[1]
+	var zr := _df_zone_reach(sim, side)
+	if zr > 0:
+		# (docs/AI.md 41: out of the reach of guns at the front of the
+		# attackers' deployment zone, where the street allows.)
+		while pct < SP_PCT_MAX and _df_zone_d(sim, 1 - side, mo.x + (px - mo.x) * pct / 100, mo.y + (py - mo.y) * pct / 100) <= zr:
+			pct = mini(pct + DF_ZONE_STEP, SP_PCT_MAX)
 	var p: Vector2i = sim.open_snap(sim, mo.x + (px - mo.x) * pct / 100, mo.y + (py - mo.y) * pct / 100, sim._ground_mask(u))
 	if cover:
-		p = _sp_cover(sim, u, mo, Vector2i(px, py), pct, p)
+		p = _sp_cover(sim, u, mo, Vector2i(px, py), pct, p, zr)
 	sim.u_ai_x[u] = p.x
 	sim.u_ai_y[u] = p.y
 	var held_n := 0
@@ -683,10 +712,11 @@ static func _strongpoint(sim, u: int) -> void:
 ## cells within SP_COVER_R rising CS_H or more (houses, walls, goods) that
 ## have open ground beside them (the corners and faces a man can shoot
 ## round) less SP_COVER_FAR per SP_LAT_STEP away from the plain point `p0`;
-## the best (first in that order on ties) on the unit's own ground. A West
+## the best (first in that order on ties) on the unit's own ground (not
+## within `zr` of the attackers' deployment zone, docs/AI.md 41). A West
 ## town's lots are scattered: the plain point stood in an open yard and the
 ## buccaneers held it in the open (the town of west_town lost 4 of 4).
-static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vector2i) -> Vector2i:
+static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vector2i, zr: int = 0) -> Vector2i:
 	var dx := pl.x - mo.x
 	var dy := pl.y - mo.y
 	var l := maxi(BattleAI._d(dx, dy), 1)
@@ -705,6 +735,8 @@ static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vec
 			var y := by + ry * k
 			if (sim.nav_at(x, y) & gm) == 0 or sim.reach_at(x, y) != ra:
 				continue
+			if zr > 0 and _df_zone_d(sim, 1 - sim.u_side[u], x, y) <= zr:
+				continue  # (in the reach of the attackers' deployment zone: docs/AI.md 41)
 			var sc := _cover_score(sim, x, y) - SP_COVER_FAR * BattleAI._d(x - p0.x, y - p0.y) / SP_LAT_STEP
 			if sc > bs:
 				bs = sc
@@ -921,6 +953,9 @@ static func _defender(sim, u: int) -> void:
 		return
 	if mode == A_PLAZA:
 		_plaza_unit(sim, u)
+		return
+	if mode == A_DCHARGE:
+		_dcharge_unit(sim, u)
 		return
 	# Not yet classified (the army thinks first on the same tick).
 
@@ -1376,9 +1411,11 @@ static func _reserve(sim, u: int) -> void:
 		return
 	if _engaged(sim, u):
 		return
+	var kn := AP.of(sim, sim.u_side[u])
+	if kn[AP.S_DEF_FIRE] != 0 and _df_fire(sim, u, kn):
+		return  # (under fire from shooters in the field: docs/AI.md 41)
 	var hx: int = sim.u_ai_x[u]
 	var hy: int = sim.u_ai_y[u]
-	var kn := AP.of(sim, sim.u_side[u])
 	var t := _nearest_attacker(sim, u, hx, hy, kn[AP.S_RESERVE_R], true)
 	if t >= 0 and sim.u_cls[u] != UT.CLS_ART:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
@@ -3800,6 +3837,7 @@ static func _att_mantlet(sim, u: int, phase: int) -> bool:
 
 const WS_STANDING := 0           # (BattleSim.WS_STANDING)
 const A_PLUG := 38               # defender holding a breach's inside edge (u_ai_x = the stretch + 1)
+const A_DCHARGE := 39            # defender charging shooters in the field (u_ai_x / u_ai_y = its post; docs/AI.md 41)
 const WALL_BOLT := 80            # (BattleSim.GATE_BOLT: a flat shot's wall damage, x m_obj %)
 const WALL_STONE := 360          # (BattleSim.GATE_STONE: a lobbed shot's)
 const WALL_BLAST_K := 60         # (BattleSim.DESTR_BLAST_K: + this per metre of a bursting shell's blast)
@@ -4352,3 +4390,226 @@ static func _seg_near(a: Vector2i, b: Vector2i, p: Vector2i) -> Vector2i:
 	var qx: int = a.x + dx * t / 1024
 	var qy: int = a.y + dy * t / 1024
 	return Vector2i(BattleAI._d(p.x - qx, p.y - qy), BattleAI._d(qx - a.x, qy - a.y))
+
+
+# ------------------------------- defenders under musket fire (docs/AI.md 41) ---
+# A West street defender (A_RESERVE at a street post, Average and Skilled:
+# S_DEF_FIRE) hit by a missile within DF_HIT_T while enemy shooters that are
+# not coming on (outside the town's urban ground, not moving) have it in
+# their range: a musket line answers from a building near its post, a pike
+# or shock unit charges the nearest of them within a charge's reach
+# (_df_reach) when no enemy horse or pike stands within DF_GUARD_R of it
+# (A_DCHARGE, back to its post after), anything else falls back along its
+# street toward the plaza to the first point out of their reach or sight
+# (_df_back), which becomes its post.
+
+## Enemy shooters standing in the field with (x, y) in their range + pad
+## (seen by u's side, ready, with shots, off the walls, outside the town's
+## urban ground, not on the move), in index order.
+static func _df_shooters(sim, u: int, x: int, y: int, pad: int) -> PackedInt32Array:
+	var side: int = sim.u_side[u]
+	var out := PackedInt32Array()
+	for e in sim.n_units:
+		if sim.u_side[e] == side or sim.u_state[e] != U_READY or sim.t_m_range[sim.u_type[e]] <= 0 \
+				or sim.u_ammo[e] <= 0 or sim.u_wall[e] > 0 or sim.u_order[e] == O_MOVE or sim.hidden_from(e, side):
+			continue
+		if (sim.veg_bits(sim.u_cx[e], sim.u_cy[e]) & MapGen.V_URBAN) != 0:
+			continue  # (in the town: the reserve's own rule fights it)
+		if BattleAI._d(sim.u_cx[e] - x, sim.u_cy[e] - y) <= sim.mrange(e) + pad:
+			out.append(e)
+	return out
+
+
+## The defender's rule under fire (from _reserve): true if it acted.
+static func _df_fire(sim, u: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.S_DEF_FIRE] == 0 or sim.n_outer != 0 or not _street_row(sim, u) or not _street_ai(sim, sim.u_side[u]):
+		return false
+	if sim.tick - sim.u_hit_t[u] > DF_HIT_T or sim.u_fighting[u] > 0:
+		return false
+	if sim.u_cvb[u] >= 0:
+		return false  # (at its cover spots: it shoots from there)
+	var sh := _df_shooters(sim, u, sim.u_cx[u], sim.u_cy[u], 0)
+	if sh.is_empty():
+		return false
+	var side: int = sim.u_side[u]
+	var cls: int = sim.u_cls[u]
+	if cls == UT.CLS_MISSILE and sim.occ_on != 0 and sim.u_ammo[u] > 0:
+		# A musket line answers from a building near its post.
+		var b: int = sim.occupy_near(u, sim.u_ai_x[u], sim.u_ai_y[u], DF_OCC_R)
+		if b >= 0 and b < sim.ob_hp.size() and sim.ob_hp[b] * 100 < sim.ob_hp0[b] * kn[AP.S_RUIN_LEAVE_PCT]:
+			b = -1
+		if b >= 0 and sim.ob_sn[b] >= SP_OCC_MIN and sim.occupy_refusal(sim, u, b) == "":
+			sim.u_ai_x[u] = sim.ob_dx[b]
+			sim.u_ai_y[u] = sim.ob_dy[b]
+			BattleAI._order(sim, u, {"type": ORDER_OCCUPY, "building": b, "run": 1}, 30)
+			BattleAI._count(sim, side, AP.C_SIEGE)
+			return true
+	if (cls == UT.CLS_PIKE or cls == UT.CLS_INF) and sim.u_alive[u] * 100 >= sim.u_count0[u] * DF_CHARGE_MEN:
+		# A pike or shock unit: at the nearest shooter within a charge's reach
+		# with no horse or pike beside it.
+		var best := -1
+		var bd := 1 << 40
+		for e in sh:
+			var d := BattleAI._d(sim.u_cx[e] - sim.u_cx[u], sim.u_cy[e] - sim.u_cy[u])
+			if d > _df_reach(sim, u, e) or d >= bd or _df_guarded(sim, e):
+				continue
+			bd = d
+			best = e
+		if best >= 0:
+			var hx: int = sim.u_ai_x[u]
+			var hy: int = sim.u_ai_y[u]
+			BattleAI._set_mode(sim, u, A_DCHARGE)
+			sim.u_ai_x[u] = hx
+			sim.u_ai_y[u] = hy
+			BattleAI._attack(sim, u, best, 1)
+			BattleAI._count(sim, side, AP.C_SIEGE)
+			return true
+	if _df_safe(sim, sim.u_ai_x[u], sim.u_ai_y[u], sh):
+		return false  # (its post is out of their reach: the reserve rule takes it there)
+	var p := _df_back(sim, u, sh)
+	if BattleAI._d(p.x - sim.u_ai_x[u], p.y - sim.u_ai_y[u]) < 4 * M:
+		return false  # (nowhere further back: it holds)
+	sim.u_ai_x[u] = p.x
+	sim.u_ai_y[u] = p.y
+	var face := FM.atan2_a(sim.u_cy[sh[0]] - p.y, sim.u_cx[sh[0]] - p.x)
+	_go_run(sim, u, p.x, p.y, face, 4, 1)
+	BattleAI._count(sim, side, AP.C_SIEGE)
+	return true
+
+
+## How far unit u charges shooter e: its run over e's reload (at most
+## DF_RELOAD_MAX) x DF_CHARGE_PCT %.
+static func _df_reach(sim, u: int, e: int) -> int:
+	return sim.t_run[sim.u_type[u]] * clampi(sim.t_m_reload[sim.u_type[e]], 1, DF_RELOAD_MAX) * DF_CHARGE_PCT / 100
+
+
+## An enemy horse or pike unit (ready) stands within DF_GUARD_R of unit e.
+static func _df_guarded(sim, e: int) -> bool:
+	for o in sim.n_units:
+		if o == e or sim.u_side[o] != sim.u_side[e] or sim.u_state[o] != U_READY:
+			continue
+		if sim.u_cls[o] != UT.CLS_CAV and sim.u_cls[o] != UT.CLS_PIKE:
+			continue
+		if BattleAI._d(sim.u_cx[o] - sim.u_cx[e], sim.u_cy[o] - sim.u_cy[e]) <= DF_GUARD_R:
+			return true
+	return false
+
+
+## Where unit u falls back to out of shooters `sh`: points DF_FB_STEP apart
+## from its post toward the plaza (and SP_LAT_STEP either side, the
+## nearer first), the first step with one out of every shooter's range +
+## DF_PAD or out of its sight; at that step the one with the most cover
+## (_cover_score; the first on ties). None before the plaza: the plaza.
+static func _df_back(sim, u: int, sh: PackedInt32Array) -> Vector2i:
+	var hx: int = sim.u_ai_x[u]
+	var hy: int = sim.u_ai_y[u]
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	var dx := px - hx
+	var dy := py - hy
+	var l := maxi(BattleAI._d(dx, dy), 1)
+	var rx := -dy * SP_LAT_STEP / l
+	var ry := dx * SP_LAT_STEP / l
+	var gm: int = sim._ground_mask(u)
+	var ra: int = sim.reach_at(hx, hy)
+	var q := 1
+	while q <= DF_FB_N:
+		var a := mini(q * DF_FB_STEP, l)
+		var bx := hx + dx * a / l
+		var by := hy + dy * a / l
+		var best := Vector2i(-1, -1)
+		var bs := -1
+		for k in [0, -1, 1, -2, 2]:
+			var x: int = bx + rx * k
+			var y: int = by + ry * k
+			if (sim.nav_at(x, y) & gm) == 0 or sim.reach_at(x, y) != ra or not _df_safe(sim, x, y, sh):
+				continue
+			var sc := _cover_score(sim, x, y)
+			if sc > bs:
+				bs = sc
+				best = Vector2i(x, y)
+		if bs >= 0:
+			return best
+		if a >= l:
+			break
+		q += 1
+	return sim.open_snap(sim, px, py, gm)
+
+
+## (x, y) is out of every shooter's range + DF_PAD, or out of its sight.
+static func _df_safe(sim, x: int, y: int, sh: PackedInt32Array) -> bool:
+	var z: int = sim.height_at(x, y) + sim.LOF_BODY
+	for e in sh:
+		if BattleAI._d(sim.u_cx[e] - x, sim.u_cy[e] - y) > sim.mrange(e) + DF_PAD:
+			continue
+		if sim.sight_line(sim.u_cx[e], sim.u_cy[e], sim.u_h[e] + sim.VIS_EYE, x, y, z):
+			return false
+	return true
+
+
+## A defender charging shooters (A_DCHARGE; u_ai_x / u_ai_y its post): it
+## fights its target while that stands; once it breaks or goes, or after
+## DF_CHARGE_T with no contact, back to its post at the run (A_RESERVE).
+static func _dcharge_unit(sim, u: int) -> void:
+	if sim.u_fighting[u] > 0:
+		return  # (in the melee: it fights on)
+	var t: int = sim.u_target[u] if sim.u_order[u] == O_ATTACK else -1
+	if t >= 0 and sim.u_state[t] == U_READY and sim.tick - sim.u_ai_t[u] < DF_CHARGE_T:
+		return
+	var hx: int = sim.u_ai_x[u]
+	var hy: int = sim.u_ai_y[u]
+	BattleAI._set_mode(sim, u, A_RESERVE)
+	sim.u_ai_x[u] = hx
+	sim.u_ai_y[u] = hy
+	_go_run(sim, u, hx, hy, sim.u_dface[u], 4, 1)
+
+
+## The reach of the enemy's guns from their deployment zone, for side's
+## street posts (S_DEF_ZONE): the longest range among the enemy's foot and
+## horse with missiles + DF_ZONE_PAD; 0 when the rule is off, the battle had
+## no deployment (no zones) or the enemy has no shooters.
+static func _df_zone_reach(sim, side: int) -> int:
+	if sim.dep_z.is_empty() or AP.of(sim, side)[AP.S_DEF_ZONE] == 0:
+		return 0
+	var r := 0
+	for e in sim.n_units:
+		if sim.u_side[e] != side and sim.u_state[e] == U_READY and sim.u_cls[e] != UT.CLS_ART:
+			r = maxi(r, sim.mrange(e))
+	return r + DF_ZONE_PAD if r > 0 else 0
+
+
+## Distance from (x, y) to side s's deployment zone (its nearest rectangle).
+static func _df_zone_d(sim, s: int, x: int, y: int) -> int:
+	var z: PackedInt32Array = sim.dep_z
+	var best := 1 << 40
+	for k in range(0, z.size(), 6):
+		if z[k] != s:
+			continue
+		var cx := clampi(x, z[k + 2], z[k + 4])
+		var cy := clampi(y, z[k + 3], z[k + 5])
+		best = mini(best, BattleAI._d(cx - x, cy - y))
+	return best
+
+
+## The deployment of an AI town defence (BattleSim._setup_deploy): the army
+## think's classification now (posts, buildings, stances: the orders a
+## player gives), so the street units can be placed at their posts.
+static func deploy_defenders(sim, side: int) -> void:
+	sim.ai_phase[side] = SD_HOLD
+	sim.ai_t[side] = sim.tick
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and not BattleAI.is_char(sim, u):
+			_classify_defender(sim, u)
+
+
+## Side's defence is set out in the deployment (BattleSim._setup_deploy): the
+## street AI plays for it (a West open town) with S_DEF_ZONE.
+static func deploys_posts(sim, side: int) -> bool:
+	return _street_ai(sim, side) and AP.of(sim, side)[AP.S_DEF_ZONE] != 0
+
+
+## Unit u (defending) is placed at its post in the deployment: a West street
+## unit at a street post, with S_DEF_ZONE.
+static func placed_at_post(sim, u: int) -> bool:
+	return sim.u_ai[u] == A_RESERVE and sim.u_wall[u] == 0 and _street_ai(sim, sim.u_side[u]) and _street_row(sim, u) \
+		and AP.of(sim, sim.u_side[u])[AP.S_DEF_ZONE] != 0
