@@ -470,3 +470,28 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
   script, kept out of the repo) after pack.py; 2236 shade and mask rects compared, 0 differ. Atlas 1024x2540, 1.4 MB of PNG.
 
 
+
+### The battlefield ground, painterly (as built, 2026-10-27)
+
+Part 5 of the visual pass (`overworld_view.md`). View only: the ground reads the sim's `veg_d` density (the vegetation texture's
+R channel, density / 3) and height grids and writes nothing; no file under `sim/` changed and no hash moved.
+
+- **Ground patches** (`terrain.gdshader`): two octaves of value noise (17 m and 6.5 m, the second domain-warped by the fine
+  noise) give patches of lusher grass (`+7 %` brightness) and bare earth (`earth_col`, the palette's base mixed 45 % with its
+  sand, `0.92` x; up to 34 % mix), on top of the existing lush / dry patches. A brushed grain: noise stretched 11:1 along the
+  NW-SE diagonal (the hill shade's light), fading out when zoomed far out (pixel above 0.2 m). The hill shade, contours and crest
+  line are unchanged and apply after. Graphics Low: one octave, no brush grain, no crown shadow.
+- **Crowns** (`crown_at()` in the shader, `crown_centre()` in `tree_layer.gd`): one jittered crown per 5.5 m cell (3 x 3 cells
+  searched), radius `5.5 m x (0.46 .. 0.60) x (0.55 + 0.6 x density)`, so a thin wood has small crowns and a dense one merged
+  clumps; the floor darkening and shadow are gated by `smoothstep(0.04, 0.14, density)`, the lit disc and rim only by `smoothstep(0.18, 0.30, density)`, so in thin or open vegetation only the slightly darker floor and the edge shadow remain, no discs. Each crown is shaded from
+  the upper left (lit side, darker scalloped rim, 0.22 to 0.52 at the wood's border where density is low), tinted from the
+  palette's two tree colours (x 1.3) with a per-crown random; between crowns the floor is 20 % darker; a soft shadow (the crown
+  field shifted 1.5 m, 1.7 m to the lower right) darkens the ground outside the crowns by up to 36 %. The kit tree sprites keep
+  their draw order and look and none is dropped (test_woods: 1338 trees, as before); `tree_layer.gd` places them clumped: each tree leans 70 % of the way to its crown's centre (the
+  same hash as the shader's, mirrored in GDScript), so the trees bunch on the crowns. Cover, line of sight and
+  the sim's woods are untouched (the sim never reads a tree).
+- **Edges** (`city_draw.gd` `draw_surround`, the decals): fields get two faint bands (8 % and 14 % alpha, 2.2 m and 1.2 m
+  out) beyond the headland and tracks two wider faint bands under the dirt, so the field and the track blend into the grass in
+  a short ramp. The settlement's own streets and plaza keep the vegetation texture's linear edge.
+- Web: nothing beyond the existing shaders' set (no `textureQueryLod`, no bit ops, constant loop bounds, one extra
+  `texture()` read for the shadow).

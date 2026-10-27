@@ -867,6 +867,9 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 		if low:  # Graphics Low: a flat tint
 			ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.75), 4.0 * k, false)
 			continue
+		# (painterly ground, 2026-10-27: two wider, fainter bands blend the track into the grass)
+		ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.1), 8.4 * k, true)
+		ci.draw_polyline(pts, Color(earth.r * 0.9, earth.g * 0.9, earth.b * 0.9, 0.16), 6.6 * k, true)
 		ci.draw_polyline(pts, Color(earth.r * 0.8, earth.g * 0.8, earth.b * 0.8, 0.35), 5.2 * k, true)
 		ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.8), 3.6 * k, true)
 		ci.draw_polyline(pts, earth.lightened(0.14) * Color(1, 1, 1, 0.5), 1.3 * k, true)
@@ -895,6 +898,9 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 		var sd := int(absf(float(fa[0])) * 7.0 + absf(float(fa[1])) * 13.0)
 		var tone := 0.94 + 0.12 * _h01(sd, 3, 5, 7)
 		col = Color(col.r * tone, col.g * tone, col.b * tone)
+		# Soft edge (painterly ground): two faint bands out from the headland blend the field into the grass.
+		ci.draw_rect(r.grow(k * 2.2), Color(col.r * 0.8, col.g * 0.85, col.b * 0.7, 0.08))
+		ci.draw_rect(r.grow(k * 1.2), Color(col.r * 0.75, col.g * 0.82, col.b * 0.65, 0.14))
 		ci.draw_rect(r.grow(k * 0.5), Color(col.r * 0.7, col.g * 0.78, col.b * 0.6, 0.35))  # headland
 		ci.draw_rect(r, Color(col.r, col.g, col.b, 0.9))
 		# Rows along the long axis: ridge and furrow (plough), crop rows, stubble dashes, fallow weeds.

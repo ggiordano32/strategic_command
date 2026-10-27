@@ -80,6 +80,14 @@ uniform sampler2D tile_sand : filter_linear_mipmap, repeat_enable;
 uniform sampler2D tile_plough : filter_linear_mipmap, repeat_enable;
 uniform vec3 grass_mean = vec3(0.39, 0.49, 0.235);
 uniform float splat_sat = 1.0;
+// The painterly ground (2026-10-27): grass and earth patches in two octaves (one on Low), a brushed grain
+// along the hill shade's light, and the woods' canopy drawn as clumped crowns (rounded clusters whose size
+// follows the vegetation density, each with a soft shadow to the lower right and a darker scalloped rim).
+// View only: the crowns read the same density the sim's cover reads and write nothing back.
+uniform vec3 crown_a = vec3(0.15, 0.30, 0.13);
+uniform vec3 crown_b = vec3(0.19, 0.35, 0.15);
+uniform vec3 earth_col = vec3(0.40, 0.36, 0.22);
+uniform float crown_cell = 5.5;       // metres: one crown per cell (jittered), radius ~45 % of it
 // Graphics Low (game/quality.gd): no noise patches / grain / rock mottling, still water, plain ford.
 uniform bool low = false;
 
@@ -119,6 +127,32 @@ float vnoise(vec2 p) {
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Nearest crown at p (metres) for a wood of density vr (0..1): x = how far inside the crown (metres, 0 at
+// its rim), y = a per-crown random number, zw = the offset from the crown's centre over its radius.
+// 3 x 3 jittered cells; the same hash in game/tree_layer.gd (crown_at) keeps the tree sprites on the crowns.
+vec4 crown_at(vec2 p, float vr) {
+	vec2 cell = floor(p / crown_cell);
+	float best = -9.0;
+	vec4 out_v = vec4(-9.0, 0.0, 0.0, 0.0);
+	for (int j = -1; j <= 1; j++) {
+		for (int i = -1; i <= 1; i++) {
+			vec2 c = cell + vec2(float(i), float(j));
+			float hx = hash12(c + vec2(17.3, 3.1));
+			float hy = hash12(c + vec2(5.7, 29.9));
+			float hr = hash12(c + vec2(41.1, 13.7));
+			vec2 ctr = (c + 0.5 + (vec2(hx, hy) - 0.5) * 0.7) * crown_cell;
+			float r = crown_cell * (0.46 + 0.14 * hr) * (0.55 + 0.6 * vr);
+			vec2 dv = p - ctr;
+			float ins = r - length(dv);
+			if (ins > best) {
+				best = ins;
+				out_v = vec4(ins, hr, dv / r);
+			}
+		}
+	}
+	return out_v;
+}
+
 void fragment() {
 	highp vec2 wm = world / ppm;  // metres
 	float n1 = 0.5;
@@ -133,9 +167,25 @@ void fragment() {
 	float patchv = (n1 - 0.5) * 1.5 + (n2 - 0.5) * 0.7;
 	vec3 col = base_col + (patchv > 0.0 ? patch_a : patch_b) * abs(patchv) * 1.6 * patch_k;
 	float mpp = fwidth(wm.x);
+	// Painted patches: lush grass and bare earth, two octaves (one on Low), tinted from the palette.
+	vec2 wq = wm + vec2(n3 - 0.5, n2 - 0.5) * 6.0;
+	float pm = vnoise(wm / 17.0 + vec2(2.3, 8.1));
+	if (!low) {
+		pm = pm * 0.62 + vnoise(wq / 6.5 + vec2(13.1, 4.7)) * 0.38;
+	}
+	float earthm = smoothstep(0.56, 0.68, pm);
+	float lushm = 1.0 - smoothstep(0.30, 0.42, pm);
+	col = mix(col, earth_col * (0.92 + 0.16 * n2), earthm * 0.34 * patch_k);
+	col *= 1.0 + 0.07 * lushm * patch_k;
 	float grain = 0.0;
 	if (!low) {
-		grain = (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
+		// Brush strokes, long along the hill shade's light (upper left to lower right).
+		vec2 bu = vec2(dot(wm, vec2(0.7071, 0.7071)), dot(wm, vec2(-0.7071, 0.7071)));
+		float bs = vnoise(vec2(bu.x / 9.0, bu.y / 0.8) + vec2(7.7, 1.3)) * 0.65 + vnoise(vec2(bu.x / 4.0, bu.y / 0.45) + vec2(2.9, 6.1)) * 0.35;
+		grain += (bs - 0.5) * 0.085 * (1.0 - smoothstep(0.2, 0.55, mpp));
+	}
+	if (!low) {
+		grain += (n3 - 0.5) * 0.07 + (vnoise(wm / 1.15 + vec2(1.7, 4.1)) - 0.5) * 0.05 * (1.0 - smoothstep(0.25, 0.7, mpp));
 	}
 	col *= 1.0 + grain;
 	bool splat = splat_on && !low;
@@ -167,6 +217,25 @@ void fragment() {
 		vec4 v = texture(vegmap, world / veg_size_px);
 		// Forest floor: darker and a little greener under the trees.
 		col = mix(col, wood_col, v.r * 0.55);
+		float vgate = smoothstep(0.04, 0.14, v.r);
+		vec2 sh_off = vec2(1.5, 1.7);  // metres, the shadow falls to the lower right
+		float vr_s = low ? 0.0 : texture(vegmap, (world - sh_off * ppm) / veg_size_px).r;
+		if (v.r > 0.03 || vr_s > 0.03) {
+			// Crowns: rounded clusters sized by the density, shadow to the lower right, a darker scalloped rim.
+			vec4 cw = crown_at(wm, v.r);
+			float cm = smoothstep(-0.12, 0.3, cw.x) * smoothstep(0.18, 0.30, v.r);  // discs only where the sim's density is real wood
+			if (!low) {
+				vec4 cs = crown_at(wm - sh_off, vr_s);
+				float sm = smoothstep(-0.2, 0.5, cs.x) * smoothstep(0.04, 0.14, vr_s);
+				col *= 1.0 - 0.36 * sm * (1.0 - cm);
+			}
+			float lit = clamp(-(cw.z + cw.w) * 0.6, -1.0, 1.0);
+			vec3 cc = mix(crown_a, crown_b, cw.y) * (0.82 + 0.4 * cw.y);
+			cc *= 1.0 + 0.26 * lit + 0.1 * clamp(cw.x * 0.5, 0.0, 1.0);
+			float rim = (1.0 - smoothstep(0.0, 0.55, cw.x)) * (0.22 + 0.3 * (1.0 - v.r));
+			cc *= 1.0 - rim;
+			col = mix(col * (1.0 - 0.2 * vgate), cc, cm * 0.92);
+		}
 		// Settlement ground, main streets and the plaza: paving.
 		// worn: packed earth mottled, the plaza lighter and scuffed
 		float worn = 0.88 + 0.24 * n2 + (n3 - 0.5) * 0.12;

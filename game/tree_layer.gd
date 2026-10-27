@@ -33,6 +33,9 @@ const PER_CELL := [0, 45, 105, 165]
 const R_MIN := [0.0, 1.8, 2.1, 2.4]
 const R_MAX := [0.0, 2.8, 3.3, 3.8]
 
+const CROWN_CELL := 5.5        # metres, as crown_cell in terrain.gdshader (the ground draws a crown under each clump)
+const CROWN_PULL := 0.7       # how far a tree leans towards its crown's centre (0 none, 1 on it)
+
 static var _atlas_cache: ImageTexture = null
 
 var sim
@@ -143,6 +146,10 @@ func _build() -> void:
 			for q in n:
 				var x := i * 4.0 + _randf() * 4.0
 				var y := j * 4.0 + _randf() * 4.0
+				# Clumps: the tree leans to the centre of the crown the ground shader draws there.
+				var cc := crown_centre(Vector2(x, y), float(d) / 3.0)
+				x = lerpf(x, cc.x, CROWN_PULL)
+				y = lerpf(y, cc.y, CROWN_PULL)
 				var kd := stand_kind if _rand() % 100 < 60 else _pick(kinds)
 				var r := lerpf(R_MIN[d], R_MAX[d], _randf())
 				# Sizes vary: saplings, the common run, now and then an old giant.
@@ -362,6 +369,44 @@ func _ground_cover(out: PackedFloat32Array, veg: PackedByteArray, mask: PackedBy
 		out.append_array(cand.slice(q * 16, q * 16 + 16))
 	if out.size() / 16 > budget:
 		out.resize(budget * 16)
+
+
+## fract() and hash12() of terrain.gdshader (the crowns are the same function; floats here are doubles, which
+## only moves a crown's jitter by a hair).
+static func _fract(x: float) -> float:
+	return x - floorf(x)
+
+
+static func _hash12(px: float, py: float) -> float:
+	var a := _fract(px * 0.1031)
+	var b := _fract(py * 0.1031)
+	var c := a
+	var d := a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33)  # dot(p3, p3.yzx + 33.33)
+	a += d
+	b += d
+	c += d
+	return _fract((a + b) * c)
+
+
+## The centre (metres) of the crown nearest p and how far inside it p is (z), for a wood of density vr, the shader's crown_at().
+static func crown_centre(p: Vector2, vr: float) -> Vector3:
+	var cx := floorf(p.x / CROWN_CELL)
+	var cy := floorf(p.y / CROWN_CELL)
+	var best := -9.0
+	var out := Vector3(p.x, p.y, -9.0)
+	for j in range(-1, 2):
+		for i in range(-1, 2):
+			var gx := cx + i
+			var gy := cy + j
+			var hx := _hash12(gx + 17.3, gy + 3.1)
+			var hy := _hash12(gx + 5.7, gy + 29.9)
+			var hr := _hash12(gx + 41.1, gy + 13.7)
+			var ctr := Vector2(gx + 0.5 + (hx - 0.5) * 0.7, gy + 0.5 + (hy - 0.5) * 0.7) * CROWN_CELL
+			var ins := CROWN_CELL * (0.46 + 0.14 * hr) * (0.55 + 0.6 * vr) - p.distance_to(ctr)
+			if ins > best:
+				best = ins
+				out = Vector3(ctr.x, ctr.y, ins)
+	return out
 
 
 static func _cell_hash(a: int, b: int) -> int:

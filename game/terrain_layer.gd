@@ -173,6 +173,14 @@ func _build() -> void:
 	m.set_shader_parameter("patch_b", pal["dry"])
 	m.set_shader_parameter("rock_col", _v3(pal["rock"]))
 	m.set_shader_parameter("sand_col", _v3(pal["sand"]))
+	# The painterly ground: earth patches tinted from the base and the sand, the crowns from the palette's trees.
+	var ec: Color = base.lerp(pal["sand"], 0.45) * 0.92
+	m.set_shader_parameter("earth_col", Vector3(ec.r, ec.g, ec.b))
+	var tcols: Array = pal["trees"]
+	var ca: Color = tcols[0]
+	var cb: Color = tcols[mini(1, tcols.size() - 1)]
+	m.set_shader_parameter("crown_a", Vector3(ca.r, ca.g, ca.b) * 1.3)
+	m.set_shader_parameter("crown_b", Vector3(cb.r, cb.g, cb.b) * 1.3)
 	m.set_shader_parameter("wood_col", Vector3(base.r * 0.55, base.g * 0.68, base.b * 0.5))
 	m.set_shader_parameter("pave_col", Vector3(base.r * 0.4 + 0.33, base.g * 0.35 + 0.33, base.b * 0.3 + 0.3))
 	m.set_shader_parameter("field_col", Vector3(minf(base.r * 0.6 + 0.38, 1.0), minf(base.g * 0.55 + 0.36, 1.0), base.b * 0.5 + 0.18))
