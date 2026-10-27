@@ -3090,3 +3090,133 @@ Syracuse; Macedon's are mostly the Greeks' wars on it (13 -> 20 of 96, the Greek
 elsewhere). The cover rule protects the side that
 declares, not its victim; Epirus needs the strategic fix of "Rome start budgets" (STATUS), not this. The format 6 and
 8 pins are unmoved; the format 10 pins, `ROME_20` and the AI goldens moved (STATUS "Verification pins").
+
+## 44. The play library (plan, 2026-10-27; agreed with the owner)
+
+The owner wants the battle AI to try historical tactics, and asked whether a
+learned model could drive armies. Two layers, in this order: **scripted
+plays** first (this section), a **learned chooser** of plays later, only if
+the plays prove out (section 44.4). A play is a named tactic the battle AI
+runs on top of its existing rules: a trigger (the side's composition, the
+ground, the enemy's shape), a faction weighting, a few orders and posts, and
+a name in the battle's telemetry so the counters and the chronicle can say
+"the Spanish formed a tercio". Plays are explainable and tunable per level;
+learning the tactics themselves from scratch is where the cost and the risk
+were, and the library removes that.
+
+**Framework (`sim/plays.gd`, static like `BattleAI`, called from
+`BattleAI._army_think` after the plan is read; nothing in the campaign).**
+
+- A side's plays are a bit mask `ai_plays` in the scenario (`[side 0, side
+  1]`, as `ai_skill`; default every bit; hashed and in snapshots like
+  `ai_skill`). Bit 0 the tercio, bit 1 the countermarch; later plays take the
+  next bits. The campaign fills it from the faction's row (`west.gd`
+  `PLAYS`: Spain tercio and countermarch, England, France and the Dutch the
+  countermarch, the natives and the Brethren none yet; Rome every bit, which
+  is a no-op: no Rome row has a gun and no play triggers without one). Custom
+  battles and scenario keys get every bit.
+- `AIProfile.PLAYS_ON` (id 300): 0 Easy, 1 Average, 1 Skilled. A play reads
+  its own knobs (ids 301-309 the tercio, 310-319 the countermarch); the AI
+  never branches on the level.
+- Per-side memory through `_sd` / `_sdset` (the play running, its start
+  tick), per-unit through `_mem` (the unit's part in it); all hashed as the
+  AI memory already is. A play is chosen once in the deployment or at the
+  first think with a trigger and dropped when its trigger is gone for
+  `PLAY_DROP_T` 30 s; its units go back to the ordinary rules.
+- Telemetry: one counter per play started (`_count`), the battle result's
+  AI counters as the other competencies; a line in the battle's chronicle
+  where the view has one (the builder checks; no new HUD element).
+- Rome byte-identity: every play's trigger needs a gun foot unit; the Rome
+  goldens, pins and `ROME_20` do not move. The West pins may move only by the
+  countermarch (the campaign's AI battles are auto-resolved, so they should
+  not; if they do, the cause is reported before the patch).
+
+### 44.1 The tercio (plan)
+
+The Spanish square: a deep pike block with the shot in "sleeves" at its
+corners, the muskets retiring under the pikes when horse comes on.
+
+- **Trigger.** A field battle (no town plan, not a sea battle), the side
+  has a pike unit (`cls` pike) and a gun foot unit (`BattleAI.line_gun`),
+  and the enemy fields a rider unit or more melee foot than the side has.
+- **Formation.** Each pike unit stands as a block: files `max(TERCIO_FILES,
+  isqrt(men))` (knob id 302, default 8; 120 pikes stand 10 by 12). Up to two
+  gun units per block are its sleeves, posted at its front corners one unit
+  width out, their front rank level with the block's; gun units beyond two a
+  block form the ordinary line between the blocks. The line, reserves and
+  the Skilled mirror are otherwise as they are: the play post-processes the
+  slots `_issue_line` made.
+- **Under horse.** A rider unit closing on a sleeve (an attack order on it,
+  or riders within `TERCIO_HORSE_R` 80 m, id 303, moving toward it) sends the
+  sleeves to the block's rear corners (10 m behind the block's rear rank,
+  flat line of fire past friends keeps them shooting); the block turns to
+  face a charger coming from a flank within 60 m. With no closing riders
+  within the reach for 10 s the sleeves return to the front corners. Pikes
+  already stop horse; the play's worth is that the shot is never caught in
+  the open.
+- **Interplay.** `_gun_covered` (horse keep out of a free musket line's
+  reach) and `_counter_target` read the sleeves as any gun line; the
+  battery guard still takes a pike first, the play never takes the guard's
+  pike. Knob `TERCIO` id 301: 0 Easy, 1 Average, 1 Skilled.
+- **Measure.** A new AI-against-AI field pair `play_field` (`sim/scenarios.gd`
+  and `tests/asym_probe.gd`: the Spanish with 2 pike, 4 musket companies and 2
+  horse against an English army of 6 musket companies, 1 pike, 2 horse and a
+  falconet battery; 48 seeds) run with the Spanish bit on and off: the
+  Spanish wins with the tercio up, and `asym_field` (natives, no horse, more
+  melee foot: the play triggers) not below 40 of 48 Spanish wins. Reported as
+  a before / after table; the balance harness plans unmoved.
+
+### 44.2 The countermarch (plan)
+
+The Dutch drill: the ranks fire in turn so the line keeps up a rolling fire
+instead of one volley a reload. In the sim's model every man reloads in
+parallel, so the countermarch is a **unit ability** whose worth is how the
+fire lands, not how many shots are fired.
+
+- **Sim (`sim/battle_sim.gd`, West gun foot rows only: `m_gun` 1, foot, a
+  crew of 1).** Ability `UT.AB_ROLL` ("Countermarch": Auto / Hold / Use now,
+  through `ORDER_ABILITY` as the others, hashed in the ability table). With
+  rolling fire on, the unit's ranks (slot `s / u_files`) fire one rank every
+  `m_reload / ranks` ticks in turn (`u_cmr` the rank pointer, hashed only
+  with `gun_on`); a man fires only with a charge and loaded as now; shots
+  and ammunition a reload are the same as a volley's. A rank's volley
+  frightens its target as a volley does (`m_fear` into `u_fright`, once per
+  rank volley) at `CM_FEAR_PCT` 50 % of `m_fear`, so a rolling fire keeps the
+  target's fright topped up through `FRIGHT_DECAY` where a volley spikes and
+  fades. The last volley: an enemy melee unit closing within `CM_CLOSE` 40 m
+  fires every loaded man at once, and the rolling fire resumes after. Fire
+  at will's volley range and the held-volley rule apply to each rank's
+  volley. Per-man fire (`_pm_on`: in buildings, on walls, in cover) is
+  unchanged: the ability does nothing there. No retiring fire at the walk in
+  this step (open: a line that gives ground firing).
+- **Auto.** Rolling fire while the fire target is beyond `CM_CLOSE` and the
+  unit is not in a melee; the opening volley of a loaded line that has
+  waited a full reload is a full volley (the drill starts after it).
+- **AI.** `CM_AUTO` (id 311: 0 Easy, 1 Average, 1 Skilled; bit 1 of
+  `ai_plays`): every AI gun foot line on Auto; a street line in the open
+  rolls, a company in a building does not. Counted once per battle per
+  side.
+- **Player.** The ability chip on gun foot companies (Auto / Hold / Use now
+  as the pistols and grenades: `game/ability_chip.gd`, the Keys "Chips"
+  section, the unit book's page line "Countermarch: rolling fire by ranks"),
+  the custom battle as any ability.
+- **Measure.** `asym_field`, `play_field` (44.1), `open_town` and
+  `west_walls` with the bit on and off, before / after tables; the expected
+  move is small and toward the shooters. `tests/defend_probe.gd` re-run: the
+  owner's musket line is a player unit on Auto, so its numbers move; reported.
+
+### 44.3 Later plays (not yet)
+
+The Swedish salvo (three ranks firing as one, then the charge), the native
+ambush from cover with a feigned retreat into it, the pirate boarding rush
+at sea, the caracole as a play (the ability exists). Each after the first
+two prove out in the harness.
+
+### 44.4 The learned chooser (not yet)
+
+Once plays exist, a tiny model has a sensible job: which play, when, from a
+feature vector (composition shares, ground, enemy shape, the odds) to a play
+id; an int8 multi-layer perceptron evaluated in integer maths in the sim,
+trained from self-play on the balance harness, with the rules of this
+section as the fallback when it picks nothing. Deterministic and small; its
+cost is explainability, which the plays' names in the telemetry keep.
