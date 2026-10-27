@@ -66,7 +66,6 @@ const Traits := preload("res://game/unit_traits.gd")
 const BTheme := preload("res://game/battle_theme.gd")
 const AbilityChip := preload("res://game/ability_chip.gd")
 const RoleTile := preload("res://game/role_tile.gd")
-const CONFIRM_SEC := 3.0
 const BANNER_SIZE := 30   # the end banner (Cinzel); the pursuit line is 20
 const LONG_PRESS_SEC := 0.5
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
@@ -225,7 +224,13 @@ var ready_button: Button
 var works_panel: PanelContainer
 var works_buttons := {}
 var _ui_controls: Array[Control] = []
-var _confirm_left := 0.0
+var confirm_panel: PanelContainer   # the Withdraw / Withdraw army confirmation popover
+var confirm_label: Label
+var confirm_ok: Button
+var confirm_cancel: Button
+var _confirm_anchor: Control
+var _confirm_sig := ""
+var _sel_n := 0
 
 
 func build(sim, player_side: int, interactive: bool) -> void:
@@ -294,8 +299,8 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		set_speed_panel_open(not speed_panel.visible)
 		speed_pressed.emit())
 	withdraw_all_button = _button("Withdraw army", Vector2(0, BTN_H), "withdraw")
-	Kit.tip(withdraw_all_button, "Withdraw army", "Every unit leaves the battle. Tap twice to confirm.")
-	withdraw_all_button.pressed.connect(_on_withdraw_all)
+	Kit.tip(withdraw_all_button, "Withdraw army", "Every unit leaves the battle; asks to confirm.")
+	withdraw_all_button.pressed.connect(func(): _open_confirm(withdraw_all_button, "Withdraw the whole army? Every unit leaves the battle.", "Withdraw army", "all"))
 	withdraw_all_button.disabled = not interactive
 	var menu := _button("", Vector2(50, BTN_H), "menu")
 	menu.name = "menu"
@@ -432,8 +437,10 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	run_button = _chip("run", "Run", "run", "Run", "Run or walk: the selection's pace.", "off")
 	_multi(run_button, func(): run_pressed.emit())
 	withdraw_button = _button("Withdraw", Vector2(0, BTN_H), "withdraw")
-	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge.")
-	withdraw_button.pressed.connect(func(): withdraw_pressed.emit())
+	Kit.tip(withdraw_button, "Withdraw", "Leave the battle by your own map edge; asks to confirm.")
+	withdraw_button.pressed.connect(func():
+		var n := maxi(_sel_n, 1)
+		_open_confirm(withdraw_button, "Withdraw %d unit%s by your map edge?" % [n, "" if n == 1 else "s"], "Withdraw", "unit"))
 	# The chips, in the bar's fixed order (see _fit_actions: what does not fit goes under More).
 	var ab_tips := {
 		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it."],
@@ -504,7 +511,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, skirm_button, stance_button, occupy_button,
 		ab_chips[UT.AB_GRENADE], ab_chips[UT.AB_PISTOL], bounds_button, deploy_button, ammo_button, refill_button, forage_button,
 		drop_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
-	for b in [halt_button, run_button, withdraw_button]:
+	for b in [halt_button, run_button]:
 		actions.add_child(b)
 	chips_box = HBoxContainer.new()
 	chips_box.name = "chips"
@@ -518,6 +525,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	more_button.visible = false
 	more_button.pressed.connect(func(): _set_more_open(more_button.button_pressed))
 	actions.add_child(more_button)
+	actions.add_child(withdraw_button)   # the row's last element: at the bar's right edge
 	# The popover above More: every chip that did not fit, one under another (nothing is ever clipped).
 	more_panel = PanelContainer.new()
 	more_panel.name = "more_panel"
@@ -539,6 +547,28 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	opt_box.add_theme_constant_override("separation", 2)
 	opt_panel.add_child(opt_box)
 	_ui_controls.append(opt_panel)
+	confirm_panel = PanelContainer.new()
+	confirm_panel.name = "confirm_panel"
+	confirm_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 6.0))
+	confirm_panel.visible = false
+	root.add_child(confirm_panel)
+	var cbox := VBoxContainer.new()
+	cbox.add_theme_constant_override("separation", 4)
+	confirm_panel.add_child(cbox)
+	confirm_label = Label.new()
+	confirm_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	confirm_label.custom_minimum_size.x = 220.0
+	confirm_label.add_theme_font_size_override("font_size", FONT)
+	cbox.add_child(confirm_label)
+	confirm_ok = _button("Withdraw", Vector2(0, 42), "withdraw")
+	confirm_ok.name = "confirm_ok"
+	confirm_ok.pressed.connect(_confirm_yes)
+	cbox.add_child(confirm_ok)
+	confirm_cancel = _button("Cancel", Vector2(0, 42), "cancel")
+	confirm_cancel.name = "confirm_cancel"
+	confirm_cancel.pressed.connect(close_confirm)
+	cbox.add_child(confirm_cancel)
+	_ui_controls.append(confirm_panel)
 	actions.visible = false
 	actions_box = actions
 	_ui_controls.append(actions)
@@ -901,20 +931,57 @@ func _process(delta: float) -> void:
 		_note_left -= delta
 		if _note_left <= 0.0:
 			arrival_note.visible = false
-	if _confirm_left > 0.0:
-		_confirm_left -= delta
-		if _confirm_left <= 0.0:
-			withdraw_all_button.text = "Withdraw army"
 
 
-func _on_withdraw_all() -> void:
-	if _confirm_left > 0.0:
-		_confirm_left = 0.0
-		withdraw_all_button.text = "Withdraw army"
+## The Withdraw / Withdraw army confirmation: a small popover above its button (docs/design/ui.md "Withdraw at the right").
+func _open_confirm(anchor: Control, text: String, ok_text: String, sig: String) -> void:
+	if confirm_panel.visible and _confirm_anchor == anchor:
+		close_confirm()
+		return
+	set_speed_panel_open(false)
+	_set_more_open(false)
+	_close_options()
+	_confirm_anchor = anchor
+	_confirm_sig = sig
+	confirm_label.text = text
+	confirm_ok.text = ok_text
+	confirm_panel.visible = true
+	_place_confirm()
+
+
+func _confirm_yes() -> void:
+	var sig := _confirm_sig
+	close_confirm()
+	if sig == "all":
 		withdraw_all_pressed.emit()
-	else:
-		_confirm_left = CONFIRM_SEC
-		withdraw_all_button.text = "Tap to confirm"
+	elif sig == "unit":
+		withdraw_pressed.emit()
+
+
+func close_confirm() -> void:
+	if confirm_panel == null:
+		return
+	confirm_panel.visible = false
+	_confirm_anchor = null
+	_confirm_sig = ""
+
+
+func _place_confirm() -> void:
+	if confirm_panel == null or not confirm_panel.visible:
+		return
+	if _confirm_anchor == null or not _confirm_anchor.is_visible_in_tree():
+		close_confirm()
+		return
+	var vp := get_viewport().get_visible_rect().size
+	confirm_panel.reset_size()
+	var sz := confirm_panel.get_combined_minimum_size()
+	var r := _confirm_anchor.get_global_rect()
+	var x := clampf(r.end.x - sz.x, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN))
+	var y := r.position.y - sz.y - GAP
+	if y < MARGIN:
+		y = clampf(r.end.y + GAP, MARGIN, maxf(vp.y - sz.y - MARGIN, MARGIN))
+	confirm_panel.position = Vector2(x, y)
+	confirm_panel.size = sz
 
 
 func set_orders_text(on: bool) -> void:
@@ -1061,6 +1128,7 @@ static func _disc(d: int, col: Color) -> ImageTexture:
 func set_speed_panel_open(on: bool) -> void:
 	speed_panel.visible = on
 	if on:
+		close_confirm()
 		_close_options()
 		speed_panel.reset_size()
 		var r := speed_button.get_global_rect()
@@ -1080,6 +1148,19 @@ func set_speed(q: int, slider_q: int) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# The confirmation popover: Esc or a press outside it (and its button) closes it with no action.
+	if confirm_panel != null and confirm_panel.visible:
+		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+			close_confirm()
+			get_viewport().set_input_as_handled()
+		else:
+			var cp := Vector2(-1, -1)
+			if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+				cp = (event as InputEventScreenTouch).position
+			elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+				cp = (event as InputEventMouseButton).position
+			if cp.x >= 0.0 and not confirm_panel.get_global_rect().has_point(cp) and not _confirm_anchor.get_global_rect().has_point(cp):
+				close_confirm()
 	# Esc closes the options popover without a change; a press outside it (and its chip) closes it too.
 	if opt_panel != null and opt_panel.visible:
 		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
@@ -1125,6 +1206,7 @@ func is_over_ui(screen_pos: Vector2) -> bool:
 func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: int = -1,
 		refill: int = -1, ammo: int = -1, ammo_word: String = "", forage: int = -1, dogs: int = -1,
 		release_armed: bool = false, stance: int = -1, bounds: int = -1, occupy: int = -1) -> void:
+	_sel_n = units.size()
 	for k in _cards:
 		var on := units.has(k)
 		if _tgroups.has(k):
@@ -1329,6 +1411,7 @@ func _fit_now() -> void:
 		_set_more_open(false)
 	_place_more()
 	_place_options()
+	_place_confirm()
 
 
 func _row_w(items: Array, compact: bool) -> float:
@@ -1359,6 +1442,8 @@ func _set_more_open(on: bool) -> void:
 	on = on and more_button.visible and more_box.get_child_count() > 0
 	more_panel.visible = on
 	more_button.set_pressed_no_signal(on)
+	if on:
+		close_confirm()
 	if on or (_opt_chip != null and _opt_chip.get_parent() == more_box):
 		_close_options()
 	if on:
@@ -1462,6 +1547,7 @@ func _open_options(c: AbilityChip) -> void:
 	if rows.is_empty():
 		return
 	set_speed_panel_open(false)
+	close_confirm()
 	if c.get_parent() != more_box:
 		_set_more_open(false)
 	_close_options()

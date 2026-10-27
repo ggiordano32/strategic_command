@@ -19,7 +19,11 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const AbilityChip := preload("res://game/ability_chip.gd")
 
-const SIZES := [[844, 390, true], [1180, 820, false], [1280, 720, false]]
+const SIZES := [[780, 360, true], [844, 390, true], [1180, 820, false], [1280, 720, false], [2560, 1440, false]]
+const GAP := 5.0
+
+var _wd := 0
+var _wd_all := 0
 
 var failures := 0
 var _shots := ""
@@ -154,6 +158,16 @@ func _fit(label: String, expect_run := true) -> void:
 	if h.actions_box.is_visible_in_tree() and h.group_box.is_visible_in_tree():
 		if h.actions_box.get_global_rect().position.x < h.group_box.get_global_rect().end.x - 0.5:
 			bad.append("actions overlap the capsule")
+	if h.withdraw_button.is_visible_in_tree():
+		var wr: Rect2 = h.withdraw_button.get_global_rect()
+		var br: Rect2 = h._bottom.get_global_rect()
+		var right_ok: bool = wr.end.x <= br.end.x + 0.5 and wr.end.x >= br.end.x - GAP - 2.0
+		for c in h._chip_order:
+			if (c as Control).is_visible_in_tree() and (c as Control).get_global_rect().end.x > wr.position.x + 0.5:
+				right_ok = false
+		if h.more_button.is_visible_in_tree() and h.more_button.get_global_rect().end.x > wr.position.x + 0.5:
+			right_ok = false
+		_check(right_ok, "%s %s: Withdraw at the bar's right edge, right of every chip and More (%s, bar %s)" % [_size_name, label, str(wr), str(br)])
 	if under > 0 and not h.more_button.visible:
 		bad.append("chips under More but no More")
 	if under == 0 and h.more_button.visible:
@@ -173,6 +187,63 @@ func _fit(label: String, expect_run := true) -> void:
 		_check(kids_ok, "%s %s: every chip under More sits inside the popover" % [_size_name, label])
 		h._set_more_open(false)
 		await _frames(1)
+
+
+func _click_at(h, p: Vector2) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = p
+	h._input(ev)
+	await _frames(1)
+
+
+## Withdraw and Withdraw army ask first: a popover above the button, Withdraw emits once, Cancel / outside / Esc do not.
+func _confirm_test() -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	_wd = 0
+	_wd_all = 0
+	h.withdraw_pressed.connect(func(): _wd += 1)
+	h.withdraw_all_pressed.connect(func(): _wd_all += 1)
+	for case in [[h.withdraw_button, "unit"], [h.withdraw_all_button, "all"]]:
+		var btn: Button = case[0]
+		var cnt := func() -> int: return _wd if case[1] == "unit" else _wd_all
+		var tag := "%s %s" % [_size_name, btn.name if btn.name != "" else case[1]]
+		var before: int = cnt.call()
+		btn.pressed.emit()
+		await _frames(2)
+		_check(h.confirm_panel.visible and int(cnt.call()) == before, "%s: pressing opens the confirmation and emits nothing" % tag)
+		_check(_rect_in(h.confirm_panel, vp), "%s: the confirmation is inside the viewport (%s)" % [tag, str(h.confirm_panel.get_global_rect())])
+		h.confirm_ok.pressed.emit()
+		await _frames(1)
+		_check(not h.confirm_panel.visible and int(cnt.call()) == before + 1, "%s: the Withdraw row emits once and closes" % tag)
+		btn.pressed.emit()
+		await _frames(2)
+		h.confirm_cancel.pressed.emit()
+		await _frames(1)
+		_check(not h.confirm_panel.visible and int(cnt.call()) == before + 1, "%s: Cancel closes without emitting" % tag)
+		btn.pressed.emit()
+		await _frames(2)
+		await _click_at(h, Vector2(2, 2))
+		_check(not h.confirm_panel.visible and int(cnt.call()) == before + 1, "%s: a press outside closes without emitting" % tag)
+		btn.pressed.emit()
+		await _frames(2)
+		var esc := InputEventKey.new()
+		esc.keycode = KEY_ESCAPE
+		esc.pressed = true
+		h._input(esc)
+		_check(not h.confirm_panel.visible and int(cnt.call()) == before + 1, "%s: Esc closes without emitting" % tag)
+	# One popover at a time.
+	h.withdraw_button.pressed.emit()
+	await _frames(1)
+	h.set_speed_panel_open(true)
+	_check(not h.confirm_panel.visible, "%s: the speed popover closes the confirmation" % _size_name)
+	h.set_speed_panel_open(false)
+	h.withdraw_button.pressed.emit()
+	await _frames(1)
+	_check(h.confirm_panel.visible and not h.speed_panel.visible and not h.opt_panel.visible and not h.more_panel.visible, "%s: opening it closes the others" % _size_name)
+	h.close_confirm()
 
 
 ## Why a fit failed: each control's estimated and real width.
@@ -363,6 +434,7 @@ func _run() -> void:
 			await _fit("role " + str(r), not (str(r).begins_with("guns")))
 		await _select_types([], by_role)
 		await _fit("everything (mixed)")
+		await _confirm_test()
 		await _select_types(["line", "skirmish", "guns_field"], by_role)
 		await _fit("line + skirmish + guns")
 		await _stress()

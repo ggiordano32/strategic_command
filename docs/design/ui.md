@@ -1039,3 +1039,15 @@ action rather than a state) act at once as before.
   Stance / Run rows send their orders; Esc, a selection change, the speed popover, More and an outside press close it with no
   change; the ability tests choose rows. `tests/input_test.gd`: Fire, Skirmish, Deploy, Ammo, Forage, Refill and Release now
   tap the chip, then the row that is not the current state (`_step_opt_row`); their expectations are unchanged.
+
+### Withdraw at the right with a confirmation (as built, 2026-10-27)
+
+Owner's phone playtest. Halt and Run stay at the left of the action row; the unit Withdraw button is now the row's last
+element, after the chips and the More chip, flush with the bar's right edge (its width still counts as fixed in the
+fit, and in compact mode it takes the compact width like the others). The More popover stays right-aligned to the More
+chip. Pressing Withdraw no longer withdraws at once: a small popover (`confirm_panel`) opens above the button, same
+style, placement and close rules as the options popover (kept on screen, Esc or a press outside closes it with no
+action) with one line, "Withdraw N unit(s) by your map edge?", and two 42 px rows, Withdraw (emits `withdraw_pressed`,
+closes) and Cancel. Withdraw army in the top bar uses the same popover ("Withdraw the whole army? Every unit leaves
+the battle.", Withdraw army / Cancel) instead of the old tap-twice text swap (CONFIRM_SEC is gone). Only one popover is
+open at a time (More, options, speed and this one close each other). Tests: `tests/hud_fit_test.gd`.
