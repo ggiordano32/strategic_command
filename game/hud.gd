@@ -103,7 +103,8 @@ var stats_label: Label
 var chips_box: HBoxContainer      # the chips that fit the bar (after Halt / Run / Withdraw)
 var more_button: AbilityChip           # More: opens the popover with the chips that did not fit
 var more_panel: PanelContainer
-var more_box: GridContainer       # (one column; more columns when the list is taller than the room above the bar)
+var more_scroll: ScrollContainer
+var more_box: MoreBox       # (one column; more columns when the list is taller than the room above the bar)
 var opt_panel: PanelContainer     # the options popover of a multi-state chip (docs/design/ui.md "Chip options")
 var opt_box: VBoxContainer
 var cap_layer: Control            # draws the clusters' captions under the bar's chips (a top-level child of chips_box)
@@ -579,11 +580,14 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	more_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.96), 8.0))
 	more_panel.visible = false
 	root.add_child(more_panel)
-	more_box = GridContainer.new()
-	more_box.columns = 1
-	more_box.add_theme_constant_override("h_separation", int(GAP))
-	more_box.add_theme_constant_override("v_separation", int(GAP))
-	more_panel.add_child(more_box)
+	more_box = MoreBox.new()
+	more_box.sep = GAP
+	more_scroll = ScrollContainer.new()   # (only scrolls when no column count fits the viewport: the worst case)
+	more_scroll.name = "more_scroll"
+	more_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	more_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	more_panel.add_child(more_scroll)
+	more_scroll.add_child(more_box)
 	_ui_controls.append(more_panel)
 	opt_panel = PanelContainer.new()
 	opt_panel.name = "opt_panel"
@@ -1688,10 +1692,20 @@ func _place_more() -> void:
 		if (c as Control).visible:
 			chips.append(c)
 	chips = _cluster_sorted(chips)
-	var room := r.position.y - GAP - (BTN_H + 3.0 * MARGIN) - 16.0
+	var pad := more_panel.get_theme_stylebox("panel").get_minimum_size()
+	var below_bar := r.position.y - GAP - (BTN_H + 3.0 * MARGIN) - pad.y   # between the top bar and the More chip
+	var to_edge := r.position.y - GAP - MARGIN - pad.y                      # worst case: over the top bar
+	var max_w := vp.x - 2.0 * MARGIN - pad.x
+	var cw := 0.0
+	for c in chips:
+		cw = maxf(cw, (c as Control).get_combined_minimum_size().x)
+	var max_cols := mini(maxi(1, int((max_w + GAP) / (cw + GAP))), maxi(chips.size(), 1))
+	# 1. A grid: as few columns as let the clusters (a heading row, then their chips) fit between the bar and the chip.
 	var cols := 1
-	while cols < chips.size() and _more_height(chips, cols) > room:
+	while cols < max_cols and _more_height(chips, cols) > below_bar:
 		cols += 1
+	var grid_ok := _more_height(chips, cols) <= below_bar
+	more_box.flow_w = 0.0
 	more_box.columns = cols
 	var seq: Array = []
 	for cl in CLUSTERS:
@@ -1702,16 +1716,38 @@ func _place_more() -> void:
 		if grp.is_empty():
 			continue
 		seq.append(_more_cell(cl))
-		for i in cols - 1:
-			seq.append(_more_cell(""))
+		if grid_ok:
+			for i in cols - 1:
+				seq.append(_more_cell(""))
 		seq.append_array(grp)
-		for i in (cols - grp.size() % cols) % cols:
-			seq.append(_more_cell(""))
+		if grid_ok:
+			for i in (cols - grp.size() % cols) % cols:
+				seq.append(_more_cell(""))
 	for i in seq.size():
 		var node: Node = seq[i]
 		if node.get_parent() == null:
 			more_box.add_child(node)
 		more_box.move_child(node, i)
+	# 2. No grid fits: the clusters flow (a heading, then its chips, wrapping like text), widening until it fits, first
+	# under the bar, then over it; and only if even the widest flow is too tall does the popover scroll.
+	if not grid_ok:
+		var fit := false
+		for lim in [below_bar, to_edge]:
+			var w := cw + 40.0
+			while w <= max_w + 0.5 and not fit:
+				more_box.flow_w = w
+				if more_box.get_combined_minimum_size().y <= lim:
+					fit = true
+				else:
+					w += 12.0
+			if fit:
+				break
+		if not fit:
+			more_box.flow_w = max_w
+	more_scroll.custom_minimum_size = Vector2.ZERO
+	more_panel.reset_size()
+	var content := more_box.get_combined_minimum_size()
+	more_scroll.custom_minimum_size = Vector2(minf(content.x, max_w), minf(content.y, maxf(to_edge, AbilityChip.H)))
 	more_panel.reset_size()
 	var sz := more_panel.get_combined_minimum_size()
 	var x := clampf(r.end.x - sz.x, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN))
@@ -1726,6 +1762,100 @@ func _place_more() -> void:
 # outside, on the chip again, Esc or a selection change closes it with no change. Keys still cycle (battle.gd).
 
 ## A hairline between two clusters of the bar.
+## The More popover's content: a grid of `columns` columns (column widths and row heights from the cells), or, when
+## `flow_w` > 0, the cells flowing left to right like text in that width (a heading cell stays with the cell after it).
+class MoreBox extends Container:
+	var columns := 1:
+		set(v):
+			columns = maxi(v, 1)
+			update_minimum_size()
+			queue_sort()
+	var flow_w := 0.0:
+		set(v):
+			flow_w = v
+			update_minimum_size()
+			queue_sort()
+	var sep := 5.0
+
+	func _cells() -> Array:
+		var a: Array = []
+		for k in get_children():
+			if k is Control and (k as Control).visible:
+				a.append(k)
+		return a
+
+	## [rects per cell, total size]
+	func _plan() -> Array:
+		var cells := _cells()
+		var rects: Array = []
+		var total := Vector2.ZERO
+		if flow_w <= 0.0:
+			var colw: Array = []
+			colw.resize(columns)
+			colw.fill(0.0)
+			var rows := ceili(float(cells.size()) / columns)
+			var rowh: Array = []
+			rowh.resize(maxi(rows, 0))
+			rowh.fill(0.0)
+			for i in cells.size():
+				var m: Vector2 = (cells[i] as Control).get_combined_minimum_size()
+				colw[i % columns] = maxf(colw[i % columns], m.x)
+				rowh[i / columns] = maxf(rowh[i / columns], m.y)
+			var ys: Array = []
+			var y := 0.0
+			for r in rows:
+				ys.append(y)
+				y += rowh[r] + sep
+			var xs: Array = []
+			var x := 0.0
+			for c in columns:
+				xs.append(x)
+				x += colw[c] + sep
+			for i in cells.size():
+				rects.append(Rect2(xs[i % columns], ys[i / columns], colw[i % columns], rowh[i / columns]))
+			total = Vector2(maxf(x - sep, 0.0), maxf(y - sep, 0.0))
+		else:
+			var x := 0.0
+			var y := 0.0
+			var rh := 0.0
+			var rowstart := 0
+			var i := 0
+			while i < cells.size():
+				var m: Vector2 = (cells[i] as Control).get_combined_minimum_size()
+				var unit := m.x
+				var n := 1
+				if str(cells[i].name).begins_with("head_") and i + 1 < cells.size():
+					unit += sep + (cells[i + 1] as Control).get_combined_minimum_size().x
+					n = 2
+				if x > 0.0 and x + unit > flow_w:
+					for j in range(rowstart, rects.size()):
+						rects[j].size.y = rh
+					y += rh + sep
+					x = 0.0
+					rh = 0.0
+					rowstart = rects.size()
+				for k in n:
+					var mk: Vector2 = (cells[i + k] as Control).get_combined_minimum_size()
+					rects.append(Rect2(x, y, mk.x, mk.y))
+					x += mk.x + sep
+					rh = maxf(rh, mk.y)
+					total.x = maxf(total.x, x - sep)
+				i += n
+			for j in range(rowstart, rects.size()):
+				rects[j].size.y = rh
+			total.y = y + rh
+		return [cells, rects, total]
+
+	func _get_minimum_size() -> Vector2:
+		return _plan()[2]
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_SORT_CHILDREN:
+			var p := _plan()
+			for i in p[0].size():
+				fit_child_in_rect(p[0][i], p[1][i])
+
+
 class ClusterDivider extends Control:
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
