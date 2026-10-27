@@ -34,6 +34,7 @@ const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CDip := preload("res://campaign/cdip.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -2049,6 +2050,33 @@ func _g() -> bool:
 	return not ps.is_empty() and CState.grid_on(ps)
 
 
+## The faction whose land a planned march (CRules.plan_path's result) ends a turn in without a right to be there (a
+## trespass, MapOverlay.trespass_owner: only an army standing there at the end of a turn pays), else -1.
+func trespass_on_path(rt: Dictionary) -> int:
+	var cells: Array = rt.get("path", [])
+	var ts: Array = rt.get("t", [])
+	for k in cells.size():
+		var stops: bool = k == cells.size() - 1 or (ts.size() > k + 1 and int(ts[k + 1]) != int(ts[k]))
+		if not stops:
+			continue
+		var o := MapOverlay.trespass_owner(ps, f, CGrid.region(int(cells[k])))
+		if o >= 0:
+			return o
+	return -1
+
+
+## The toast after a march is planned into land at peace: what a trespass costs, and the way round it.
+func trespass_toast(army: int) -> void:
+	var rt := route6(army)
+	if rt.is_empty() or rt.has("why"):
+		return
+	var o := trespass_on_path(rt)
+	if o < 0:
+		return
+	show_toast("Trespass: %d regard a turn per army; war at %d. %s's land: ask for passage in Diplomacy." % [
+		CDip.REG_TRESPASS, CDip.WAR_LINE, CData.faction_name(o)], ["Diplomacy", func(): panels.show_diplomacy(o)])
+
+
 ## Version 6: army's planned or stored march: {cell, tgt, mode, stored,
 ## join (an army of ours it marches to merge into, -1), fleet (a fleet of ours
 ## it boards on arriving, -1)} ({} none).
@@ -2146,6 +2174,7 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 	_replan()
 	save_plan()
 	_t("campaign_input", {"what": "move", "tgt": tgt})
+	trespass_toast(army)
 
 
 ## Version 6: army marches to our army `target` and merges into it on
@@ -2520,6 +2549,8 @@ func path_entry(a: Dictionary, rt: Dictionary) -> Dictionary:
 	var out := {"army": int(a["id"]), "pts": pts, "now": now, "kind": kind}
 	if int(a["f"]) == f and int(plan6(int(a["id"])).get("fleet", -1)) >= 0:
 		out["board"] = 1
+	if int(a["f"]) == f and trespass_on_path(rt) >= 0:
+		out["trespass"] = 1   # (the end marker is drawn in the warning colour)
 	if kind == "merge":
 		var t := CState.army(ps, int(aim.get("join", -1)))
 		if not t.is_empty():

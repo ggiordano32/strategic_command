@@ -987,6 +987,12 @@ class UnitRow extends PressRow:
 		set(v):
 			sub_text = v
 			update_minimum_size()
+	## sub_text is the reason the unit cannot be raised: red, on up to two lines (a long one, "needs a trade agreement
+	## with a European nation", would be cut off at a phone's width on one).
+	var sub_bad := false:
+		set(v):
+			sub_bad = v
+			update_minimum_size()
 	## Compact card: trait glyphs after the name, good / weak against class
 	## rows, the five pips (game/unit_traits.gd). faction: for the fire trait.
 	var detail := true
@@ -1015,6 +1021,8 @@ class UnitRow extends PressRow:
 		var h := 56.0
 		if men >= 0 or sub_text != "":
 			h += 16.0
+		if sub_bad and sub_text != "":
+			h += 14.0
 		return Vector2(200, h)
 
 	func _draw() -> void:
@@ -1086,6 +1094,8 @@ class UnitRow extends PressRow:
 			draw_rect(Rect2(x0, by, bw * frac, 9), Color(col, 0.75))
 			var t := "%d/%d" % [men, full] if sub_text == "" else sub_text
 			draw_string(font, Vector2(x0 + bw + 6, by + 9), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COL_DIM)
+		elif sub_text != "" and sub_bad and detail:
+			draw_multiline_string(font, Vector2(x0, by - 4), sub_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 6, 12, 2, COL_BAD)
 		elif sub_text != "":
 			draw_string(font, Vector2(x0, by + 9), sub_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw, 12, COL_DIM)
 

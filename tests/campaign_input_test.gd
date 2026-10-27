@@ -73,6 +73,8 @@ const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Panels := preload("res://game/campaign/campaign_panels.gd")
+const CDip := preload("res://campaign/cdip.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -105,6 +107,7 @@ var _poll := 0
 
 func _initialize() -> void:
 	OS.add_logger(_errs)
+	Panels.dip_open_all = true   # (the Diplomacy blocks open at once; the diplomacy-screen step switches it off to test the taps)
 	Input.use_accumulated_input = false
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	var st := CState.as_format(CState.new_campaign("InputTest", 3, [rome, greeks]), 5)
@@ -138,7 +141,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _dp_run, _j_done, _s_done,
 	]
 
 
@@ -1276,6 +1279,9 @@ func _n_open() -> void:
 	_check(_nc.find_children("faction_*", "Button", true, false).size() == CData.faction_count(), "the new-campaign screen has a Human / AI toggle per faction")
 	_check(_nc.find_children("team_*", "OptionButton", true, false).size() == CData.faction_count(), "and a team dropdown per faction")
 	_check(_nbtn("all_one_team") != null and _nbtn("everyone_alone") != null, "and the two team buttons")
+	_check(_nc._seg.has("ai_alliances") and int(_nc.settings.get("ai_alliances", -1)) == 1, "the new-campaign screen has the AI alliances setting, On by default")
+	(_nc._seg["ai_alliances"] as Kit.Segmented).changed.emit(0)
+	_check(int(_nc.settings["ai_alliances"]) == 0, "and Off sets it to 0")
 
 
 func _n_idle() -> void:
@@ -1341,6 +1347,7 @@ func _n_check() -> void:
 		_check(CState.same_team(st, rome, carthage) and not CState.same_team(st, rome, greeks) and not CState.same_team(st, greeks, CData.faction_index("gauls")),
 			"whose teams match the screen: %s" % [st["teams"]])
 		_check(CState.dip(st, rome, carthage) == CState.ALLIED, "and team-mates are allied")
+		_check(int(st["settings"].get("ai_alliances", 1)) == 0, "AI alliances Off is stored in the state's settings (only when 0)")
 	if _nc_slot != "":
 		Saves.delete(_nc_slot)
 	_nc.get_parent().queue_free()
@@ -2434,6 +2441,330 @@ func _j_board() -> void:
 		await process_frame
 	_check((cs.ps["regions"][r].get("sq", []) as Array).is_empty(), "shipyard: the group's close button removes the order")
 	cs.close_dialog()
+	hold = false
+
+
+# ------------------------------------------- diplomacy: trust, alliances, passage ---
+
+func _texts(n: Node) -> String:
+	var out := ""
+	for l in n.find_children("*", "Label", true, false):
+		out += (l as Label).text + "\n"
+	return out
+
+
+## The diplomacy screen of a West campaign with a human Miskito (state format 10): the rows, their actions, the inbox,
+## the trespass warnings, the chronicle lines, and the dialog's fit at the phone sizes.
+func _dp_run() -> void:
+	hold = true
+	cs.queue_free()
+	await process_frame
+	CData.use_pack("west")
+	var mk := CData.faction_index("miskito")
+	var eng := CData.faction_index("england")
+	var n := CState.nf()
+	var st := CState.new_campaign("DipView", 3, [mk], {}, [], "west")
+	cs = CampaignScreen.new()
+	cs.no_bar = true
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_dip")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	cs.close_dialog()
+	cs.cover.visible = false
+	Panels.dip_open_all = false
+	cs.panels._dip_open = {}
+	var f: int = cs.f
+	# The top line and the collapsed rows.
+	cs.panels.show_diplomacy()
+	for k in 3:
+		await process_frame
+	var rep = cs.dialog_box.find_child("own_repute", true, false)
+	_check(rep != null and (rep as Label).text == "Your repute: +0", "diplomacy: the top line reads 'Your repute: +0' (%s)" % ((rep as Label).text if rep else "missing"))
+	var row = cs.dialog_box.find_child("dip_england", true, false)
+	_check(row != null and cs.dialog_box.find_child("dip_detail_england", true, false) == null, "diplomacy: a faction's row starts closed")
+	var rel = cs.dialog_box.find_child("dip_rel_england", true, false)
+	_check(rel != null and (rel as Label).text.contains("Allied"), "diplomacy: the England row reads Allied (%s)" % ((rel as Label).text if rel else "missing"))
+	var rg = cs.dialog_box.find_child("dip_regard_england", true, false)
+	_check(rg != null and (rg as Label).text == "Regard of you +30", "diplomacy: England's regard of us is +30 (%s)" % ((rg as Label).text if rg else "missing"))
+	var bar = cs.dialog_box.find_child("dip_bar_england", true, false)
+	_check(bar != null and int(bar.get_meta("value")) == 30, "diplomacy: with a bar for it")
+	var ev := cs.dialog_box.find_child("dip_repute_england", true, false)
+	_check(ev != null and (ev as Label).text == "Repute +0", "diplomacy: and their repute")
+	# A tap on the header opens it; the log has the starting treaty.
+	var press = cs.dialog_box.find_child("dip_press_england", true, false)
+	_check(press is Kit.PressRow, "diplomacy: the header is a PressRow")
+	if press != null:
+		_tap_control(press)
+	for k in 4:
+		await process_frame
+	var det = cs.dialog_box.find_child("dip_detail_england", true, false)
+	_check(det != null, "diplomacy: a tap on the header opens the row")
+	var lg = cs.dialog_box.find_child("dip_log_england_0", true, false)
+	_check(lg != null and (lg as Label).text.ends_with(": starting treaty, +30"), "diplomacy: the log line reads the starting treaty (%s)" % ((lg as Label).text if lg else "missing"))
+	_check(cs.dialog_box.find_child("leave_alliance_england", true, false) != null and cs.dialog_box.find_child("war_england", true, false) != null,
+		"diplomacy: an allied row offers Leave alliance and Declare war")
+	_check(_texts(cs.dialog_box).contains("%d turns' notice" % CDip.ALLIANCE_NOTICE), "diplomacy: Leave alliance states its notice")
+	for k in 4:
+		await process_frame
+	var pp = cs.dialog_box.find_child("dip_press_england", true, false)
+	if pp != null:
+		_tap_control(pp)
+	for k in 6:
+		await process_frame
+	_check(cs.dialog_box.find_child("dip_detail_england", true, false) == null, "diplomacy: and a second tap closes it")
+	# A faction at peace: Propose passage on and off by its regard.
+	var peace := -1
+	for g in n:
+		if g != f and CState.alive(cs.st, g) and CState.dip(cs.st, f, g) == CState.PEACE and not CState.is_human(cs.st, g):
+			peace = g
+			break
+	_check(peace >= 0, "diplomacy: a faction at peace with the Miskito")
+	if peace < 0:
+		Panels.dip_open_all = true
+		hold = false
+		return
+	var pk := str(CData.FACTIONS[peace]["key"])
+	cs.st["regard"][peace * n + f] = 20
+	cs._replan()
+	cs.panels.show_diplomacy(peace)
+	for k in 4:
+		await process_frame
+	var pb = cs.dialog_box.find_child("passage_" + pk, true, false)
+	_check(pb is Button and not (pb as Button).disabled and CAI.why(cs.ps, f, peace, "passage") == "",
+		"diplomacy: Propose passage is on when their regard allows it")
+	if pb != null:
+		_tap_control(pb)
+		for k in 3:
+			await process_frame
+		var got := false
+		for o in cs.orders:
+			got = got or (str(o["t"]) == "propose" and str(o["what"]) == "passage" and int(o["to"]) == peace)
+		_check(got, "diplomacy: it adds a propose passage order")
+		_check(cs.dialog_box.find_child("dip_planned_" + pk, true, false) != null and _texts(cs.dialog_box).contains("Planned: ask for passage"), "diplomacy: and the row shows it planned, with its Cancel")
+		cs.remove_orders(func(o): return str(o["t"]) == "propose")
+	cs.st["regard"][peace * n + f] = 0
+	cs._replan()
+	cs.panels.show_diplomacy(peace)
+	for k in 4:
+		await process_frame
+	pb = cs.dialog_box.find_child("passage_" + pk, true, false)
+	var hint = cs.dialog_box.find_child("hint_passage_" + pk, true, false)
+	_check(pb is Button and (pb as Button).disabled and hint != null and (hint as Label).text.contains("do not trust you"),
+		"diplomacy: Propose passage is off with the refusal as its hint (%s)" % ((hint as Label).text if hint else "missing"))
+	var ab = cs.dialog_box.find_child("alliance_" + pk, true, false)
+	_check(ab is Button and (ab as Button).disabled, "diplomacy: so is Propose alliance")
+	# Gifts.
+	var gb = cs.dialog_box.find_child("gift_100_" + pk, true, false)
+	_check(gb is Button and not (gb as Button).disabled, "diplomacy: Gift 100 is on")
+	var gh = cs.dialog_box.find_child("hint_gift_" + pk, true, false)
+	_check(gh != null and (gh as Label).text.contains("capped at +%d from gifts" % CDip.GIFT_CAP), "diplomacy: its hint states the cap (%s)" % ((gh as Label).text if gh else "missing"))
+	if gb != null:
+		_tap_control(gb)
+		for k in 4:
+			await process_frame
+		var gifted := false
+		for o in cs.orders:
+			gifted = gifted or (str(o["t"]) == "gift" and int(o["to"]) == peace and int(o["gold"]) == 100)
+		_check(gifted, "diplomacy: Gift 100 adds a gift order")
+		var pg = cs.dialog_box.find_child("dip_planned_gift_%s_0" % pk, true, false)
+		_check(pg != null and _texts(pg).contains("Planned: gift 100 gold"), "diplomacy: and the row shows it")
+		var rg2 = cs.dialog_box.find_child("dip_regard_" + pk, true, false)
+		_check(rg2 != null and (rg2 as Label).text == "Regard of you +%d" % (100 / CDip.GIFT_GOLD), "diplomacy: with the regard it buys (%s)" % ((rg2 as Label).text if rg2 else "missing"))
+		cs.remove_orders(func(o): return str(o["t"]) == "gift")
+	cs.st["factions"][f]["treasury"] = 120
+	cs._replan()
+	cs.panels.show_diplomacy(peace)
+	for k in 4:
+		await process_frame
+	_check((cs.dialog_box.find_child("gift_250_" + pk, true, false) as Button).disabled and not (cs.dialog_box.find_child("gift_100_" + pk, true, false) as Button).disabled,
+		"diplomacy: a gift above the treasury is off")
+	cs.st["factions"][f]["treasury"] = 1200
+	# The war confirmation names the repute cost of breaking a treaty.
+	cs._replan()
+	cs.panels._confirm_war(eng)
+	for k in 3:
+		await process_frame
+	_check(_texts(cs.dialog_box).contains("breaking a treaty: repute %d" % CDip.REP_TREATY_BREAK), "diplomacy: war on an ally says 'breaking a treaty: repute -20'")
+	cs.close_dialog()
+	# The inbox: a call to arms and an alliance offer.
+	var enemy := -1
+	for g in n:
+		if g != f and g != eng and g != peace and CState.alive(cs.st, g):
+			enemy = g
+			break
+	cs.st["proposals"].append({"id": 901, "from": eng, "to": f, "what": "call", "vs": enemy, "turn": int(cs.st["turn"])})
+	cs.st["proposals"].append({"id": 902, "from": peace, "to": f, "what": "alliance", "turn": int(cs.st["turn"])})
+	cs.st["proposals"].append({"id": 903, "from": peace, "to": f, "what": "passage", "turn": int(cs.st["turn"])})
+	cs.st["next_proposal"] = 904
+	cs._replan()
+	cs.panels.show_diplomacy()
+	for k in 4:
+		await process_frame
+	var ct = cs.dialog_box.find_child("proposal_text_901", true, false)
+	_check(ct != null and (ct as Label).text == "%s calls you to arms against %s: accepting declares war; refusing costs regard %d and repute %d." % [
+		CData.faction_name(eng), CData.faction_name(enemy), CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED], "inbox: a call reads as agreed (%s)" % ((ct as Label).text if ct else "missing"))
+	_check(cs.dialog_box.find_child("proposal_refuse_901", true, false) != null and cs.dialog_box.find_child("proposal_accept_901", true, false) != null, "inbox: the call has Accept and Refuse")
+	var at = cs.dialog_box.find_child("proposal_text_902", true, false)
+	_check(at != null and (at as Label).text.contains("shared sight") and (at as Label).text.contains("each other's ports") and (at as Label).text.contains("call to arms"), "inbox: an alliance offer states what it gives")
+	var pt = cs.dialog_box.find_child("proposal_text_903", true, false)
+	_check(pt != null and (pt as Label).text.contains("march through your land"), "inbox: a passage request reads as one")
+	var acc = cs.dialog_box.find_child("proposal_accept_901", true, false)
+	if acc != null:
+		_tap_control(acc)
+		for k in 3:
+			await process_frame
+	var ans := false
+	for o in cs.orders:
+		ans = ans or (str(o["t"]) == "answer" and int(o["id"]) == 901 and int(o["accept"]) == 1)
+	_check(ans, "inbox: Accept adds an answer order")
+	cs.orders = []
+	cs.st["proposals"] = []
+	cs._replan()
+	# `--dialog=diplomacy` opens the same screen.
+	cs.close_dialog()
+	cs.panels.show_diplomacy()
+	await process_frame
+	_check(cs.dialog.visible and cs.dialog_title.text == "Diplomacy", "diplomacy: the dialog opens (--dialog=diplomacy)")
+	# The dialog fits the phone sizes, closed and open.
+	var win := root.content_scale_size
+	var root_size := root.size
+	Panels.dip_open_all = true
+	for cfg in [["S", Vector2i(1231, 568)], ["M", Vector2i(886, 409)], ["M", Vector2i(1280, 720)]]:
+		var vp: Vector2i = cfg[1]
+		root.content_scale_size = vp
+		if DisplayServer.get_name() == "headless":
+			root.size = vp
+		for k in 3:
+			await process_frame
+		for open_all in [false, true]:
+			Panels.dip_open_all = open_all
+			cs.close_dialog()
+			cs.panels.show_diplomacy(peace)
+			for k in 4:
+				await process_frame
+			var tag := "diplomacy %s %dx%d %s: " % [cfg[0], vp.x, vp.y, "open" if open_all else "closed"]
+			_check(cs.dialog.position.y >= 0.0 and cs.dialog.position.y + cs.dialog.size.y <= float(vp.y) + 0.5 and cs.dialog.position.x >= 0.0 and cs.dialog.get_global_rect().end.x <= float(vp.x) + 0.5,
+				tag + "the dialog (%s at %s) is inside the viewport" % [str(cs.dialog.size), str(cs.dialog.position)])
+			var bt: Control = cs.dialog_buttons
+			var br: Rect2 = bt.get_global_rect()
+			_check(bt.is_visible_in_tree() and br.position.y >= 0.0 and br.end.y <= float(vp.y) + 0.5 and br.size.y > 0.0, tag + "the buttons row is visible (%s)" % str(br))
+			_check(cs.dialog_box.get_combined_minimum_size().x <= cs.dialog_scroll.size.x + 1.0, tag + "no sideways overflow (%.0f of %.0f)" % [cs.dialog_box.get_combined_minimum_size().x, cs.dialog_scroll.size.x])
+	Panels.dip_open_all = false
+	cs.close_dialog()
+	# The raise dialog: the Miskito musket row says why it is off (a treaty line), on two lines.
+	var r := -1
+	for i in CData.region_count():
+		if int(cs.ps["regions"][i]["owner"]) == f:
+			r = i
+			break
+	cs.st["regard"][eng * n + f] = 0
+	CState.set_dip(cs.st, f, eng, CState.WAR)
+	for g in n:
+		if g != f and CState.dip(cs.st, f, g) >= CState.TRADE:
+			CState.set_dip(cs.st, f, g, CState.PEACE)
+	cs._replan()
+	cs.panels._raise = {}
+	cs.panels.show_raise(r, "army")
+	for k in 4:
+		await process_frame
+	var mrow = cs.dialog_box.find_child("raise_row_musketeers", true, false)
+	if mrow != null:
+		_check((mrow as Kit.UnitRow).sub_text == CDip.TREATY_LINE_WHY and (mrow as Kit.UnitRow).sub_bad,
+			"raise: the musket row reads '%s' (%s)" % [CDip.TREATY_LINE_WHY, (mrow as Kit.UnitRow).sub_text])
+	else:
+		_check(false, "raise: the Miskito have a musket row")
+	cs.close_dialog()
+	# Trespass: a march into a peaceful AI's land warns; an army standing there says so on the bar.
+	cs.no_bar = false
+	var armies: Array = CState.armies_of(cs.ps, f)
+	var aid := int(armies[0]["id"])
+	var a0 := CState.army(cs.st, aid)
+	var home_cell := CState.cell(a0)
+	var cands: Array = []   # cells (not the city's own) of peaceful AI regions
+	for i in CData.region_count():
+		var o := CState.owner(cs.st, i)
+		if o >= 0 and o != f and CState.dip(cs.st, f, o) == CState.PEACE and not CState.is_human(cs.st, o):
+			for c in CGrid.cells_of(i):
+				if c != CGrid.site(i):
+					cands.append(c)
+	cands.sort_custom(func(x, y): return CGrid.cheb(home_cell, int(x)) < CGrid.cheb(home_cell, int(y)))
+	var planned_to := -1
+	for i in mini(cands.size(), 10):
+		cs.orders = []
+		cs._replan()
+		cs.select_army(aid)
+		await process_frame
+		cs.set_move6(aid, int(cands[i]), -1)
+		await process_frame
+		if not _move_order(aid).is_empty() and cs._toast != null and _texts(cs._toast).contains("Trespass"):
+			planned_to = CGrid.region(int(cands[i]))
+			break
+	_check(planned_to >= 0, "trespass: a march into a peaceful AI's land is planned with a warning toast")
+	if planned_to >= 0:
+		_check(_texts(cs._toast).contains("Trespass: %d regard a turn per army; war at %d" % [CDip.REG_TRESPASS, CDip.WAR_LINE]), "trespass: it says '%s'" % _texts(cs._toast).strip_edges().substr(0, 70))
+		cs._refresh_map()
+		await process_frame
+		var flagged := false
+		for pth in cs.overlay.paths6:
+			flagged = flagged or int(pth.get("trespass", 0)) == 1
+		_check(flagged, "trespass: the planned path's end is marked")
+		var cur_o := CState.owner(cs.st, planned_to)
+		_check(MapOverlay.trespass_owner(cs.ps, f, planned_to) == cur_o, "trespass: the overlay's test names the land's owner")
+	# Standing there: the bar's status line.
+	cs.orders = []
+	var trr := CGrid.region(int(cands[0])) if not cands.is_empty() else -1
+	if trr >= 0:
+		var sc := int(cands[0])
+		a0["x"] = CGrid.cx(sc)
+		a0["y"] = CGrid.cy(sc)
+		a0["r"] = trr
+		cs._replan()
+		cs.select_army(-1)
+		cs.select_army(aid)
+		await process_frame
+		await process_frame
+		var bar_txt := ""
+		for l in cs.cmd_bar.find_children("leader_status", "Label", true, false):
+			bar_txt = (l as Label).text
+		_check(bar_txt == "Trespassing in %s's land" % CData.faction_name(CState.owner(cs.st, trr)), "trespass: the bar says '%s'" % bar_txt)
+		_check(MapOverlay.trespass_owner(cs.ps, f, trr) >= 0, "trespass: the map marks the army standing there")
+		# With passage held, neither.
+		cs.st["passage"][CState.owner(cs.st, trr) * n + f] = int(cs.st["turn"]) + 5
+		cs._replan()
+		cs.select_army(-1)
+		cs.select_army(aid)
+		await process_frame
+		await process_frame
+		_check(MapOverlay.trespass_owner(cs.ps, f, trr) < 0, "trespass: passage held ends the warning")
+	cs.no_bar = true
+	# The chronicle lines for the new events.
+	var e1 := peace
+	var evs := {
+		"regard": {"k": "regard", "a": e1, "b": f, "d": -15, "why": "city_taken", "turn": 5},
+		"repute": {"k": "repute", "f": f, "d": -20, "why": "treaty_broken", "turn": 5},
+		"alliance": {"k": "alliance", "a": e1, "b": eng, "turn": 5},
+		"alliance_notice": {"k": "alliance_notice", "f": e1, "with": eng, "turns": 5, "turn": 5},
+		"alliance_left": {"k": "alliance_left", "f": e1, "with": eng, "why": "notice", "turn": 5},
+		"passage": {"k": "passage", "a": e1, "b": f, "until": 15, "turn": 5},
+		"passage_end": {"k": "passage_end", "a": e1, "b": f, "turn": 5},
+		"gold_gift": {"k": "gold_gift", "from": f, "to": e1, "gold": 250, "d": 5, "turn": 5},
+		"trespass": {"k": "trespass", "f": f, "g": e1, "armies": 2, "turn": 5},
+		"call": {"k": "call", "from": eng, "to": f, "vs": e1, "turn": 5},
+		"call_answered": {"k": "call_answered", "from": eng, "to": f, "vs": e1, "accept": 0, "why": "refused", "turn": 5},
+		"call_sat_out": {"k": "call_sat_out", "from": eng, "to": f, "vs": e1, "turn": 5},
+		"war": {"k": "war", "a": e1, "b": f, "why": "trespass", "turn": 5}}
+	for k in evs:
+		_check(cs.panels.event_text(evs[k], f) != "", "chronicle: a line for %s (%s)" % [k, cs.panels.event_text(evs[k], f)])
+	_check(cs.panels.event_text({"k": "regard", "a": e1, "b": f, "d": -4, "why": "trespass", "turn": 5}, f) == "", "chronicle: a regard move under 5 stays out")
+	_check(cs.panels.event_text(evs["war"], f).contains("trespassed in its land"), "chronicle: the trespass war says why")
+	CData.use_pack("rome")
+	cs.close_dialog()
+	root.content_scale_size = win
+	if DisplayServer.get_name() == "headless":
+		root.size = root_size
+	Panels.dip_open_all = true
 	hold = false
 
 

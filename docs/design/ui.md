@@ -412,6 +412,75 @@ copied from the battle's `unit_faction`: card names, battery text, reinforcement
 name: the main-menu unit book and Roles pages (no faction), the "killed by" lists (`Kit.kills_detail`, enemy types), the
 engine-worker note ("on bolts") and the trait text of characters.
 
+### Diplomacy screen: trust, alliances and passage (as built, 2026-10-26)
+
+The view half of the diplomacy rules (`campaign/cdip.gd`; `docs/design/campaign_rules.md`
+"Diplomacy: trust, alliances and passage"). It reads the planned state (`ps`: a gift or a
+planned war already shows) and emits orders; nothing here writes the state. Every number
+in a hint or a confirmation is read from `cdip.gd`'s const table, never typed in.
+
+- **Top of the dialog**: "Your repute: +N" (`own_repute`, coloured by its sign) with a
+  dim note on what moves it; then the inbox, the team header, then one block per live
+  faction but ours. Formats before 10 (no `regard` key) show no trust lines or trust actions.
+- **A faction's block** (`dip_<key>`): a header (a `PanelContainer` holding crest, name in
+  the faction colour, the relation and a +/- mark, with a `Kit.PressRow` laid over it: a tap
+  opens or closes the block, kept in `_dip_open`; the faction asked about via
+  `show_diplomacy(focus)` is open). The relation reads War / Peace / Trade / Allied (team
+  mates "on your team (ally)") with ", passage until turn N", ", they cross our land until
+  turn N" and ", marque until turn N" when held. Under it the strength line, and the trust
+  line: "Regard of you +N" (their regard, `regard[g*n+f]`), a short bar (red below 0, green
+  above, its width the magnitude of -100..100; `dip_bar_<key>`, meta `value`) and "Repute
+  +N" (theirs). `CampaignPanels.dip_open_all` (static) opens every block (the test flag).
+- **Open**: up to 4 lines from `regard_log[g*n+f]`, newest first, "turn 31: you took a
+  city of theirs, -15". The rules store codes ("city_taken"); the screen words them from
+  the row's side (`_regard_why`, unknown codes show as given with underscores spaced). Then
+  the AI's stances (existing peace / trade / team / marque lines), the actions in a flow
+  row, planned orders and the gift chips.
+- **Actions** (the existing `_dip_button` path, so they are orders): Offer peace, Offer
+  trade, Cancel trade, Marque, Join our team (as before); Propose passage and Propose
+  alliance (shown at peace or trade; on when the rules allow and `CAI.why` says yes or the
+  target is a human, who answers next turn; off with the refusal as its hint,
+  `hint_<what>_<key>`, e.g. "they do not trust you (0, 10 needed)"; passage already held
+  reads "Passage held until turn N"); Leave alliance for a non-team ally (confirm dialog
+  with the 5-turn notice and the -20 regard when they are at war; a recorded notice reads
+  "Leaving the alliance: N turns left"); Declare war, whose confirmation lists what it
+  costs from the rules' table: "breaking a treaty: repute -20" on a trade partner or an
+  ally, "an unprovoked war ...: repute -10" when none of their armies stands in our land,
+  their regard -40, the alliance ending. Gift 100 / 250 / 500 gold chips (off above the
+  treasury or at war, `CDip.gift_check` as the hint) with the line "Gifts: 100 gold = +2
+  regard, 250 = +5, 500 = +10, capped at +25 from gifts (now +N); the gift share fades 2 a
+  turn". A pending order of ours on the faction is a "Planned: ..." line with its own
+  Cancel (propose / war, leave alliance, each gift separately). Team mates keep the
+  gift-money / buy-a-city deals and gain no treaty buttons.
+- **Inbox** (`proposal_<id>`, text `proposal_text_<id>`, `proposal_accept_<id>` /
+  `proposal_refuse_<id>`): team (as before), alliance ("shared sight, each other's ports,
+  reinforcing each other's battles and a defensive call to arms"), passage ("asks to march
+  through your land for 10 turns") and a call to arms ("X calls you to arms against Y:
+  accepting declares war; refusing costs regard -20 and repute -5"). All answer with the
+  `answer` order; the end-turn warning lists an unanswered one.
+- **Creation screen**: "AI alliances" On / Off (`ai_alliances`, default On; the rules store
+  it only when 0), after "AI aggression".
+- **Trespass** (the rule is `CDip.may_cross` without passage, the one `end_turn` charges;
+  `MapOverlay.trespass_owner(st, f, region)` is the view's name for it): planning a march
+  whose path ends a turn in such a region toasts "Trespass: -2 regard a turn per army;
+  war at -40. <Faction>'s land: ask for passage in Diplomacy." with a Diplomacy action
+  (`campaign_screen.trespass_toast`; a path only crossing the land in a turn costs nothing,
+  so it is not warned), the path's end gets an orange warning triangle (`COL_TRESPASS`, the
+  `trespass` intent kind), an army of ours standing in such a region wears the same
+  triangle at its banner's corner and the command bar's status line reads "Trespassing in
+  <faction>'s land" while it holds position. Passage held clears all three.
+- **Raise dialog**: a unit row refused for a reason now draws it red on up to two lines
+  (`UnitRow.sub_bad`), so "needs a trade agreement with a European nation" (the Miskito
+  musketeers without a European trade partner) fits a phone at S.
+- **Chronicle**: `event_text` words regard (only moves of 5 or more, and only a faction's
+  regard of us), repute (ours), alliance, alliance_notice, alliance_left, passage,
+  passage_end, gold_gift, trespass, call, call_answered, call_sat_out and the trespass /
+  called wars. `_involves` also reads the keys `with`, `g`, `vs`.
+- Tests: `campaign_input_test` step `_dp_run` (West, human Miskito): the rows, the closed /
+  open block, the log line, Propose passage on / off, the gift, the inbox, the war
+  confirmation, the fit at S / M phone sizes and 1280x720, the musket reason, the trespass
+  toast, mark and bar line, and a chronicle line per event key.
+
 ### The command bar (overworld selection, as built 2026-10-15)
 
 View only (`game/campaign/command_bar.gd`; no rules path, no `campaign/`

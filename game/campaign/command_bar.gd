@@ -39,6 +39,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CLanes := preload("res://campaign/clanes.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
+const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const DragReorder := preload("res://game/drag_reorder.gd")
 
 const DESK_H := 132.0          # bar height, desktop / tablet
@@ -387,6 +388,9 @@ func _status(a: Dictionary) -> Array:
 		return ["Besieged inside the walls", Kit.COL_BAD]
 	var p6: Dictionary = s.plan6(id)
 	if p6.is_empty():
+		var tres: int = MapOverlay.trespass_owner(ps, int(a["f"]), int(a["r"])) if int(a["f"]) == s.f else -1
+		if tres >= 0:
+			return ["Trespassing in %s's land" % CData.faction_name(tres), Color(1.0, 0.55, 0.1)]
 		return ["Holding position", Kit.COL_DIM]
 	var kind: String = s.move_kind(id)
 	var verb: String = {"inside": "Going inside", "siege": "Laying siege", "join": "Joining the siege", "assault": "Storming",

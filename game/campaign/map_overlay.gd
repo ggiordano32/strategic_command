@@ -36,6 +36,7 @@ const FogView := preload("res://game/campaign/fog_view.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CRules := preload("res://campaign/crules.gd")
+const CDip := preload("res://campaign/cdip.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CStorm := preload("res://campaign/cstorm.gd")
@@ -61,6 +62,7 @@ const COL_MOVE := Color(0.95, 0.95, 0.9)
 const COL_ATTACK := Color(1.0, 0.45, 0.35)       # attack, assault, relief, sally
 const COL_SIEGE := Color(1.0, 0.7, 0.25)         # siege, join a siege
 const COL_MERGE := Color(0.55, 0.95, 0.6)
+const COL_TRESPASS := Color(1.0, 0.55, 0.1)      # a march into, or an army standing in, the land of a faction at peace
 const COL_MERGE_NO := Color(0.7, 0.7, 0.68)      # too many units to merge
 const ATTACK_KINDS: Array[String] = ["attack", "assault", "relief", "sally"]
 const SIEGE_KINDS: Array[String] = ["siege", "join"]
@@ -1136,12 +1138,34 @@ static func draw_turn_end(ci: CanvasItem, e: Vector2, col: Color, m: float) -> v
 ## The intent at a path's end: a small badge (swords an attack, a tent a
 ## siege, a plus a merge, a tower going inside); none for a plain march (its
 ## line ends there; the ring marks where this turn's part ends).
+## The faction whose land region r is when an army of f there would be a trespass (CDip.may_cross without passage,
+## the rule end_turn charges for), else -1.
+static func trespass_owner(st: Dictionary, f: int, r: int) -> int:
+	if st.is_empty() or r < 0 or not CDip.on(st) or not CState.is_human(st, f):
+		return -1
+	var o := CState.owner(st, r)
+	if o < 0 or o == f or not CDip.may_cross(st, f, o) or CDip.has_passage(st, f, o):
+		return -1
+	return o
+
+
 static func has_intent(kind: String) -> bool:
-	return ATTACK_KINDS.has(kind) or SIEGE_KINDS.has(kind) or kind == "merge" or kind == "inside"
+	return ATTACK_KINDS.has(kind) or SIEGE_KINDS.has(kind) or kind == "merge" or kind == "inside" or kind == "trespass"
 
 
 static func draw_intent(ci: CanvasItem, p: Vector2, kind: String, col: Color, m: float) -> void:
 	if not has_intent(kind):
+		return
+	if kind == "trespass":
+		# A warning triangle with an exclamation mark.
+		var tsz := 10.0 * m
+		var tri := PackedVector2Array([p + Vector2(0, -tsz), p + Vector2(tsz * 1.05, tsz * 0.8), p + Vector2(-tsz * 1.05, tsz * 0.8)])
+		var ol := PackedVector2Array(tri)
+		ol.append(tri[0])
+		ci.draw_polyline(ol, Color(0, 0, 0, 0.85), 3.5, true)
+		ci.draw_colored_polygon(tri, col)
+		ci.draw_line(p + Vector2(0, -tsz * 0.35), p + Vector2(0, tsz * 0.15), COL_OUTLINE, 2.2 * m, true)
+		ci.draw_circle(p + Vector2(0, tsz * 0.5), 1.4 * m, COL_OUTLINE)
 		return
 	var r := 9.0 * m
 	ci.draw_circle(p, r + 1.5, Color(0, 0, 0, 0.75))
@@ -1696,6 +1720,8 @@ func _path6(pth: Dictionary, pos: Dictionary) -> void:
 		_ci.draw_circle(sp[-1], 9.0 * m, Color(0, 0, 0, 0.6))
 		draw_boat(_ci, sp[-1], COL_BOARD, m)
 	_tips.append([sp[-1], kind, col, str(pth.get("caption", ""))])
+	if int(pth.get("trespass", 0)) != 0:
+		_tips.append([sp[-1] + Vector2(12, -12) * m, "trespass", COL_TRESPASS, ""])   # (a march into land at peace: warned at its end)
 
 
 ## A boarding cell: a rounded teal outline over the cell with a small boat at its centre.
@@ -1851,6 +1877,8 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 		int(a["moved"]) != 0 and human and not grid, CData.FACTIONS[f]["key"] if f >= 0 else "")
 	if grid:
 		draw_stance(_ci, rect, CState.stance(a))
+	if human and f == player and trespass_owner(state, f, int(a["r"])) >= 0:
+		draw_intent(_ci, rect.position + Vector2(rect.size.x, 0), "trespass", COL_TRESPASS, m * 0.7)   # (standing in land at peace without passage)
 	if (not grid and int(a.get("stance", 0)) == CData.STANCE_GARRISON) or (grid and CRules.inside(state, a)):
 		draw_tower(_ci, rect, m)
 	if grid and CRules.afloat(a):

@@ -9,6 +9,7 @@ const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CDip := preload("res://campaign/cdip.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const FogView := preload("res://game/campaign/fog_view.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
@@ -35,6 +36,9 @@ var s  # the campaign screen
 ## Open / closed state of the collapsible card groups this session (never in
 ## the campaign state): key -> bool.
 var _fold: Dictionary = {}
+## The diplomacy screen: factions whose block is open (a tap on the header); dip_open_all opens every block (tests).
+var _dip_open: Dictionary = {}
+static var dip_open_all := false
 var _split_sel: Dictionary = {}  # army id -> Array of selected unit indices
 ## The exchange panel's pending trade: {a (this army), b (the other), out
 ## [indices of a's units going to b], back [indices of b's coming to a]}.
@@ -898,6 +902,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
+		row.sub_bad = not o["ok"]
 		if o["ok"] and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		var key := str(o["t"])
@@ -1239,6 +1244,7 @@ func show_raise(r: int, tab: String = "") -> void:
 			row.modulate = Color(1, 1, 1, 0.82)
 		row.selected = cnt > 0
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
+		row.sub_bad = not ok
 		if ok and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", f))
@@ -1781,6 +1787,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (why_a if o["ok"] else str(o["why"]))
+		row.sub_bad = not ok
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
 		if o["lower"]:
@@ -2363,132 +2370,28 @@ func show_diplomacy(focus: int = -1) -> void:
 	var f: int = s.f
 	if f < 0:
 		return
+	if focus >= 0:
+		_dip_open[focus] = true
 	var focus_row: Control = null
 	var box := Kit.vbox(8)
 	box.add_child(Kit.label("Proposals are answered when the turn is resolved; the other side weighs its strength against yours, how long the war has lasted and its losses.", Kit.FONT_SMALL, Kit.COL_DIM, true))
-	for p in ps["proposals"]:
-		if int(p["to"]) != f or p.has("kind"):
-			continue
-		var pid := int(p["id"])
-		var answered := -1
-		for o in s.orders:
-			if str(o["t"]) == "answer" and int(o["id"]) == pid:
-				answered = int(o["accept"])
-		var h := Kit.hbox(6)
-		h.name = "proposal_%d" % pid
-		var ptxt := "%s offers %s." % [CData.faction_name(int(p["from"])), _what(str(p["what"]))]
-		if str(p["what"]) == "team":
-			ptxt = "%s asks you to join their team (%s)." % [CData.faction_name(int(p["from"])), _team_names(ps, int(p["from"]))]
-		h.add_child(Kit.label(ptxt, Kit.FONT, Kit.COL_GOLD, true))
-		if answered < 0:
-			h.add_child(Kit.icon_button("Accept", "accept", func():
-				s.add_order({"t": "answer", "id": pid, "accept": 1})
-				show_diplomacy(), 80))
-			h.add_child(Kit.icon_button("Refuse", "decline", func():
-				s.add_order({"t": "answer", "id": pid, "accept": 0})
-				show_diplomacy(), 80))
-		else:
-			h.add_child(Kit.label("accepted" if answered == 1 else "refused", Kit.FONT_SMALL, Kit.COL_DIM))
-		box.add_child(h)
+	if CDip.on(ps):
+		var rp := CDip.repute(ps, f)
+		var rl := Kit.label("Your repute: %+d" % rp, Kit.FONT, _trust_col(rp), true)
+		rl.name = "own_repute"
+		box.add_child(rl)
+		var rn := Kit.label("How every faction weighs your word. Breaking treaties, unprovoked wars and refused calls lower it; battles beside an ally raise it; it fades toward 0 each turn. Each faction's regard of you (the bar) is what it did to them, and fades too.", Kit.FONT_SMALL, Kit.COL_DIM, true)
+		rn.name = "repute_note"
+		box.add_child(rn)
+	_dip_inbox(box, ps, f)
 	_team_header(box, ps, f)
-	var mine := _fstrength(ps, f)
 	for g in CState.nf():
 		if g == f or not CState.alive(ps, g):
 			continue
-		var d := CState.dip(ps, f, g)
-		var row := Kit.hbox(6)
-		row.name = "dip_%s" % CData.FACTIONS[g]["key"]
+		var card := _dip_card(ps, f, g)
+		box.add_child(card)
 		if g == focus:
-			focus_row = row
-		row.add_child(Kit.faction_mark(g, 20))
-		var them := _fstrength(ps, g)
-		var nreg := CState.regions_of(ps, g).size()
-		var asof := ""
-		if FogView.on:
-			# (fog: the regions as last seen, the army as far as it is in sight)
-			nreg = 0
-			var oldest := 1 << 30
-			for r2 in CData.region_count():
-				if FogView.shown_owner(s.st, r2) != g:
-					continue
-				nreg += 1
-				if not FogView.region_seen(r2):
-					oldest = mini(oldest, FogView.last_seen(s.st, r2))
-			var unseen_army := false
-			for a2 in CState.armies_of(ps, g):
-				if not FogView.army_seen(s.st, a2):
-					unseen_army = true
-			if oldest < (1 << 30):
-				asof = " (regions as of turn %d)" % oldest
-			if unseen_army:
-				them = 0
-				for a2 in CState.armies_of(ps, g):
-					if FogView.army_seen(s.st, a2):
-						them += CState.strength(a2)
-				asof += " (army: only what you can see)"
-		var desc := "%s - %s. %d regions, %s army.%s" % [CData.faction_name(g), CState.DIP_NAMES[d],
-			nreg, _compare(mine, them), asof]
-		if CState.same_team(ps, f, g):
-			desc = "%s - on your team (ally). %d regions, %s army." % [CData.faction_name(g), CState.regions_of(ps, g).size(), _compare(mine, them)]
-		elif CState.team_members(ps, CState.team(ps, g)).size() > 1:
-			desc += " " + _team_names(ps, g) + "."
-		if CFleet.on(ps):
-			if CSea.pirate(g):
-				desc += " Pirates, infamy %d." % CSea.infamy(ps, g)
-			var mq := CSea.marque_of(ps, f, g)
-			if not mq.is_empty():
-				desc += " Letter of marque: %d turns left." % (int(mq[2]) - int(ps["turn"]))
-		var l := Kit.label(desc, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
-		row.add_child(l)
-		box.add_child(row)
-		var stance := _stance(ps, f, g, d)
-		if stance != null:
-			box.add_child(stance)
-		var tstance := _team_stance(ps, f, g)
-		if tstance != null:
-			box.add_child(tstance)
-		if CFleet.on(ps) and not CState.is_human(ps, g) and CRules.check_proposal(ps, f, g, "marque") == "":
-			var why_m: String = CAI.why(ps, f, g, "marque")
-			var ml := Kit.label("Would accept a letter of marque (%d turns of peace; the pirates plunder %s's enemies at +%d%%)." % [
-				CSea.k("MARQUE_TURNS", 12), CData.faction_name(g if not CSea.pirate(g) else f), CSea.k("MARQUE_BONUS_PCT", 50)]
-				if why_m == "" else "Would refuse a letter of marque: %s." % why_m, Kit.FONT_SMALL, Kit.COL_GOOD if why_m == "" else Kit.COL_DIM, true)
-			ml.name = "marque_stance"
-			box.add_child(ml)
-		if d == CState.ALLIED:
-			if CRules.gift_partner_check(ps, f, g) == "":
-				_ally_deals(box, g)
-			continue
-		var acts := Kit.hbox(6)
-		row.add_child(acts)
-		var planned := ""
-		for o in s.orders:
-			if (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g:
-				planned = str(o.get("what", "war"))
-		if planned != "":
-			acts.add_child(Kit.label("Planned: " + ("ask them to join our team" if planned == "team" else _what(planned)), Kit.FONT_SMALL, Kit.COL_GOOD))
-			acts.add_child(Kit.icon_button("Cancel", "cancel", func():
-				s.remove_orders(func(o): return (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g)
-				show_diplomacy(), 80))
-		else:
-			if d == CState.WAR:
-				acts.add_child(_dip_button("Offer peace", "peace", {"t": "propose", "to": g, "what": "peace"}))
-			if d == CState.PEACE:
-				acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
-			if d == CState.TRADE:
-				acts.add_child(_dip_button("End trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"}))
-			if CFleet.on(ps) and CRules.check_proposal(ps, f, g, "marque") == "":
-				var mb := _dip_button("Marque", "scroll", {"t": "propose", "to": g, "what": "marque"})
-				mb.name = "marque_%s" % CData.FACTIONS[g]["key"]
-				acts.add_child(mb)
-			if CRules.check_proposal(ps, f, g, "team") == "":
-				var tb := _dip_button("Join our team", "alliance", {"t": "propose", "to": g, "what": "team"})
-				tb.name = "team_%s" % CData.FACTIONS[g]["key"]
-				acts.add_child(tb)
-			if d != CState.WAR:
-				var wb := Kit.icon_button("Declare war", "war", func(): _confirm_war(g), 0)
-				wb.add_theme_color_override("font_color", Kit.COL_BAD)
-				Kit.tint_icon(wb, Kit.COL_BAD)
-				acts.add_child(wb)
+			focus_row = card.get_child(0)
 	s.show_dialog("Diplomacy", box, [["Close", Callable()]], 700)
 	if focus_row != null:
 		# Bring the faction asked about into view and mark it.
@@ -2501,6 +2404,395 @@ func show_diplomacy(focus: int = -1) -> void:
 		p.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		focus_row.add_child(p)
 		s.dialog_scroll.call_deferred("ensure_control_visible", focus_row)
+
+
+## The colour of a trust number: red below 0, green above, white at 0.
+func _trust_col(v: int) -> Color:
+	return Kit.COL_BAD if v < 0 else (Kit.COL_GOOD if v > 0 else Color.WHITE)
+
+
+## A short bar for a regard (-100..100): its width is the magnitude, red below 0, green above.
+func _trust_bar(v: int, nm: String) -> Control:
+	var c := Control.new()
+	c.name = nm
+	c.custom_minimum_size = Vector2(72, 8)
+	c.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	c.set_meta("value", v)
+	c.draw.connect(func():
+		var w := c.size.x
+		c.draw_rect(Rect2(0, 0, w, c.size.y), Color(1, 1, 1, 0.12))
+		var fw := w * float(clampi(absi(v), 0, 100)) / 100.0
+		c.draw_rect(Rect2(0, 0, fw, c.size.y), Kit.COL_BAD if v < 0 else Kit.COL_GOOD))
+	return c
+
+
+## What a regard-log reason (a code from campaign/cdip.gd) says, from the row's side: "you ..." is what we did.
+func _regard_why(why: String) -> String:
+	return {"war": "you declared war on them", "city_taken": "you took a city of theirs", "sacked": "you sacked a town of theirs",
+		"trespass": "your armies trespassed in their land", "call_refused": "you left their call to arms unanswered",
+		"trade_cancelled": "you cancelled trade", "left_at_war": "you left the alliance while they were at war",
+		"peace": "peace made", "fought_together": "a battle fought side by side", "gift": "your gift", "treaty": "starting treaty"}.get(why, why.replace("_", " "))
+
+
+func _repute_why(why: String) -> String:
+	return {"treaty_broken": "a broken treaty", "unprovoked_war": "an unprovoked war", "sack": "a town sacked",
+		"call_refused": "a call to arms refused", "fought_together": "a battle fought beside an ally"}.get(why, why.replace("_", " "))
+
+
+## Incoming proposals (not the city offers): team, alliance, passage and the calls to arms.
+func _dip_inbox(box: VBoxContainer, ps: Dictionary, f: int) -> void:
+	for p in ps["proposals"]:
+		if int(p["to"]) != f or p.has("kind"):
+			continue
+		var pid := int(p["id"])
+		var answered := -1
+		for o in s.orders:
+			if str(o["t"]) == "answer" and int(o["id"]) == pid:
+				answered = int(o["accept"])
+		var h := Kit.vbox(4)
+		h.name = "proposal_%d" % pid
+		var fn := CData.faction_name(int(p["from"]))
+		var ptxt := "%s offers %s." % [fn, _what(str(p["what"]))]
+		match str(p["what"]):
+			"team":
+				ptxt = "%s asks you to join their team (%s)." % [fn, _team_names(ps, int(p["from"]))]
+			"alliance":
+				ptxt = "%s offers an alliance: shared sight, each other's ports, reinforcing each other's battles and a defensive call to arms." % fn
+			"passage":
+				ptxt = "%s asks to march through your land for %d turns." % [fn, CDip.PASSAGE_TURNS]
+			"call":
+				ptxt = "%s calls you to arms against %s: accepting declares war; refusing costs regard %d and repute %d." % [fn,
+					CData.faction_name(int(p.get("vs", -1))) if int(p.get("vs", -1)) >= 0 else "an enemy", CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED]
+		var l := Kit.label(ptxt, Kit.FONT, Kit.COL_GOLD, true)
+		l.name = "proposal_text_%d" % pid
+		h.add_child(l)
+		var bh := Kit.hbox(6)
+		if answered < 0:
+			var ab := Kit.icon_button("Accept", "accept", func():
+				s.add_order({"t": "answer", "id": pid, "accept": 1})
+				show_diplomacy(), 80)
+			ab.name = "proposal_accept_%d" % pid
+			bh.add_child(ab)
+			var rb := Kit.icon_button("Refuse", "decline", func():
+				s.add_order({"t": "answer", "id": pid, "accept": 0})
+				show_diplomacy(), 80)
+			rb.name = "proposal_refuse_%d" % pid
+			bh.add_child(rb)
+		else:
+			bh.add_child(Kit.label("accepted" if answered == 1 else "refused", Kit.FONT_SMALL, Kit.COL_DIM))
+		h.add_child(bh)
+		box.add_child(h)
+
+
+## One faction's block: the header (crest, name, relation, their regard and repute; a tap opens it) and, open,
+## the regard log, what they would answer and the actions. The header is child 0 (the focus mark goes there).
+func _dip_card(ps: Dictionary, f: int, g: int) -> Control:
+	var gk := str(CData.FACTIONS[g]["key"])
+	var d := CState.dip(ps, f, g)
+	var team := CState.same_team(ps, f, g)
+	var open: bool = dip_open_all or bool(_dip_open.get(g, false))
+	var card := Kit.vbox(4)
+	card.name = "dip_%s" % gk
+	var head := PanelContainer.new()
+	head.name = "dip_head_%s" % gk
+	var hb := Kit.hbox(8)
+	head.add_child(hb)
+	hb.add_child(Kit.faction_mark(g, 22))
+	var tv := Kit.vbox(2)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(tv)
+	# Name and relation.
+	var rel := CState.DIP_NAMES[d]
+	if team:
+		rel = "on your team (ally)"
+	var held: Array[String] = []
+	if CDip.has_passage(ps, f, g):
+		held.append("passage until turn %d" % int(ps["passage"][g * CState.nf() + f]))
+	if CDip.has_passage(ps, g, f):
+		held.append("they cross our land until turn %d" % int(ps["passage"][f * CState.nf() + g]))
+	if CFleet.on(ps):
+		var mq := CSea.marque_of(ps, f, g)
+		if not mq.is_empty():
+			held.append("marque until turn %d" % int(mq[2]))
+	if not held.is_empty():
+		rel += ", " + ", ".join(held)
+	var nl := Kit.label(CData.faction_name(g), Kit.FONT, CData.faction_color(g).lightened(0.45), true)
+	nl.name = "dip_name_%s" % gk
+	var rl := Kit.label("- " + rel, Kit.FONT, Kit.COL_BAD if d == CState.WAR else Color.WHITE, true)
+	rl.name = "dip_rel_%s" % gk
+	var line1 := Kit.flow(6)
+	line1.add_child(nl)
+	line1.add_child(rl)
+	tv.add_child(line1)
+	# Strength and regions (the fog keeps what it always did: regions as last seen, an army only as far as it is in sight).
+	var mine := _fstrength(ps, f)
+	var them := _fstrength(ps, g)
+	var nreg := CState.regions_of(ps, g).size()
+	var asof := ""
+	if FogView.on:
+		nreg = 0
+		var oldest := 1 << 30
+		for r2 in CData.region_count():
+			if FogView.shown_owner(s.st, r2) != g:
+				continue
+			nreg += 1
+			if not FogView.region_seen(r2):
+				oldest = mini(oldest, FogView.last_seen(s.st, r2))
+		var unseen_army := false
+		for a2 in CState.armies_of(ps, g):
+			if not FogView.army_seen(s.st, a2):
+				unseen_army = true
+		if oldest < (1 << 30):
+			asof = " (regions as of turn %d)" % oldest
+		if unseen_army:
+			them = 0
+			for a2 in CState.armies_of(ps, g):
+				if FogView.army_seen(s.st, a2):
+					them += CState.strength(a2)
+			asof += " (army: only what you can see)"
+	var desc := "%d regions, %s army.%s" % [nreg, _compare(mine, them), asof]
+	if CState.team_members(ps, CState.team(ps, g)).size() > 1:
+		desc += " " + _team_names(ps, g) + "."
+	if CFleet.on(ps) and CSea.pirate(g):
+		desc += " Pirates, infamy %d." % CSea.infamy(ps, g)
+	var dl := Kit.label(desc, Kit.FONT_SMALL, Kit.COL_DIM, true)
+	dl.name = "dip_desc_%s" % gk
+	tv.add_child(dl)
+	# Trust: their regard of us (the bar) and their repute.
+	if CDip.on(ps):
+		var rg := CDip.regard(ps, g, f)
+		var th := Kit.hbox(8)
+		th.name = "dip_trust_%s" % gk
+		var rgl := Kit.label("Regard of you %+d" % rg, Kit.FONT_SMALL, _trust_col(rg))
+		rgl.name = "dip_regard_%s" % gk
+		th.add_child(rgl)
+		th.add_child(_trust_bar(rg, "dip_bar_%s" % gk))
+		var rpv := CDip.repute(ps, g)
+		var rpl := Kit.label("Repute %+d" % rpv, Kit.FONT_SMALL, _trust_col(rpv))
+		rpl.name = "dip_repute_%s" % gk
+		th.add_child(rpl)
+		tv.add_child(th)
+	var tog := Kit.label("-" if open else "+", Kit.FONT_TITLE, Kit.COL_GOLD)
+	tog.name = "dip_toggle_%s" % gk
+	tog.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	hb.add_child(tog)
+	var pr := Kit.PressRow.new()
+	pr.name = "dip_press_%s" % gk
+	pr.pressed.connect(func():
+		_dip_open[g] = not bool(_dip_open.get(g, false)) if not dip_open_all else false
+		show_diplomacy())
+	head.add_child(pr)
+	card.add_child(head)
+	if open:
+		card.add_child(_dip_detail(ps, f, g, d, team))
+	return card
+
+
+## The open part of a faction's block.
+func _dip_detail(ps: Dictionary, f: int, g: int, d: int, team: bool) -> Control:
+	var gk := str(CData.FACTIONS[g]["key"])
+	var mc := MarginContainer.new()
+	mc.name = "dip_detail_%s" % gk
+	mc.add_theme_constant_override("margin_left", 28)
+	var box := Kit.vbox(4)
+	mc.add_child(box)
+	# Why they regard us as they do.
+	if CDip.on(ps):
+		var lg: Array = CDip.regard_log(ps, g, f)
+		var i := lg.size() - 1
+		var shown := 0
+		while i >= 0 and shown < CDip.LOG_MAX:
+			var e: Array = lg[i]
+			var ll := Kit.label("turn %d: %s, %+d" % [int(e[0]), _regard_why(str(e[2])), int(e[1])], Kit.FONT_SMALL, _trust_col(int(e[1])), true)
+			ll.name = "dip_log_%s_%d" % [gk, shown]
+			box.add_child(ll)
+			i -= 1
+			shown += 1
+		if shown == 0:
+			var nl := Kit.label("Nothing has moved their regard of you lately.", Kit.FONT_SMALL, Kit.COL_DIM, true)
+			nl.name = "dip_log_none_%s" % gk
+			box.add_child(nl)
+	if team:
+		if CRules.gift_partner_check(ps, f, g) == "":
+			_ally_deals(box, g)
+		return mc
+	var stance := _stance(ps, f, g, d)
+	if stance != null:
+		box.add_child(stance)
+	var tstance := _team_stance(ps, f, g)
+	if tstance != null:
+		box.add_child(tstance)
+	if CFleet.on(ps) and not CState.is_human(ps, g) and CRules.check_proposal(ps, f, g, "marque") == "":
+		var why_m: String = CAI.why(ps, f, g, "marque")
+		var ml := Kit.label("Would accept a letter of marque (%d turns of peace; the pirates plunder %s's enemies at +%d%%)." % [
+			CSea.k("MARQUE_TURNS", 12), CData.faction_name(g if not CSea.pirate(g) else f), CSea.k("MARQUE_BONUS_PCT", 50)]
+			if why_m == "" else "Would refuse a letter of marque: %s." % why_m, Kit.FONT_SMALL, Kit.COL_GOOD if why_m == "" else Kit.COL_DIM, true)
+		ml.name = "marque_stance"
+		box.add_child(ml)
+	var acts := Kit.flow(6)
+	acts.name = "dip_acts_%s" % gk
+	box.add_child(acts)
+	# Pending orders on this faction.
+	var planned := ""
+	for o in s.orders:
+		if (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g:
+			planned = str(o.get("what", "war"))
+	var planned_leave := false
+	for o in s.orders:
+		if str(o["t"]) == "leave_alliance" and int(o.get("with", -1)) == g:
+			planned_leave = true
+	if planned != "":
+		var ph := Kit.hbox(6)
+		ph.name = "dip_planned_%s" % gk
+		ph.add_child(Kit.label("Planned: " + _planned_text(planned), Kit.FONT_SMALL, Kit.COL_GOOD, true))
+		ph.add_child(Kit.icon_button("Cancel", "cancel", func():
+			s.remove_orders(func(o): return (str(o["t"]) == "propose" or str(o["t"]) == "war") and int(o["to"]) == g)
+			show_diplomacy(), 80))
+		box.add_child(ph)
+	if planned_leave:
+		var lh := Kit.hbox(6)
+		lh.name = "dip_planned_leave_%s" % gk
+		lh.add_child(Kit.label("Planned: leave the alliance (%d turns' notice)." % CDip.ALLIANCE_NOTICE, Kit.FONT_SMALL, Kit.COL_GOOD, true))
+		lh.add_child(Kit.icon_button("Cancel", "cancel", func():
+			s.remove_orders(func(o): return str(o["t"]) == "leave_alliance" and int(o.get("with", -1)) == g)
+			show_diplomacy(), 80))
+		box.add_child(lh)
+	var gi := 0
+	for o in s.orders:
+		if str(o["t"]) == "gift" and int(o.get("to", -1)) == g:
+			var gh := Kit.hbox(6)
+			gh.name = "dip_planned_gift_%s_%d" % [gk, gi]
+			gh.add_child(Kit.label("Planned: gift %d gold." % int(o["gold"]), Kit.FONT_SMALL, Kit.COL_GOOD, true))
+			var go: Dictionary = o
+			gh.add_child(Kit.icon_button("Cancel", "cancel", func():
+				var done := [false]
+				s.remove_orders(func(x):
+					if not done[0] and x == go:
+						done[0] = true
+						return true
+					return false)
+				show_diplomacy(), 80))
+			box.add_child(gh)
+			gi += 1
+	# Allied (not a team): notice of leaving, or the button.
+	if d == CState.ALLIED:
+		var since := CDip.leaving_since(s.st, f, g)
+		if since < 0:
+			since = CDip.leaving_since(s.st, g, f)
+		if since >= 0:
+			var left := maxi(1, CDip.ALLIANCE_NOTICE - (int(s.st["turn"]) - since))
+			var ln := Kit.label("Leaving the alliance: %d turn%s left." % [left, "" if left == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true)
+			ln.name = "dip_leaving_%s" % gk
+			box.add_child(ln)
+		elif not planned_leave:
+			var lb := Kit.icon_button("Leave alliance", "decline", func(): _confirm_leave_alliance(g), 0)
+			lb.name = "leave_alliance_%s" % gk
+			acts.add_child(lb)
+			var lhint := Kit.label("Leave alliance: %d turns' notice; you then trade." % CDip.ALLIANCE_NOTICE, Kit.FONT_SMALL, Kit.COL_DIM, true)
+			lhint.name = "hint_leave_alliance_%s" % gk
+			box.add_child(lhint)
+	if planned == "":
+		if d == CState.WAR:
+			acts.add_child(_dip_button("Offer peace", "peace", {"t": "propose", "to": g, "what": "peace"}))
+		if d == CState.PEACE:
+			acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
+		if d == CState.TRADE:
+			var cb := _dip_button("Cancel trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"})
+			cb.name = "cancel_trade_%s" % gk
+			acts.add_child(cb)
+		if CFleet.on(ps) and CRules.check_proposal(ps, f, g, "marque") == "":
+			var mb := _dip_button("Marque", "scroll", {"t": "propose", "to": g, "what": "marque"})
+			mb.name = "marque_%s" % gk
+			acts.add_child(mb)
+		if d == CState.PEACE or d == CState.TRADE:
+			_dip_treaty_button(box, acts, ps, f, g, "passage", "Propose passage", "scroll")
+			_dip_treaty_button(box, acts, ps, f, g, "alliance", "Propose alliance", "alliance")
+		if CRules.check_proposal(ps, f, g, "team") == "":
+			var tb := _dip_button("Join our team", "alliance", {"t": "propose", "to": g, "what": "team"})
+			tb.name = "team_%s" % gk
+			acts.add_child(tb)
+		if d != CState.WAR:
+			var wb := Kit.icon_button("Declare war", "war", func(): _confirm_war(g), 0)
+			wb.name = "war_%s" % gk
+			wb.add_theme_color_override("font_color", Kit.COL_BAD)
+			Kit.tint_icon(wb, Kit.COL_BAD)
+			acts.add_child(wb)
+	# Gifts.
+	if CDip.on(ps) and d != CState.WAR:
+		var gl := Kit.flow(6)
+		gl.name = "dip_gifts_%s" % gk
+		gl.add_child(Kit.label("Gift gold:", Kit.FONT_SMALL, Kit.COL_DIM))
+		var why_off: Array[String] = []
+		for amt in [100, 250, 500]:
+			var why: String = CDip.gift_check(ps, f, g, amt)
+			var gb := Kit.icon_button("%d" % amt, "coin", func():
+				s.add_order({"t": "gift", "to": g, "gold": amt})
+				show_diplomacy(g), 0)
+			gb.name = "gift_%d_%s" % [amt, gk]
+			gb.disabled = why != ""
+			gb.tooltip_text = why if why != "" else "Give %d gold: +%d regard (capped at +%d from gifts)" % [amt, amt / CDip.GIFT_GOLD, CDip.GIFT_CAP]
+			if why != "":
+				why_off.append("%d: %s" % [amt, why])
+			gl.add_child(gb)
+		box.add_child(gl)
+		var cur := CDip.gift_share(ps, g, f)
+		var gt := "Gifts: 100 gold = +%d regard, 250 = +%d, 500 = +%d, capped at +%d from gifts (now +%d); the gift share fades %d a turn." % [
+			100 / CDip.GIFT_GOLD, 250 / CDip.GIFT_GOLD, 500 / CDip.GIFT_GOLD, CDip.GIFT_CAP, cur, CDip.GIFT_FADE]
+		if not why_off.is_empty():
+			gt += " Off: " + "; ".join(why_off) + "."
+		var gh2 := Kit.label(gt, Kit.FONT_SMALL, Kit.COL_DIM, true)
+		gh2.name = "hint_gift_%s" % gk
+		box.add_child(gh2)
+	return mc
+
+
+## A treaty button whose answer depends on the AI's regard (passage, alliance): shown on when the rules allow and the
+## AI would say yes (or the target is a human, who answers next turn); off with the refusal as its hint otherwise.
+func _dip_treaty_button(box: VBoxContainer, acts: Control, ps: Dictionary, f: int, g: int, what: String, text: String, icon: String) -> void:
+	var gk := str(CData.FACTIONS[g]["key"])
+	var rules_why := CRules.check_proposal(ps, f, g, what)
+	if what == "passage" and CDip.has_passage(ps, f, g):
+		var hl := Kit.label("Passage held until turn %d." % int(ps["passage"][g * CState.nf() + f]), Kit.FONT_SMALL, Kit.COL_GOOD, true)
+		hl.name = "hint_passage_%s" % gk
+		box.add_child(hl)
+		return
+	var b := _dip_button(text, icon, {"t": "propose", "to": g, "what": what})
+	b.name = "%s_%s" % [what, gk]
+	var hint := ""
+	var good := false
+	if rules_why != "":
+		hint = rules_why
+		b.disabled = true
+	elif CState.is_human(ps, g):
+		hint = "they answer next turn"
+	else:
+		var why: String = CAI.why(ps, f, g, what)
+		if why != "":
+			hint = why
+			b.disabled = true
+		else:
+			good = true
+			hint = "would accept%s" % (" (%d turns)" % CDip.PASSAGE_TURNS if what == "passage" else "")
+	b.tooltip_text = hint
+	acts.add_child(b)
+	var l := Kit.label("%s: %s." % [text, hint], Kit.FONT_SMALL,
+		Kit.COL_GOOD if good else Kit.COL_DIM, true)
+	l.name = "hint_%s_%s" % [what, gk]
+	box.add_child(l)
+
+
+func _planned_text(w: String) -> String:
+	return {"team": "ask them to join our team", "alliance": "propose an alliance", "passage": "ask for passage through their land",
+		"war": "declare war"}.get(w, _what(w))
+
+
+func _confirm_leave_alliance(g: int) -> void:
+	var l := Kit.label("Leave the alliance with %s? You stay allied for %d more turns (the notice), then you only trade. If they are at war when you give notice, their regard of you falls by %d." % [
+		CData.faction_name(g), CDip.ALLIANCE_NOTICE, -CDip.REG_LEFT_AT_WAR], Kit.FONT, Color.WHITE, true)
+	s.show_dialog("Leave alliance", l, [["Give notice", func():
+		s.add_order({"t": "leave_alliance", "with": g})
+		show_diplomacy(g)], ["Back", func(): show_diplomacy(g)]], 460)
 
 
 ## What an AI faction would answer to the proposal this row offers (the same
@@ -2611,15 +2903,39 @@ func _dip_button(text: String, icon: String, o: Dictionary) -> Button:
 
 
 func _confirm_war(g: int) -> void:
-	var l := Kit.label("Declare war on %s? It takes effect when the turn is resolved, before armies move, so moves into their land can be planned right away and happen this turn." % CData.faction_name(g), Kit.FONT, Color.WHITE, true)
+	var ps: Dictionary = s.ps
+	var txt := "Declare war on %s? It takes effect when the turn is resolved, before armies move, so moves into their land can be planned right away and happen this turn." % CData.faction_name(g)
+	if CDip.on(ps):
+		for c in _war_costs(ps, s.f, g):
+			txt += "\n" + c
+	var l := Kit.label(txt, Kit.FONT, Color.WHITE, true)
+	l.name = "war_confirm_text"
 	s.show_dialog("War", l, [["Declare war", func():
 		s.add_order({"t": "war", "to": g})
 		show_diplomacy(g)], ["Back", func(): show_diplomacy(g)]], 460)
 
 
+## What a war on g costs in trust, from the rules' table (CDip.on_war): a treaty broken, an unprovoked war, their regard.
+func _war_costs(ps: Dictionary, f: int, g: int) -> Array[String]:
+	var out: Array[String] = []
+	var d := CState.dip(ps, f, g)
+	if d == CState.TRADE or d == CState.ALLIED:
+		out.append("breaking a treaty: repute %d" % CDip.REP_TREATY_BREAK)
+	var provoked := false
+	for a in ps["armies"]:
+		if int(a["f"]) == g and CState.owner(ps, int(a["r"])) == f:
+			provoked = true
+	if not provoked:
+		out.append("an unprovoked war (no army of theirs in your land): repute %d" % CDip.REP_UNPROVOKED)
+	out.append("their regard of you: %d" % CDip.REG_WAR)
+	if d == CState.ALLIED:
+		out.append("the alliance ends")
+	return out
+
+
 func _what(w: String) -> String:
 	return {"peace": "peace", "trade": "a trade agreement", "cancel_trade": "an end to trade", "war": "war",
-		"team": "one team", "marque": "a letter of marque"}.get(w, w)
+		"team": "one team", "marque": "a letter of marque", "alliance": "an alliance", "passage": "military passage", "call": "a call to arms"}.get(w, w)
 
 
 func _fstrength(ps: Dictionary, f: int) -> int:
@@ -2888,7 +3204,7 @@ func _event_seen(st: Dictionary, e: Dictionary) -> bool:
 
 
 func _involves(e: Dictionary, f: int) -> bool:
-	for k in ["f", "from", "to", "a", "b", "o", "by"]:
+	for k in ["f", "from", "to", "a", "b", "o", "by", "with", "g", "vs"]:
 		if e.has(k) and int(e[k]) == f and str(e["k"]) != "move_failed":
 			return true
 	if str(e["k"]) == "battle" or str(e["k"]) == "sea_battle":
@@ -2939,8 +3255,16 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_BAD
 		"war", "destroyed", "debt", "eliminated", "defeat", "order_failed", "move_failed", "starving":
 			return Kit.COL_BAD
-		"team_notice", "team_left":
+		"team_notice", "team_left", "alliance_notice", "passage_end", "call", "call_sat_out":
 			return Kit.COL_GOLD
+		"alliance", "alliance_left", "passage", "gold_gift":
+			return Kit.COL_GOOD if str(e["k"]) != "alliance_left" else Kit.COL_GOLD
+		"regard", "repute":
+			return Kit.COL_GOOD if int(e["d"]) > 0 else Kit.COL_BAD
+		"trespass":
+			return Kit.COL_BAD if int(e["f"]) == f else Kit.COL_GOLD
+		"call_answered":
+			return Kit.COL_GOOD if int(e["accept"]) != 0 else Kit.COL_BAD
 		"team_joined":
 			return Kit.COL_GOOD
 		"siege":
@@ -3032,7 +3356,51 @@ func event_text(e: Dictionary, f: int) -> String:
 		"destroyed":
 			return "A %s army of %d men was destroyed at %s with nowhere to retreat." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), city.call(e["r"])]
 		"war":
+			var wwhy := str(e.get("why", ""))
+			if wwhy == "trespass":
+				return "%s declares war on %s: their armies trespassed in its land." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+			if wwhy == "called":
+				return "%s declared war on %s, answering an ally's call to arms." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
 			return "%s declared war on %s." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"regard":
+			# Only what moves another faction's regard of us, and only the larger moves (the log on the Diplomacy screen has the rest).
+			if f < 0 or int(e["b"]) != f or absi(int(e["d"])) < 5:
+				return ""
+			return "%s's regard of you: %+d (%s)." % [CData.faction_name(int(e["a"])), int(e["d"]), _regard_why(str(e["why"]))]
+		"repute":
+			if f < 0 or int(e["f"]) != f:
+				return ""
+			return "Your repute: %+d (%s)." % [int(e["d"]), _repute_why(str(e["why"]))]
+		"alliance":
+			return "%s and %s signed an alliance." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
+		"alliance_notice":
+			return "%s gave notice of leaving its alliance with %s: in %d turns they only trade." % [CData.faction_name(int(e["f"])), CData.faction_name(int(e["with"])), int(e["turns"])]
+		"alliance_left":
+			return "The alliance of %s and %s is over%s." % [CData.faction_name(int(e["f"])), CData.faction_name(int(e["with"])),
+				" (%s sat out the war)" % CData.faction_name(int(e["with"])) if str(e.get("why", "")) == "sat_out" else ""]
+		"passage":
+			return "%s lets %s's armies cross its land until turn %d." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"])), int(e["until"])]
+		"passage_end":
+			return "%s's passage through %s's land has ended." % [CData.faction_name(int(e["b"])), CData.faction_name(int(e["a"]))]
+		"gold_gift":
+			return "%s gave %s %d gold%s." % [CData.faction_name(int(e["from"])), CData.faction_name(int(e["to"])), int(e["gold"]),
+				" (regard +%d)" % int(e["d"]) if int(e["d"]) > 0 else " (their regard is at the gift cap)"]
+		"trespass":
+			if f < 0:
+				return ""
+			if int(e["f"]) == f:
+				return "Your %s trespassed in %s's land: its regard of you falls (%d)." % ["army" if int(e["armies"]) == 1 else "%d armies" % int(e["armies"]), CData.faction_name(int(e["g"])), CDip.REG_TRESPASS * int(e["armies"])]
+			return "%s's %s trespassed in your land." % [CData.faction_name(int(e["f"])), "army" if int(e["armies"]) == 1 else "%d armies" % int(e["armies"])]
+		"call":
+			if f < 0:
+				return ""
+			return "%s calls %s to arms against %s." % [CData.faction_name(int(e["from"])), CData.faction_name(int(e["to"])), CData.faction_name(int(e["vs"]))]
+		"call_answered":
+			if int(e["accept"]) != 0:
+				return "%s answered %s's call and went to war on %s." % [CData.faction_name(int(e["to"])), CData.faction_name(int(e["from"])), CData.faction_name(int(e["vs"]))]
+			return "%s refused %s's call to arms against %s." % [CData.faction_name(int(e["to"])), CData.faction_name(int(e["from"])), CData.faction_name(int(e["vs"]))]
+		"call_sat_out":
+			return "%s sat out %s's war on %s." % [CData.faction_name(int(e["to"])), CData.faction_name(int(e["from"])), CData.faction_name(int(e["vs"]))]
 		"peace":
 			return "%s and %s made peace." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
 		"trade":

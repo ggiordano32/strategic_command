@@ -441,6 +441,9 @@ func _build_settings() -> Control:
 		"Battles", "Ask: you choose between fighting and auto-resolving each battle you are in. Always auto: every battle is resolved at once.")
 	_setting_seg(body, "ai_aggression", "AI aggression", "How eagerly the AI factions go to war.", ["Calm", "Normal", "Aggressive"],
 		"AI aggression", "Calm AIs keep the peace longer; aggressive ones pick wars early and often.")
+	settings["ai_alliances"] = 1   # (the rules store it only when 0; CState drops a 1)
+	_setting_seg(body, "ai_alliances", "AI alliances", "Whether AI factions ally with one another when threatened.", ["On", "Off"],
+		"AI alliances", "On: a threatened AI faction may propose an alliance to a neighbour it regards well, and allies are called to each other's defence. Off: AI factions never ally with one another (they still offer alliances to players).")
 	settings["ai_battle_skill"] = AI_AVERAGE
 	settings["ai_campaign_skill"] = AI_AVERAGE
 	_setting_seg(body, "ai_battle_skill", "Battle AI", "How well the AI fights the battles you play.", SKILL_LABELS,
@@ -531,7 +534,7 @@ func _set_pack(key: String) -> void:
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0], "team_regions": [0, 1]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0], "team_regions": [0, 1], "ai_alliances": [1, 0]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]
