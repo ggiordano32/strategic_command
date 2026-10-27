@@ -272,23 +272,27 @@ func _campaign_page() -> void:
 		if c is HBoxContainer:
 			rows += 1
 	_check(rows == 2, "Your campaigns lists both local saves (%d)" % rows)
-	_check(_btn("card_west") != null and _btn("card_rome") != null, "two setting cards")
+	var ncards := 0
+	for c in m._pages["campaign"].find_children("card_*", "Button", true, false):
+		ncards += 1
+	_check(ncards == 1 and _btn("card_story") != null, "the Campaign page has exactly one card, the story (%d)" % ncards)
+	_check(_btn("card_west") == null and _btn("card_rome") == null, "... no setting cards (Rome is the Grand Campaign's)")
 	_check(_btn("home_Import") != null, "Import is on the Campaign page")
 	await _shot("campaign_page")
-	for pk in ["west", "rome"]:
-		await _press("card_" + pk)
-		_check(m._new_campaign != null and m._new_campaign.pack_pick == pk, "card %s opens the new-campaign page" % pk)
-		_check(CData.pack == pk, "... on the %s setting" % pk)
-		var key := "brethren" if pk == "west" else "rome"
-		_check(m._new_campaign.find_child("row_" + key, true, false) != null, "... with its faction rows (%s)" % key)
-		_check(m._new_campaign.find_child("pack_west", true, false) == null, "... without the Setting row")
-		await _shot("faction_" + pk)
-		await _faction_checks(m._new_campaign, key)
-		if pk == "west":
-			await _scroll_shot(m._new_campaign, "faction_west_settings", 100000)
-		m._new_campaign.back.emit()
-		await _frames(3)
-		_check(m._new_campaign == null and m._menu.visible and m.page == "campaign", "Back from the faction page returns to Campaign")
+	await _press("card_story")
+	var nc: Control = m._new_campaign
+	_check(nc != null and nc.story_only and not nc.online and CData.pack == "west", "the story card opens the story setup on the West setting")
+	_check(nc.find_children("row_*", "PanelContainer", true, false).is_empty() and nc.find_children("faction_*", "Button", true, false).is_empty(), "... without faction rows")
+	_check(nc.find_child("pack_west", true, false) == null and nc.find_child("pack_rome", true, false) == null, "... without the Setting row")
+	_check(nc.find_child("all_one_team", true, false) == null or not (nc.find_child("all_one_team", true, false) as Control).is_visible_in_tree(), "... without the team buttons")
+	for nm in ["story_brethren", "story_brethren_coop", "campaign_name", "campaign_seed", "start_campaign", "ai_battle_skill_2", "autoresolve_auto", "deploy_time", "time_limit"]:
+		_check(nc.find_child(nm, true, false) != null, "the story setup has %s" % nm)
+	_check(nc.find_child("step_victory_regions_plus", true, false) == null, "... and no victory settings (the story has its own ending)")
+	_check(not (nc.find_child("start_campaign", true, false) as Button).disabled, "Start is on (it plays the story)")
+	await _shot("story_setup")
+	nc.back.emit()
+	await _frames(3)
+	_check(m._new_campaign == null and m._menu.visible and m.page == "campaign", "Back from the story setup returns to Campaign")
 	await _press("home_Import")
 	_check(m.page == "import", "Import opens the import page")
 	m._back_btn.pressed.emit()
@@ -339,6 +343,19 @@ func _grand_page() -> void:
 		await _press("home_Online_co-op")
 		_check(m._new_campaign != null and m._new_campaign.online and m._new_campaign.pack_pick == pk, "Host opens the online faction page for %s" % pk)
 		_check(m._new_campaign.find_child("nc_title", true, false).text == "New grand campaign", "... titled New grand campaign")
+		var hn: Control = m._new_campaign
+		_check(CData.pack == pk and hn.find_child("row_" + ("brethren" if pk == "west" else "rome"), true, false) != null, "... on the %s setting, with its faction rows" % pk)
+		_check(hn.find_child("pack_west", true, false) == null and not hn.story_only, "... without the Setting row, not the story setup")
+		_check((hn.find_child("story_brethren_online", true, false) != null) == (pk == "west"), "... the online story card only on the West setting")
+		# Hosting: two humans picked, the state the Host path creates (the server call itself needs a server).
+		var f1 := CData.faction_index("rome" if pk == "rome" else "england")
+		var f2 := CData.faction_index("carthage" if pk == "rome" else "france")
+		hn._pick(f1)
+		await _frames(2)
+		_check(not (hn.find_child("start_campaign", true, false) as Button).disabled, "... one human enables Start (a solo campaign on the server)")
+		hn._pick(f2)
+		var hst: Dictionary = hn.build_state("HostTest", 7)
+		_check(CData.pack == pk and str(hst.get("pack", "rome")) == pk and (hst["humans"] as Array).size() == 2 and (hst["humans"] as Array).has(f1), "... Host creates a %s campaign (CData.pack %s, state pack %s, humans %s)" % [pk, CData.pack, hst.get("pack", "(none)"), hst["humans"]])
 		if pk == "west":
 			await _shot("faction_west_online")
 			await _scroll_shot(m._new_campaign, "faction_west_online_bottom", 100000)
@@ -906,8 +923,14 @@ func _phone() -> void:
 		await _frames(4)
 	m.show_page("campaign")
 	await _frames(2)
-	for pk in ["west", "rome"]:
-		await _press("card_" + pk)
+	for pk in ["story", "host_west", "host_rome"]:
+		if pk == "story":
+			await _press("card_story")
+		else:
+			m.show_page("grand")
+			await _frames(2)
+			await _press("host_pack_" + pk.get_slice("_", 1))
+			await _press("home_Online_co-op")
 		var nc: Control = m._new_campaign
 		await _frames(4)
 		_check(nc.find_child("settings_fold", true, false) != null and not nc.find_child("settings_body", true, false).visible, "phone: the Settings panel is folded under a Settings header (%s)" % pk)
@@ -916,14 +939,11 @@ func _phone() -> void:
 			if (r as Control).get_global_rect().end.x > vp.x + 0.5:
 				wide += 1
 		_check(wide == 0, "phone: the faction rows fit the width (%s)" % pk)
-		await _faction_checks(nc, "england" if pk == "west" else "rome")
-		await _shot("faction_%s_phone" % pk)
+		if pk != "story":
+			await _shot("faction_%s_phone" % pk)
 		nc.find_child("settings_fold", true, false).pressed.emit()
 		await _frames(3)
 		_check(nc.find_child("settings_body", true, false).visible, "phone: the fold opens")
-		if pk == "west":
-			await _scroll_shot(nc, "faction_west_phone_settings", 100000)
-			await _scroll_shot(nc, "faction_west_phone_rows", 560)
 		nc.back.emit()
 		await _frames(3)
 	m.show_page("home")

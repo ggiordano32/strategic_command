@@ -660,6 +660,19 @@ co-op) apart from the single-player Campaign, "make it look like a modern menu",
 `game/main.gd` builds the pages; the new view code is in `game/menu/` (`menu_prefs.gd`, `menu_style.gd`,
 `emblem.gd`, `menu_bg.gd`, `diorama.gd`). View only: nothing in `sim/` or `campaign/` changed.
 
+**2026-10-27, the Campaign page is the story only (bug and reshape).** Owner: "I can no longer start a roman campaign. The
+campaign shows Caribbean when i choose either option ... If the campaign is only the single player story we should remove
+the Rome selection and not allow choosing of armies, that is reserved for the Grand Campaign." Cause: since the Story panel
+went in, the offline new-campaign screen showed it above the faction rows for every setting and its buttons ("Play the story",
+"Play with two") call `_start_story`, which forces `PackView.use_pack("west")` (`new_campaign.gd`, `_start_story`); the Rome
+card led to a Rome-titled screen whose prominent Start buttons all started the West story. Now: the Campaign page has one
+card (`card_story`, "The Brethren's Due") that opens the new-campaign screen with `story_only` (no Setting row, no faction
+rows or team buttons; the name, seed and the settings the story reads: Battles, Battle AI, Campaign AI, Deployment, Battle
+time; Start plays the one-captain story, "Two captains" is the card below). Rome and the faction pick live only in the Grand
+Campaign's Host card (`host_pack_west` / `host_pack_rome` then Host: the faction page, one human at least (2026-10-27: a solo campaign can be hosted on the server, no join code; before it needed two); the
+online story card shows on the West setting only). "Your campaigns" and Continue open saves of either setting as before.
+`NewCampaign.build_state` is the one place a faction campaign's state is made (tests assert Host + Rome gives a Rome state).
+
 **Title screen.** The wordmark top-left (the last-played setting's emblem, "STRATEGIC COMMAND" in Cinzel Bold from
 `assets/ui/fonts/` when present, else the UI font, and the setting's subtitle), a left-aligned stack of five entries
 over a full-bleed background with a dark gradient under the stack (phones, `UiScale.is_touch()` and a logical

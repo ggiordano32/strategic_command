@@ -251,7 +251,7 @@ func _ready() -> void:
 			show_page("server")
 			_server_page.autostart.call_deferred(int(a.get_slice("=", 1)))
 		elif a == "--new-campaign":
-			_new_campaign_page()  # testing aid
+			_new_campaign_page(false, "west", true)  # testing aid
 		elif a == "--custom" or a.begins_with("--custom-template=") or a.begins_with("--custom-join="):
 			if custom == null:
 				_open_custom()  # testing aid (the screen reads the rest)
@@ -825,14 +825,16 @@ func _slide_in(nodes: Array) -> void:
 		i += 1
 
 
-func _pack_card(pack: String, label: String) -> Button:
+func _story_card() -> Button:
+	var pack := "west"
+	var label := "The Brethren's Due"
 	var b := Button.new()
-	b.name = "card_" + pack
+	b.name = "card_story"
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(250, 220)
 	MenuStyle.card_style(b)
 	b.pressed.connect(AudioFx.click)
-	b.pressed.connect(_new_campaign_page.bind(false, pack))
+	b.pressed.connect(_new_campaign_page.bind(false, pack, true))
 	b.mouse_entered.connect(func(): _bg.show_pack(pack))
 	var v := VBoxContainer.new()
 	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -852,7 +854,7 @@ func _pack_card(pack: String, label: String) -> Button:
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(t)
-	var sub := Kit.label(PackView.subtitle(pack), 13, Kit.COL_DIM, true)
+	var sub := Kit.label("The Caribbean, 1665: one captain, or two on this device.", 13, Kit.COL_DIM, true)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(sub)
@@ -863,14 +865,13 @@ func _pack_card(pack: String, label: String) -> Button:
 func _build_campaign(bg: Control) -> Control:
 	var vb := _page_box(bg)
 	vb.add_child(_heading("Campaign"))
-	vb.add_child(Kit.label("One player, or several taking turns on this device. Pick a setting to begin.", 14, Kit.COL_DIM))
+	vb.add_child(Kit.label("The story campaign: the Brethren of the Coast, one player or several taking turns on this device.", 14, Kit.COL_DIM))
 	var cards := HFlowContainer.new()
 	cards.add_theme_constant_override("h_separation", 16)
 	cards.add_theme_constant_override("v_separation", 12)
 	cards.alignment = FlowContainer.ALIGNMENT_CENTER
-	for key in ["west", "rome"]:
-		if CData.has_pack(key):
-			cards.add_child(_pack_card(key, CARD_TITLES[key]))
+	if CData.has_pack("west"):
+		cards.add_child(_story_card())
 	vb.add_child(cards)
 	var yh := Kit.hbox(8)
 	yh.add_child(Kit.label("Your campaigns", 20, Kit.COL_GOLD))
@@ -899,7 +900,7 @@ func _build_grand(bg: Control) -> Control:
 	_grand_col = vb
 	vb.add_theme_constant_override("separation", 12)
 	vb.add_child(_heading("Grand Campaign"))
-	var intro := Kit.label("Online co-op: each player on their own device; the turn resolves when everyone has submitted.", 14, Kit.COL_DIM, true)
+	var intro := Kit.label("Pick a setting (Rome or the Caribbean) and a faction: online, alone or with friends; the turn resolves when everyone has submitted.", 14, Kit.COL_DIM, true)
 	intro.name = "grand_intro"
 	vb.add_child(intro)
 	_grand_cards = BoxContainer.new()
@@ -1002,7 +1003,7 @@ func _build_host_card() -> Control:
 		_gh_pack = first
 	var hb := Kit.hero_button("Host", "", func(): _new_campaign_page(true, _gh_pack), 0, 20)
 	hb.name = "home_Online_co-op"
-	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (two at least) and the rules, then send the join code.")
+	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (one at least: alone on the server, or with friends who join by code) and the rules.")
 	v.add_child(hb)
 	var st := Kit.hbox(8)
 	_net_dot = Kit.dot(Kit.COL_DIM)
@@ -1643,11 +1644,12 @@ func _notification(what: int) -> void:
 		go_back()
 
 
-func _new_campaign_page(online: bool = false, pack: String = "") -> void:
+func _new_campaign_page(online: bool = false, pack: String = "", story: bool = false) -> void:
 	_menu.visible = false
 	_new_campaign = NewCampaign.new()
 	_new_campaign.online = online
 	_new_campaign.pack_pick = pack
+	_new_campaign.story_only = story
 	_new_campaign.created_online.connect(func(cid, code):
 		_new_campaign.queue_free()
 		_new_campaign = null

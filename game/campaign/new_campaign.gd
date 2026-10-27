@@ -6,7 +6,7 @@ extends Control
 ## device takes). Name, seed and settings. Emits `start(data, slot)` with
 ## fresh save data, or `back`. Local play with several humans is hot seat
 ## (the campaign screen cycles through every human seat). Online mode
-## (`online` = true): at least two humans, one join code lets the others each
+## (`online` = true): at least one human (alone on the server, or one join code lets the others each
 ## claim a free seat; plus the Discord webhook, your Discord user id and (if
 ## the server wants one) an invite key; Start creates the campaign on the
 ## server and emits `created_online(id, code)`.
@@ -68,6 +68,9 @@ var _steppers := {}      # settings key -> [value Label, format]
 var online := false
 ## Open on this setting and hide the Setting row (the title menu's cards).
 var pack_pick := ""
+## The Campaign page's screen (2026-10-27): the single-player story only, "The Brethren's Due" (West): no setting pick,
+## no faction rows or teams, only the settings the story reads. Rome and the faction pick are the Grand Campaign's (`online`).
+var story_only := false
 var _online_box: Control
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
@@ -131,7 +134,7 @@ func _ready() -> void:
 	_title_emblem = Kit.emblem(pk, 36)
 	_title_emblem.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(_title_emblem)
-	_title_label = Kit.title("New grand campaign" if online else "New campaign", 24 if not _narrow else 18)
+	_title_label = Kit.title("New grand campaign" if online else ("The Brethren's Due" if story_only else "New campaign"), 24 if not _narrow else 18)
 	_title_label.name = "nc_title"
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -165,7 +168,7 @@ func _ready() -> void:
 	_info.name = "nc_info"
 	v.add_child(_info)
 	var avail := PackView.available()
-	if avail.size() > 1 and pack_pick == "":
+	if avail.size() > 1 and pack_pick == "" and not story_only:
 		var sr0 := Kit.flow(8)
 		sr0.add_child(Kit.label("Setting", Kit.FONT, Kit.COL_DIM))
 		for c in avail:
@@ -175,7 +178,7 @@ func _ready() -> void:
 			sr0.add_child(sb)
 			_pack_buttons[str(c[0])] = sb
 		v.add_child(sr0)
-	if CData.has_pack("west"):
+	if CData.has_pack("west") and (story_only or CData.pack == "west"):
 		v.add_child(_build_story())
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
@@ -188,11 +191,14 @@ func _ready() -> void:
 	Kit.nav_style(b_own)
 	Kit.tip(b_own, "Own teams", "Every faction on a team of its own again.")
 	team_row.add_child(b_own)
+	team_row.visible = not story_only
 	v.add_child(team_row)
 	_list = Kit.vbox(6)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_list.visible = not story_only
 	v.add_child(_list)
-	_build_rows()
+	if not story_only:
+		_build_rows()
 	v.add_child(_build_settings())
 	if online:
 		v.add_child(_build_online())
@@ -429,6 +435,12 @@ func _build_settings() -> Control:
 	sh.add_child(dice)
 	_srow(body, "seed", "Seed", "The same seed gives the same map.", sh)
 	body.add_child(Kit.rule())
+	if story_only:
+		_build_story_settings(body)
+		if _narrow:
+			body.visible = false
+			_fold_button.text = "Settings  +"
+		return panel
 	var vh := Kit.hbox(14)
 	vh.add_child(_stepper("victory_regions", "%d regions", "Regions to win", "Hold this many regions to win outright."))
 	vh.add_child(_stepper("victory_capitals", "%d cities", "Great cities to win", "...and hold this many of the great cities."))
@@ -469,6 +481,30 @@ func _build_settings() -> Control:
 		body.visible = false
 		_fold_button.text = "Settings  +"
 	return panel
+
+
+## The story's settings: only what `_start_story` reads (battles, the two AI skills, deployment and battle time).
+func _build_story_settings(body: Control) -> void:
+	_setting_seg(body, "autoresolve", "Battles", "Fight the battles yourself, or let them resolve.", ["Ask", "Always auto"],
+		"Battles", "Ask: you choose between fighting and auto-resolving each battle you are in. Always auto: every battle is resolved at once.")
+	settings["ai_battle_skill"] = AI_AVERAGE
+	settings["ai_campaign_skill"] = AI_AVERAGE
+	_setting_seg(body, "ai_battle_skill", "Battle AI", "How well the AI fights the battles you play.", SKILL_LABELS,
+		"Battle AI", "Easy makes a new player's mistakes; Skilled reads the battle and punishes yours.")
+	_setting_seg(body, "ai_campaign_skill", "Campaign AI", "How well the AI runs its empire.", SKILL_LABELS,
+		"Campaign AI", "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time.")
+	settings["deploy_time"] = 60
+	var db := Kit.dropdown(Kit.DEPLOY_OPTIONS, 60, func(x): settings["deploy_time"] = int(x), 0, 14)
+	db.name = "deploy_time"
+	Kit.tip(db, "Deployment", "Before a battle you fight yourself: time to place your units in your zone; Unlimited waits until every player is ready; auto-resolve ignores it.")
+	_deploy_dd = db
+	_srow(body, "deploy", "Deployment", "Time to place your units before a battle.", db)
+	settings["time_limit"] = 900
+	var tb := Kit.dropdown(Kit.TIME_OPTIONS, 900, func(x): settings["time_limit"] = int(x), 0, 14)
+	tb.name = "time_limit"
+	Kit.tip(tb, "Battle time", "How long a battle lasts before it is a draw.")
+	_time_dd = tb
+	_srow(body, "time", "Battle time", "How long a battle lasts before it is a draw.", tb)
 
 
 func _toggle_fold() -> void:
@@ -603,7 +639,7 @@ func _update() -> void:
 	for k in _pack_buttons:
 		(_pack_buttons[k] as Button).set_pressed_no_signal(str(k) == CData.pack)
 		(_pack_buttons[k] as Button).disabled = _creating
-	var need := 2 if online else 1
+	var need := 1  # (online too: one human hosts a solo campaign on the server; the others may join with the code)
 	if _title_emblem != null and _title_emblem.get("pack") != null:
 		_title_emblem.set("pack", CData.pack)
 		_title_emblem.queue_redraw()
@@ -618,15 +654,19 @@ func _update() -> void:
 		_name_labels[f].text = CData.faction_name(f) + (" (you)" if picks.find(f) == 0 else "")
 		_style_row(f, is_h)
 	var teams_txt := _team_text()
-	if picks.is_empty():
+	if story_only:
+		_info.text = "The Brethren's Due: the Caribbean, 1665. One captain, or two on this device."
+		_start_button.disabled = _creating
+		Kit.tip(_start_button, "Start", "Play the story with one captain; Two captains is below.")
+	elif picks.is_empty():
 		_info.text = "Switch at least one faction to Human (the first one is you)."
-	elif picks.size() < need:
-		_info.text = "You play %s. Online co-op needs at least one more human: switch another faction to Human." % CData.faction_name(picks[0])
 	else:
 		var names: Array[String] = []
 		for f in picks:
 			names.append(CData.faction_name(f))
-		if online:
+		if online and picks.size() == 1:
+			_info.text = "You play %s, alone on the server. Switch more factions to Human for friends who join with the code." % names[0]
+		elif online:
 			_info.text = "You play %s; humans: %s. Each joins with the code and plans on their own device; the turn resolves when everyone has submitted." % [
 				CData.faction_name(picks[0]), ", ".join(names)]
 		elif picks.size() == 1:
@@ -635,13 +675,14 @@ func _update() -> void:
 			_info.text = "Humans: %s. They plan on this device one after the other (hot seat)." % ", ".join(names)
 		if teams_txt != "":
 			_info.text += " " + teams_txt + "."
-	_start_button.disabled = picks.size() < need or _creating
+	if not story_only:
+		_start_button.disabled = picks.size() < need or _creating
 	if _creating:
 		Kit.tip(_start_button, "Starting", "The campaign is being created.")
+	elif story_only:
+		pass
 	elif picks.is_empty():
 		Kit.tip(_start_button, "Pick a human", "Switch at least one faction to Human first: the first one you switch on is you.")
-	elif picks.size() < need:
-		Kit.tip(_start_button, "Pick another human", "An online campaign needs at least two humans: switch one more faction to Human.")
 	else:
 		Kit.tip(_start_button, "Start", "Create the campaign and open the map." if not online else "Create the campaign on the server and get the join code.")
 	for k in _seg:
@@ -652,6 +693,9 @@ func _update() -> void:
 
 
 func _start() -> void:
+	if story_only:
+		_start_story(false)
+		return
 	if online:
 		_start_online()
 		return
@@ -667,7 +711,7 @@ func _start() -> void:
 	_update()
 	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	await lp.step("Creating the campaign")
-	var st := CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
+	var st := build_state(nm, sd)
 	var slot := Saves.slot_for(nm, sd)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
@@ -697,6 +741,11 @@ func _start_story(coop: bool = false) -> void:
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
 	start.emit(data, slot, lp)
+
+
+## The state a (non-story) campaign starts from: the picked humans and teams on the screen's setting (CData.pack).
+func build_state(nm: String, sd: int) -> Dictionary:
+	return CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
 
 
 func _start_online(story: bool = false) -> void:
@@ -731,7 +780,7 @@ func _start_online(story: bool = false) -> void:
 		st = CStory.new_story(nm, sd, stt, "brethren", true)
 		seat_f = CStory.player(st)
 	else:
-		st = CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
+		st = build_state(nm, sd)
 		_creating = true
 	_update()
 	_info.text = "Creating the campaign on the server..."
