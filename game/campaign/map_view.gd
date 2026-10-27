@@ -262,6 +262,7 @@ func _make_water() -> void:
 	m.set_shader_parameter("table", 1.0 if table_on() else 0.0)
 	m.set_shader_parameter("wave_gain", 0.6 if table_on() else 1.0)
 	m.set_shader_parameter("chart_d", _chart_tex())
+	m.set_shader_parameter("chart_z", _chart_zone_tex())
 	m.set_shader_parameter("chart", 1.0 if terrain_view else 0.0)
 	_water.material = m
 	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
@@ -291,67 +292,215 @@ func _make_water() -> void:
 	add_child(_coast_node)
 
 
-## The chart sea's distance field (2026-10-27): the distance from each sea sample to the nearest land in map px / 1.5
-## (L8, up to 382 px), on a grid of 4 x 4 fine samples. The baked coast field stops at about 72 px, the chart needs
-## 220. A two-pass chamfer on the coarse grid (about 40 000 cells, a few ms), once per pack.
+## The chart sea's distance field (2026-10-27, rounded and pushed out the same day, owner): the true Euclidean
+## distance from each sea sample to the nearest land in map px / 3 (L8, up to 765 px), on a grid of B x B fine
+## samples (cells of about 7 map px; the baked coast field stops at about 72 px, the chart needs 420). Felzenszwalb's
+## two-pass 1-D squared-distance transform (exact, so the contours around an island are circles), then two
+## running-sum box blurs a side (7 cells; about a Gaussian of 2.8 cells) to round the Voronoi creases between
+## islands. Linear filtering in the shaders. Once per pack.
 static var _chart_cache: ImageTexture = null
 static var _chart_gen := -1
+static var chart_build_ms := 0.0   # the last build's time (tests / notes)
 
 
 static func _chart_tex() -> ImageTexture:
 	_sync_gen()
 	if _chart_cache != null and _chart_gen == Geo.gen:
 		return _chart_cache
+	var t0 := Time.get_ticks_usec()
 	var coast := GeoFields.coast()
 	var fw := GeoFields.fine_width()
 	var fh := GeoFields.fine_height()
-	const B := 4
+	var B := maxi(1, int(8.0 / GeoFields.sample_px()))   # cells of at most 8 map px
 	var cw := (fw + B - 1) / B
 	var ch := (fh + B - 1) / B
 	var cell := GeoFields.sample_px() * B   # map px per coarse cell
-	var big := 1.0e6
-	var d := PackedFloat32Array()
-	d.resize(cw * ch)
-	d.fill(big)
-	for y in fh:
-		var row := (y / B) * cw
-		for x in fw:
-			if coast[y * fw + x] < 128:   # land side
-				d[row + x / B] = 0.0
-	var dg := 1.4142
-	for y in ch:
-		for x in cw:
-			var i := y * cw + x
-			var v := d[i]
-			if x > 0:
-				v = minf(v, d[i - 1] + 1.0)
-			if y > 0:
-				v = minf(v, d[i - cw] + 1.0)
-				if x > 0:
-					v = minf(v, d[i - cw - 1] + dg)
-				if x < cw - 1:
-					v = minf(v, d[i - cw + 1] + dg)
-			d[i] = v
-	for y in range(ch - 1, -1, -1):
-		for x in range(cw - 1, -1, -1):
-			var i := y * cw + x
-			var v := d[i]
-			if x < cw - 1:
-				v = minf(v, d[i + 1] + 1.0)
-			if y < ch - 1:
-				v = minf(v, d[i + cw] + 1.0)
-				if x < cw - 1:
-					v = minf(v, d[i + cw + 1] + dg)
-				if x > 0:
-					v = minf(v, d[i + cw - 1] + dg)
-			d[i] = v
+	var big := 1.0e9
+	var f := PackedFloat32Array()
+	f.resize(cw * ch)
+	f.fill(big)
+	for cy in ch:
+		for cx in cw:
+			var x1 := mini((cx + 1) * B, fw)
+			var land := false
+			for y in range(cy * B, mini((cy + 1) * B, fh)):
+				var o := y * fw
+				for x in range(cx * B, x1):
+					if coast[o + x] < 128:   # land side
+						land = true
+						break
+				if land:
+					break
+			if land:
+				f[cy * cw + cx] = 0.0
+	_edt(f, cw, ch)
+	# to map px (zero on land; capped), then the blur
+	var maxd := 255.0 * 3.0
+	for i in cw * ch:
+		f[i] = minf(sqrt(f[i]) * cell, maxd)
+	var tmp := PackedFloat32Array()
+	tmp.resize(cw * ch)
+	for _pass in 2:
+		_box_h(f, tmp, cw, ch, 3)
+		_box_v(tmp, f, cw, ch, 3)
 	var bytes := PackedByteArray()
 	bytes.resize(cw * ch)
 	for i in cw * ch:
-		bytes[i] = clampi(int(d[i] * cell / 1.5), 0, 255)
+		bytes[i] = clampi(int(f[i] / 3.0 + 0.5), 0, 255)
 	_chart_cache = ImageTexture.create_from_image(Image.create_from_data(cw, ch, false, Image.FORMAT_L8, bytes))
 	_chart_gen = Geo.gen
+	chart_build_ms = float(Time.get_ticks_usec() - t0) / 1000.0
 	return _chart_cache
+
+
+## The hand-authored chart zone (Geo.CHART: polygons in [lon, lat], open ocean the chart should cover): the signed
+## distance to the nearest polygon edge (inside positive), in map px clamped to +-150, L8 as (d + 150) / 300, on a grid
+## of 24 map px cells (two EDTs, then two small box blurs). The shaders take chart = max(land rule, smoothstep(-75, 75, d)).
+static var _zone_cache: ImageTexture = null
+static var _zone_gen := -1
+
+
+static func _chart_zone_tex() -> ImageTexture:
+	_sync_gen()
+	if _zone_cache != null and _zone_gen == Geo.gen:
+		return _zone_cache
+	var cell := 24.0
+	var cw := int(ceil(Geo.SIZE.x / cell))
+	var ch := int(ceil(Geo.SIZE.y / cell))
+	var inside := PackedFloat32Array()
+	inside.resize(cw * ch)
+	inside.fill(1.0)   # 1 = outside, 0 = inside (a source of the inside distance)
+	for poly in Geo.CHART:
+		var pts := PackedVector2Array()
+		for q in poly:
+			pts.append(Geo.project(q[0], q[1]))
+		for y in ch:   # even-odd scanline at the cell centres' row
+			var yy := (float(y) + 0.5) * cell
+			var xs: Array = []
+			for k in pts.size():
+				var a := pts[k]
+				var b := pts[(k + 1) % pts.size()]
+				if (a.y <= yy) != (b.y <= yy):
+					xs.append(a.x + (yy - a.y) / (b.y - a.y) * (b.x - a.x))
+			xs.sort()
+			for k in range(0, xs.size() - 1, 2):
+				for x in range(maxi(0, int(ceil(xs[k] / cell - 0.5))), mini(cw, int(floor(xs[k + 1] / cell - 0.5)) + 1)):
+					inside[y * cw + x] = 0.0
+	var outside := PackedFloat32Array()   # 0 = outside cell (a source of the outside distance)
+	outside.resize(cw * ch)
+	for i in cw * ch:
+		outside[i] = 1.0 if inside[i] == 0.0 else 0.0
+	_edt(inside, cw, ch)    # for an outside cell: squared cells to the nearest inside cell
+	_edt(outside, cw, ch)   # for an inside cell: squared cells to the nearest outside cell
+	var d := PackedFloat32Array()
+	d.resize(cw * ch)
+	for i in cw * ch:
+		if inside[i] == 0.0:
+			d[i] = maxf(sqrt(outside[i]) - 0.5, 0.0) * cell
+		else:
+			d[i] = -(maxf(sqrt(inside[i]) - 0.5, 0.0)) * cell
+		d[i] = clampf(d[i], -150.0, 150.0)
+	var tmp := PackedFloat32Array()
+	tmp.resize(cw * ch)
+	for _pass in 2:
+		_box_h(d, tmp, cw, ch, 1)
+		_box_v(tmp, d, cw, ch, 1)
+	var bytes := PackedByteArray()
+	bytes.resize(cw * ch)
+	for i in cw * ch:
+		bytes[i] = clampi(int((d[i] + 150.0) / 300.0 * 255.0 + 0.5), 0, 255)
+	_zone_cache = ImageTexture.create_from_image(Image.create_from_data(cw, ch, false, Image.FORMAT_L8, bytes))
+	_zone_gen = Geo.gen
+	return _zone_cache
+
+
+## Squared Euclidean distance (in cells) from every cell to the nearest source cell (value 0.0; any other value is
+## "not a source"), in place: Felzenszwalb and Huttenlocher's two-pass 1-D transform, exact.
+static func _edt(f: PackedFloat32Array, cw: int, ch: int) -> void:
+	# pass 1: down each column, squared distance to the nearest land cell in it (two sweeps)
+	var far := float(cw + ch)   # (no land in the column: far, squared below)
+	for x in cw:
+		var run := far
+		for y in ch:
+			var i := y * cw + x
+			if f[i] == 0.0:
+				run = 0.0
+			else:
+				run = run + 1.0   # (steps from the last land; squared below)
+			f[i] = run
+		run = far
+		for y in range(ch - 1, -1, -1):
+			var i := y * cw + x
+			if f[i] == 0.0:
+				run = 0.0
+			else:
+				run = run + 1.0
+			f[i] = minf(f[i], run)
+		for y in ch:
+			var i := y * cw + x
+			f[i] = minf(f[i], far) * minf(f[i], far)
+	# pass 2: along each row, the lower envelope of parabolas (Felzenszwalb and Huttenlocher)
+	var v := PackedInt32Array()
+	v.resize(cw)
+	var z := PackedFloat32Array()
+	z.resize(cw + 1)
+	var g := PackedFloat32Array()
+	g.resize(cw)
+	for y in ch:
+		var o := y * cw
+		var k := 0
+		v[0] = 0
+		z[0] = -1.0e30
+		z[1] = 1.0e30
+		for q in range(1, cw):
+			var fq := f[o + q] + float(q * q)
+			var s := 0.0
+			while true:
+				var p := v[k]
+				s = (fq - (f[o + p] + float(p * p))) / float(2 * (q - p))
+				if s <= z[k]:
+					k -= 1   # (z[0] is -inf: k never goes below 0)
+				else:
+					break
+			k += 1
+			v[k] = q
+			z[k] = s
+			z[k + 1] = 1.0e30
+		k = 0
+		for q in cw:
+			while z[k + 1] < float(q):
+				k += 1
+			var dq := q - v[k]
+			g[q] = f[o + v[k]] + float(dq * dq)
+		for q in cw:
+			f[o + q] = g[q]
+
+
+## A box blur of radius r along the rows (running sum, edges clamped), src -> dst.
+static func _box_h(src: PackedFloat32Array, dst: PackedFloat32Array, w: int, h: int, r: int) -> void:
+	var inv := 1.0 / float(2 * r + 1)
+	for y in h:
+		var o := y * w
+		var acc := src[o] * float(r + 1)
+		for i in range(1, r):
+			acc += src[o + mini(i, w - 1)]
+		for x in w:
+			acc += src[o + mini(x + r, w - 1)]
+			dst[o + x] = acc * inv
+			acc -= src[o + maxi(x - r, 0)]
+
+
+## The same down the columns.
+static func _box_v(src: PackedFloat32Array, dst: PackedFloat32Array, w: int, h: int, r: int) -> void:
+	var inv := 1.0 / float(2 * r + 1)
+	for x in w:
+		var acc := src[x] * float(r + 1)
+		for i in range(1, r):
+			acc += src[mini(i, h - 1) * w + x]
+		for y in h:
+			acc += src[mini(y + r, h - 1) * w + x]
+			dst[y * w + x] = acc * inv
+			acc -= src[maxi(y - r, 0) * w + x]
 
 
 ## The style changed: the sea's uniforms, the land node, a redraw.

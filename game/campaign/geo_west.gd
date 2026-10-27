@@ -1194,6 +1194,16 @@ const ISLANDS := [
 const PHANTOMS := [
 ]
 
+## The chart sea's open-ocean zones (view only; 2026-10-27, owner: the chart creeps into the usable map): polygons in
+## [lon, lat] the Terrain view's water goes to the drawn-chart tone over, with a feathered edge of 150 map px (the
+## polygon's edge is the half-way line). Each edge keeps 120 to 150 px of blue off every coast; the Caribbean between
+## the islands and the mainland is in none of them. (The land-distance rule, 480 to 620 px, applies besides.)
+const CHART := [
+	[[-95.3, 24.0], [-95.3, 26.2], [-93.5, 27.5], [-90.0, 27.6], [-86.5, 27.6], [-85.2, 26.3], [-85.2, 24.5], [-87.2, 23.2], [-90.5, 23.0], [-93.0, 22.8]],   # the Gulf's centre
+	[[-77.5, 32.5], [-77.5, 28.8], [-75.5, 28.4], [-72.0, 25.0], [-70.0, 23.4], [-67.8, 22.2], [-65.5, 21.5], [-63.0, 20.0], [-60.0, 17.8], [-60.0, 16.4], [-57.5, 15.0], [-57.0, 32.5]],   # the Atlantic north and east of the Bahamas and the Antilles
+	[[-100.0, 15.6], [-98.0, 14.2], [-92.0, 12.7], [-88.3, 10.8], [-87.5, 9.6], [-85.8, 8.0], [-85.8, 6.5], [-100.0, 6.5]],   # the Pacific off Mexico and Central America
+]
+
 const RIVERS := [
 	{"name": "Mississippi", "into": -1,
 	"pts": [[-91.45, 31.45], [-91.4, 30.85], [-90.9, 30.1], [-90.07, 29.93], [-89.1, 29.0]],

@@ -3,9 +3,10 @@ shader_type canvas_item;
 // water.gdshader's `cf`) the fog is lighter, `chart_fog` of its strength, so unseen far sea reads as a dimmer
 // parchment, not dark grey; full over land and the shelf. Uniforms are the water's own textures.
 uniform sampler2D chart_d : filter_linear, repeat_disable;
+uniform sampler2D chart_z : filter_linear, repeat_disable;   // the hand-authored chart zone: (signed distance to its edge + 150) / 300 map px
 uniform sampler2D depth : filter_linear, repeat_disable;
 uniform vec2 field_px = vec2(2760.0, 1400.0);
-uniform vec2 chart_range = vec2(40.0, 260.0);
+uniform vec2 chart_range = vec2(400.0, 560.0);
 uniform vec2 depth_range = vec2(80.0, 400.0);
 uniform float chart_fog = 0.6;
 uniform float chart_on = 0.0;
@@ -23,9 +24,10 @@ void fragment() {
 	vec4 c = texture(TEXTURE, UV) * COLOR;
 	vec2 fuv = wp / field_px;
 	float inwin = step(0.0, fuv.x) * step(fuv.x, 1.0) * step(0.0, fuv.y) * step(fuv.y, 1.0);
-	float cdist = mix(400.0, texture(chart_d, fuv).r * 255.0 * 1.5, inwin);
+	float cdist = mix(800.0, texture(chart_d, fuv).r * 255.0 * 3.0, inwin);
 	float dm = depth_m(mix(255.0, texture(depth, fuv).r * 255.0, inwin));
-	float cf = smoothstep(chart_range.x, chart_range.y, cdist) * mix(0.65, 1.0, smoothstep(depth_range.x, depth_range.y, dm)) * chart_on;
+	float zone = mix(0.0, smoothstep(-75.0, 75.0, texture(chart_z, fuv).r * 300.0 - 150.0), inwin);
+	float cf = max(smoothstep(chart_range.x, chart_range.y, cdist), zone) * mix(0.5, 1.0, smoothstep(depth_range.x, depth_range.y, dm)) * chart_on;
 	c.a *= mix(1.0, chart_fog, cf);
 	COLOR = c;
 }

@@ -50,12 +50,13 @@ uniform float table_depth = 0.75;                // table style: share of the de
 uniform float table = 0.0;                       // 1: the map-table sea (clean depth bands, softer waves)
 // The deep sea fades into the chart (2026-10-27, owner: "the overworld feels like it is floating over an ocean texture
 // when you zoom out"): far from any coast, past the shelf, the water goes to the drawn-chart tone with faint engraved
-// wave hatching. `chart_d` is the distance to the nearest land in map px / 1.5 (map_view.gd builds it from the coast
+// wave hatching. `chart_d` is the distance to the nearest land in map px / 3 (map_view.gd builds it from the coast
 // field, which itself stops at about 72 px); `chart` is 0 in the political view.
 uniform sampler2D chart_d : filter_linear, repeat_disable;
+uniform sampler2D chart_z : filter_linear, repeat_disable;   // the hand-authored chart zone: (signed distance to its edge + 150) / 300 map px
 uniform float chart = 1.0;
-uniform vec2 chart_range = vec2(40.0, 260.0);    // map px: blue within the first, fully chart beyond the second
-uniform vec2 depth_range = vec2(80.0, 400.0);    // m: the fade is at 0.65 of its strength in water shallower than the first, full below the second
+uniform vec2 chart_range = vec2(400.0, 560.0);    // map px: blue within the first, fully chart beyond the second
+uniform vec2 depth_range = vec2(80.0, 400.0);    // m: the fade is at 0.5 of its strength in water shallower than the first, full below the second
 uniform vec3 chart_paper = vec3(0.80, 0.76, 0.60);  // the chart sea: the frame's paper (0.84, 0.76, 0.58 on average) a touch cooler and darker
 uniform vec3 chart_ink = vec3(0.28, 0.38, 0.44);    // the engraver's strokes
 
@@ -264,8 +265,9 @@ void fragment() {
 	}
 	// The chart sea: far from every coast and past the shelf the water goes to the drawn-chart tone (all styles, all
 	// qualities), with engraved wave hatching on "high".
-	float cdist = mix(400.0, texture(chart_d, fuv).r * 255.0 * 1.5, inwin);
-	float cf = smoothstep(chart_range.x, chart_range.y, cdist) * mix(0.65, 1.0, smoothstep(depth_range.x, depth_range.y, dm)) * chart * step(0.0, d);   // depth only delays the fade (shoals keep a pale tint)
+	float cdist = mix(800.0, texture(chart_d, fuv).r * 255.0 * 3.0, inwin);
+	float zone = mix(0.0, smoothstep(-75.0, 75.0, texture(chart_z, fuv).r * 300.0 - 150.0), inwin);
+	float cf = max(smoothstep(chart_range.x, chart_range.y, cdist), zone) * mix(0.5, 1.0, smoothstep(depth_range.x, depth_range.y, dm)) * chart * step(0.0, d);   // depth only delays the fade (shoals keep a pale tint)
 	col = mix(vec3(dot(col, vec3(0.30, 0.59, 0.11))), col, mix(1.0, 0.8, chart));   // the Terrain view's sea a fifth less saturated
 	if (cf > 0.003) {
 		vec3 ch = mix(chart_paper, chart_paper * vec3(0.94, 0.97, 1.0), smoothstep(1000.0, 3000.0, dm));

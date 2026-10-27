@@ -762,6 +762,14 @@ const PHANTOMS := [
 	[2.0, 34.4, 1], [6.5, 34.2, 1], [-3.0, 34.0, 1], [-5.5, 33.6, 1], [9.0, 33.6, 1],
 ]
 
+## The chart sea's open-ocean zones (view only; 2026-10-27): polygons in [lon, lat] the Terrain view's water goes to
+## the drawn-chart tone over, feathered over 150 map px. The Atlantic strip west of Iberia and the Libyan sea are too
+## narrow to keep 150 px of blue off every coast, so only the Bay of Biscay corner and a small patch off Morocco.
+const CHART := [
+	[[-11.0, 48.0], [-11.0, 44.8], [-9.0, 45.4], [-6.6, 45.9], [-6.0, 46.6], [-6.0, 48.0]],   # the Bay of Biscay corner
+	[[-11.0, 35.6], [-10.2, 35.3], [-10.0, 34.4], [-10.5, 33.7], [-11.0, 33.7]],   # the Atlantic off Morocco
+]
+
 ## Rivers (roads, rivers and hills, 2026-10-09; static, rules read the
 ## baked grid): {name, into (-1: the sea, else the index of the river it
 ## flows into), pts [lon, lat] from the source down to the mouth, cross

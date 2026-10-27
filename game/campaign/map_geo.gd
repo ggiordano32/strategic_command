@@ -23,6 +23,7 @@ static var ISLANDS: Array = RomeGeo.ISLANDS
 static var PHANTOMS: Array = RomeGeo.PHANTOMS
 static var RIVERS: Array = RomeGeo.RIVERS
 static var ROADS: Array = RomeGeo.ROADS
+static var CHART: Array = RomeGeo.CHART   # open-ocean polygons [lon, lat] the chart sea covers (view only)
 
 static var _cells: Array = []
 static var _smooth: Array = []   # per region: the territory's pieces with the shared edges smoothed (see smooth_cell)
@@ -58,6 +59,7 @@ static func use_pack(key: String) -> void:
 	PHANTOMS = g.PHANTOMS
 	RIVERS = g.RIVERS
 	ROADS = g.ROADS
+	CHART = g.CHART
 	_cells = []
 	_smooth = []
 	_anchors = []

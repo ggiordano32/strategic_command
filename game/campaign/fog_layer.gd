@@ -27,6 +27,7 @@ func _bind_chart() -> void:
 	var m := ShaderMaterial.new()
 	m.shader = FOG_SHADER
 	m.set_shader_parameter("chart_d", wm.get_shader_parameter("chart_d"))
+	m.set_shader_parameter("chart_z", wm.get_shader_parameter("chart_z"))
 	m.set_shader_parameter("depth", wm.get_shader_parameter("depth"))
 	m.set_shader_parameter("field_px", wm.get_shader_parameter("field_px"))
 	material = m
