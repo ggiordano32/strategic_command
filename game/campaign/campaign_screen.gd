@@ -136,6 +136,8 @@ var _force_side := false       # open_details is building the side panel
 var end_button: Button
 var battles_button: Button
 var hint: Label
+var _hint_plate: Panel = null
+var _hint_key := ""
 var map_key: MapKey            # the map key (bottom left)
 var dialog: PanelContainer
 var dialog_box: VBoxContainer
@@ -1425,6 +1427,16 @@ func _build_ui() -> void:
 	# Right of the map key's button.
 	hint.offset_left = MapKey.MARGIN * 2.0 + maxf(MapKey.BUTTON_W, MapKey.VIEW_W)
 	hint.offset_right = hint.offset_left + 412
+	# A translucent dark plate behind the hint, sized to its text (the hint sits partly on the table's parchment)
+	_hint_plate = Panel.new()
+	_hint_plate.show_behind_parent = true
+	_hint_plate.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hsb := StyleBoxFlat.new()
+	hsb.bg_color = Color(0.04, 0.05, 0.07, 0.58)
+	hsb.set_corner_radius_all(5)
+	_hint_plate.add_theme_stylebox_override("panel", hsb)
+	_hint_plate.visible = false
+	hint.add_child(_hint_plate)
 	ui.add_child(hint)
 	map_key = MapKey.new()
 	ui.add_child(map_key)
@@ -1902,6 +1914,27 @@ func _paddle_hint() -> String:
 	if not a.is_empty() and CRules.amphibious(ps, a):
 		return " This army may paddle along the coast (the shaded water): canoes cannot be attacked by land armies, but an enemy fleet sinks them."
 	return ""
+
+
+## The hint's plate hugs its text (the wrapped width and height), refitted when the text or the hint's width changes.
+func _fit_hint_plate() -> void:
+	if _hint_plate == null:
+		return
+	var key := "%s|%d|%s" % [hint.text, int(hint.size.x), hint.visible]
+	if key == _hint_key:
+		return
+	_hint_key = key
+	var on := hint.text != "" and hint.visible
+	_hint_plate.visible = on
+	if not on:
+		return
+	var fs := hint.get_theme_font_size("font_size")
+	var tsz := hint.get_theme_font("font").get_multiline_string_size(hint.text, HORIZONTAL_ALIGNMENT_LEFT, maxf(hint.size.x, 40.0), fs,
+			-1, TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_ADAPTIVE)
+	var tw := minf(tsz.x, hint.size.x)
+	var th := maxf(tsz.y, hint.size.y)
+	_hint_plate.position = Vector2(-6.0, hint.size.y - th - 4.0)
+	_hint_plate.size = Vector2(tw + 12.0, th + 8.0)
 
 
 func _update_hint() -> void:
@@ -2989,6 +3022,8 @@ func _tick(delta: float) -> void:
 	world.position = offset
 	world.scale = Vector2(zoom, zoom)
 	map_view.zoom = zoom
+	map_view.update_lod(zoom)
+	_fit_hint_plate()
 	map_view.view_rect = Rect2(-offset / zoom, _vp() / zoom)
 	overlay.zoom = zoom
 	var xf := Transform2D(0.0, Vector2(zoom, zoom), 0.0, offset)

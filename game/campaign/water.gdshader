@@ -48,6 +48,16 @@ uniform vec3 c_foam = vec3(0.90, 0.95, 0.96);
 uniform float wave_gain = 1.0;                   // strength of the lit waves
 uniform float table_depth = 0.75;                // table style: share of the depth colouring in the banded sea (0: the old bands)
 uniform float table = 0.0;                       // 1: the map-table sea (clean depth bands, softer waves)
+// The deep sea fades into the chart (2026-10-27, owner: "the overworld feels like it is floating over an ocean texture
+// when you zoom out"): far from any coast, past the shelf, the water goes to the drawn-chart tone with faint engraved
+// wave hatching. `chart_d` is the distance to the nearest land in map px / 1.5 (map_view.gd builds it from the coast
+// field, which itself stops at about 72 px); `chart` is 0 in the political view.
+uniform sampler2D chart_d : filter_linear, repeat_disable;
+uniform float chart = 1.0;
+uniform vec2 chart_range = vec2(40.0, 260.0);    // map px: blue within the first, fully chart beyond the second
+uniform vec2 depth_range = vec2(80.0, 400.0);    // m: the fade is at 0.65 of its strength in water shallower than the first, full below the second
+uniform vec3 chart_paper = vec3(0.80, 0.76, 0.60);  // the chart sea: the frame's paper (0.84, 0.76, 0.58 on average) a touch cooler and darker
+uniform vec3 chart_ink = vec3(0.28, 0.38, 0.44);    // the engraver's strokes
 
 const float WARP_A = 3.0;      // phase warp size in rad for the 56 px train (x 56 / wavelength for shorter ones; x the noise, +-1.2 typical)
 const float WARP_S1 = 1.0 / 90.0;
@@ -80,6 +90,24 @@ float vnoise(vec2 p) {
 	f = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
 	return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x),
 			mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+// Engraved wave strokes: rows s map px apart, each row a run of short tapered dashes (lens shaped, a little wavy);
+// lw is the stroke's half width (map px), aa the antialiasing width. 0..1.
+float hatch_layer(vec2 p, float s, float lw, float aa) {
+	float row = p.y / s;
+	float ri = floor(row);
+	float rj = hash(vec2(ri, 7.0));
+	float yd = (fract(row) - 0.5) * s + sin(p.x / (s * 3.1) + rj * 6.283) * s * 0.07;
+	float u = p.x / (s * 2.8) + rj * 17.0;
+	float ci = floor(u);
+	float cu = fract(u);
+	float h = hash(vec2(ci, ri));
+	float a0 = 0.08 + 0.25 * hash(vec2(ci + 3.0, ri));
+	float len = 0.40 + 0.32 * hash(vec2(ci, ri + 5.0));
+	float t = clamp((cu - a0) / len, 0.0, 1.0);
+	float w = lw * sqrt(sin(3.14159 * t));
+	return step(0.4, h) * (1.0 - smoothstep(w - aa, w + aa, abs(yd))) * step(0.0001, w);
 }
 
 // Metres of a DEPTH code (tools/geo_fit.py header; GeoFields.depth_code_m).
@@ -234,9 +262,31 @@ void fragment() {
 			col = mix(col, c_foam, clamp(foam, 0.0, 0.8));
 		}
 	}
+	// The chart sea: far from every coast and past the shelf the water goes to the drawn-chart tone (all styles, all
+	// qualities), with engraved wave hatching on "high".
+	float cdist = mix(400.0, texture(chart_d, fuv).r * 255.0 * 1.5, inwin);
+	float cf = smoothstep(chart_range.x, chart_range.y, cdist) * mix(0.65, 1.0, smoothstep(depth_range.x, depth_range.y, dm)) * chart * step(0.0, d);   // depth only delays the fade (shoals keep a pale tint)
+	col = mix(vec3(dot(col, vec3(0.30, 0.59, 0.11))), col, mix(1.0, 0.8, chart));   // the Terrain view's sea a fifth less saturated
+	if (cf > 0.003) {
+		vec3 ch = mix(chart_paper, chart_paper * vec3(0.94, 0.97, 1.0), smoothstep(1000.0, 3000.0, dm));
+		// across the band the blue loses its saturation (half at the far end) and lightens to the chart tone, so an
+		// island carries a soft pale coastal wash, not a halo
+		col = mix(col, mix(vec3(dot(col, vec3(0.30, 0.59, 0.11))), col, 0.5), cf);
+		col = mix(col, ch, cf * 0.94);
+		if (hi > 0.5) {
+			float cw = max(fwidth(wp.x) + fwidth(wp.y), 0.0001) * 0.7;   // map px per screen px
+			float k = log2(max(cw * 1.3, 1.0));                        // rows stay about 9 screen px or more apart
+			float s0 = 7.0 * exp2(floor(k));
+			float wb = fract(k);
+			float aa = cw * 0.5;
+			float hz = hatch_layer(wp, s0, max(cw * 0.6, s0 * 0.04), aa) * (1.0 - wb)
+					+ hatch_layer(wp, s0 * 2.0, max(cw * 0.6, s0 * 0.07), aa) * wb;
+			col = mix(col, chart_ink, clamp(hz, 0.0, 1.0) * 0.62 * cf);
+		}
+	}
 	// Shelf break: a faint thin line at 200 m (code 123.3), only where the slope is steep.
 	float fv = max(fwidth(dv), 0.0001);
 	float brk = (1.0 - smoothstep(0.5 * fv, 1.2 * fv, abs(dv - 123.3))) * smoothstep(3.0, 10.0, fv) * inwin * step(0.5, d);
-	col = mix(col, c_line, brk * 0.16 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)) * (1.0 - table));
+	col = mix(col, c_line, brk * 0.16 * (1.0 - clamp(foam_zone * 1.5, 0.0, 1.0)) * (1.0 - table) * (1.0 - cf));
 	COLOR = vec4(col, 1.0);
 }

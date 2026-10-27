@@ -254,6 +254,8 @@ func _make_water() -> void:
 		m.set_shader_parameter("train%d" % i, SeaWaves.TRAINS[i])
 	m.set_shader_parameter("table", 1.0 if table_on() else 0.0)
 	m.set_shader_parameter("wave_gain", 0.6 if table_on() else 1.0)
+	m.set_shader_parameter("chart_d", _chart_tex())
+	m.set_shader_parameter("chart", 1.0 if terrain_view else 0.0)
 	_water.material = m
 	_water.draw.connect(func(): _water.draw_rect(Rect2(Vector2(-4000, -4000), Geo.SIZE + Vector2(8000, 8000)), SEA))
 	add_child(_water)
@@ -280,6 +282,69 @@ func _make_water() -> void:
 	_coast_node = Node2D.new()
 	_coast_node.draw.connect(_draw_coast)
 	add_child(_coast_node)
+
+
+## The chart sea's distance field (2026-10-27): the distance from each sea sample to the nearest land in map px / 1.5
+## (L8, up to 382 px), on a grid of 4 x 4 fine samples. The baked coast field stops at about 72 px, the chart needs
+## 220. A two-pass chamfer on the coarse grid (about 40 000 cells, a few ms), once per pack.
+static var _chart_cache: ImageTexture = null
+static var _chart_gen := -1
+
+
+static func _chart_tex() -> ImageTexture:
+	_sync_gen()
+	if _chart_cache != null and _chart_gen == Geo.gen:
+		return _chart_cache
+	var coast := GeoFields.coast()
+	var fw := GeoFields.fine_width()
+	var fh := GeoFields.fine_height()
+	const B := 4
+	var cw := (fw + B - 1) / B
+	var ch := (fh + B - 1) / B
+	var cell := GeoFields.sample_px() * B   # map px per coarse cell
+	var big := 1.0e6
+	var d := PackedFloat32Array()
+	d.resize(cw * ch)
+	d.fill(big)
+	for y in fh:
+		var row := (y / B) * cw
+		for x in fw:
+			if coast[y * fw + x] < 128:   # land side
+				d[row + x / B] = 0.0
+	var dg := 1.4142
+	for y in ch:
+		for x in cw:
+			var i := y * cw + x
+			var v := d[i]
+			if x > 0:
+				v = minf(v, d[i - 1] + 1.0)
+			if y > 0:
+				v = minf(v, d[i - cw] + 1.0)
+				if x > 0:
+					v = minf(v, d[i - cw - 1] + dg)
+				if x < cw - 1:
+					v = minf(v, d[i - cw + 1] + dg)
+			d[i] = v
+	for y in range(ch - 1, -1, -1):
+		for x in range(cw - 1, -1, -1):
+			var i := y * cw + x
+			var v := d[i]
+			if x < cw - 1:
+				v = minf(v, d[i + 1] + 1.0)
+			if y < ch - 1:
+				v = minf(v, d[i + cw] + 1.0)
+				if x < cw - 1:
+					v = minf(v, d[i + cw + 1] + dg)
+				if x > 0:
+					v = minf(v, d[i + cw - 1] + dg)
+			d[i] = v
+	var bytes := PackedByteArray()
+	bytes.resize(cw * ch)
+	for i in cw * ch:
+		bytes[i] = clampi(int(d[i] * cell / 1.5), 0, 255)
+	_chart_cache = ImageTexture.create_from_image(Image.create_from_data(cw, ch, false, Image.FORMAT_L8, bytes))
+	_chart_gen = Geo.gen
+	return _chart_cache
 
 
 ## The style changed: the sea's uniforms, the land node, a redraw.
@@ -438,6 +503,35 @@ static func set_terrain_view(on: bool, save := true) -> void:
 		cf.save(SETTINGS)
 	if instance != null and is_instance_valid(instance):
 		instance.queue_redraw()
+		var w: Node2D = instance.get("_water")
+		if w != null:
+			(w.material as ShaderMaterial).set_shader_parameter("chart", 1.0 if on else 0.0)
+
+
+## Zoomed-out level of detail (2026-10-27): below LOD_ZOOM (where the minis stop drawing) the map reads at a glance:
+## ordinary settlements are small dots, capitals keep star and name, the owner washes are stronger, the sea lanes
+## thinner. A few percent of hysteresis so nothing flickers at the threshold. `far_lod` is shared (the overlay reads it).
+const LOD_ZOOM := 0.55
+const LOD_HYST := 0.04
+const LOD_WASH := 1.6        # factor on the owner wash alpha when far
+const LOD_WASH_CAP := 0.5
+const LOD_LANE := 0.7        # factor on the sea lanes' width when far
+static var far_lod := false
+
+
+## Called every frame with the zoom; redraws what depends on the level when it flips.
+func update_lod(z: float) -> void:
+	var f := far_lod
+	if far_lod and z >= LOD_ZOOM * (1.0 + LOD_HYST):
+		f = false
+	elif not far_lod and z < LOD_ZOOM * (1.0 - LOD_HYST):
+		f = true
+	if f == far_lod:
+		return
+	far_lod = f
+	queue_redraw()
+	if _coast_node != null:
+		_coast_node.queue_redraw()
 
 
 func set_reach(rt: PackedInt32Array) -> void:
@@ -706,6 +800,8 @@ func _draw() -> void:
 func _draw_all() -> void:
 	var lw := 1.0 / maxf(zoom, 0.05)
 	var land_view := terrain_view and grid and not state.is_empty()
+	if _water != null:
+		(_water.material as ShaderMaterial).set_shader_parameter("chart", 1.0 if terrain_view else 0.0)
 	if land_view:
 		_terrain_geometry()
 	var tbl := land_view and table_on()
@@ -736,6 +832,8 @@ func _draw_all() -> void:
 			if o >= 0:
 				var tc := CData.faction_color(o)
 				tc.a = TABLE_TINT if tbl else TERRAIN_TINT
+				if far_lod:
+					tc.a = minf(tc.a * LOD_WASH, LOD_WASH_CAP)
 				_fill_cell(r, tc)
 		# Rivers: a faint green and a pale bank under the blue line.
 		for ln in _river_lines:
@@ -922,6 +1020,7 @@ func _draw_coast_body() -> void:
 ## The sea lanes as dashed curves (dashes cut for this line scale and style, cached).
 static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 	var tbl := table_on()
+	var wk := LOD_LANE if far_lod else 1.0   # (zoomed out the lanes are thinner, the dashes the same)
 	var key := "%d:%.4f:%s" % [_gen, lw, "t" if tbl else "r"]
 	if key != _lane_dash_key:
 		_lane_dash_key = key
@@ -931,10 +1030,10 @@ static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 	for segs in _lane_dashes:
 		if (segs as PackedVector2Array).size() >= 2:
 			if tbl:
-				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * lw, true)
-				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw, true)
+				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * lw * wk, true)
+				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw * wk, true)
 			else:
-				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw, true)
+				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw * wk, true)
 
 
 # ----------------------------------------------------------- beaches and cliffs ---

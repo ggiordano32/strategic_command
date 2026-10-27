@@ -909,16 +909,21 @@ func _sites_body() -> void:
 		var w := FogView.shown_walls(state, r)   # (fog: the walls as last seen)
 		# every settlement has a marker that is its tap target: the relief style's, and over a table-style model that
 		# is small or sparse (a bare name over a hut was hard to hit); the harbour mark for a port
-		if not Minis.on_sites or Minis.weak(zoom, r):
+		var big := CData.is_capital(r) or CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"]))   # (capitals and key cities keep their look when far)
+		var dot := MapView.far_lod and not big and (not Minis.on_sites or zoom < Minis.SITE_MIN_ZOOM)   # zoomed out: an ordinary settlement is a small dot
+		if not Minis.on_sites or Minis.weak(zoom, r) or dot:
 			var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
-			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
+			if dot:
+				draw_site(_ci, p, rad * 0.5, oc, 0, m, false)
+			else:
+				draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
 		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
 		if not sg.is_empty():
 			var sr := siege_ring_radius(r)   # (round the ring the besiegers stand on)
 			draw_siege_ring(_ci, p, sr, CData.faction_color(int(sg["f"])), m)
 		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])):
 			draw_key_city(_ci, p, rad)
-		if (show_names or lvl == CData.CITY) and not FogView.never(r):
+		if (show_names or lvl == CData.CITY) and (not MapView.far_lod or big) and not FogView.never(r):
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			# At the diorama zoom the names are 18 px or more and use the display face; smaller zooms are as before.

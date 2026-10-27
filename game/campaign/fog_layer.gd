@@ -6,6 +6,8 @@ const FogView := preload("res://game/campaign/fog_view.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const FOG_COL := Color(0.06, 0.08, 0.11)
 const FOG_A := 0.66
+const MapView := preload("res://game/campaign/map_view.gd")
+const FOG_SHADER := preload("res://game/campaign/fog_layer.gdshader")
 
 var _tex: ImageTexture = null
 var _gen := -1
@@ -13,9 +15,28 @@ var _gen := -1
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_bind_chart()
+
+
+## The fog is lighter over the chart sea: the shader reads the water's own distance and depth textures.
+func _bind_chart() -> void:
+	var w: Node = MapView.instance.get("_water") if MapView.instance != null and is_instance_valid(MapView.instance) else null
+	if w == null:
+		return
+	var wm := (w as CanvasItem).material as ShaderMaterial
+	var m := ShaderMaterial.new()
+	m.shader = FOG_SHADER
+	m.set_shader_parameter("chart_d", wm.get_shader_parameter("chart_d"))
+	m.set_shader_parameter("depth", wm.get_shader_parameter("depth"))
+	m.set_shader_parameter("field_px", wm.get_shader_parameter("field_px"))
+	material = m
 
 
 func _process(_d: float) -> void:
+	if material == null:
+		_bind_chart()
+	else:
+		(material as ShaderMaterial).set_shader_parameter("chart_on", 1.0 if MapView.terrain_view else 0.0)
 	if _gen != FogView.gen:
 		_gen = FogView.gen
 		visible = FogView.on

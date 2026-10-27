@@ -25,7 +25,7 @@ void fragment() {
 	}
 	// vignette
 	float v = smoothstep(0.55, 1.25, length((SCREEN_UV - 0.5) * vec2(1.25, 1.0) * 1.6));
-	col *= 1.0 - v * 0.27;
+	col *= 1.0 - v * 0.18;   // (a third lighter since 2026-10-27: 0.27)
 	// inside / outside of the map's edge
 	vec2 lo = px - map_rect.xy;
 	vec2 hi = map_rect.zw - px;

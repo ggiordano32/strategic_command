@@ -5,7 +5,7 @@ extends SceneTree
 ## (table_frame.gd) spans the viewport. The paper patch at the top left at
 ## minimum zoom (owner, 2026-10-27) was that frame left at a stale size.
 ##   DISPLAY=:0 godot --path . --disable-vsync --resolution 2000x923 -s tests/zoom_probe.gd -- \
-##     --pack=west|rome --style=table|relief|auto --view=terrain|political [--grow] [--shots=DIR] [--tag=NAME]
+##     --pack=west|rome --style=table|relief|auto --view=terrain|political [--grow] [--nofog] [--shots=DIR] [--tag=NAME]
 ##   --grow: the viewport grows by 1 / 0.85 (about 18 %) after the screen is built
 ##   (--disable-vsync: an idle display can throttle the window to 1 frame a second)
 ## Prints RESULT: PASS / FAIL and exits 0 / 1 (it may then abort at exit, a known quirk).
@@ -13,6 +13,8 @@ const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
+const Geo := preload("res://game/campaign/map_geo.gd")
+const FogView := preload("res://game/campaign/fog_view.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 var cs
 var frame := 0
@@ -23,6 +25,7 @@ var shots := ""
 var tag := ""
 var fails: Array = []
 var grow := false
+var nofog := false
 
 func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
@@ -34,10 +37,13 @@ func _initialize() -> void:
 			view = a.get_slice("=", 1)
 		elif a.begins_with("--shots="):
 			shots = a.get_slice("=", 1)
+		elif a == "--nofog":
+			nofog = true   # the whole map in sight (the fog darkens the unseen sea; for the look shots)
 		elif a == "--grow":
 			grow = true
 		elif a.begins_with("--tag="):
 			tag = a.get_slice("=", 1)
+	FogView.all_seeing = nofog
 	MapView.load_view_pref()
 	MapView.set_style(style, false)
 	MapView.set_terrain_view(view != "political", false)
@@ -88,6 +94,15 @@ func _process(_d: float) -> bool:
 	elif frame == 130:
 		_check("edge")
 		_shot("edge")
+		# a middle zoom on the Gulf coast (West: Veracruz; Rome: Massalia): the shelf and the coast bands in view
+		var key := "veracruz" if pack == "west" else "massalia"
+		var rg := CData.region_index(key)
+		cs.zoom = 1.0
+		cs.offset = cs._vp() * 0.5 - Geo.site(maxi(rg, 0)) * cs.zoom + Vector2(-250, 0)
+		cs._clamp_view()
+	elif frame == 170:
+		_check("mid")
+		_shot("mid")
 		for f in fails:
 			print("FAIL ", f)
 		print("RESULT: ", "PASS" if fails.is_empty() else "FAIL")
