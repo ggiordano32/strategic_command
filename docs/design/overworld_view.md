@@ -71,6 +71,9 @@ a sprite but kit pieces placed on the real terrain.
   3 on Low) when the map loads and again when a town changes; the land shader mixes it in before the hillshade, so
   it is lit like the land and has no patch edge. `footprint.gd` is gone: no redraw on zoom or pan.
   `landscape.gd` clears the forest inside each footprint and field and hands the ring trees to the town.
+  2026-10-27: each town's lawn colour (from its region's `ground`) is resolved in `bake`, not in the deferred
+  `_paint`: a pack switch (`CData.use_pack`) between the bake and the frame that draws it read a West region
+  index (41+) out of the Rome `REGIONS` (`campaign_input_test` after `_dp_run`).
 - **Landscape trees and rocks as models** (`landtrees.gd`, `landtrees.gdshader`, not Graphics Low): the map's
   tree kinds (broadleaf x3, pine x3, scrub x2, cypress, palm x2 in the tropics) and rocks (x3, crag) from the
   atlas, one MultiMesh at the old dots' positions and sizes, tinted by the palette, sorted by y; both atlas sizes

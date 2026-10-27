@@ -22,7 +22,7 @@ var world := Vector2(3760.0, 2350.0)
 var px_per_texel := 2.0
 var _vp: SubViewport = null
 var _drawer: Node2D = null
-var _entries: Array = []     # [plan, site, region]
+var _entries: Array = []     # [plan, site, region, lawn colour]
 var _roads: Array = []
 var _trees: Array = []
 var _specks: Array = []
@@ -64,7 +64,11 @@ func set_landscape(trees: Array, specks: Array, ring: Dictionary) -> void:
 func bake(entries: Array, roads: Array) -> void:
 	if _vp == null:
 		return
-	_entries = entries
+	# The lawn colour is read from the region's ground now, not at the deferred draw: the pack (CData.REGIONS)
+	# can change between the bake and the frame that paints it (a West game left for a Rome one).
+	_entries = []
+	for e in entries:
+		_entries.append([e[0], e[1], e[2], _lawn(int(e[2]))])
 	_roads = roads
 	_vp.render_target_update_mode = SubViewport.UPDATE_ONCE
 	_drawer.queue_redraw()
@@ -136,11 +140,10 @@ func _paint() -> void:
 	for e in _entries:
 		var plan: Dictionary = e[0]
 		var s: Dictionary = e[1]
-		var r: int = e[2]
 		var style: String = plan["style"]
 		var c: Vector2 = s["c"]
 		var sc: float = plan["sc"]
-		var lawn := _lawn(r)
+		var lawn: Color = e[3]
 		# 1 the cleared ground: lawn, wide and soft (the ring the forest keeps off)
 		var clear_ring := _outline(s, 1.14)
 		var lc := lawn

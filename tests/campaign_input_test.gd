@@ -1020,6 +1020,7 @@ var _d_root := Vector2i.ZERO
 func _d_select() -> void:
 	_d_win = root.content_scale_size
 	root.content_scale_size = Vector2i(844, 390)  # a phone, landscape
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP  # the visible rect is this size, whatever the window's shape
 	if DisplayServer.get_name() == "headless":
 		# headless has no real window: size the root too, or the scale does
 		# nothing and the Diplomacy dialog is tall enough not to scroll
@@ -1091,6 +1092,7 @@ func _d_other_check() -> void:
 	_check(cs.dialog.visible and cs.dialog_scroll.scroll_vertical == 0, "another dialog opens at the top (%d)" % cs.dialog_scroll.scroll_vertical)
 	cs.close_dialog()
 	root.content_scale_size = _d_win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND  # (project.godot)
 	if _d_root != Vector2i.ZERO:
 		root.size = _d_root
 
@@ -2176,6 +2178,7 @@ func _j_barfit() -> void:
 	cs._replan()
 	for sz in [Vector2i(1000, 461), Vector2i(915, 412), Vector2i(844, 390), Vector2i(1280, 720)]:
 		root.content_scale_size = sz
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP  # the visible rect is this size, whatever the window's shape
 		if DisplayServer.get_name() == "headless":
 			root.size = sz
 		cs.close_side()
@@ -2221,6 +2224,7 @@ func _j_barfit() -> void:
 		cs.offset = o0
 	cs.close_side()
 	root.content_scale_size = win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND  # (project.godot)
 	if DisplayServer.get_name() == "headless":
 		root.size = root_size
 	cs.no_bar = true
@@ -2266,6 +2270,7 @@ func _j_ship() -> void:
 	for cfg in [["S", Vector2i(844, 390)], ["M", Vector2i(844, 390)], ["S", Vector2i(1231, 568)]]:
 		var vp: Vector2i = cfg[1]
 		root.content_scale_size = vp
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP  # the visible rect is this size, whatever the window's shape
 		if DisplayServer.get_name() == "headless":
 			root.size = vp
 		for k in 3:
@@ -2318,6 +2323,7 @@ func _j_ship() -> void:
 		_check(wc != null and (wc as Kit.ShipRow).sub_text.ends_with("coastal  -  rowed"), "ship dialog: the war canoe's sub line says coastal and rowed")
 	cs.close_dialog()
 	root.content_scale_size = win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND  # (project.godot)
 	if DisplayServer.get_name() == "headless":
 		root.size = root_size
 	hold = false
@@ -2637,6 +2643,7 @@ func _dp_run() -> void:
 	for cfg in [["S", Vector2i(1231, 568)], ["M", Vector2i(886, 409)], ["M", Vector2i(1280, 720)]]:
 		var vp: Vector2i = cfg[1]
 		root.content_scale_size = vp
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP  # the visible rect is this size, whatever the window's shape
 		if DisplayServer.get_name() == "headless":
 			root.size = vp
 		for k in 3:
@@ -2765,6 +2772,7 @@ func _dp_run() -> void:
 	CData.use_pack("rome")
 	cs.close_dialog()
 	root.content_scale_size = win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND  # (project.godot)
 	if DisplayServer.get_name() == "headless":
 		root.size = root_size
 	Panels.dip_open_all = true

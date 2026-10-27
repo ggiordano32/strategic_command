@@ -576,6 +576,13 @@ down. `_center_dialog` now fits again after the next two layouts, and
 `_fit_dialog` limits the scroll area to what is left of the screen after the
 title, rule and buttons (`campaign_input_test` `_j_ship`: both tabs inside the
 viewport with the buttons visible at 844x390 S / M and 1231x568 S).
+2026-10-27: the dialogs were right; the test's fit checks failed (up to 28) only when
+the test window's shape differed from the phone sizes (a window manager resizing the
+`--resolution` window): with the project's stretch aspect `expand` the visible rect,
+which `_fit_dialog` centres in (`_vp()`), was taller than the `content_scale_size` the
+test checks against. The phone-size steps (`_d_select`, `_j_barfit`, `_j_ship`,
+`_dp_run`) now set `content_scale_aspect` to `keep` (the visible rect is exactly the
+phone size, letterboxed) and restore `expand` after; PASS at 2000x923 and 1600x1100.
 
 **Boarding indicator and the Shipyard queue (as built, 2026-10-26).** The
 overlay's `set_landing` (called as before after a selection or an order; it
