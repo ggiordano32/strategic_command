@@ -128,6 +128,7 @@ var _opts: OptionsRows = null    # the Options page's rows
 
 
 var custom: CustomBattle = null
+var _names_keep_pack := ""   # the pack to put back after a custom battle with per-side unit names
 var _shot_path := ""
 var _shot_frames := 0
 var _tests_box: Control
@@ -1959,6 +1960,9 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 
 
 func _end_battle() -> void:
+	if _names_keep_pack != "":
+		CData.use_pack(_names_keep_pack)
+		_names_keep_pack = ""
 	if _battle != null:
 		if _battle.coop != null and _battle.has_meta("custom"):
 			_battle.coop.leave()
@@ -1997,6 +2001,13 @@ func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	b.seed_value = int(built["seed"])
 	b.player_side = maxi(CustomSetup.side_of_player(st, me), 0)
 	b.custom_summary = CustomSetup.summary(st)
+	var nk := [CustomSetup.names_of(st, 0), CustomSetup.names_of(st, 1)]
+	if nk[0] != "" or nk[1] != "":
+		# Per-side unit names (the HUD reads them through the active pack): the setting's pack for the battle.
+		if _names_keep_pack == "":
+			_names_keep_pack = CData.pack
+		CData.use_pack(CustomSetup.pack_of(st))
+		b.side_name_fkeys = nk
 	b.set_meta("custom", true)
 	b.speed_q = Battle.SPEED_PRESETS[clampi(_speed_idx, 0, Battle.SPEED_PRESETS.size() - 1)]
 	b.exit_requested.connect(_end_battle)

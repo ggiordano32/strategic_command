@@ -144,6 +144,7 @@ func _run() -> void:
 	await _tooltips()
 	await _emblems()
 	await _backgrounds()
+	await _unit_book_names()
 	await _phone()
 	_wipe_saves()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path("user://campaigns/menu_test"))
@@ -153,6 +154,44 @@ func _run() -> void:
 	_check(_errs.n == 0, "no script errors logged during the run (%d: %s)" % [_errs.n, _errs.first])
 	print("RESULT ", "PASS" if failures == 0 else "FAIL (%d)" % failures)
 	quit(1 if failures > 0 else 0)
+
+
+# The unit book under per-faction unit names (west.gd UNIT_NAMES): a faction's list shows its names.
+func _unit_book_names() -> void:
+	var UB := preload("res://game/unit_book.gd")
+	var UTm := preload("res://sim/unit_types.gd")
+	PackView.use_pack("west")
+	var bk: Control = UB.new()
+	root.add_child(bk)
+	bk.open()
+	await _frames(2)
+	var mis := CData.faction_index("miskito")
+	var itz := CData.faction_index("itza")
+	_check(bk.faction_pick.visible and bk.faction_pick.item_count >= 4, "unit book (west): a faction picker lists the factions with names")
+	var all: Array = bk.names_for(-1)
+	_check(all.has("Warriors") and all.has("Musketeers") and all.has("Chieftain's Guard"), "unit book (west): all factions list the row names")
+	var wt := UTm.index_of("native_warriors")
+	_check(bk.variants_text(wt) == "Itza Warriors, Miskito Warriors" and bk._subs[wt].visible, "unit book (west): a shared row lists each faction's name in small text (%s)" % bk.variants_text(wt))
+	bk.open(-1, mis)
+	await _frames(2)
+	var mn: Array = bk.names_for(mis)
+	_check(mn.has("Miskito Musketmen") and mn.has("King's Guard") and mn.has("Miskito Warriors"), "unit book (west): the Miskito list has Miskito Musketmen, King's Guard, Miskito Warriors")
+	_check(str(bk._list[UTm.index_of("musketeers")].text).strip_edges() == "Miskito Musketmen", "unit book (west): the Miskito list's button reads Miskito Musketmen")
+	bk.show_type(UTm.index_of("chieftain"))
+	_check(bk.entry._name.text == "King's Guard", "unit book (west): the Miskito unit page is named King's Guard (%s)" % bk.entry._name.text)
+	bk.open(-1, itz)
+	_check(bk.names_for(itz).has("Batab's Guard") and not bk.names_for(itz).has("Miskito Musketmen"), "unit book (west): the Itza list has Batab's Guard")
+	bk.queue_free()
+	PackView.use_pack("rome")
+	var rb: Control = UB.new()
+	root.add_child(rb)
+	rb.open()
+	await _frames(2)
+	var wr := UTm.index_of("heavy")
+	_check(not rb.faction_pick.visible and rb.names_for(-1).has(str(UTm.TYPES[wr]["name"])) and rb.variants_text(wr) == "" and str(rb._list[wr].text).strip_edges() == str(UTm.TYPES[wr]["name"]),
+		"unit book (rome): unchanged (no picker, the row's name, no variants)")
+	rb.queue_free()
+	await _frames(2)
 
 
 # ------------------------------------------------------------ entries ---

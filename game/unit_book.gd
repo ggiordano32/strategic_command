@@ -39,6 +39,13 @@ var _shown := ""
 var _order: Array[int] = []
 ## Role -> the group head (badge, name, "plays as") above its units in the list.
 var _heads: Dictionary = {}
+## Per-faction names (a pack with CData.UNIT_NAMES, e.g. the West): the faction picker above the list,
+## the faction whose names the list and the unit page show (CData.FACTIONS index; -1 the rows' own
+## names with each faction's variants in small text under a shared row) and the variants labels.
+var faction_pick: OptionButton
+var faction := -1
+var _pick_factions: Array[int] = []
+var _subs: Dictionary = {}
 
 
 func _init() -> void:
@@ -73,6 +80,14 @@ func _init() -> void:
 	var list := VBoxContainer.new()
 	list.add_theme_constant_override("separation", 6)
 	lscroll.add_child(list)
+	faction_pick = OptionButton.new()
+	faction_pick.name = "book_faction"
+	faction_pick.focus_mode = Control.FOCUS_NONE
+	faction_pick.custom_minimum_size = Vector2(200, 44)
+	faction_pick.add_theme_font_size_override("font_size", 15)
+	faction_pick.visible = false
+	faction_pick.item_selected.connect(func(i: int): set_faction(_pick_factions[i] if i < _pick_factions.size() else -1))
+	list.add_child(faction_pick)
 	_order = _page_order()
 	var btns: Dictionary = {}
 	for ty in UT.count():
@@ -86,6 +101,16 @@ func _init() -> void:
 		var ic := IconView.new(Icons.icon_of(ty), side_color, 40.0)
 		ic.position = Vector2(8, 8)
 		b.add_child(ic)
+		var sub := Label.new()
+		sub.position = Vector2(52, 31)
+		sub.size = Vector2(144, 22)
+		sub.clip_text = true
+		sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sub.add_theme_font_size_override("font_size", 11)
+		sub.add_theme_color_override("font_color", Color(0.72, 0.78, 0.65))
+		sub.visible = false
+		b.add_child(sub)
+		_subs[ty] = sub
 		b.pressed.connect(show_type.bind(ty))
 		btns[ty] = b
 		_list.append(b)
@@ -165,6 +190,87 @@ func _init() -> void:
 	terrain_text.add_theme_font_size_override("font_size", 16)
 	terrain_text.text = terrain_help()
 	terrain_page.add_child(terrain_text)
+
+
+## The name the list shows for row ty under the picked faction (CData.unit_name; the row's own with none).
+func unit_label(ty: int) -> String:
+	return CData.unit_name(UT.key_of(ty), faction) if _names_on() else str(UT.TYPES[ty]["name"])
+
+
+## True when the shown setting is the active pack and it has per-faction names.
+func _names_on() -> bool:
+	return not CData.UNIT_NAMES.is_empty() and _shown == CData.pack
+
+
+## The distinct names a row has across the factions that differ from its own, "Itza Warriors, Miskito Warriors".
+func variants_text(ty: int) -> String:
+	if not _names_on():
+		return ""
+	var key := UT.key_of(ty)
+	var own := str(UT.TYPES[ty]["name"])
+	var seen: Array[String] = []
+	for fk in CData.UNIT_NAMES:
+		var f := CData.faction_index(str(fk))
+		if f < 0:
+			continue
+		var n := CData.unit_name(key, f)
+		if n != own and not seen.has(n):
+			seen.append(n)
+	return ", ".join(seen)
+
+
+## Whether row ty is on the list: the setting's rows, and (a pack with per-faction names) the rows
+## the factions rename (the West's chieftain and general guards are Rome-tagged rows): with a faction
+## picked, only those that faction renames.
+func _row_shown(ty: int) -> bool:
+	if UT.pack_of(ty) == _shown:
+		return true
+	if not _names_on():
+		return false
+	var key := UT.key_of(ty)
+	if faction >= 0:
+		return CData.UNIT_NAMES.get(str(CData.FACTIONS[faction]["key"]), {}).has(key)
+	for fk in CData.UNIT_NAMES:
+		if (CData.UNIT_NAMES[fk] as Dictionary).has(key):
+			return true
+	return false
+
+
+## Every row's name of the shown setting, under faction f (-1: the rows' own), in list order.
+func names_for(f: int) -> Array[String]:
+	var out: Array[String] = []
+	var keep := faction
+	faction = f if _names_on() else -1
+	for ty in _order:
+		if ty < UT.count() and _row_shown(ty):
+			out.append(unit_label(ty))
+	faction = keep
+	return out
+
+
+## Show the list and the unit page under faction f's names (-1: the rows' own, variants in small text).
+func set_faction(f: int) -> void:
+	faction = f if _names_on() else -1
+	for ty in UT.count():
+		var b: Button = _list[ty]
+		var vt := variants_text(ty) if faction < 0 else ""
+		b.visible = _row_shown(ty)
+		b.text = "            " + unit_label(ty) + ("\n " if vt != "" else "")
+		var sub: Label = _subs[ty]
+		sub.text = vt
+		sub.visible = vt != ""
+		b.custom_minimum_size.y = 62 if vt != "" else 56
+	var any := {}
+	for t in UT.count():
+		if _list[t].visible:
+			any[UT.role(t)] = true
+	for rk in _heads:
+		(_heads[rk] as Control).visible = any.has(rk)
+	if faction_pick != null and faction_pick.item_count > 0:
+		var at := _pick_factions.find(faction)
+		faction_pick.select(maxi(at, 0))
+	if current < UT.count():
+		show_type(current)
 
 
 func _pages() -> int:
@@ -419,26 +525,38 @@ static func siege_help() -> String:
 	return "\n".join(lines)
 
 
-func open(ty: int = -1) -> void:
+func open(ty: int = -1, fac: int = -1) -> void:
 	visible = true
 	var pk := pack if pack != "" else CData.pack
 	if pk != _shown:
 		# Only the setting's rows in the list (Rome: exactly as before the West rows).
 		_shown = pk
-		var any := {}
-		for t in UT.count():
-			_list[t].visible = UT.pack_of(t) == pk
-			if _list[t].visible:
-				any[UT.role(t)] = true
-		for rk in _heads:
-			(_heads[rk] as Control).visible = any.has(rk)
-		if current < UT.count() and UT.pack_of(current) != pk:
-			current = 0
-			for t in _order:
-				if t < UT.count() and UT.pack_of(t) == pk:
-					current = t
-					break
+		_fill_faction_pick()
+	set_faction(fac)
+	if current < UT.count() and not _list[current].visible:
+		current = 0
+		for t in _order:
+			if t < UT.count() and _list[t].visible:
+				current = t
+				break
 	show_type(current if ty < 0 else ty)
+
+
+## The faction picker: "All factions" and each faction with names of its own (West); hidden elsewhere (Rome).
+func _fill_faction_pick() -> void:
+	faction_pick.clear()
+	_pick_factions.clear()
+	faction = -1
+	faction_pick.visible = _names_on()
+	if not _names_on():
+		return
+	faction_pick.add_item("All factions")
+	_pick_factions.append(-1)
+	for fk in CData.UNIT_NAMES:
+		var f := CData.faction_index(str(fk))
+		if f >= 0:
+			faction_pick.add_item(CData.faction_name(f))
+			_pick_factions.append(f)
 
 
 ## The next (dir 1) or previous (-1) page shown in the list.
@@ -476,7 +594,7 @@ func show_type(ty: int) -> void:
 		terrain_text.text = terrain_help() if current == UT.count() else (siege_help() if current == UT.count() + 1 else chars_help(_shown))
 		terrain_page.scroll_vertical = 0
 	else:
-		entry.set_unit_type(current, side_color)
+		entry.set_unit_type(current, side_color, faction)
 
 
 func _unhandled_input(event: InputEvent) -> void:

@@ -198,8 +198,74 @@ func _init() -> void:
 		_fail("solo: Player 2's side is not the AI's")
 	_check_sea()
 	_check_occupy()
+	await _check_names()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## Per-side unit names (west.gd UNIT_NAMES): a Miskito side's list and the battle HUD's cards name its units
+## Miskito; the other side keeps the row names; Rome has no Names button.
+func _check_names() -> void:
+	const CustomBattle := preload("res://game/custom/custom_battle.gd")
+	const PackView := preload("res://game/campaign/pack_view.gd")
+	const BattleScr := preload("res://game/battle.gd")
+	var st := CS.default_setup(3)
+	CS.set_pack(st, "west")
+	st["sides"][0]["armies"][0]["units"] = [["musketeers", 100], ["native_warriors", 80], ["chieftain", 40]]
+	st["sides"][1]["armies"][0]["units"] = [["musketeers", 100], ["native_warriors", 80]]
+	if CS.names_of(st, 0) != "" or CS.unit_label(st, 0, "musketeers") != "Musketeers":
+		_fail("names: a side with no choice keeps the row names")
+	st["sides"][0]["names"] = "miskito"
+	if CS.unit_label(st, 0, "musketeers") != "Miskito Musketmen" or CS.unit_label(st, 0, "chieftain") != "King's Guard" \
+			or CS.unit_label(st, 1, "musketeers") != "Musketeers":
+		_fail("names: a Miskito side's labels (%s / %s)" % [CS.unit_label(st, 0, "musketeers"), CS.unit_label(st, 1, "musketeers")])
+	var rs := CS.default_setup(3)
+	rs["sides"][0]["names"] = "miskito"
+	if CS.names_of(rs, 0) != "":
+		_fail("names: Rome has no per-side names")
+	# The setup screen: the side's army list.
+	var cb: Control = CustomBattle.new()
+	cb.setup = st.duplicate(true)
+	root.add_child(cb)
+	await process_frame
+	await process_frame
+	cb._rebuild()
+	await process_frame
+	var texts: Array[String] = []
+	for l in cb.find_children("*", "Label", true, false):
+		texts.append((l as Label).text)
+	var joined := "\n".join(texts)
+	if not joined.contains("Miskito Musketmen") or not joined.contains("King's Guard"):
+		_fail("names: the Miskito side's list shows Miskito Musketmen and King's Guard")
+	var nb := cb.find_child("custom_names_0", true, false)
+	if nb == null or not (nb as Button).text.contains("Miskito"):
+		_fail("names: the Names button of side 1 reads Miskito")
+	cb.queue_free()
+	# The battle: the HUD cards.
+	var built := CS.build(st, true)
+	PackView.use_pack("west")
+	var bt = BattleScr.new()
+	bt.custom_scenario = built["scenario"]
+	bt.seed_value = 5
+	bt.side_name_fkeys = [CS.names_of(st, 0), CS.names_of(st, 1)]
+	root.add_child(bt)
+	for k in 8:
+		await process_frame
+	var mis := 0
+	var plain := 0
+	for u in bt.hud._cards:
+		var nm: String = bt.hud._faces[u].name_text
+		if bt.sim.u_side[u] == 0 and bt.sim.u_otype[u] == UT.index_of("musketeers") and nm.contains("Musketmen"):
+			mis += 1
+		if bt.sim.u_side[u] == 0 and bt.sim.u_otype[u] == UT.index_of("chieftain") and nm.contains("King's Guard"):
+			plain += 1
+	var sides_ok: bool = bt.hud.unit_faction.size() == bt.sim.n_units
+	bt.free()
+	PackView.use_pack("rome")
+	if mis != 1 or plain != 1 or not sides_ok:
+		_fail("names: the HUD cards name the Miskito side's musketeers Musketmen (%d) and the King's Guard (%d)" % [mis, plain])
+	else:
+		print("PASS names: a Miskito side shows its names in the setup list and the HUD cards")
 
 
 ## (N3a) The West setting's sea battle: the default builds a sea scenario

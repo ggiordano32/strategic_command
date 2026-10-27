@@ -41,6 +41,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
+const UnitNames := preload("res://game/unit_names.gd")
 
 const LADDER_SETS := 3         # the Ladders toggle: sets of ladders (as a campaign siege of two turns)
 const MAX_TOWERS := 2          # the Siege towers option: 0, 1 or 2 (as a campaign siege of three / four turns)
@@ -122,11 +123,31 @@ static func set_pack(st: Dictionary, pack: String) -> void:
 		st["pack"] = pack
 	var army: Array = WEST_ARMY if pack == "west" else (default_setup(0)["sides"][0]["armies"][0]["units"] as Array)
 	for s in 2:
+		(st["sides"][s] as Dictionary).erase("names")
 		st["sides"][s]["armies"] = [{"ctrl": "p1" if s == 0 else "ai", "units": army.duplicate(true)}]
 		(st["sides"][s] as Dictionary).erase("chars")  # (the other setting's characters)
 	if st.get("sea") is Dictionary:
 		st["sea"] = sea_default(pack)  # (R2: the ships on offer follow the setting)
 	fit_map(st)
+
+
+## A side's unit-name faction (view only; the setup's side "names": a faction key of the
+## setting's UNIT_NAMES, "" = the rows' own names). A custom side is an army of any units, not a
+## faction, so the owner picks whose names the side's units carry (Names button).
+static func names_of(st: Dictionary, s: int) -> String:
+	var k := str((st["sides"][s] as Dictionary).get("names", ""))
+	return k if k != "" and UnitNames.factions(pack_of(st)).has(k) else ""
+
+
+## The next choice after the side's current one: "", then each faction with names.
+static func next_names(st: Dictionary, s: int) -> String:
+	var all: Array = [""] + UnitNames.factions(pack_of(st))
+	return str(all[(all.find(names_of(st, s)) + 1) % all.size()])
+
+
+## Unit row `ukey`'s name on side s (short: the card name).
+static func unit_label(st: Dictionary, s: int, ukey: String, short := false) -> String:
+	return UnitNames.name_of(pack_of(st), names_of(st, s), ukey, short)
 
 
 ## The picker's lines for pack `pack` (Rome: the base lines with the light

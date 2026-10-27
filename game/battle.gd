@@ -103,6 +103,9 @@ var custom_scenario: Dictionary = {}
 ## Campaign faction index per unit (CBattle "unit_faction"): the soldiers'
 ## palettes (view only; empty: from each side's units, see SoldierLayer).
 var unit_faction: Array = []
+## Custom battle (view only): per sim side the faction key whose unit names the HUD shows ("" the
+## rows' own); needs that faction's pack active (main.gd switches it for the battle).
+var side_name_fkeys: Array = []
 ## Sandbox: battle AI skill for both sides (sim/ai_profile.gd), -1 = the
 ## scenario's own (campaign battles carry theirs in the scenario).
 var ai_skill := -1
@@ -352,6 +355,12 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.unit_faction = soldiers.unit_faction
+	if not side_name_fkeys.is_empty():
+		var nf: Array = []
+		for u in sim.n_units:
+			var sk := int(sim.u_side[u]) & 1
+			nf.append(CData.faction_index(str(side_name_fkeys[sk])) if sk < side_name_fkeys.size() and str(side_name_fkeys[sk]) != "" else -1)
+		hud.unit_faction = nf
 	hud.build(sim, player_side, interactive)
 	hud.set_title(_hud_title(), hud.book.pack)
 	var su: Array = scn.get("units", [])

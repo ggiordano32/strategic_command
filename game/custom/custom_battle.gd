@@ -20,6 +20,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const UT := preload("res://sim/unit_types.gd")
+const UnitNames := preload("res://game/unit_names.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CoopSession := preload("res://game/net/coop_session.gd")
@@ -415,6 +416,19 @@ func _side_view(s: int) -> Control:
 		else:
 			ar.add_child(Kit.label("AI armies on a side with a player are commanded by that player.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 		v.add_child(ar)
+	# Names: whose unit names this side's units carry (the setting's factions with their own names).
+	if not UnitNames.factions(CS.pack_of(setup)).is_empty():
+		var fk := CS.names_of(setup, s)
+		var nb := _opt("Names: " + (UnitNames.faction_name(CS.pack_of(setup), fk) if fk != "" else "standard"), func():
+			var nx := CS.next_names(setup, s)
+			if nx == "":
+				sd.erase("names")
+			else:
+				sd["names"] = nx
+			_changed(), _can_edit_all())
+		nb.name = "custom_names_%d" % s
+		nb.tooltip_text = "Whose names this side's units carry in the lists and the battle (a Miskito side: Miskito Musketmen, King's Guard). The units themselves do not change."
+		v.add_child(nb)
 	# Mantlets (any map): screens set up before the side's missile troops and engines.
 	var nm := CS.mantlets_of(setup, s)
 	var mb := _opt("Mantlets: " + ("none" if nm == 0 else str(nm)), func():
@@ -477,7 +491,7 @@ func _army_view(s: int, ai: int) -> Control:
 		var e: Array = units[k]
 		var ty := UT.index_of(str(e[0]))
 		var r := Kit.hbox(4)
-		var nm := Kit.label("%s  %d" % [UT.text(ty, "name") if ty >= 0 else str(e[0]), int(e[1])], Kit.FONT_SMALL, Color.WHITE)
+		var nm := Kit.label("%s  %d" % [CS.unit_label(setup, s, str(e[0])) if ty >= 0 else str(e[0]), int(e[1])], Kit.FONT_SMALL, Color.WHITE)
 		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.add_child(nm)
 		var kinds := CS.ammo_choices(ty)

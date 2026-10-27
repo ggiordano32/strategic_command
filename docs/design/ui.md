@@ -409,8 +409,21 @@ unit rows (`Kit.UnitRow.name_f`, apart from `faction` so the fire trait is uncha
 tooltips, the unit page (`open_unit_page(..., fac)`, `UnitEntry.set_unit_type(..., faction)`), the recruit / raising
 event texts, the pre-battle and result cards (`battle_screen.gd UnitCard.name_f`) and the battle HUD (`Hud.unit_faction`,
 copied from the battle's `unit_faction`: card names, battery text, reinforcement note, result table). Left with the row
-name: the main-menu unit book and Roles pages (no faction), the "killed by" lists (`Kit.kills_detail`, enemy types), the
-engine-worker note ("on bolts") and the trait text of characters.
+name: the Roles texts (they name roles, not units), the "killed by" lists (`Kit.kills_detail`, enemy types), the
+engine-worker note ("on bolts") and the trait text of characters, and the custom battle's unit picker (it
+adds rows, not a side's units).
+
+Unit book and custom battle (2026-10-27): the main-menu book (`unit_book.gd`) has a faction picker above its list
+(`book_faction`, only in a pack with `UNIT_NAMES`): "All factions" lists each row once under its own name with the
+per-faction names in small text under it ("Itza Warriors, Miskito Warriors"; `variants_text`), and a faction pick
+lists that faction's names (`unit_label`) and the unit page takes the faction (`open(ty, fac)`,
+`UnitEntry.set_unit_type(..., faction)`). Rows the factions rename but the book did not list in the West (the
+Rome-tagged chieftain and general guards) are listed for them. Rome has no table: unchanged. A custom battle side
+is an army of any units, not a faction, so each side has a Names button (West: standard / Itza / Miskito / Brethren;
+setup side key `names`, view only, erased by a pack change); `CustomSetup.unit_label` names the side's army list
+(`game/unit_names.gd` reads the pack's table without making it active) and `Battle.side_name_fkeys` makes the HUD's
+`unit_faction` per sim unit (the soldiers' palette `unit_faction` is untouched); `main.gd` makes the setup's pack
+active for the battle and puts the old one back at its end.
 
 ### Diplomacy screen: trust, alliances and passage (as built, 2026-10-26)
 
