@@ -258,6 +258,9 @@ func _s_handover() -> void:
 
 func _s_intro() -> void:
 	_check(not cs.cover.visible and cs.dialog.visible, "intro dialog after the hand-over")
+	# the map-table frame spans the viewport, shown or not (it was 0 x 0, or the
+	# viewport's later growth as a paper patch at the top left; tests/zoom_probe.gd)
+	_check(cs.table_frame.get_global_rect().is_equal_approx(Rect2(Vector2.ZERO, cs._vp())), "the table frame spans the viewport")
 	_tap_button("dlg_Start", "intro: start")
 
 

@@ -14,7 +14,10 @@ static var tilt_default := true
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# The offsets too: set_anchors_preset alone (in the tree) keeps the 0 x 0
+	# rect, so the frame was only as large as the viewport later grew: a paper
+	# patch at the top left (2026-10-27), or nothing.
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var m := ShaderMaterial.new()
 	m.shader = SHADER
 	material = m
