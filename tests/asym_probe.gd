@@ -7,7 +7,8 @@ extends SceneTree
 ## ground (the English with England's campaign plays, the countermarch's
 ## bit only). --plays=MASK sets the Spanish side's ai_plays (sim/plays.gd
 ## bits; default every play), e.g. --plays=0 without the tercio. Each battle
-## prints whether the Spanish formed a tercio.
+## prints whether the Spanish formed a tercio, and the line of sight's
+## reveals, hidden checks and sight lingers (the summary: per battle).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -29,6 +30,9 @@ func _init() -> void:
 		elif a.begins_with("--plays="):
 			plays = int(a.substr(8))
 	var w := [0, 0, 0]
+	var rv := 0
+	var hd := 0
+	var lg := 0
 	for k in seeds:
 		var sd := 5000 + seed0 + k
 		var sim := BattleSim.new()
@@ -45,6 +49,11 @@ func _init() -> void:
 			sim.alive_count(0), sim.alive_count(1), sim.stat_pis_shots if "stat_pis_shots" in sim else -1,
 			sim.stat_car_volleys if "stat_car_volleys" in sim else -1, sim.stat_skd_men if "stat_skd_men" in sim else -1,
 			sim.stat_parley_ok, sim.stat_parley_ok + sim.stat_parley_fail, sim.ch_pris[0], sim.ch_pris[1]])
-		print("  tercio %d" % sim.stat_aic[AP.C_PLAY_TERCIO])
-	print("SUMMARY %s seeds %d spanish %d natives %d draws %d" % [scen, seeds, w[0], w[1], w[2]])
+		var lin: int = sim.get("stat_lingers") if "stat_lingers" in sim else 0
+		print("  tercio %d reveals %d hidden %d lingers %d" % [sim.stat_aic[AP.C_PLAY_TERCIO], sim.stat_reveals, sim.stat_hidden, lin])
+		lg += lin
+		rv += sim.stat_reveals
+		hd += sim.stat_hidden
+	print("SUMMARY %s seeds %d spanish %d natives %d draws %d reveals/battle %.1f hidden/battle %.1f lingers/battle %.1f" % [scen, seeds, w[0], w[1], w[2],
+		float(rv) / maxi(seeds, 1), float(hd) / maxi(seeds, 1), float(lg) / maxi(seeds, 1)])
 	quit()

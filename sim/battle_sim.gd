@@ -441,6 +441,11 @@ const VIS_T := 10         # sight: each unit re-checked every this many ticks (s
 const VIS_NEAR := 20 * M  # an enemy unit this near (box to box) always sees it ...
 const VIS_WOODS := 40 * M # ... a unit in woods only enemies this near see ...
 const REVEAL_T := 50      # ... unless it shot within this long (5 s)
+const VIS_LINGER := 30    # a unit seen in the open stays seen this long after the last enemy loses it (3 s), once a hiding
+const VIS_LINGER_WOODS := 15  # ... in woods or gone to ground in cover (1.5 s)
+const VIS_WOODS_OUT := 10 * M # a seen unit stays seen by enemies this much beyond VIS_NEAR / VIS_WOODS (hysteresis)
+const LIN_EARNED := -1    # u_lin: an enemy's eyes saw it since its last hiding (the next hiding lingers)
+const LIN_SPENT := -1000  # u_lin: none earned (start, or a hiding spent it with no linger)
 const VIS_PEEK := 12 * M  # an observer sees out through this much of the woods round him
 const VIS_EYE := 1741     # the observer's eye, 1.7 m up (aimed at a man's body, LOF_BODY)
 const VIS_BUILD_H := 5 * M  # a building's height on maps that give none (field maps' blocks)
@@ -1496,6 +1501,7 @@ var u_hid0 := PackedInt32Array()      # tick it was last hidden from (while hidd
 var u_amb := PackedInt32Array()       # it ambushes until this tick (seen after AMBUSH_HID hidden)
 var u_ambt := PackedInt32Array()      # tick it was last struck by an ambush
 var u_revt := PackedInt32Array()      # tick it was last seen after hiding (view: the reveal flash)
+var u_lin := PackedInt32Array()       # sight linger: the tick it was granted (LIN_EARNED: earned, not granted; LIN_SPENT: none)
 var u_seer := PackedInt32Array()      # the enemy unit that saw it last (tried first; no effect on the outcome, not hashed)
 var u_cov := PackedInt32Array()       # cover units: its men in cover at the last check
 var u_gnd := PackedInt32Array()       # cover units: checks still in cover running (GROUND_STILL: gone to ground)
@@ -1592,6 +1598,9 @@ var stat_ground_stop: int = 0         # ... and by his going to ground
 var stat_cover_kind := PackedInt32Array([0, 0, 0, 0, 0, 0, 0])  # hits on cover men by the cover they were in (COV_*)
 var stat_hidden: int = 0              # unit-checks that found a unit hidden
 var stat_reveals: int = 0             # units seen after hiding
+var stat_lingers: int = 0             # sight lingers granted (VIS_LINGER)
+var _vis_eye: int = 0                 # scratch (_seen): it was seen by an enemy's eyes (near, a sight line, contact), not only its shot
+var _vis_wood: int = 0                # scratch (_seen): it is in woods or gone to ground in cover
 var stat_ambush: int = 0              # ambush shocks struck
 var stat_blind: int = 0               # arrows lobbed at a target nobody sees
 var stat_vis_rays: int = 0            # sight lines traced (cost)
@@ -2157,6 +2166,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	u_seen.fill(1)
 	u_ambt.fill(-1000)
 	u_revt.fill(-1000)
+	u_lin.fill(LIN_SPENT)
 	u_seer.resize(n_units)
 	u_seer.fill(-1)
 	u_kills_ty.resize(n_units * kty_n)
@@ -2585,7 +2595,7 @@ func _gun_arrays() -> Array:
 ## only with vis_on). (u_seer: snapshotted, not hashed: it only picks which
 ## enemy is asked first.)
 func _vis_arrays() -> Array:
-	return [u_seen, u_rev, u_hid0, u_amb, u_ambt, u_revt]
+	return [u_seen, u_rev, u_hid0, u_amb, u_ambt, u_revt, u_lin]
 
 
 ## Per-unit cover state (hashed only with cov_on).
@@ -16750,20 +16760,34 @@ func _update_vis() -> void:
 
 
 ## Unit t: seen by the enemy or hidden; seen after hiding long enough, it
-## ambushes for AMBUSH_T.
+## ambushes for AMBUSH_T. The sight linger: a unit an enemy's eyes saw
+## (near, a sight line, contact; a shot's reveal alone neither earns nor
+## spends it) that the enemy loses, in battle, stays seen VIS_LINGER more
+## (in woods or gone to ground in cover VIS_LINGER_WOODS); once a hiding
+## (while deploying it hides at once and the hiding spends it as well).
 func _vis_unit(t: int) -> void:
 	if u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
 		u_seen[t] = 1
 		return
 	if _seen(t):
+		if _vis_eye != 0:
+			u_lin[t] = LIN_EARNED
 		if u_seen[t] == 0:
 			_revealed(t)
 		u_seen[t] = 1
-	else:
-		stat_hidden += 1
-		if u_seen[t] != 0:
-			u_hid0[t] = tick
-		u_seen[t] = 0
+		return
+	if u_seen[t] != 0 and phase == PHASE_BATTLE:
+		if u_lin[t] == LIN_EARNED:
+			u_lin[t] = tick
+			stat_lingers += 1
+		if u_lin[t] >= 0 and tick < u_lin[t] + (VIS_LINGER_WOODS if _vis_wood != 0 else VIS_LINGER):
+			return  # (lingers: still seen)
+	stat_hidden += 1
+	if u_seen[t] != 0:
+		u_hid0[t] = tick
+		if u_lin[t] == LIN_EARNED:
+			u_lin[t] = LIN_SPENT
+	u_seen[t] = 0
 
 
 ## Unit t is seen again after hiding (a reveal: the view's flash).
@@ -16786,18 +16810,28 @@ func _shot_seen(t: int) -> void:
 
 ## Some enemy unit sees unit t: it shot lately or is in contact; an enemy
 ## within VIS_NEAR (box to box; in woods, or a cover unit gone to ground in
-## its cover, VIS_WOODS, and no further); else a clear sight line from an
-## enemy's centroid (the last one that saw it first, then index order).
+## its cover, VIS_WOODS, and no further; either VIS_WOODS_OUT further
+## while it is seen); else a clear sight line from an enemy's centroid (the
+## last one that saw it first, then index order).
+## (_vis_eye: 1 when an enemy's eyes see it, 0 when only its shot or
+## nothing; _vis_wood: 1 when it is in woods or gone to ground in cover.)
 func _seen(t: int) -> bool:
-	if tick < u_rev[t] or u_contact[t] != 0 or u_fighting[t] > 0:
+	_vis_eye = 1
+	_vis_wood = 0
+	if u_contact[t] != 0 or u_fighting[t] > 0:
+		return true
+	if tick < u_rev[t]:
+		_vis_eye = 0
 		return true
 	var side := u_side[t]
 	var wood := (veg_on != 0 and veg_d(u_cx[t], u_cy[t]) > 0) or cover_state(t) == 2
-	var near := VIS_WOODS if wood else VIS_NEAR
+	var near := (VIS_WOODS if wood else VIS_NEAR) + (VIS_WOODS_OUT if u_seen[t] != 0 else 0)
 	for o in n_units:
 		if u_side[o] != side and u_state[o] < U_DESTROYED and u_alive[o] > 0 and _box_gap(o, t) <= near:
 			return true
 	if wood:
+		_vis_eye = 0
+		_vis_wood = 1
 		return false
 	var c := u_seer[t]
 	if c >= 0 and u_side[c] != side and u_state[c] < U_DESTROYED and u_alive[c] > 0 and _sight(c, t):
@@ -16808,6 +16842,7 @@ func _seen(t: int) -> bool:
 		if _sight(o, t):
 			u_seer[t] = o
 			return true
+	_vis_eye = 0
 	return false
 
 

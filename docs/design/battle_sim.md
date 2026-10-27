@@ -1882,6 +1882,42 @@ bench_4000_city 4.23 -> 4.34, bench_2000 (flat, no blockers) 1.48 = 1.48.
 Settlements: Punic siege, both AI, seeds 1-6: the attacker won 1 (5 draws)
 with line of sight against 3 (3 draws) without; more defenders left.
 
+**Sight linger (2026-10-27).** The owner's "units pop in and out of
+sight" (docs/STATUS.md, the line-of-sight plan; the view's last-seen ghost
+is the other half). Two rules, no new sight traces:
+- *Linger*: a unit an enemy's eyes saw (an enemy near enough, a sight
+  line, contact) that a check then finds unseen, in battle, stays seen
+  `VIS_LINGER` 30 ticks (3 s) more in the open, `VIS_LINGER_WOODS` 15 (in
+  woods or a cover unit gone to ground in cover, the test `_seen` uses;
+  checks come every `VIS_T` 10, so 2 s in practice), then hides as before
+  (`u_hid0`, the ambush clock and the reveal flash unchanged; lingering
+  checks count neither as hidden nor as a reveal). Once a hiding: the
+  grant (`u_lin`, the tick it began; hashed with the other `_vis_arrays`,
+  so flat maps hash as before) is earned again only by an enemy's eyes.
+  While the armies deploy a unit hides at once and the hiding spends it.
+  A shot's reveal (`REVEAL_T`) neither earns nor spends it: a unit hidden
+  when it shot hides at once when the reveal runs out (the 5 s already
+  lingered); one the enemy saw before it shot lingers after the reveal if
+  the enemy has lost it by then (the reveal skips the sight lines, so
+  "seen meanwhile" is "seen before the shot").
+- *The band* (hysteresis): a unit that is seen stays seen by an enemy
+  within `VIS_NEAR` + `VIS_WOODS_OUT` 10 m (30 m), in woods `VIS_WOODS` +
+  10 m (50 m), box to box; an unseen one still needs 20 m / 40 m.
+
+Test: determinism `--only=linger`. Measured (48 seeds, before = HEAD):
+asym_woods Spanish wins 1 -> 0 (natives 46 -> 47, draws 1), reveals per
+battle 33.1 -> 28.4 (-14 %), hidden checks 3455 -> 3277, 13.8 lingers a
+battle; asym_field 42 = 42 (no sight blockers). Hidings in asym_woods (12
+seeds): 307 in woods / 19 in the open -> 234 / 4, and reveals within 3 s
+of a hiding (the flicker) 51 -> 5. Most of the remaining reveals are real
+(a unit hidden for longer than 3 s). With the open-ground linger alone
+(woods hiding at once) asym_woods did not move at all (33.1 reveals a
+battle): 94 % of its hidings are in woods. What moved: no pinned golden
+(the four flat maps have no blockers); every determinism run on a map
+with sight blockers has a new final hash (u_lin is hashed and the AI sees
+differently: test_woods, the siege_* and west_town runs, battle_2000@2,
+bench_2000@3 / @4, the river crossings).
+
 ### Fight jitter and stuck units (as built, pathing phase J, 2026-10-16)
 
 Why: phase C's target (fight jitter near obstacles and in town at most

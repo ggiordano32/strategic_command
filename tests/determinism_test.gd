@@ -321,6 +321,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=linger" in OS.get_cmdline_user_args():
+		_check_linger()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=street" in OS.get_cmdline_user_args():
 		_check_street()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -425,6 +430,7 @@ func _init() -> void:
 	_check_reinf()
 	_check_guns()
 	_check_cover()
+	_check_linger()
 	_check_street()
 	_check_west()
 	_check_plays()
@@ -6939,6 +6945,169 @@ func _check_cover() -> void:
 		print("PASS cover (town, phase C0): buccaneers at a street's mouth: %d balls stopped by the houses (%d traced), %d men to cover spots, %d leaning shots, %d / %d behind cover at the end (a line there: %d / %d, no spots, none off its places), lost %d / %d (the line %d / %d); identical on repeat and across snapshot / restore" % [
 			int(tw["flat_block"]), int(tw["flat_traced"]), int(tw["cs_men"]), int(tw["lean"]), int(tw["behind"]), int(tw["alive_d"]),
 			int(tl["behind"]), int(tl["alive_d"]), int(tw["lost0"]), int(tw["lost1"]), int(tl["lost0"]), int(tl["lost1"])])
+	else:
+		for x in bad:
+			_fail(str(x))
+
+
+## The sight linger (docs/design/battle_sim.md "Cover and line of sight",
+## "Sight linger"; "--only=linger", also in the full run). "open": two pike
+## blocks 135 m apart on a flat field, a 4 m rock wall 15 m in front of the
+## side 1 block's walk; it walks behind the wall (lingers VIS_LINGER, then
+## hides), out of it (seen again by a sight line) and behind it again (a
+## fresh linger); hidden there it is revealed as if it shot (no linger when
+## the reveal runs out). "woods": a block in a wood seen by an enemy 30 m
+## off that walks away: still seen out to VIS_WOODS + VIS_WOODS_OUT (the
+## band), then lingers VIS_LINGER_WOODS (to the next check) and hides. Identical on repeat and
+## across a snapshot taken mid-linger.
+static func _linger_sc(kind: String) -> Dictionary:
+	if kind == "woods":
+		return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "units": [
+			Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 200, 160, Scenarios.FACE_DOWN),
+			Scenarios.unit(0, UT.index_of("w_pikemen"), 40, 200, 200, Scenarios.FACE_UP)],
+			"terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 150, 50, 30, 2]]}}
+	var rk: Array = []
+	var x := 176
+	while x <= 224:
+		rk.append([x, 200, 1, 40])
+		x += 2
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "units": [
+		Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 150, 185, Scenarios.FACE_DOWN),
+		Scenarios.unit(0, UT.index_of("w_pikemen"), 40, 200, 320, Scenarios.FACE_UP)],
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": rk}}
+
+
+## One run: per tick the side 1 block's (unit 0) seen flag and linger tick; the
+## walks (open) or the observer's retreat (woods) given as the last one
+## ends; snap_at >= 0: a restored copy from that tick runs beside it.
+func _linger_run(kind: String, snap_at: int) -> Dictionary:
+	var sc := _linger_sc(kind)
+	var sim := BattleSim.new()
+	sim.setup(sc, 3)
+	var twin = null
+	var twin_bad := 0
+	var hashes := PackedInt64Array()
+	var seen := PackedInt32Array()
+	var lin := PackedInt32Array()
+	var gaps := PackedInt32Array()
+	var legs: Array = [[0, 0, 200, 185], [0, 0, 150, 185], [0, 0, 200, 185]] if kind == "open" else [[0, 1, 200, 330]]
+	var leg := -1
+	var still := 0
+	var shot_t := -1
+	for k in 2600:
+		var extra: Array = []
+		# The next walk once the block has stood still a while (and, after the
+		# last walk, the "shot" while hidden).
+		var mu: int = 0 if kind == "open" else 1
+		if sim.u_state[mu] == BattleSim.U_READY and sim.u_order[mu] == BattleSim.O_NONE:
+			still += 1
+		else:
+			still = 0
+		if still >= 80 or (leg < 0 and k == 20):
+			if leg + 1 < legs.size():
+				leg += 1
+				var lg: Array = legs[leg]
+				extra.append(BattleSim.make_move_order(sim.tick, int(lg[1]), int(lg[2]) * M, int(lg[3]) * M,
+					256 if kind == "open" else 768, 20 * M, 0))
+				still = 0
+			elif kind == "open" and shot_t < 0 and sim.u_seen[0] == 0:
+				shot_t = sim.tick
+		for o in extra:
+			sim.queue_order(o)
+			if twin != null:
+				twin.queue_order((o as Dictionary).duplicate())
+		if shot_t == sim.tick:
+			sim._shot_seen(0)
+			if twin != null:
+				twin._shot_seen(0)
+		sim.step()
+		hashes.append(sim.state_hash())
+		seen.append(sim.u_seen[0])
+		lin.append(sim.u_lin[0])
+		gaps.append(sim._box_gap(0, 1))
+		if twin != null:
+			twin.step()
+			if twin.state_hash() != sim.state_hash():
+				twin_bad += 1
+		if k == snap_at:
+			twin = BattleSim.new()
+			twin.setup(sc, 3)
+			if not twin.restore(sim.snapshot()) or twin.state_hash() != sim.state_hash():
+				twin_bad += 1000
+		if shot_t >= 0 and sim.tick > shot_t + BattleSim.REVEAL_T + 2 * BattleSim.VIS_T:
+			break
+		if kind == "woods" and leg >= 0 and still >= 40:
+			break
+	return {"hashes": hashes, "seen": seen, "lin": lin, "gaps": gaps, "shot_t": shot_t, "twin_bad": twin_bad if snap_at < 0 or twin != null else -1,
+		"lingers": sim.stat_lingers, "vis_on": sim.vis_on}
+
+
+func _check_linger() -> void:
+	var bad: Array = []
+	var o := _linger_run("open", -1)
+	var seen: PackedInt32Array = o["seen"]
+	var lin: PackedInt32Array = o["lin"]
+	# Each grant: the tick the linger began and the first tick hidden after it.
+	var grants: Array = []
+	var hides: Array = []  # [tick, linger tick then]
+	for k in seen.size():
+		if k > 0 and lin[k] >= 0 and lin[k] != lin[k - 1]:
+			grants.append(lin[k])
+		if k > 0 and seen[k] == 0 and seen[k - 1] != 0:
+			hides.append([k, lin[k]])
+	var lin_ok := grants.size() == 2 and hides.size() >= 3
+	if lin_ok:
+		for g in 2:
+			var h: Array = hides[g]
+			if int(h[1]) != int(grants[g]) or int(h[0]) != int(grants[g]) + BattleSim.VIS_LINGER:
+				lin_ok = false
+	if int(o["vis_on"]) != 1 or not lin_ok:
+		bad.append("linger: open: grants %s, hides [tick, linger] %s (want 2 grants, each hidden VIS_LINGER %d after it)" % [
+			str(grants), str(hides), BattleSim.VIS_LINGER])
+	# Seen again between the two hidings (a sight line earned a fresh linger).
+	if lin_ok:
+		var back := false
+		for k in range(int(hides[0][0]), int(grants[1])):
+			if seen[k - 1] != 0 and lin[k - 1] == BattleSim.LIN_EARNED:
+				back = true
+		if not back:
+			bad.append("linger: open: not seen by a sight line between the two hidings")
+	# The shot's reveal ran out with no linger: hidden at the first check at
+	# or after REVEAL_T, its linger tick unchanged.
+	var st := int(o["shot_t"])
+	if st < 0 or not lin_ok:
+		bad.append("linger: open: no shot while hidden (%d)" % st)
+	else:
+		var h3: Array = hides[hides.size() - 1]
+		if int(h3[0]) < st + BattleSim.REVEAL_T or int(h3[0]) >= st + BattleSim.REVEAL_T + BattleSim.VIS_T or int(h3[1]) != int(grants[1]):
+			bad.append("linger: open: after the shot at %d hidden at %d (want by %d + %d), linger %d (want %d)" % [
+				st, int(h3[0]), st, BattleSim.REVEAL_T, int(h3[1]), int(grants[1])])
+	var o2 := _linger_run("open", int(grants[0]) + 5 if grants.size() > 0 else 100)
+	if o2["hashes"] != o["hashes"]:
+		bad.append("linger: open: the repeat diverged")
+	if int(o2["twin_bad"]) != 0:
+		bad.append("linger: open: the restored copy diverged (%d)" % int(o2["twin_bad"]))
+	# Woods: seen out to the band, then the short linger.
+	var w := _linger_run("woods", -1)
+	var ws: PackedInt32Array = w["seen"]
+	var wl: PackedInt32Array = w["lin"]
+	var wg: PackedInt32Array = w["gaps"]
+	var w_hid := -1
+	var w_band := 0  # ticks seen by an eye with the enemy beyond VIS_WOODS
+	for k in ws.size():
+		if ws[k] != 0 and wl[k] == BattleSim.LIN_EARNED and wg[k] > BattleSim.VIS_WOODS:
+			w_band += 1
+		if ws[k] == 0 and w_hid < 0:
+			w_hid = k
+	var w_g := wl[w_hid] if w_hid >= 0 else -1
+	if w_hid < 0 or int(w["lingers"]) != 1 or w_g < 0 or w_hid != w_g + (BattleSim.VIS_LINGER_WOODS + BattleSim.VIS_T - 1) / BattleSim.VIS_T * BattleSim.VIS_T or w_band <= 0 \
+			or wg[w_g] <= BattleSim.VIS_WOODS + BattleSim.VIS_WOODS_OUT or wg[w_g - BattleSim.VIS_T] > BattleSim.VIS_WOODS + BattleSim.VIS_WOODS_OUT:
+		bad.append("linger: woods: band ticks %d, lingered at %d (gap %d mm), hidden at %d, lingers %d (want seen past VIS_WOODS, lost past the band, hidden at the first check VIS_LINGER_WOODS %d later)" % [
+			w_band, w_g, wg[w_g] if w_g >= 0 else -1, w_hid, int(w["lingers"]), BattleSim.VIS_LINGER_WOODS])
+	if bad.is_empty():
+		print("PASS linger: in the open lingered at %s, hidden at %s (VIS_LINGER %d), seen again by a sight line in between; revealed by a shot at %d, hidden at %d with no linger; in woods seen %d ticks with the enemy past VIS_WOODS (the band), lost at %d past %d m, hidden at %d (the first check VIS_LINGER_WOODS %d after); identical on repeat and across a snapshot mid-linger" % [
+			str(grants), str(hides.slice(0, 2).map(func(h): return h[0])), BattleSim.VIS_LINGER, st, int(hides[hides.size() - 1][0]),
+			w_band, w_g, (BattleSim.VIS_WOODS + BattleSim.VIS_WOODS_OUT) / M, w_hid, BattleSim.VIS_LINGER_WOODS])
 	else:
 		for x in bad:
 			_fail(str(x))
