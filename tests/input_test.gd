@@ -39,6 +39,10 @@ var wait := 0
 var u_inf := -1     # heavy swords
 var u_pike := -1
 var u_arch := -1
+var _lpc_pos := Vector2.ZERO
+var _lpc_t0 := 0
+var _chip_fire_before := 0
+var _chip_orders_before := 0
 var u_cav := -1
 var u_enemy := -1
 
@@ -135,6 +139,9 @@ func _initialize() -> void:
 		_step_group_line,
 		_step_check_group_line,
 		_step_group_missile,
+		_step_chip_long_press,
+		_step_chip_long_press_check,
+		_step_chip_long_press_outside,
 		_step_missile_buttons,
 		_step_opt_row,
 		_step_missile_skirm,
@@ -484,6 +491,26 @@ func _tap_control(c: Control) -> void:
 	var p := _vp_to_window(c.get_global_rect().get_center())
 	_touch(0, p, true)
 	_touch(0, p, false)
+
+
+## Hold a control down for 0.7 s (the steps that follow wait and lift), e.g. a chip's long press.
+func _long_press_control(c: Control) -> void:
+	_no_double_tap()
+	_open_more_for(c)
+	_lpc_pos = _vp_to_window(c.get_global_rect().get_center())
+	_lpc_t0 = Time.get_ticks_msec()
+	_touch(0, _lpc_pos, true)
+	steps.push_front(_step_lpc_up)
+	steps.push_front(_step_lpc_wait)
+
+
+func _step_lpc_wait() -> void:
+	if Time.get_ticks_msec() - _lpc_t0 < 700:
+		steps.push_front(_step_lpc_wait)
+
+
+func _step_lpc_up() -> void:
+	_touch(0, _lpc_pos, false)
 
 
 ## A chip that did not fit the bar (a phone-width viewport with a wide selection capsule) lives in the More popover:
@@ -1016,6 +1043,37 @@ func _step_check_group_line() -> void:
 		_check(absi(((ov._v(u, "dface") - 768 + 512) & 1023) - 512) <= 2, "lined-up unit %d faces up" % u)
 
 
+## A long press on a chip (docs/design/ui.md "Chip clusters and the long-press explanation"): the explanation opens,
+## the chip's own tap does not fire, a press outside closes it; the short tap that follows (_step_missile_buttons) still
+## opens the options popover.
+func _step_chip_long_press() -> void:
+	_chip_fire_before = battle.sim.u_fire[u_arch]
+	_chip_orders_before = battle.sim._order_seq
+	_long_press_control(battle.hud.fire_button)
+
+
+func _step_chip_long_press_check() -> void:
+	var h = battle.hud
+	_check(h.explain_panel.visible and h.explain_box.get_node("ex_title").text == "Fire",
+		"a long press on the Fire chip opens its explanation (title Fire)")
+	_check(h.explain_box.has_node("ex_row_1") and h.explain_box.has_node("ex_row_0") and h.explain_box.has_node("ex_book"),
+		"the explanation lists the states and the Unit book link")
+	_check(not h.opt_panel.visible and battle.sim._order_seq == _chip_orders_before and battle.sim.u_fire[u_arch] == _chip_fire_before,
+		"the long press gave no tap: no options popover, no order")
+	_check(h.explain_panel.get_global_rect().end.y <= h.fire_button.get_global_rect().position.y + 0.5,
+		"the explanation sits above the chip")
+
+
+func _step_chip_long_press_outside() -> void:
+	var h = battle.hud
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = true
+	ev.position = Vector2(2, 2)
+	h._input(ev)
+	_check(not h.explain_panel.visible, "a press outside closes the explanation")
+
+
 func _step_missile_buttons() -> void:
 	_paused_tick = battle.sim.tick
 	_check(battle.sim.u_fire[u_arch] == 1, "archers start with fire at will")
@@ -1030,7 +1088,7 @@ func _step_missile_skirm() -> void:
 ## current state (every chip this test presses is a two-state toggle), which sends the order the old tap sent.
 func _step_opt_row() -> void:
 	var h = battle.hud
-	_check(h.opt_panel.visible, "the chip tap opened its options popover")
+	_check(h.opt_panel.visible and not h.explain_panel.visible, "the chip tap opened its options popover")
 	var tapped := false
 	for r in h.opt_box.get_children():
 		if not r.current:

@@ -172,6 +172,7 @@ func _fit(label: String, expect_run := true) -> void:
 		bad.append("chips under More but no More")
 	if under == 0 and h.more_button.visible:
 		bad.append("More with nothing under it")
+	_clusters_check(label)
 	if not bad.is_empty():
 		_dump()
 	_check(fixed_ok, "%s %s: Halt, Withdraw (and Run) on the bar" % [_size_name, label])
@@ -185,8 +186,83 @@ func _fit(label: String, expect_run := true) -> void:
 			if (c as Control).visible and not h.more_panel.get_global_rect().grow(0.5).encloses((c as Control).get_global_rect()):
 				kids_ok = false
 		_check(kids_ok, "%s %s: every chip under More sits inside the popover" % [_size_name, label])
+		_more_headings_check(label)
 		h._set_more_open(false)
 		await _frames(1)
+
+
+## The clusters of the bar (docs/design/ui.md "Chip clusters"): a caption for each cluster that has a chip on the bar and
+## for no other, inside the chips box, the bar and the viewport and under (never over) a chip; a divider between two
+## neighbouring clusters, none for a single cluster; the dividers inside the box and over no chip.
+func _clusters_check(label: String) -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var present := {}
+	var bar_chips: Array = []
+	for c in h.chips_box.get_children():   # (in the bar's left-to-right order)
+		if c is AbilityChip and (c as Control).visible:
+			present[h.cluster_of(c)] = true
+			bar_chips.append(c)
+	var caps: Dictionary = h.cluster_caption_rects()
+	var bad: Array[String] = []
+	var want: Array = present.keys()
+	want.sort()
+	var have: Array = caps.keys()
+	have.sort()
+	if want != have:
+		bad.append("captions %s for clusters %s" % [str(have), str(want)])
+	var box: Rect2 = h.chips_box.get_global_rect()
+	var bar: Rect2 = h._bottom.get_global_rect()
+	for k in caps:
+		var r: Rect2 = caps[k]
+		if not box.grow(0.5).encloses(r) or not bar.grow(0.5).encloses(r) or not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(r):
+			bad.append("caption %s outside (%s, box %s)" % [k, str(r), str(box)])
+		for c in bar_chips:
+			if r.intersects((c as Control).get_global_rect().grow(-0.5)):
+				bad.append("caption %s over chip %s" % [k, c.key])
+	var divs: Array = h.divider_rects()
+	var n_div: int = maxi(present.size() - 1, 0)
+	if divs.size() != n_div:
+		bad.append("%d dividers for %d clusters" % [divs.size(), present.size()])
+	for r in divs:
+		if not box.grow(0.5).encloses(r) or not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(r):
+			bad.append("divider outside %s" % str(r))
+		for c in bar_chips:
+			if (r as Rect2).intersects((c as Control).get_global_rect().grow(-0.5)):
+				bad.append("divider over chip %s" % c.key)
+	# The clusters follow one another on the bar, left to right, in the fixed order.
+	var last := -1
+	for c in bar_chips:
+		var ci: int = h.CLUSTERS.find(h.cluster_of(c))
+		if ci < last:
+			bad.append("chip %s out of cluster order" % c.key)
+		last = maxi(last, ci)
+	_check(bad.is_empty(), "%s %s: %d captions and %d dividers for %d clusters, inside the bar and clear of the chips (%s)" % [
+		_size_name, label, caps.size(), divs.size(), present.size(), ", ".join(bad)])
+
+
+## The More popover's headings: one per cluster that has a chip under More, inside the viewport and the popover.
+func _more_headings_check(label: String) -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var present := {}
+	for c in h._chip_order:
+		if (c as Control).visible and c.get_parent() == h.more_box:
+			present[h.cluster_of(c)] = true
+	var heads := {}
+	var bad: Array[String] = []
+	for k in h.more_box.get_children():
+		if str(k.name).begins_with("head_"):
+			heads[str(k.name).substr(5)] = true
+			var r: Rect2 = (k as Control).get_global_rect()
+			if not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(r) or not h.more_panel.get_global_rect().grow(0.5).encloses(r):
+				bad.append("heading %s outside %s" % [k.name, str(r)])
+	if heads.keys().size() != present.size():
+		bad.append("headings %s for clusters %s" % [str(heads.keys()), str(present.keys())])
+	for k in present:
+		if not heads.has(k):
+			bad.append("no heading " + str(k))
+	_check(bad.is_empty(), "%s %s: the More popover has a heading per cluster, inside the viewport (%s)" % [_size_name, label, ", ".join(bad)])
 
 
 func _click_at(h, p: Vector2) -> void:
@@ -350,6 +426,38 @@ func _options_stress() -> void:
 	_check(seen >= 8, "%s: %d multi-state chips checked" % [_size_name, seen])
 
 
+## Every chip's long-press explanation (the stress bar): inside the viewport, above a bar chip, the title right, a
+## 'Unit book' row, one row per state of a multi-state chip, and opening the options closes it.
+func _explain_stress() -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var n := 0
+	for c in h._chip_order:
+		var ch: AbilityChip = c
+		if not ch.visible:
+			continue
+		if ch.get_parent() == h.more_box:
+			h._set_more_open(true)
+			await _frames(2)
+		h._open_explain(ch)
+		await _frames(2)
+		var tag := "%s %s: %s explanation" % [_size_name, "under More" if ch.get_parent() == h.more_box else "on the bar", ch.key]
+		var rows: int = h._chip_rows(ch).size()
+		var n_rows := 0
+		for k in h.explain_box.get_children():
+			if str(k.name).begins_with("ex_row_"):
+				n_rows += 1
+		var ok: bool = h.explain_panel.visible and _rect_in(h.explain_panel, vp) and h.explain_box.get_node("ex_title").text == ch.tip_title \
+			and h.explain_box.has_node("ex_book") and n_rows == (rows if rows > 1 else 0) and not h.opt_panel.visible
+		_check(ok, tag + " (%s, %d state rows)" % [str(h.explain_panel.get_global_rect()), n_rows])
+		if ch.get_parent() != h.more_box:
+			_check(h.explain_panel.get_global_rect().end.y <= ch.get_global_rect().position.y + 0.5, tag + ": above the chip")
+		n += 1
+		h._close_explain()
+	h._set_more_open(false)
+	_check(n >= 10, "%s: %d explanations checked" % [_size_name, n])
+
+
 ## A real skirmish selection: each row sends the expected order; Esc, a selection change and the other popovers close it.
 func _options_orders(by_role: Dictionary) -> void:
 	var h = b.hud
@@ -440,6 +548,7 @@ func _run() -> void:
 		await _stress()
 		await _fit("stress: every chip")
 		await _options_stress()
+		await _explain_stress()
 		b.process_mode = Node.PROCESS_MODE_INHERIT
 		await _options_orders(by_role)
 		if _shots != "" and sz[2]:

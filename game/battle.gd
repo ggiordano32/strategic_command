@@ -428,6 +428,7 @@ func _ready() -> void:
 	hud.orders_toggled.connect(_on_orders_toggled)
 	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
 	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_otype[u], "book_open_card"))
+	hud.chip_book_pressed.connect(func(): _open_book(sim.u_otype[selected] if selected >= 0 and selected < sim.n_units else -1, "book_open_chip"))
 	hud.cards_reordered.connect(func(): _count("card_reorder"))
 	hud.book.closed.connect(_on_book_closed)
 	hud.undo_pressed.connect(func():

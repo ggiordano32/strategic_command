@@ -327,6 +327,8 @@ func _fill_chips() -> void:
 		["Halt, Run, Withdraw", "Always on the bar with a selection (Run is hidden when only guns are selected): stop and drop orders, walk or run, leave the battle."],
 		["Chips", "The bar's other buttons are chips, one per order the selected units can take, in a fixed order. A tap cycles a toggle (Fire: at will / hold). A chip dimmed with 'not all selected units' only works for some of the selection."],
 		["Auto / Hold / Use now", "Abilities (Grenades, Pistols, Caracole, Target) have three states. Auto: the unit decides. Hold: it never uses it. Use now: tap a target on the field (lit when armed); Esc or the chip again cancels back to Auto. Pistols have Auto and Hold only."],
+		["Clusters", "The chips sit in four groups with a small caption under each: Move (Bounds, Deploy, Waypoints, Release), Shoot (Target, Caracole, Fire, Skirmish, Ammo, Refill, Forage), Fight (Stance, Occupy, Grenades, Pistols) and Kit (Drop, Gift, the character acts). Under More the same captions head the list."],
+		["Long press", "Hold a chip (touch or mouse, about half a second, without moving) for what it does, its state, each of its states, and a link to the unit book. A tap anywhere else closes it; a short tap still gives the order."],
 		["More", "A chip that does not fit the bar is under More, which opens a list above it. Nothing is ever cut off."],
 		["Phone capsule", "On a phone the selection capsule shows the role badges: Line (bars), Skirm (scatter), Shock (sword), Horse (horseshoe), Guns (a gun on a wheel). Keys 1-6 are the same."],
 		["Card strip", "A card shows a small glyph for each chip that is not at its default: hold fire, an ability on Hold or armed, the Cover stance. Its tip lists them in words."]]:

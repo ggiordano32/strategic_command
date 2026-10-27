@@ -1064,3 +1064,28 @@ action) with one line, "Withdraw N unit(s) by your map edge?", and two 42 px row
 closes) and Cancel. Withdraw army in the top bar uses the same popover ("Withdraw the whole army? Every unit leaves
 the battle.", Withdraw army / Cancel) instead of the old tap-twice text swap (CONFIRM_SEC is gone). Only one popover is
 open at a time (More, options, speed and this one close each other). Tests: `tests/hud_fit_test.gd`.
+
+### Chip clusters and the long-press explanation (as built, 2026-10-27)
+
+The owner's words: "I don't know what all of the chits do on the bottom bar in a battle ... maybe we can double stack them, or condense and explain them." First step, view only (nothing under `sim/` or `campaign/`): clusters with captions, and a long-press explanation. The double stack and a legend page are later steps.
+
+**Clusters.** The chips of the bar sit in four groups, in this order, derived from the flat `_chip_order` (which stays the single list a new chip is appended to) by `Hud.CLUSTER_OF`, a chip key -> cluster map; a key not in the map lands in Fight, so a new chip is one map line (the Countermarch ability chip is already mapped, to Shoot, under the key `countermarch`):
+
+| Cluster | Chips |
+|---|---|
+| Move | Bounds, Deploy, Waypoints, Release |
+| Shoot | Target (batter), Caracole, Fire, Skirmish, Ammo, Refill, Forage, (Countermarch) |
+| Fight | Stance, Occupy, Grenades, Pistols |
+| Kit | Drop, Gift, Sabotage, Attempt, Parley |
+
+- On the bar: a 1 px divider (the bar rule's gold at 50 %, in a 3 px slot, so a divider costs 8 px of the row) between neighbouring clusters, and a 9 px caption (bone at 60 %, drawn by one `ClusterCaptions` control, a top-level child of `chips_box`) centred under each cluster's chips. The caption row is 10 px: `chips_box` is 52 px high (chips 42, shrink-begin, the caption row under them); the other row items (Halt, Run, More, Withdraw, the capsule) keep 42 px at the top of the row, the two notes bottom-align in 42. The bar is 10 px taller while any chip is on it (`bottom_height()` adds `CAP_H` then). No caption at the left of the divider was needed.
+- The order on the bar is now cluster order, then the fixed order; the old "an armed ability first" display order is gone (the armed ability still never goes under More, and still gets its room first). The fit counts the dividers' width per chip (a chip of a cluster not yet on the bar costs its 8 px too); a cluster with no chip on the bar has no divider and no caption.
+- Under More: the grid lists the same clusters, each with a 10 px heading cell in its first column (padding cells fill the rest of the heading row and the cluster's last row, so a multi-column grid keeps one cluster per band); the column count is the least that fits the clusters' height above More. The headings exist only while More is open.
+
+**Long-press explanation.** A press held 0.45 s on a chip (touch or mouse button, 8 px of slop) opens `explain_panel` above it (placed like the options popover; for a chip under More beside the More popover, `_popover_pos` is the shared placement): the chip's title (gold), "Now: <state>", the tip text (with the "not all selected units" note), one row per state with the options' own words and icons and "(now)" on the current one (Auto / Hold / Use now for abilities; none for a single-action chip), and a "Unit book" row that emits `chip_book_pressed`; battle.gd opens the selected unit's type page (`book_open_chip`). The hold swallows the release (the chip is switched off and on once, which cancels the press), so no tap, no options, no order. Closed by a press anywhere outside, Esc, a selection change, More closing (for a chip under it), or opening any options / More / confirmation; opening it closes those. The mouse hover tooltip is unchanged; the touch tip host (`Kit.TipHost`) skips the chips already (`tip_host_skip`).
+
+**Tests.** `tests/hud_fit_test.gd`: at every size and selection captions = the clusters on the bar, inside the chips box, the bar and the viewport, clear of every chip, dividers = clusters - 1 and clear of chips, the clusters in order; the More headings one per cluster present and inside the popover and viewport; every chip's explanation inside the viewport, above a bar chip, title right, state rows, Unit book row, options closed. `tests/input_test.gd`: `_long_press_control` (a 0.7 s touch hold), the Fire chip's explanation opens, no tap fires, a press outside closes it, the short tap after still opens the options.
+
+**Cost.** Row height +10 px (phone 886x409: bottom 143 -> 153 px with chips on the bar, 37 % of the height); the dividers take 8 px each of the row's width: on the probe's selections the bar holds the same chips at 1231x568 and 886x409, one fewer (Stance goes under More) at 866x400 with the skirmish selection and in the "all" selection at 1006x464.
+
+**Open.** The captions are 9 px: legible on a phone but small; a tap on a caption does nothing. The explanation is the tip text; a per-chip longer text and a legend page are later. The double stack (two rows of icon-only chips) is the next step if the row is still too long. The Keys page has a "Clusters" and a "Long press" line.

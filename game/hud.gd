@@ -40,6 +40,7 @@ signal orders_toggled(on: bool)
 signal paths_toggled(on: bool)
 signal book_pressed
 signal card_long_pressed(unit: int)
+signal chip_book_pressed   # the 'Unit book' row of a chip's long-press explanation: battle.gd opens the selected unit's page
 signal deselect_pressed
 signal undo_pressed
 signal controls_pressed
@@ -81,6 +82,22 @@ const CARD_MIN_W := 84.0
 const CARD_NARROW_W := 58.0  # below CARD_MIN_W: symbol and number only
 const CARD_MAX_W := 136.0
 const CARD_GAP := 2.0
+# Chip clusters (docs/design/ui.md "Chip clusters and the long-press explanation"): a hairline divider between the groups
+# of the bar, and a 9 px caption under each group's chips.
+const CAP_H := 10.0       # the caption row under the chips
+const CAP_FONT := 9
+const DIV_W := 3.0        # a divider's slot (the line is 1 px in its middle)
+const MORE_HEAD_H := 13.0 # a cluster heading in the More grid
+const CLUSTERS := ["Move", "Shoot", "Fight", "Kit"]
+## Chip key -> cluster. A chip whose key is not here lands in Fight; a new chip (a new ability) is one line here.
+const CLUSTER_OF := {"bounds": "Move", "deploy": "Move", "waypoints": "Move", "release": "Move",
+	"batter": "Shoot", "caracole": "Shoot", "fire": "Shoot", "skirmish": "Shoot", "ammo": "Shoot", "refill": "Shoot", "forage": "Shoot",
+	"countermarch": "Shoot",
+	"stance": "Fight", "occupy": "Fight", "grenades": "Fight", "pistols": "Fight",
+	"drop": "Kit", "gift": "Kit", "char_sabotage": "Kit", "char_attempt": "Kit", "char_parley": "Kit"}
+const CHIP_LONG_SEC := 0.45   # a held chip explains itself
+const CHIP_LONG_SLOP := 8.0   # px it may move meanwhile
+const EXPLAIN_W := 270.0
 
 var stats_label: Label
 var chips_box: HBoxContainer      # the chips that fit the bar (after Halt / Run / Withdraw)
@@ -89,6 +106,16 @@ var more_panel: PanelContainer
 var more_box: GridContainer       # (one column; more columns when the list is taller than the room above the bar)
 var opt_panel: PanelContainer     # the options popover of a multi-state chip (docs/design/ui.md "Chip options")
 var opt_box: VBoxContainer
+var cap_layer: Control            # draws the clusters' captions under the bar's chips (a top-level child of chips_box)
+var explain_panel: PanelContainer # the long-press explanation of a chip
+var explain_box: VBoxContainer
+var _exp_chip: AbilityChip = null
+var _dividers: Array = []         # the bar's hairline dividers (pooled; the first n are visible)
+var _more_extras: Array = []      # the headings and padding cells in the More grid (only while it is open)
+var _lp_chip: AbilityChip = null  # the chip a press is held on
+var _lp_ms := 0
+var _lp_pos := Vector2.ZERO
+var _lp_fired := false
 var ammo_kinds: Array = []        # [standard, special] ammunition words of the selection (set by battle.gd)
 var _opt_chip: AbilityChip = null # the chip whose options are open
 var _opt_cur := -1                # that chip's current state value when it opened
@@ -517,12 +544,25 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	chips_box.name = "chips"
 	chips_box.add_theme_constant_override("separation", int(GAP))
 	chips_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chips_box.custom_minimum_size.y = BTN_H + CAP_H   # (the caption row under the chips)
 	actions.add_child(chips_box)
 	for c in _chip_order:
+		c.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		chips_box.add_child(c)
+	cap_layer = ClusterCaptions.new()
+	chips_box.add_child(cap_layer)
+	chips_box.sort_children.connect(_place_clusters)
+	for b in [halt_button, run_button, withdraw_button, group_box]:
+		(b as Control).size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	group_box.custom_minimum_size.y = BTN_H
+	for n in [engine_note, carry_note]:
+		(n as Label).size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		(n as Label).custom_minimum_size.y = BTN_H
+		(n as Label).vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	more_button = _chip("more", "More", "more", "More", "The orders that did not fit the bar.", "", true)
 	more_button.name = "more"
 	more_button.visible = false
+	more_button.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	more_button.pressed.connect(func(): _set_more_open(more_button.button_pressed))
 	actions.add_child(more_button)
 	actions.add_child(withdraw_button)   # the row's last element: at the bar's right edge
@@ -547,6 +587,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	opt_box.add_theme_constant_override("separation", 2)
 	opt_panel.add_child(opt_box)
 	_ui_controls.append(opt_panel)
+	explain_panel = PanelContainer.new()
+	explain_panel.name = "explain_panel"
+	explain_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 8.0))
+	explain_panel.visible = false
+	root.add_child(explain_panel)
+	explain_box = VBoxContainer.new()
+	explain_box.add_theme_constant_override("separation", 4)
+	explain_panel.add_child(explain_box)
+	_ui_controls.append(explain_panel)
 	confirm_panel = PanelContainer.new()
 	confirm_panel.name = "confirm_panel"
 	confirm_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 6.0))
@@ -873,7 +922,7 @@ func top_height() -> float:
 
 
 func bottom_height() -> float:
-	return MARGIN * 3 + BTN_H + GAP + card_rows * (CARD_H + CARD_GAP) + 6.0
+	return MARGIN * 3 + BTN_H + (CAP_H if chips_box != null and chips_box.visible else 0.0) + GAP + card_rows * (CARD_H + CARD_GAP) + 6.0
 
 
 ## Readout: short line always, details when expanded.
@@ -927,6 +976,14 @@ func display_order() -> Array[int]:
 
 
 func _process(delta: float) -> void:
+	if _lp_chip != null and not _lp_fired and Time.get_ticks_msec() - _lp_ms >= int(CHIP_LONG_SEC * 1000.0):
+		_lp_fired = true
+		var lc := _lp_chip
+		if lc.is_visible_in_tree():
+			# (off and on again cancels the press: the release then gives no tap)
+			lc.disabled = true
+			lc.disabled = false
+			_open_explain(lc)
 	if _note_left > 0.0:
 		_note_left -= delta
 		if _note_left <= 0.0:
@@ -1161,6 +1218,19 @@ func _input(event: InputEvent) -> void:
 				cp = (event as InputEventMouseButton).position
 			if cp.x >= 0.0 and not confirm_panel.get_global_rect().has_point(cp) and not _confirm_anchor.get_global_rect().has_point(cp):
 				close_confirm()
+	# The chip explanation: Esc or a press anywhere outside it closes it.
+	if explain_panel != null and explain_panel.visible:
+		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+			_close_explain()
+			get_viewport().set_input_as_handled()
+		else:
+			var xp := Vector2(-1, -1)
+			if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+				xp = (event as InputEventScreenTouch).position
+			elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+				xp = (event as InputEventMouseButton).position
+			if xp.x >= 0.0 and not explain_panel.get_global_rect().has_point(xp):
+				_close_explain()
 	# Esc closes the options popover without a change; a press outside it (and its chip) closes it too.
 	if opt_panel != null and opt_panel.visible:
 		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
@@ -1182,7 +1252,8 @@ func _input(event: InputEvent) -> void:
 		elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 			mp = (event as InputEventMouseButton).position
 		if mp.x >= 0.0 and not more_panel.get_global_rect().has_point(mp) and not more_button.get_global_rect().has_point(mp) \
-				and not (opt_panel != null and opt_panel.visible and opt_panel.get_global_rect().has_point(mp)):
+				and not (opt_panel != null and opt_panel.visible and opt_panel.get_global_rect().has_point(mp)) \
+				and not (explain_panel != null and explain_panel.visible and explain_panel.get_global_rect().has_point(mp)):
 			_set_more_open(false)
 	# A press anywhere outside the open speed popover (and its button) closes it.
 	if speed_panel != null and speed_panel.visible and event is InputEventScreenTouch \
@@ -1253,6 +1324,7 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	if _sel != units:
 		_set_more_open(false)
 		_close_options()
+		_close_explain()
 	_sel = units.duplicate()
 	_update_common()
 	_fit_actions()
@@ -1368,7 +1440,8 @@ func _fit_now() -> void:
 			rest.append(ch)
 	var mode_compact := false
 	var fixed_w := _row_w(fixed, false)
-	var all_w := fixed_w + _row_w(rest, false) + (GAP if not fixed.is_empty() and not rest.is_empty() else 0.0)
+	var all_w := fixed_w + _row_w(rest, false) + (GAP if not fixed.is_empty() and not rest.is_empty() else 0.0) \
+		+ _divider_w(rest)
 	if forced.is_empty() and all_w <= avail:
 		in_bar = rest
 	else:
@@ -1377,18 +1450,25 @@ func _fit_now() -> void:
 		var more_w := more_button.width_for(false) + GAP
 		var used := fixed_w + more_w
 		var stop := false
+		var seen := {}
 		for ch in rest:
-			var w := (ch as AbilityChip).width_for(true) + GAP
+			var cl := cluster_of(ch)
+			var w := (ch as AbilityChip).width_for(true) + GAP + (DIV_W + GAP if not seen.is_empty() and not seen.has(cl) else 0.0)
 			if not stop and (ch as AbilityChip).pinned and used + w <= avail:
 				in_bar.append(ch)
+				seen[cl] = true
 				used += w
 			elif not stop and used + w <= avail and not (ch as AbilityChip).pinned:
 				in_bar.append(ch)
+				seen[cl] = true
 				used += w
 			else:
 				stop = true
 				in_more.append(ch)
 		in_more.append_array(forced)
+	in_bar = _cluster_sorted(in_bar)
+	in_more = _cluster_sorted(in_more)
+	_strip_more_extras()
 	for b in fixed:
 		if b is AbilityChip:
 			(b as AbilityChip).set_mode(mode_compact)
@@ -1399,8 +1479,20 @@ func _fit_now() -> void:
 		var ch := c as Control
 		if in_bar.has(ch) or not (vis.has(ch)):
 			_home(ch, chips_box)
+	var nd := 0
+	var prev := ""
 	for ch in in_bar:
+		var cl := cluster_of(ch)
+		if prev != "" and cl != prev:
+			var d := _divider(nd)
+			d.visible = true
+			chips_box.move_child(d, chips_box.get_child_count() - 1)
+			nd += 1
+		prev = cl
 		chips_box.move_child(ch, chips_box.get_child_count() - 1)
+	for i in range(nd, _dividers.size()):
+		(_dividers[i] as Control).visible = false
+	chips_box.move_child(cap_layer, chips_box.get_child_count() - 1)
 	for ch in in_more:
 		_home(ch, more_box)
 		(ch as AbilityChip).set_mode(false)
@@ -1411,7 +1503,96 @@ func _fit_now() -> void:
 		_set_more_open(false)
 	_place_more()
 	_place_options()
+	_place_explain()
 	_place_confirm()
+	_place_clusters()
+
+
+## The cluster of a chip (CLUSTER_OF by its key; Fight when it is not listed).
+static func cluster_of(c: AbilityChip) -> String:
+	return str(CLUSTER_OF.get(c.key, "Fight"))
+
+
+## Chips in cluster order, each cluster in the bar's fixed order.
+func _cluster_sorted(items: Array) -> Array:
+	var out := items.duplicate()
+	out.sort_custom(func(a, b) -> bool:
+		var ca := CLUSTERS.find(cluster_of(a))
+		var cb := CLUSTERS.find(cluster_of(b))
+		if ca != cb:
+			return ca < cb
+		return _chip_order.find(a) < _chip_order.find(b))
+	return out
+
+
+## Extra width the dividers of these chips cost.
+func _divider_w(items: Array) -> float:
+	var seen := {}
+	for ch in items:
+		seen[cluster_of(ch)] = true
+	return (DIV_W + GAP) * maxi(seen.size() - 1, 0)
+
+
+func _divider(i: int) -> Control:
+	while _dividers.size() <= i:
+		var d := ClusterDivider.new()
+		d.name = "divider_%d" % _dividers.size()
+		d.visible = false
+		chips_box.add_child(d)
+		_dividers.append(d)
+	return _dividers[i]
+
+
+## The captions: one per cluster that has a chip on the bar, centred under its chips, in the row under them.
+func _place_clusters() -> void:
+	if cap_layer == null or chips_box == null:
+		return
+	var caps: Array = []
+	for cl in CLUSTERS:
+		var x0 := INF
+		var x1 := -INF
+		for c in _chip_order:
+			var ch := c as AbilityChip
+			if ch.get_parent() == chips_box and ch.visible and cluster_of(ch) == cl:
+				x0 = minf(x0, ch.position.x)
+				x1 = maxf(x1, ch.position.x + ch.size.x)
+		if x0 < INF:
+			caps.append([cl, Rect2(x0, BTN_H, x1 - x0, CAP_H)])
+	var cap_node := cap_layer as ClusterCaptions
+	cap_node.global_position = chips_box.global_position
+	cap_node.size = chips_box.size
+	cap_node.caps = caps
+	cap_node.visible = not caps.is_empty()
+	cap_node.queue_redraw()
+
+
+## The caption rectangles in viewport space: cluster word -> Rect2 (for the tests).
+func cluster_caption_rects() -> Dictionary:
+	var out := {}
+	if cap_layer == null:
+		return out
+	var o := chips_box.get_global_rect().position
+	for c in (cap_layer as ClusterCaptions).caps:
+		out[str(c[0])] = Rect2(o + (c[1] as Rect2).position, (c[1] as Rect2).size)
+	return out
+
+
+## The visible dividers' rectangles in viewport space.
+func divider_rects() -> Array:
+	var out: Array = []
+	for d in _dividers:
+		if (d as Control).visible:
+			out.append((d as Control).get_global_rect())
+	return out
+
+
+func _strip_more_extras() -> void:
+	for e in _more_extras:
+		if is_instance_valid(e):
+			if e.get_parent() != null:
+				e.get_parent().remove_child(e)
+			e.queue_free()
+	_more_extras.clear()
 
 
 func _row_w(items: Array, compact: bool) -> float:
@@ -1444,10 +1625,47 @@ func _set_more_open(on: bool) -> void:
 	more_button.set_pressed_no_signal(on)
 	if on:
 		close_confirm()
+	else:
+		_strip_more_extras()
 	if on or (_opt_chip != null and _opt_chip.get_parent() == more_box):
 		_close_options()
+	if on or (_exp_chip != null and _exp_chip.get_parent() == more_box):
+		_close_explain()
 	if on:
 		_place_more()
+
+
+## The grid's height with `cols` columns: per cluster a heading row and its chips in rows of `cols`.
+func _more_height(chips: Array, cols: int) -> float:
+	var h := 0.0
+	for cl in CLUSTERS:
+		var k := 0
+		for c in chips:
+			if cluster_of(c) == cl:
+				k += 1
+		if k > 0:
+			h += MORE_HEAD_H + GAP + ceili(float(k) / cols) * (AbilityChip.H + GAP)
+	return h
+
+
+## A heading cell of the More grid (text "": an empty padding cell).
+func _more_cell(text: String) -> Control:
+	var n: Control
+	if text == "":
+		n = Control.new()
+		n.name = "pad"
+	else:
+		var l := Label.new()
+		l.text = text
+		l.name = "head_" + text
+		l.add_theme_font_size_override("font_size", 10)
+		l.add_theme_color_override("font_color", Color(Kit.COL_BONE, 0.65))
+		l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		n = l
+	n.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	n.custom_minimum_size = Vector2(0.0, MORE_HEAD_H)
+	_more_extras.append(n)
+	return n
 
 
 ## The popover sits above the More chip, right-aligned to it and kept on screen.
@@ -1456,13 +1674,37 @@ func _place_more() -> void:
 		return
 	var vp := get_viewport().get_visible_rect().size
 	var r := more_button.get_global_rect()
-	# Columns: as many rows as fit between the top bar and the More chip, then another column.
-	var n := 0
+	# Columns: as few as let the clusters (a heading row, then their chips) fit between the top bar and the More chip.
+	_strip_more_extras()
+	var chips: Array = []
 	for c in more_box.get_children():
 		if (c as Control).visible:
-			n += 1
-	var rows := maxi(int((r.position.y - GAP - (BTN_H + 3.0 * MARGIN) - 16.0) / (AbilityChip.H + GAP)), 1)
-	more_box.columns = maxi(ceili(float(n) / rows), 1)
+			chips.append(c)
+	chips = _cluster_sorted(chips)
+	var room := r.position.y - GAP - (BTN_H + 3.0 * MARGIN) - 16.0
+	var cols := 1
+	while cols < chips.size() and _more_height(chips, cols) > room:
+		cols += 1
+	more_box.columns = cols
+	var seq: Array = []
+	for cl in CLUSTERS:
+		var grp: Array = []
+		for c in chips:
+			if cluster_of(c) == cl:
+				grp.append(c)
+		if grp.is_empty():
+			continue
+		seq.append(_more_cell(cl))
+		for i in cols - 1:
+			seq.append(_more_cell(""))
+		seq.append_array(grp)
+		for i in (cols - grp.size() % cols) % cols:
+			seq.append(_more_cell(""))
+	for i in seq.size():
+		var node: Node = seq[i]
+		if node.get_parent() == null:
+			more_box.add_child(node)
+		more_box.move_child(node, i)
 	more_panel.reset_size()
 	var sz := more_panel.get_combined_minimum_size()
 	var x := clampf(r.end.x - sz.x, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN))
@@ -1475,6 +1717,35 @@ func _place_more() -> void:
 # docs/design/ui.md "Chip options": a tap on a chip with more than one state opens a small popover above it with one
 # 42 px row per state (the current one pressed, with a check); a row sets that state and closes the popover. A tap
 # outside, on the chip again, Esc or a selection change closes it with no change. Keys still cycle (battle.gd).
+
+## A hairline between two clusters of the bar.
+class ClusterDivider extends Control:
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		custom_minimum_size = Vector2(3.0, 52.0)
+		size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+
+	func _draw() -> void:
+		draw_rect(Rect2(floorf(size.x * 0.5), 2.0, 1.0, maxf(size.y - 4.0, 1.0)), Color(0.69, 0.54, 0.25, 0.5))
+
+
+## The clusters' captions, drawn (a Label would not fit the 10 px row): `caps` is [word, Rect2 in this node's space].
+class ClusterCaptions extends Control:
+	var caps: Array = []
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		top_level = true
+		name = "captions"
+
+	func _draw() -> void:
+		var f := ThemeDB.fallback_font
+		for c in caps:
+			var r: Rect2 = c[1]
+			var w := f.get_string_size(str(c[0]), HORIZONTAL_ALIGNMENT_LEFT, -1, 9).x
+			draw_string(f, Vector2(r.position.x + maxf((r.size.x - w) * 0.5, 0.0), r.end.y - 2.0), str(c[0]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.91, 0.86, 0.69, 0.6))
+
 
 ## An option row: a toggle-look button that draws a check at its right end when it is the current state.
 class OptRow extends Button:
@@ -1548,6 +1819,7 @@ func _open_options(c: AbilityChip) -> void:
 		return
 	set_speed_panel_open(false)
 	close_confirm()
+	_close_explain()
 	if c.get_parent() != more_box:
 		_set_more_open(false)
 	_close_options()
@@ -1616,12 +1888,19 @@ func _place_options() -> void:
 	if _opt_chip == null or not _opt_chip.is_visible_in_tree():
 		_close_options()
 		return
-	var vp := get_viewport().get_visible_rect().size
 	opt_panel.reset_size()
 	var sz := opt_panel.get_combined_minimum_size()
-	var r := _opt_chip.get_global_rect()
+	opt_panel.position = _popover_pos(_opt_chip, sz)
+	opt_panel.size = sz
+
+
+## Where a popover of size `sz` goes for `chip`: above it (centred, kept inside the viewport); for a chip under More
+## beside the More popover (left, else right), else above it, else clamped inside the viewport.
+func _popover_pos(chip: Control, sz: Vector2) -> Vector2:
+	var vp := get_viewport().get_visible_rect().size
+	var r := chip.get_global_rect()
 	var pos: Vector2
-	if _opt_chip.get_parent() == more_box and more_panel.visible:
+	if chip.get_parent() == more_box and more_panel.visible:
 		var mr := more_panel.get_global_rect()
 		var y := clampf(r.get_center().y - sz.y * 0.5, MARGIN, maxf(vp.y - sz.y - MARGIN, MARGIN))
 		if mr.position.x - GAP - sz.x >= MARGIN:
@@ -1635,8 +1914,103 @@ func _place_options() -> void:
 	else:
 		pos = Vector2(clampf(r.get_center().x - sz.x * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)),
 			maxf(r.position.y - sz.y - GAP, MARGIN))
-	opt_panel.position = pos
-	opt_panel.size = sz
+	return pos
+
+
+# ------------------------------------------- the long-press explanation ---
+# A chip held 0.45 s (a finger or the mouse button, not moving more than 8 px) opens a popover above it: the chip's
+# title, its state, the tip, one line per state, and a link to the unit book. The release gives no tap. Taps outside,
+# Esc, a selection change, or opening the options close it.
+
+## Mouse / touch input on a chip: starts and ends the hold (the timer runs in _process).
+func _chip_input(ev: InputEvent, c: AbilityChip) -> void:
+	if c == more_button:
+		return
+	if ev is InputEventMouseButton and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		var mb := ev as InputEventMouseButton
+		if mb.pressed:
+			_lp_chip = c
+			_lp_ms = Time.get_ticks_msec()
+			_lp_pos = mb.global_position
+			_lp_fired = false
+		else:
+			_lp_chip = null
+	elif ev is InputEventMouseMotion and _lp_chip == c:
+		if (ev as InputEventMouseMotion).global_position.distance_to(_lp_pos) > CHIP_LONG_SLOP:
+			_lp_chip = null
+
+
+func _open_explain(c: AbilityChip) -> void:
+	set_speed_panel_open(false)
+	close_confirm()
+	if c.get_parent() != more_box:
+		_set_more_open(false)
+	_close_options()
+	_close_explain()
+	var title := Kit.label(c.tip_title, 16, Kit.COL_GOLD)
+	title.name = "ex_title"
+	explain_box.add_child(title)
+	var cur_word := "Use now" if c.armed else c.state_word
+	if cur_word != "":
+		var st := Kit.label("Now: " + cur_word, 14, Kit.COL_DIM)
+		st.name = "ex_state"
+		explain_box.add_child(st)
+	var body := c.tip_body
+	if not c.common:
+		body += "\nNot all selected units have it: only some obey."
+	var bl := Kit.label(body, 14, Kit.COL_BONE, true)
+	bl.name = "ex_body"
+	bl.custom_minimum_size.x = EXPLAIN_W
+	explain_box.add_child(bl)
+	var rows := _chip_rows(c)
+	if rows.size() > 1:
+		var cur := _ability_cur(c) if c.ab >= 0 else int(_cur_val.get(c.key, 0))
+		for r in rows:
+			var now := int(r[2]) == cur
+			var l := Kit.label(str(r[0]) + ("  (now)" if now else ""), 14, Kit.COL_GOLD if now else Kit.COL_BONE)
+			l.name = "ex_row_%d" % int(r[2])
+			if str(r[1]) != "":
+				Kit.label_icon(l, str(r[1]))
+			explain_box.add_child(l)
+	var xbook := Button.new()
+	xbook.name = "ex_book"
+	xbook.text = "Unit book"
+	xbook.focus_mode = Control.FOCUS_NONE
+	xbook.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	xbook.add_theme_font_size_override("font_size", FONT)
+	xbook.custom_minimum_size = Vector2(0.0, 36.0)
+	BTheme.plate(xbook)
+	Kit.set_icon(xbook, "units")
+	xbook.pressed.connect(AudioFx.click)
+	xbook.pressed.connect(func():
+		_close_explain()
+		chip_book_pressed.emit())
+	explain_box.add_child(xbook)
+	_exp_chip = c
+	explain_panel.visible = true
+	_place_explain()
+
+
+func _close_explain() -> void:
+	if explain_panel == null:
+		return
+	explain_panel.visible = false
+	_exp_chip = null
+	for k in explain_box.get_children():
+		explain_box.remove_child(k)
+		k.queue_free()
+
+
+func _place_explain() -> void:
+	if explain_panel == null or not explain_panel.visible:
+		return
+	if _exp_chip == null or not _exp_chip.is_visible_in_tree():
+		_close_explain()
+		return
+	explain_panel.reset_size()
+	var sz := explain_panel.get_combined_minimum_size()
+	explain_panel.position = _popover_pos(_exp_chip, sz)
+	explain_panel.size = sz
 
 
 func _button_w(b: Button, t: String) -> float:
@@ -2086,6 +2460,7 @@ func _chip(key: String, label: String, icon: String, title: String, tip_text: St
 	c.setup(key, label, icon, title, tip_text, ab, toggle)
 	c.state_word = state
 	c.text = c.full_text()
+	c.gui_input.connect(_chip_input.bind(c))
 	c.pressed.connect(func():
 		if more_panel != null and c.get_parent() == more_box and c != more_button and not _is_multi(c):
 			_set_more_open(false))
