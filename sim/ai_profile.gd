@@ -367,7 +367,18 @@ const S_BATTER_OPEN := 289     # 1: the stretch battered must have open ground a
 # The defending post under musket fire (docs/AI.md 41, 2026-10-27).
 const S_DEF_FIRE := 290        # 1: a West street defender shot by shooters standing in the field answers from a building, charges them or falls back out of their reach (SiegeAI._df_fire); 0 it holds its post
 const S_DEF_ZONE := 291        # 1: West street posts at the start stand out of the attackers' guns' reach from their deployment zone, and the defenders are placed at their posts in the deployment (0: as placed)
-const N_KNOBS := 292
+# The play library (docs/AI.md 44, 2026-10-27): scripted historical plays
+# (sim/plays.gd) a side runs by its scenario's ai_plays bits. Ids 300-309
+# the framework and the tercio, 310-319 the countermarch; 292-299 unused
+# (KNOB_GAPS: 0, no row).
+const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits allow (Plays.army_think); 0 none (Easy)
+const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
+const TERCIO_FILES := 302      # ... a block stands max(this, isqrt(men)) files wide
+const TERCIO_HORSE_R := 303    # ... riders this near a sleeve moving toward it (or with an attack order on it, twice this) send it behind the block
+const N_KNOBS := 304
+## Knob ids with no row (reserved ranges between the competencies' blocks):
+## [first, last + 1); they read 0.
+const KNOB_GAPS: Array = [[292, 300]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -642,6 +653,10 @@ const KNOBS: Array = [
 	# The defending post under musket fire (docs/AI.md 41): Easy keeps its men where they stand (a deliberate mistake).
 	[S_DEF_FIRE, 0, 1, 1],
 	[S_DEF_ZONE, 0, 1, 1],
+	[PLAYS_ON, 0, 1, 1],
+	[TERCIO, 0, 1, 1],
+	[TERCIO_FILES, 8, 14, 14],
+	[TERCIO_HORSE_R, 80 * M, 80 * M, 80 * M],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -748,13 +763,14 @@ const C_WORKS := C_CAV_STAY + 10  # field works placed
 const C_CH_ATTEMPT := C_CAV_STAY + 11  # assassins' attempts ordered
 const C_CH_PARLEY := C_CAV_STAY + 12   # diplomats' parleys ordered
 const C_CH_SABOTAGE := C_CAV_STAY + 13  # assassins sent to sabotage a battery
-const N_COUNTERS := C_CAV_STAY + 14
+const C_PLAY_TERCIO := C_CAV_STAY + 14  # the tercio formed (docs/AI.md 44.1; once a battle per side)
+const N_COUNTERS := C_CAV_STAY + 15
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
-	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage"]
+	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.
@@ -804,6 +820,10 @@ static func _build() -> void:
 		base.fill(-0x7FFFFFFF)
 		for r in KNOBS:
 			base[int(r[0])] = int(r[1 + s])
+		for g in KNOB_GAPS:
+			for k in range(int(g[0]), int(g[1])):
+				if base[k] == -0x7FFFFFFF:
+					base[k] = 0
 		for k in N_KNOBS:
 			if base[k] == -0x7FFFFFFF:
 				push_error("ai_profile: knob %d has no value" % k)

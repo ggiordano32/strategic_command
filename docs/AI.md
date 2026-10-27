@@ -3166,6 +3166,110 @@ corners, the muskets retiring under the pikes when horse comes on.
   melee foot: the play triggers) not below 40 of 48 Spanish wins. Reported as
   a before / after table; the balance harness plans unmoved.
 
+### 44.1 The tercio (as built, 2026-10-27)
+
+**Framework.** `sim/plays.gd` (static `Plays`, self-contained: it mirrors the
+few BattleAI helpers it needs, as BattleAI mirrors the sim's constants, so no
+preload cycle). `BattleAI._army_think` calls `Plays.army_think` right after the
+plan is read (a play starts, or is dropped); `_issue_line` calls
+`Plays.post_line` after the reassignment by lateral and before the orders (a
+slot may carry a third value, the unit's width); `_unit_think` calls
+`Plays.unit_think` before the class rules (true: the play gave the orders).
+Scenario key `ai_plays` `[side 0, side 1]`, `Plays.ALL` = -1 (every bit) when
+absent; bit 0 `P_TERCIO`, bit 1 `P_COUNTERMARCH` (defined, unused here).
+`BattleSim.ai_plays` is parsed next to `ai_style`, hashed only when a side is
+not -1 and snapshotted as a script variable. Memory: a tail of
+`BattleSim.ai_mem` after the Skilled memory (`PU_K` 4 ints a unit: role
+0 none / 1 block / 2 left sleeve / 3 right sleeve, its block + 1, state, the
+tick riders were last seen closing; `PS_K` 4 a side: the tercio's state 0 / 1
+running / 2 dropped, its start tick, the tick its trigger last held). The tail
+exists only when an AI side has `PLAYS_ON`, a play bit and a gun foot unit
+(`Plays.wants_mem` at setup); `MU_K` / `SD_K` are unchanged, so Skilled memory
+is laid out and hashed as before, and `state_hash()` hashes `ai_mem` at the
+default profile too when it is not empty (only the plays' tail makes it so).
+Counter `AP.C_PLAY_TERCIO` ("play_tercio", once a battle per side). The battle
+view has no chronicle or notice line for AI events: no HUD element added.
+Campaign: `west.gd` `PLAYS` (new_spain and tierra_firme 3, england, france,
+dutch 2, brethren, itza, miskito 0), `CData.PLAYS` / `CData.plays_of(f)`
+(a pack without the table, Rome: -1; a West faction not listed and the
+independents: 0); `cbattle._ai_profiles` returns the plays too and both
+scenario builders put `ai_plays` in only when a side is not -1 (Rome
+scenarios unchanged; the table is data, not state: no `CState.VERSION` bump).
+
+**The tercio as built.** Trigger (`tercio_trigger`, each army think): no
+settlement map (`city_on` 0, no `tp`), a ready pike unit not guarding a
+battery and a ready gun foot unit (`m_gun`, not skirmishing, not horse or a
+battery), and the enemy shows a ready rider unit (one hidden from the side
+does not count). **Riders only**: the plan's second clause (more enemy melee
+foot than the side's) was dropped after the measure below (the owner's
+choice, option c). Started at the first army think the trigger holds (the
+deployment's, in a field battle), dropped for good when it has been gone
+`PLAY_DROP_T` (no enemy rider unit left ready and seen for 30 s). Layout
+(`post_line`, each `_issue_line` while it runs): the first line's pikes (not
+the would-be guard: `_pick_guard` was split into the pure `_guard_choice`,
+used here at the deployment) are blocks of `max(TERCIO_FILES, isqrt(men))`
+files; sleeves go block by block, the outer side first (a block in the left
+half: left), then the inner side, so with fewer than two guns a block every
+block gets an outer sleeve first; the guns beyond take the gaps between blocks
+evenly (one block: half each side outside the sleeves); the guns are given
+their places in their left-to-right order; the core is centred where the old
+core was, the line's other foot outward of it in their order, and the wings
+(cavalry, bolt throwers at the line's level) shifted by the change of the
+line's ends. A sleeve's front post: beside its block, lateral `bw / 2 +
+LINE_GAP + sw / 2`, front rank level. Under horse (`unit_think`, each unit
+think): a rider closing on a sleeve (an attack order on it within 2 x
+`TERCIO_HORSE_R`, or within `TERCIO_HORSE_R` with its move end or attack
+target nearer the sleeve than it is) sends it running to the rear corner
+(lateral `max(bw / 2, sw / 2 + LINE_GAP / 2)`, the block's depth +
+`TERCIO_REAR` behind its front, facing as the block) with fire at will on;
+`TERCIO_CLEAR_T` with none closing and it is sent back to the front post
+(then the ordinary rules: in the engagement the musket line closes as
+before). A block with a rider closing within `TERCIO_TURN_R` more than
+`TERCIO_FLANK` off its front turns in place about its centre to face it, and
+holds while riders keep closing, `TERCIO_CLEAR_T` after. A sheltering sleeve
+or a turned block is left out of `_issue_line`'s orders. A sleeve or block in
+a melee, mauled (A_RETIRE) or guarding is left to the ordinary rules.
+
+Knobs (`ai_profile.gd`; ids 292-299 are a gap, `KNOB_GAPS`, read as 0):
+`PLAYS_ON` 300 (Easy 0 / Average 1 / Skilled 1), `TERCIO` 301 (0 / 1 / 1),
+`TERCIO_FILES` 302 (Easy 8, never used / Average 14 / Skilled 14: 120 pikes
+stand 14 x 9; the plan's 8, 10 x 12, measured worse), `TERCIO_HORSE_R` 303
+(80 m all). Constants
+(`plays.gd`): `PLAY_DROP_T` 300 ticks (30 s), `TERCIO_CLEAR_T` 100 (10 s),
+`TERCIO_TURN_R` 60 m, `TERCIO_FLANK` 128 (45 degrees), `TERCIO_REAR` 10 m.
+
+**Measured** (`tests/asym_probe.gd`, 48 seeds from 5000, both sides Average;
+new `--plays=MASK` sets the Spanish side's bits; `play_field` new in
+`sim/scenarios.gd`: the Spanish 2 pike, 4 musket companies, 2 lancers, 4,680,
+against 6 English musket companies of 80, 1 pike, 2 pistoleers of 50 and a
+falconet battery, 4,840, 600 x 400 m open; the English with `ai_plays` 2, as
+England's campaign row). Spanish wins of 48, "off" the bit off (the battle as
+before the play):
+
+| build | play_field off | play_field on | asym_field off | asym_field on |
+|---|---|---|---|---|
+| as built: riders only, 14 files | 31 | 43 | 39 | 39 (every battle as off) |
+| plan trigger, 8 files (10 x 12) | 31 | 32 | 39 | 27 |
+| plan trigger, 12 files | | 40 | | 33 |
+| plan trigger, 14 files | | 43 | | 32 |
+| plan trigger, 16 files | | 33 | | 38 |
+| plan trigger, 20 files (the old frontage) | | | | 39 |
+
+Why: at the plan's 8 files the play gained nothing against the English and
+cost 12 battles against the natives (`asym_field`: no horse, more melee
+foot, so the plan's second clause started it). At 20 files `asym_field` was
+exactly the off result: the loss was the block's depth alone (a narrow deep
+block gives up frontage to the warriors' swarm, and with no riders the
+sleeves never shelter). Against the English the gain peaked at 12-14 files
+(48 seeds: about +-3 wins of noise; the curve is not smooth). Riders only
+and 14 files keeps the gain where there is horse and leaves the natives'
+battle untouched (the play never starts there).
+
+**Open.** The sleeves keep their corners only until the lines engage (then
+the ordinary musket rules take them forward); no play line in the battle view
+(it has no notice line for AI events); TERCIO_FILES' curve is noisy and was
+swept only on these two pairs.
+
 ### 44.2 The countermarch (plan)
 
 The Dutch drill: the ranks fire in turn so the line keeps up a rolling fire

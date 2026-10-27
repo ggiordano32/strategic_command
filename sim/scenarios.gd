@@ -467,6 +467,24 @@ static func _make(id: String) -> Dictionary:
 			if id == "probe_deck":
 				scd["chars"] = [[{"key": "sea_captain", "name": "Calico Jack"}], []]
 			return scd
+		"play_field":
+			# The tercio's measure (docs/AI.md 44.1): the Spanish (side 0: 2 pike,
+			# 4 musket companies, 2 lancers: 4,680) against an English army (6
+			# musket companies of 80, 1 pike, 2 pistoleers of 50 and a falconet
+			# battery: 4,840) on open ground, 600 x 400 m, both AI; the English
+			# with England's campaign plays (the countermarch's bit only).
+			var pf: Array = []
+			for r in [["w_pikemen", 120, 270, 340], ["w_pikemen", 120, 330, 340], ["musketeers", 100, 150, 340],
+					["musketeers", 100, 210, 340], ["musketeers", 100, 390, 340], ["musketeers", 100, 450, 340],
+					["lancers", 60, 80, 345], ["lancers", 60, 520, 345]]:
+				pf.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))
+			for r in [["musketeers", 80, 120, 110], ["musketeers", 80, 180, 110], ["musketeers", 80, 240, 110],
+					["w_pikemen", 120, 300, 110], ["musketeers", 80, 360, 110], ["musketeers", 80, 420, 110],
+					["musketeers", 80, 480, 110], ["pistoleers", 50, 60, 105], ["pistoleers", 50, 540, 105],
+					["light_gun", 12, 300, 80]]:
+				pf.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
+			return {"width_m": 600, "height_m": 400, "ai_sides": [0, 1], "units": pf,
+				"terrain": {"kind": Terrain.K_FLAT}, "ai_plays": [-1, 2]}
 		"asym_woods", "asym_field", "asym_woods2", "asym_field2":
 			# The asymmetry probe (roles step 2, docs/design/battle_sim.md
 			# "Roles, step 2"): a Spanish army (side 0) and a native war party

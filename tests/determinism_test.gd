@@ -165,6 +165,7 @@ const BattleAI := preload("res://sim/battle_ai.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const AIP := preload("res://sim/ai_profile.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const Plays := preload("res://sim/plays.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
@@ -378,6 +379,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=plays" in OS.get_cmdline_user_args():
+		_check_plays()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=wp" in OS.get_cmdline_user_args():
 		_check_wp()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -421,6 +427,7 @@ func _init() -> void:
 	_check_cover()
 	_check_street()
 	_check_west()
+	_check_plays()
 	_check_fort()
 	_check_occupy()
 	_check_destr()
@@ -8338,3 +8345,189 @@ func _check_town() -> void:
 	else:
 		for x in bad:
 			_fail(str(x))
+
+
+## The play library (docs/AI.md 44; "--only=plays", also in the full run):
+## the tercio (44.1). play_field: the Spanish (side 0) form it at the first
+## think (counted once), the English (ai_plays 2: no tercio bit) do not;
+## each Spanish pike unit is a block of max(TERCIO_FILES, isqrt(men)) files,
+## two sleeves a block at its front corners (beside it, front ranks level);
+## with no enemy rider it does not start, however many enemy melee foot;
+## a side with no gun foot unit (Rome) keeps no play memory and hashes the
+## same with or without "ai_plays"; a lancer charging a sleeve sends it
+## behind its block, firing, and it returns once the rider is gone; the
+## battle with the tercio is identical on repeat and across snapshot /
+## restore.
+func _check_plays() -> void:
+	var sc := Scenarios.make("play_field")
+	var sim := BattleSim.new()
+	sim.setup(sc, 11)
+	for t in 150:
+		sim.step()
+	if not Plays.tercio_on(sim, 0) or Plays.tercio_on(sim, 1):
+		_fail("plays: the Spanish should form a tercio in play_field, the English (bit 1 only) not")
+	if sim.stat_aic[AIP.C_PLAY_TERCIO] != 1 or sim.stat_aic[AIP.N_COUNTERS + AIP.C_PLAY_TERCIO] != 0:
+		_fail("plays: the tercio counter is %d / %d (want 1 / 0)" % [sim.stat_aic[AIP.C_PLAY_TERCIO],
+			sim.stat_aic[AIP.N_COUNTERS + AIP.C_PLAY_TERCIO]])
+	var kn := AIP.of(sim, 0)
+	var nblk := 0
+	var nslv := 0
+	for u in sim.n_units:
+		var r := Plays.role(sim, u)
+		if r == 1:
+			nblk += 1
+			var want: int = maxi(kn[AIP.TERCIO_FILES], FM.isqrt(sim.u_alive[u]))
+			if sim.u_files[u] != want and BattleSim.width_to_files(want * UT.stat(sim.u_type[u], "file_sp"), sim.u_alive[u], sim.u_type[u]) != want:
+				_fail("plays: block %d's order does not give it %d files" % [u, want])
+		elif r >= 2:
+			nslv += 1
+			var b: int = Plays._pm(sim, u, Plays.PU_OF) - 1
+			if b < 0:
+				_fail("plays: sleeve %d has no block" % u)
+				continue
+			# (where each is going, or stands: anchors, the front centres)
+			var face: int = sim.u_dface[b]
+			var fx := FM.cos_a(face)
+			var fy := FM.sin_a(face)
+			var ux: int = sim.u_dx[u] if sim.u_order[u] == BattleAI.O_MOVE else sim.u_ax[u]
+			var uy: int = sim.u_dy[u] if sim.u_order[u] == BattleAI.O_MOVE else sim.u_ay[u]
+			var bx: int = sim.u_dx[b] if sim.u_order[b] == BattleAI.O_MOVE else sim.u_ax[b]
+			var by: int = sim.u_dy[b] if sim.u_order[b] == BattleAI.O_MOVE else sim.u_ay[b]
+			var ddx: int = ux - bx
+			var ddy: int = uy - by
+			var fwd: int = (ddx * fx + ddy * fy) / FM.TRIG_ONE
+			var lat: int = (-ddx * fy + ddy * fx) / FM.TRIG_ONE
+			var bw: int = Plays.block_files(sim, b, kn) * UT.stat(sim.u_type[b], "file_sp")
+			var sw: int = BattleAI._width(sim, u)
+			var want_lat: int = (bw / 2 + kn[AIP.LINE_GAP] + sw / 2) * (-1 if r == 2 else 1)
+			if absi(fwd) > 3 * M or absi(lat - want_lat) > 3 * M:
+				_fail("plays: sleeve %d stands %d m ahead / %d m aside of block %d (want 0 / %d)" % [u, fwd / M, lat / M, b, want_lat / M])
+	if nblk != 2 or nslv != 4:
+		_fail("plays: play_field has %d blocks and %d sleeves (want 2 and 4)" % [nblk, nslv])
+	for u in sim.n_units:
+		if Plays.role(sim, u) == 1 and sim.u_files[u] != maxi(kn[AIP.TERCIO_FILES], FM.isqrt(sim.u_alive[u])):
+			_fail("plays: block %d stands %d files (want %d)" % [u, sim.u_files[u], maxi(kn[AIP.TERCIO_FILES], FM.isqrt(sim.u_alive[u]))])
+	# No trigger: the English without their riders, with more melee foot (3
+	# pikes to 2): riders only start it.
+	var sc2 := Scenarios.make("play_field")
+	var keep: Array = []
+	for ud in sc2["units"]:
+		if not (int(ud["side"]) == 1 and UT.cls(int(ud["type"])) == UT.CLS_CAV):
+			keep.append(ud)
+	keep.append(Scenarios.unit(1, UT.index_of("w_pikemen"), 120, 60, 110, Scenarios.FACE_DOWN))
+	keep.append(Scenarios.unit(1, UT.index_of("w_pikemen"), 120, 540, 110, Scenarios.FACE_DOWN))
+	sc2["units"] = keep
+	var s2 := BattleSim.new()
+	s2.setup(sc2, 11)
+	for t in 30:
+		s2.step()
+	if Plays.tercio_on(s2, 0) or s2.stat_aic[AIP.C_PLAY_TERCIO] != 0:
+		_fail("plays: a tercio against no riders (more melee foot)")
+	# The bit off: no tercio.
+	var sc3 := Scenarios.make("play_field")
+	sc3["ai_plays"] = [0, 2]
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 11)
+	for t in 30:
+		s3.step()
+	if Plays.tercio_on(s3, 0) or Plays.role(s3, 0) != 0:
+		_fail("plays: a tercio with the side's bit off")
+	# No gun foot unit: no play memory, the same hash with or without the key
+	# (Rome: skirmish both AI; a West army of pikes and horse).
+	for id in ["skirmish", "west_nogun"]:
+		var base: Dictionary
+		if id == "skirmish":
+			base = Scenarios.make("skirmish")
+			base["ai_sides"] = [0, 1]
+		else:
+			base = Scenarios.make("play_field")
+			var ng: Array = []
+			for ud in base["units"]:
+				if UT.stat(int(ud["type"]), "m_gun") == 0:
+					ng.append(ud)
+			base["units"] = ng
+			base.erase("ai_plays")
+		var a := BattleSim.new()
+		a.setup(base, 5)
+		var named := base.duplicate(true)
+		named["ai_plays"] = [-1, -1]
+		var b := BattleSim.new()
+		b.setup(named, 5)
+		for t in 200:
+			a.step()
+			b.step()
+		if not a.ai_mem.is_empty() or Plays.has_mem(a) or a.state_hash() != b.state_hash():
+			_fail("plays: %s (no gun foot) keeps play memory (%d) or hashes otherwise with ai_plays named" % [id, a.ai_mem.size()])
+	# Under horse: a sleeve charged by a lancer shelters behind its block,
+	# firing, and returns once the rider has gone.
+	var hs := {"width_m": 400, "height_m": 400, "ai_sides": [0], "terrain": {"kind": Terrain.K_FLAT}, "units": [
+		Scenarios.unit(0, UT.index_of("w_pikemen"), 120, 200, 300, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.index_of("musketeers"), 100, 150, 300, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.index_of("musketeers"), 100, 250, 300, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.index_of("lancers"), 60, 60, 120, Scenarios.FACE_DOWN)],
+		"orders": [Scenarios.attack(60, 3, 1, 1)]}
+	var hsim := BattleSim.new()
+	hsim.setup(hs, 3)
+	var sl := -1
+	var shelt := -1
+	for t in 400:
+		hsim.step()
+		if sl < 0 and Plays.role(hsim, 1) >= 2:
+			sl = 1
+		if sl >= 0 and Plays.state(hsim, sl) == 1:
+			shelt = hsim.tick
+			break
+	if sl < 0 or shelt < 0:
+		_fail("plays: the charged sleeve did not shelter (sleeve %d)" % sl)
+	else:
+		for t in 5:
+			hsim.step()
+		var fx := FM.cos_a(hsim.u_face[0])
+		var fy := FM.sin_a(hsim.u_face[0])
+		var fwd: int = ((hsim.u_dx[sl] - hsim.u_ax[0]) * fx + (hsim.u_dy[sl] - hsim.u_ay[0]) * fy) / FM.TRIG_ONE
+		if hsim.u_order[sl] == BattleAI.O_MOVE and fwd > -(Plays._depth(hsim, 0) + Plays.TERCIO_REAR) + M:
+			_fail("plays: the sheltering sleeve goes to %d m ahead of the block's front (want behind its rear rank)" % (fwd / M))
+		if hsim.u_fire[sl] == 0:
+			_fail("plays: the sheltering sleeve holds its fire")
+		# The rider rides off: the sleeve returns after TERCIO_CLEAR_T.
+		hsim.queue_order({"tick": hsim.tick, "type": BattleAI.ORDER_MOVE, "unit": 3, "x": 380 * M, "y": 20 * M,
+			"facing": 0, "width": 0, "run": 1})
+		var back := -1
+		for t in 600:
+			hsim.step()
+			if Plays.state(hsim, sl) == 0:
+				back = hsim.tick
+				break
+		if back < 0 or back - shelt < Plays.TERCIO_CLEAR_T:
+			_fail("plays: the sleeve did not return after the rider left (back at %d, sheltered at %d)" % [back, shelt])
+		else:
+			print("PASS plays: sleeve %d sheltered at tick %d, back at %d" % [sl, shelt, back])
+	# Repeat and snapshot / restore with the tercio running.
+	var r1 := BattleSim.new()
+	r1.setup(Scenarios.make("play_field"), 21)
+	var r2 := BattleSim.new()
+	r2.setup(Scenarios.make("play_field"), 21)
+	var snap := PackedByteArray()
+	for t in 900:
+		r1.step()
+		r2.step()
+		if t == 400:
+			snap = r1.snapshot()
+		if r1.state_hash() != r2.state_hash():
+			_fail("plays: play_field diverged on repeat at tick %d" % r1.tick)
+			break
+	var r3 := BattleSim.new()
+	r3.setup(Scenarios.make("play_field"), 21)
+	if not r3.restore(snap):
+		_fail("plays: restore failed")
+	else:
+		var r4 := BattleSim.new()
+		r4.setup(Scenarios.make("play_field"), 21)
+		for t in 401:
+			r4.step()
+		for t in 499:
+			r3.step()
+			r4.step()
+		if r3.state_hash() != r4.state_hash() or not Plays.has_mem(r3):
+			_fail("plays: play_field restored from a snapshot does not run on exactly")
+	print("PASS plays: tercio formed (2 blocks, 4 sleeves), not without its trigger, bit or a gun; repeat and snapshot exact")

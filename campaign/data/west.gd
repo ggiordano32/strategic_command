@@ -310,6 +310,11 @@ const AI_SPECIALISTS: Array = ["canoe_raiders", "boarding_grenadiers", "coureurs
 ## yet (the marines' Barracks 2 and Shipyard, the mortars' Workshop 3, ...)
 ## gives its share to the lines that can be raised (CP.MIX_LIVE).
 const AI_LIVE_MIX := 1
+## The battle AI's plays (sim/plays.gd bits, docs/AI.md 44) per faction:
+## bit 0 the tercio, bit 1 the countermarch. A faction not listed (and the
+## independents) runs none; a pack without the table (Rome) every one.
+const PLAYS := {"new_spain": 3, "tierra_firme": 3, "england": 2, "france": 2, "dutch": 2,
+	"brethren": 0, "itza": 0, "miskito": 0}
 
 const START_WARS: Array = [
 	["new_spain", "england"], ["new_spain", "brethren"], ["tierra_firme", "brethren"],

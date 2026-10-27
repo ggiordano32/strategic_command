@@ -285,6 +285,8 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	var scn := {"width_m": width, "height_m": height, "ai_sides": ai, "ai_skill": prof[0],
 		"ai_style": prof[1], "units": units, "terrain": terrain}
+	if prof[2] != [CData.PLAYS_ALL, CData.PLAYS_ALL]:
+		scn["ai_plays"] = prof[2]
 	var cross := river_crossing(st, b)
 	if cross >= 0:
 		# The sim ignores this key for now (the crossing map is the next
@@ -509,12 +511,14 @@ static func equipment_text(st: Dictionary, r: int) -> String:
 	return "Siege equipment: none yet (artillery only); ladders next turn, a ram and mantlets in %d turns." % RAM_TURNS
 
 
-## [ai_skill per sim side, ai_style per sim side] for battle b: an AI side
-## its lead faction's (attacker / defender), the players' sides Average /
-## Balanced.
+## [ai_skill per sim side, ai_style per sim side, ai_plays per sim side] for
+## battle b: an AI side its lead faction's (attacker / defender; its plays
+## CData.plays_of), the players' sides Average / Balanced / every play (the
+## key is left out of the scenario when every side has every play).
 static func _ai_profiles(st: Dictionary, b: Dictionary, sim_side: Array, ai: Array) -> Array:
 	var sk := [CP.AVERAGE, CP.AVERAGE]
 	var sy := [CP.BALANCED, CP.BALANCED]
+	var pl := [CData.PLAYS_ALL, CData.PLAYS_ALL]
 	for cs in 2:
 		var ss := int(sim_side[cs])
 		if not ai.has(ss):
@@ -524,7 +528,8 @@ static func _ai_profiles(st: Dictionary, b: Dictionary, sim_side: Array, ai: Arr
 			continue
 		sk[ss] = CP.battle_skill(st, f)
 		sy[ss] = CP.style(st, f)
-	return [sk, sy]
+		pl[ss] = CData.plays_of(f)
+	return [sk, sy, pl]
 
 
 ## Reinforcing armies with an edge (b["edge"], version 5) taken out of
@@ -796,6 +801,8 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 	var prof := _ai_profiles(st, b, sim_side, ai)
 	res["scenario"]["ai_skill"] = prof[0]
 	res["scenario"]["ai_style"] = prof[1]
+	if prof[2] != [CData.PLAYS_ALL, CData.PLAYS_ALL]:
+		res["scenario"]["ai_plays"] = prof[2]
 	_deployment(st, res["scenario"], human_f)
 	_time_limit(st, res["scenario"])
 	var map: Array = []

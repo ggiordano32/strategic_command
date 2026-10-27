@@ -115,8 +115,12 @@ static var START_TREATIES: Array = []
 ## Treaty lines (format 10; cdip.gd line_why): faction key -> unit line -> the
 ## faction keys a trade agreement (or alliance) with any of which unlocks it.
 static var TREATY_LINES: Dictionary = {}
+## The battle AI's plays per faction key (west.gd PLAYS: sim/plays.gd bits;
+## empty: every play for every faction, Rome). Data, not state.
+static var PLAYS: Dictionary = {}
 
 const INDEPENDENT := -1
+const PLAYS_ALL := -1  # (sim/plays.gd ALL: every play)
 const INDEPENDENT_COLOR := "8c8c84"
 
 ## Display order of lines in recruitment lists.
@@ -411,6 +415,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	UNIT_NAMES = c.get("UNIT_NAMES", {})
 	START_TREATIES = c.get("START_TREATIES", [])
 	TREATY_LINES = c.get("TREATY_LINES", {})
+	PLAYS = c.get("PLAYS", {})
 	SHIPS = c.get("SHIPS", null)
 	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}
@@ -663,3 +668,14 @@ static func name_list(f: int) -> Array[String]:
 		return NAMES_DEFAULT
 	var by: Array[String] = NAMES_BY_FACTION.get(str(FACTIONS[f]["key"]), NAMES.get(faction_culture(f), NAMES_DEFAULT))
 	return by
+
+
+## The battle AI's play bits for faction f's armies (scenario "ai_plays";
+## sim/plays.gd): PLAYS_ALL in a pack without a PLAYS table, else the
+## faction's row (0 for a faction not listed and the independents).
+static func plays_of(f: int) -> int:
+	if PLAYS.is_empty():
+		return PLAYS_ALL
+	if f < 0 or f >= FACTIONS.size():
+		return 0
+	return int(PLAYS.get(str(FACTIONS[f]["key"]), 0))

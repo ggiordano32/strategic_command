@@ -108,11 +108,18 @@ extends RefCounted
 ## pulled away from a routing neighbour; deployment that puts the spears
 ## at the end facing the enemy's riders; withdrawal in good order. All of
 ## it orders a player could give, read from what a player sees.
+## Plays (docs/AI.md 44; sim/plays.gd): scripted historical tactics a side
+## runs by its scenario's ai_plays bits (PLAYS_ON, Easy 0): chosen in
+## _army_think (Plays.army_think), laid out in _issue_line (Plays.post_line
+## reshapes the first line's slots), run per unit before the class rules
+## (Plays.unit_think). The tercio: pike blocks with musket sleeves at their
+## corners that shelter behind the block from horse.
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const AP := preload("res://sim/ai_profile.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const Plays := preload("res://sim/plays.gd")
 ## River crossings: the attacker's line forms this far beyond the crossing's
 ## mouth on the far bank (and skirmishes this far back from its own).
 const RIV_FORM := 30 * 1024
@@ -274,6 +281,7 @@ static func _army_think(sim, side: int) -> void:
 	var plan := _plan(sim, side)
 	if plan.is_empty():
 		return
+	Plays.army_think(sim, side)  # (the play library, docs/AI.md 44: a play starts or is dropped)
 	if phase == P_DEPLOY and is_camp(sim, side):
 		_camp_deploy(sim, side)
 		sim.ai_phase[side] = P_ADVANCE
@@ -877,6 +885,13 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 	# Keep left-to-right order within each role.
 	for group in [pikes, inf, cav, mis, bolts, stones, resv]:
 		_reassign_by_lateral(sim, group, slots, cx, cy, rx, ry)
+	if Plays.tercio_on(sim, side):
+		# The tercio (docs/AI.md 44.1): pike blocks with their sleeves; never
+		# the pike that will guard the batteries.
+		var guard := -1
+		if deploy and not (bolts.is_empty() and stones.is_empty()):
+			guard = _guard_choice(sim, side, bolts[0] if not bolts.is_empty() else stones[0])
+		Plays.post_line(sim, side, line1, slots, guard)
 	var seq := 0
 	var keys := slots.keys()
 	keys.sort()  # index order, never Dictionary order
@@ -884,6 +899,7 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		var s: Array = slots[u]
 		var lat: int = s[0]
 		var back: int = s[1]
+		var wd: int = s[2] if s.size() > 2 else _width(sim, u)  # (a tercio block's width: Plays.post_line)
 		var px := cx + ((rx * lat - fx * back) / FM.TRIG_ONE)
 		var py := cy + ((ry * lat - fy * back) / FM.TRIG_ONE)
 		px = clampi(px, 4 * M, sim.field_w - 4 * M)
@@ -916,9 +932,9 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 			# and to keep up with the line as it advances.
 			var far := kn[AP.ART_DEPLOY_MOVE] if deploy else kn[AP.ART_MOVE]
 			if not stay and _d(px - sim.u_ax[u], py - sim.u_ay[u]) > far and sim.u_ammo[u] > 0:
-				_move(sim, u, px, py, face, _width(sim, u), 0, seq)
+				_move(sim, u, px, py, face, wd, 0, seq)
 		else:
-			_move(sim, u, px, py, face, _width(sim, u), 0, seq)
+			_move(sim, u, px, py, face, wd, 0, seq)
 		seq += 1
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_skirm[u] == 0 and kn[AP.MIS_SKIRM] != 0 and not line_gun(sim.u_type[u]):
 			_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
@@ -1084,6 +1100,8 @@ static func _unit_think(sim, u: int) -> void:
 		mode = A_ATTACK
 	if cls != UT.CLS_CAV and UT.stat(sim.u_type[u], "vs_cav") > 0:
 		_watch_cav(sim, u, kn[AP.SPEAR_CAV_R])
+	if Plays.unit_think(sim, u):
+		return  # (its part in a play: docs/AI.md 44)
 	if mode == A_RESV:
 		_resv_think(sim, u, kn)
 		return
@@ -1895,6 +1913,17 @@ static func _art_threatened(sim, u: int) -> bool:
 
 ## One infantry unit (spears first, else light, else heavy) guards battery b.
 static func _pick_guard(sim, side: int, b: int) -> void:
+	var best := _guard_choice(sim, side, b)
+	if best < 0:
+		return  # too small an army to spare a guard
+	_set_mode(sim, best, A_GUARD)
+	sim.u_ai_y[best] = b
+	_guard_post(sim, best, b)
+
+
+## The unit _pick_guard makes battery b's guard (-1 none): a pure choice
+## (the tercio leaves it out of its blocks in the deployment).
+static func _guard_choice(sim, side: int, b: int) -> int:
 	var best := -1
 	var best_k := 0
 	var melee := 0
@@ -1920,10 +1949,8 @@ static func _pick_guard(sim, side: int, b: int) -> void:
 			best = u
 			best_k = k
 	if best < 0 or melee < AP.of(sim, side)[AP.GUARD_MIN_MELEE]:
-		return  # too small an army to spare a guard
-	_set_mode(sim, best, A_GUARD)
-	sim.u_ai_y[best] = b
-	_guard_post(sim, best, b)
+		return -1
+	return best
 
 
 ## Guard post: beside battery b on its outer side (away from the army's

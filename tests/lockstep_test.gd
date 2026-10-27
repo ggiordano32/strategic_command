@@ -257,6 +257,42 @@ func _test_profiles() -> void:
 	else:
 		print("PASS profiles: default hashes as before, others hashed (%08x vs %08x), snapshot keeps them" % [
 			prof.state_hash(), plain.state_hash()])
+	# The plays (sim/plays.gd, docs/AI.md 44): "ai_plays" every bit (-1)
+	# hashes as no key; another mask is in the hash from tick 0 and survives
+	# snapshot / restore, with the plays' memory (play_field: the tercio runs).
+	var pf := Scenarios.make("play_field")
+	pf.erase("ai_plays")
+	var p0 := BattleSim.new()
+	p0.setup(pf, 7)
+	var pfa := pf.duplicate(true)
+	pfa["ai_plays"] = [-1, -1]
+	var p1 := BattleSim.new()
+	p1.setup(pfa, 7)
+	var pfb := pf.duplicate(true)
+	pfb["ai_plays"] = [1, 0]
+	var p2 := BattleSim.new()
+	p2.setup(pfb, 7)
+	if p1.state_hash() != p0.state_hash() or p1.ai_plays != PackedInt32Array([-1, -1]):
+		_fail("plays: ai_plays every bit named in the scenario changed the hash")
+	if p2.state_hash() == p0.state_hash() or p2.ai_plays != PackedInt32Array([1, 0]):
+		_fail("plays: another ai_plays mask is not parsed or not in the hash at tick 0")
+	for t in 300:
+		p2.step()
+	var psnap := p2.snapshot()
+	var pback := BattleSim.new()
+	pback.setup(pf, 7)
+	if not pback.restore(psnap) or pback.state_hash() != p2.state_hash() or pback.ai_plays != p2.ai_plays \
+			or pback.ai_mem != p2.ai_mem:
+		_fail("plays: snapshot / restore lost ai_plays or the plays' memory")
+	else:
+		for t in 300:
+			p2.step()
+			pback.step()
+		if pback.state_hash() != p2.state_hash():
+			_fail("plays: a restored play_field does not run on exactly")
+		else:
+			print("PASS plays: ai_plays default hashes as before, a mask is hashed (%08x vs %08x), snapshot keeps it and the plays' memory" % [
+				p2.state_hash(), p0.state_hash()])
 
 
 # ----------------------------------------------------------------- easy ---

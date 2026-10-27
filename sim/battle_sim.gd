@@ -26,6 +26,7 @@ const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const SiegeAI := preload("res://sim/siege_ai.gd")
+const Plays := preload("res://sim/plays.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -828,6 +829,10 @@ var ai_sides: PackedInt32Array = PackedInt32Array([0, 0])  # 1 = AI controls sid
 ## when not the default (AVERAGE / BALANCED on both sides).
 var ai_skill: PackedInt32Array = PackedInt32Array([1, 1])
 var ai_style: PackedInt32Array = PackedInt32Array([1, 1])
+## The plays each side's AI may run (sim/plays.gd, docs/AI.md 44): a bit mask
+## per side (Plays.P_* bits; scenario "ai_plays"; Plays.ALL, every bit, when
+## absent). Hashed when not ALL on both sides.
+var ai_plays: PackedInt32Array = PackedInt32Array([-1, -1])
 var winner: int = -1  # -1 undecided, else winning side (2 = draw)
 var decided_tick: int = -1
 var ended: int = 0    # 1 once the result is final (pursuit over)
@@ -1975,6 +1980,8 @@ var stat_clr: int = 0             # diagnostics (not hashed): men pushed off a h
 ##   "ai_sides": [side, ...],
 ##   "ai_skill": [side 0, side 1], "ai_style": [side 0, side 1]   # optional AI
 ##     profiles (sim/ai_profile.gd; default AVERAGE / BALANCED),
+##   "ai_plays": [side 0, side 1]   # optional: the plays each AI side may run
+##     (sim/plays.gd bits; default Plays.ALL = -1, every bit),
 ##   "units": [{"side", "type", "count", "x_m", "y_m", "facing", "files", optional
 ##     "wall", "morale_pct" (starts with that % of its morale)}, ...],
 ##   "orders": [order, ...]   # optional scripted orders (test scenarios)
@@ -2004,6 +2011,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		ai_skill[s] = clampi(int(sk[s]), AIProfile.EASY, AIProfile.SKILLED)
 	for s in mini(sy.size(), 2):
 		ai_style[s] = clampi(int(sy[s]), AIProfile.CAUTIOUS, AIProfile.AGGRESSIVE)
+	ai_plays = PackedInt32Array([Plays.ALL, Plays.ALL])
+	var pl: Array = scenario.get("ai_plays", [])
+	for s in mini(pl.size(), 2):
+		ai_plays[s] = int(pl[s])
 	stat_aic = PackedInt32Array()
 	stat_aic.resize(2 * AIProfile.N_COUNTERS)
 	stat_aic.fill(0)
@@ -2139,9 +2150,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	dbg_cav_seen.resize(n_units)
 	dbg_cav_seen.fill(-1)
 	ai_mem = PackedInt32Array()
-	if AIProfile.uses_mem(ai_skill, ai_style):
+	var play_mem := Plays.wants_mem(self, units)
+	if AIProfile.uses_mem(ai_skill, ai_style) or play_mem:
 		ai_mem.resize(n_units * AIProfile.MU_K + 2 * AIProfile.SD_K)
 		ai_mem.fill(0)
+	if play_mem:
+		Plays.add_mem(self)  # (the plays' tail of ai_mem: only a battle where a play can run has it)
 	for arr in _map_unit_arrays():
 		arr.resize(n_units)
 		arr.fill(0)
@@ -18158,6 +18172,10 @@ func state_hash() -> int:
 		ctx.update(ai_mist.to_byte_array())
 		if not ai_mem.is_empty():
 			ctx.update(ai_mem.to_byte_array())
+	elif not ai_mem.is_empty():
+		ctx.update(ai_mem.to_byte_array())  # (the default profile keeps memory only for a play: sim/plays.gd)
+	if ai_plays[0] != Plays.ALL or ai_plays[1] != Plays.ALL:
+		ctx.update(ai_plays.to_byte_array())
 	if map_on != 0:
 		# Woods / settlement maps only (a plain map hashes as it always did).
 		for arr in _map_unit_arrays():

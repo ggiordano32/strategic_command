@@ -1,0 +1,554 @@
+extends RefCounted
+## The play library (docs/AI.md 44): scripted historical tactics the battle
+## AI (sim/battle_ai.gd) runs on top of its ordinary rules. A play has a
+## trigger (the side's composition, the ground, the enemy's shape), a few
+## posts and orders, and a counter in the battle's AI telemetry
+## (BattleSim.stat_aic, AIProfile.C_PLAY_*). Deterministic like the rest of
+## the AI: integers, no RNG, units in index order; its memory is a tail of
+## BattleSim.ai_mem (hashed and snapshotted with it) that exists only in a
+## battle where a play can run (wants_mem: an AI side with PLAYS_ON, a play
+## bit and a gun foot unit; no Rome row has a gun, so a Rome battle never
+## has it and hashes as before).
+##
+## Which plays: the scenario's "ai_plays" [side 0, side 1] bit mask
+## (BattleSim.ai_plays; ALL when absent: custom battles and scenario keys);
+## the campaign fills it from the faction's row (CData.PLAYS, west.gd).
+## AIProfile.PLAYS_ON (Easy 0) switches the library; each play has its knob.
+## A play starts once, in the deployment or at the first army think whose
+## trigger holds (one C_PLAY_* count), and is dropped for good when its
+## trigger has been gone PLAY_DROP_T; its units go back to the ordinary rules.
+##
+## The tercio (P_TERCIO, docs/AI.md 44.1; knob TERCIO): a field battle, the
+## side has a pike unit and a gun foot unit (BattleAI.line_gun) and the enemy
+## fields a rider unit. Each pike unit of
+## the first line (not the battery guard's) stands as a block max(TERCIO_FILES,
+## isqrt(men)) files wide; up to two gun units a block are its sleeves at
+## its front corners (beside it, their front rank level with its front);
+## other gun units stand in the line between the blocks (one block: beside
+## the sleeves), the line's other foot outward of them, the wings shifted
+## by as much (post_line: the slots _issue_line made). Under horse
+## (unit_think): enemy riders closing on a sleeve (an attack order on it
+## within 2 x TERCIO_HORSE_R, or riders within TERCIO_HORSE_R moving toward
+## it) send it to the block's rear corner (TERCIO_REAR behind its rear rank)
+## firing at will; TERCIO_CLEAR_T with none closing and it returns to the
+## front corner. A block with riders closing from a flank (off its front by
+## more than TERCIO_FLANK) within TERCIO_TURN_R turns in place to face them,
+## and holds the turn until none have closed for TERCIO_CLEAR_T.
+
+const FM := preload("res://sim/fixed_math.gd")
+const UT := preload("res://sim/unit_types.gd")
+const AP := preload("res://sim/ai_profile.gd")
+
+const M := 1024
+const ALL := -1                 # every play (the default of a scenario without "ai_plays")
+const P_TERCIO := 0             # bit 0: the tercio (docs/AI.md 44.1)
+const P_COUNTERMARCH := 1       # bit 1: the countermarch (docs/AI.md 44.2; its own build)
+const PLAY_DROP_T := 300        # a play is dropped when its trigger has been gone this long (30 s)
+const TERCIO_CLEAR_T := 100     # sleeves return / a block turns back after this long with no riders closing (10 s)
+const TERCIO_TURN_R := 60 * M   # a block turns to face riders closing from a flank this near
+const TERCIO_FLANK := 128       # ... off its front by more than this (1024 = a full turn: 45 degrees)
+const TERCIO_REAR := 10 * M     # sheltering sleeves stand this far behind the block's rear rank
+
+# Mirrored from BattleSim / BattleAI (preloading either here would be circular).
+const U_READY := 0
+const O_MOVE := 1
+const O_ATTACK := 2
+const ORDER_MOVE := 1
+const ORDER_FIRE := 5
+const AI_PLAYER_BASE := 100
+const A_RETIRE := 7
+const A_GUARD := 10
+
+# The plays' memory: a tail of BattleSim.ai_mem after the Skilled memory
+# (n_units * AP.MU_K + 2 * AP.SD_K), PU_K ints per unit then PS_K per side.
+const PU_ROLE := 0              # tercio part: 0 none, 1 block, 2 left sleeve, 3 right sleeve
+const PU_OF := 1                # a sleeve's block + 1
+const PU_STATE := 2             # 1: a sleeve sheltering behind its block / a block turned to a flank
+const PU_T := 3                 # the tick riders were last seen closing on it
+const PU_K := 4
+const PS_TERCIO := 0            # 0 not chosen, 1 running, 2 dropped
+const PS_TERCIO_T := 1          # the tick it started
+const PS_TERCIO_SEEN := 2       # the tick its trigger last held
+const PS_K := 4
+
+
+# --------------------------------------------------------------- memory ---
+
+## A play can run in this battle: some AI side has PLAYS_ON, a play bit and
+## a gun foot unit (scenario rows `units`). Decides whether ai_mem gets the
+## plays' tail (BattleSim.setup).
+static func wants_mem(sim, units: Array) -> bool:
+	for s in 2:
+		if sim.ai_sides[s] == 0 or sim.ai_plays[s] == 0 or AP.of(sim, s)[AP.PLAYS_ON] == 0:
+			continue
+		for ud in units:
+			if int(ud["side"]) == s and _gun_type(int(ud["type"])):
+				return true
+	return false
+
+
+## Appends the plays' tail to sim.ai_mem (sized for the Skilled memory first).
+static func add_mem(sim) -> void:
+	var at: int = sim.n_units * AP.MU_K + 2 * AP.SD_K
+	sim.ai_mem.resize(at + sim.n_units * PU_K + 2 * PS_K)
+	for k in range(at, sim.ai_mem.size()):
+		sim.ai_mem[k] = 0
+
+
+static func has_mem(sim) -> bool:
+	return sim.ai_mem.size() == sim.n_units * (AP.MU_K + PU_K) + 2 * (AP.SD_K + PS_K)
+
+
+static func _pm(sim, u: int, k: int) -> int:
+	return sim.ai_mem[sim.n_units * AP.MU_K + 2 * AP.SD_K + u * PU_K + k]
+
+
+static func _pmset(sim, u: int, k: int, v: int) -> void:
+	sim.ai_mem[sim.n_units * AP.MU_K + 2 * AP.SD_K + u * PU_K + k] = v
+
+
+static func _ps(sim, side: int, k: int) -> int:
+	return sim.ai_mem[sim.n_units * (AP.MU_K + PU_K) + 2 * AP.SD_K + side * PS_K + k]
+
+
+static func _psset(sim, side: int, k: int, v: int) -> void:
+	sim.ai_mem[sim.n_units * (AP.MU_K + PU_K) + 2 * AP.SD_K + side * PS_K + k] = v
+
+
+## The tercio is running for side `side`.
+static func tercio_on(sim, side: int) -> bool:
+	return has_mem(sim) and _ps(sim, side, PS_TERCIO) == 1
+
+
+## The side's tercio role of unit u (PU_ROLE; 0 without the plays' memory).
+static func role(sim, u: int) -> int:
+	return _pm(sim, u, PU_ROLE) if has_mem(sim) else 0
+
+
+## Unit u's PU_STATE (1: a sleeve sheltering, a block turned).
+static func state(sim, u: int) -> int:
+	return _pm(sim, u, PU_STATE) if has_mem(sim) else 0
+
+
+# ----------------------------------------------------------- army level ---
+
+## Each army think (BattleAI._army_think, after the plan is read): start the
+## plays whose trigger holds, drop those whose trigger has been gone
+## PLAY_DROP_T.
+static func army_think(sim, side: int) -> void:
+	if not has_mem(sim):
+		return
+	var kn := AP.of(sim, side)
+	if kn[AP.PLAYS_ON] == 0:
+		return
+	if kn[AP.TERCIO] != 0 and (sim.ai_plays[side] >> P_TERCIO) & 1 != 0:
+		var st := _ps(sim, side, PS_TERCIO)
+		if st == 2:
+			return
+		var trig := tercio_trigger(sim, side)
+		if trig:
+			_psset(sim, side, PS_TERCIO_SEEN, sim.tick)
+		if st == 0 and trig:
+			_psset(sim, side, PS_TERCIO, 1)
+			_psset(sim, side, PS_TERCIO_T, sim.tick)
+			sim.stat_aic[side * AP.N_COUNTERS + AP.C_PLAY_TERCIO] += 1
+		elif st == 1 and not trig and sim.tick - _ps(sim, side, PS_TERCIO_SEEN) >= PLAY_DROP_T:
+			_psset(sim, side, PS_TERCIO, 2)
+			for u in sim.n_units:
+				if sim.u_side[u] == side:
+					_clear(sim, u)
+
+
+## The tercio's trigger: a field battle (no settlement, no town plan); the
+## side has a ready pike unit (not guarding the batteries) and a ready gun
+## foot unit; the enemy shows a ready rider unit (one it sees). (Riders
+## only, the owner's choice after the measure, docs/AI.md 44.1: against foot
+## alone the deep block cost the natives' battle.)
+static func tercio_trigger(sim, side: int) -> bool:
+	if sim.city_on != 0:
+		return false
+	var city = sim.map_info.get("city", null)
+	if city is Dictionary and int((city as Dictionary).get("tp", 0)) != 0:
+		return false
+	var pike := false
+	var gun := false
+	var rider := false
+	for u in sim.n_units:
+		if sim.u_state[u] != U_READY or _skip(sim, u):
+			continue
+		var c: int = sim.u_cls[u]
+		if sim.u_side[u] == side:
+			if c == UT.CLS_PIKE and sim.u_ai[u] != A_GUARD:
+				pike = true
+			if _gun_foot(sim, u):
+				gun = true
+		elif c == UT.CLS_CAV and not sim.hidden_from(u, side):
+			rider = true
+	return pike and gun and rider
+
+
+# ------------------------------------------------------------ formation ---
+
+## The tercio's layout (BattleAI._issue_line, after its slots are made and
+## before the orders): `line1` the first line's units, `slots` unit ->
+## [lateral, back] (a block's gets its width as a third value), `guard` the
+## pike that will guard the batteries (deployment; -1 none). Sheltering
+## sleeves and turned blocks are taken out of the slots (unit_think has
+## them). Does nothing unless the side's tercio runs.
+static func post_line(sim, side: int, line1: Array, slots: Dictionary, guard: int) -> void:
+	if not tercio_on(sim, side):
+		return
+	var kn := AP.of(sim, side)
+	var gap := kn[AP.LINE_GAP]
+	var row: Array = []
+	for u in line1:
+		if slots.has(u):
+			row.append(u)
+	row.sort_custom(func(a: int, b: int) -> bool:
+		var la: int = slots[a][0]
+		var lb: int = slots[b][0]
+		return la < lb or (la == lb and a < b))
+	var blocks: Array = []
+	var guns: Array = []
+	var lrest: Array = []
+	var rrest: Array = []
+	for u in row:
+		if sim.u_cls[u] == UT.CLS_PIKE and u != guard:
+			blocks.append(u)
+		elif _gun_foot(sim, u):
+			guns.append(u)
+		elif int(slots[u][0]) < 0:
+			lrest.append(u)
+		else:
+			rrest.append(u)
+	var nb := blocks.size()
+	var ng := guns.size()
+	var roles := {}  # unit -> [role, of]
+	if nb > 0 and ng > 0:
+		# Old extents: the whole row's and the core's (blocks and guns).
+		var old_l := 0
+		var old_r := 0
+		var core_l := 0
+		var core_r := 0
+		var first := true
+		var cfirst := true
+		for u in row:
+			var w := _width(sim, u)
+			var a: int = int(slots[u][0]) - w / 2
+			var b: int = int(slots[u][0]) + w / 2
+			if first or a < old_l:
+				old_l = a
+			if first or b > old_r:
+				old_r = b
+			first = false
+			if blocks.has(u) or guns.has(u):
+				if cfirst or a < core_l:
+					core_l = a
+				if cfirst or b > core_r:
+					core_r = b
+				cfirst = false
+		# Sleeves: block k % nb's outer side on the first pass, its inner
+		# side on the second (a block in the left half: left is outer).
+		var sl: Array = []
+		var sr: Array = []
+		sl.resize(nb)
+		sr.resize(nb)
+		sl.fill(false)
+		sr.fill(false)
+		var nsl := mini(ng, 2 * nb)
+		for k in nsl:
+			var i := k % nb
+			var outer_left := 2 * i + 1 <= nb
+			if (k < nb) == outer_left:
+				sl[i] = true
+			else:
+				sr[i] = true
+		var extra := ng - nsl
+		# The sequence left to right: -1 a gun (assigned in lateral order),
+		# else a block; per gun its role and block.
+		var seq: Array = []
+		var gr: Array = []  # per gun place: [role, block]
+		if nb == 1:
+			for k in extra / 2:
+				seq.append(-1)
+				gr.append([0, -1])
+		for i in nb:
+			if sl[i]:
+				seq.append(-1)
+				gr.append([2, blocks[i]])
+			seq.append(blocks[i])
+			if sr[i]:
+				seq.append(-1)
+				gr.append([3, blocks[i]])
+			if nb > 1 and i < nb - 1:
+				var share := extra / (nb - 1) + (1 if i < extra % (nb - 1) else 0)
+				for k in share:
+					seq.append(-1)
+					gr.append([0, -1])
+		if nb == 1:
+			for k in extra - extra / 2:
+				seq.append(-1)
+				gr.append([0, -1])
+		var units: Array = []
+		var widths: Array = []
+		var total := 0
+		var gk := 0
+		for e in seq:
+			var u: int = e
+			var w := 0
+			if u < 0:
+				u = guns[gk]
+				w = _width(sim, u)
+				var r: Array = gr[gk]
+				if int(r[0]) != 0:
+					roles[u] = [int(r[0]), int(r[1])]
+				gk += 1
+			else:
+				w = block_files(sim, u, kn) * UT.stat(sim.u_type[u], "file_sp")
+				roles[u] = [1, -1]
+			units.append(u)
+			widths.append(w)
+			total += w + gap
+		total -= gap
+		var x := (core_l + core_r) / 2 - total / 2
+		var new_l := x
+		for k in units.size():
+			var u: int = units[k]
+			var w: int = widths[k]
+			if sim.u_cls[u] == UT.CLS_PIKE:
+				slots[u] = [x + w / 2, int(slots[u][1]), w]
+			else:
+				slots[u] = [x + w / 2, int(slots[u][1])]
+			x += w + gap
+		var new_r := x - gap
+		# The line's other foot outward of the core, in their order.
+		for k in range(lrest.size() - 1, -1, -1):
+			var u: int = lrest[k]
+			var w := _width(sim, u)
+			slots[u] = [new_l - gap - w / 2, int(slots[u][1])]
+			new_l -= gap + w
+		for u in rrest:
+			var w := _width(sim, u)
+			slots[u] = [new_r + gap + w / 2, int(slots[u][1])]
+			new_r += gap + w
+		# The wings (cavalry, bolt throwers: slots level with the line,
+		# beyond it) keep their distance from its ends.
+		var keys := slots.keys()
+		keys.sort()
+		for u in keys:
+			if row.has(u) or int(slots[u][1]) != 0:
+				continue
+			var lat: int = slots[u][0]
+			if lat < old_l:
+				slots[u] = [lat + new_l - old_l, 0]
+			elif lat > old_r:
+				slots[u] = [lat + new_r - old_r, 0]
+	# Roles: set, kept (with their state) or cleared, in index order.
+	for u in sim.n_units:
+		if sim.u_side[u] != side:
+			continue
+		var r: Array = roles.get(u, [0, -1])
+		if _pm(sim, u, PU_ROLE) != int(r[0]) or _pm(sim, u, PU_OF) != int(r[1]) + 1:
+			_clear(sim, u)
+			_pmset(sim, u, PU_ROLE, int(r[0]))
+			_pmset(sim, u, PU_OF, int(r[1]) + 1)
+		if _pm(sim, u, PU_ROLE) != 0 and _pm(sim, u, PU_STATE) != 0:
+			slots.erase(u)  # (sheltering or turned: unit_think's)
+
+
+## A tercio block's files: max(TERCIO_FILES, isqrt(men)), at most its men.
+static func block_files(sim, u: int, kn: PackedInt32Array) -> int:
+	var men: int = sim.u_alive[u]
+	return clampi(maxi(kn[AP.TERCIO_FILES], FM.isqrt(men)), 1, maxi(men, 1))
+
+
+# ------------------------------------------------------------ unit level ---
+
+## Each unit think (BattleAI._unit_think, before the class rules): a unit
+## with a part in its side's running tercio. True if the play gave it its
+## orders this think (the ordinary rules are skipped).
+static func unit_think(sim, u: int) -> bool:
+	if not has_mem(sim):
+		return false
+	var r := _pm(sim, u, PU_ROLE)
+	if r == 0 or _ps(sim, sim.u_side[u], PS_TERCIO) != 1:
+		return false
+	if sim.u_ai[u] == A_RETIRE or sim.u_ai[u] == A_GUARD:
+		return false
+	if r == 1:
+		return _block_think(sim, u)
+	return _sleeve_think(sim, u, r)
+
+
+static func _sleeve_think(sim, u: int, r: int) -> bool:
+	var b := _pm(sim, u, PU_OF) - 1
+	if b < 0 or sim.u_state[b] != U_READY or sim.u_fighting[u] > 0:
+		return false
+	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
+	var near := false
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] != UT.CLS_CAV or _skip(sim, o):
+			continue
+		if not sim.hidden_from(o, side) and _closing(sim, o, u, kn[AP.TERCIO_HORSE_R]):
+			near = true
+			break
+	if near:
+		_pmset(sim, u, PU_T, sim.tick)
+	var st := _pm(sim, u, PU_STATE)
+	if st == 0:
+		if not near:
+			return false
+		_pmset(sim, u, PU_STATE, 1)
+	elif not near and sim.tick - _pm(sim, u, PU_T) >= TERCIO_CLEAR_T:
+		_pmset(sim, u, PU_STATE, 0)
+		var fp := sleeve_post(sim, u, b, r, false)
+		_move(sim, u, fp.x, fp.y, sim.u_face[b], _width(sim, u), 0, 7)
+		return true
+	var p := sleeve_post(sim, u, b, r, true)
+	_move(sim, u, p.x, p.y, sim.u_face[b], _width(sim, u), 1, 7)
+	if sim.u_fire[u] == 0:
+		_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+	return true
+
+
+## A sleeve's post beside block b (its anchor, the front centre, facing as
+## the block): `rear` false the front corner (beside the block, the front
+## ranks level), true the rear corner (TERCIO_REAR behind its rear rank).
+static func sleeve_post(sim, u: int, b: int, r: int, rear: bool) -> Vector2i:
+	var kn := AP.of(sim, sim.u_side[u])
+	var gap := kn[AP.LINE_GAP]
+	var face: int = sim.u_face[b]
+	var fx := FM.cos_a(face)
+	var fy := FM.sin_a(face)
+	var rx := -fy
+	var ry := fx
+	var bw := _width(sim, b)
+	var sw := _width(sim, u)
+	var sgn := -1 if r == 2 else 1
+	var lat := sgn * (bw / 2 + gap + sw / 2)
+	var back := 0
+	if rear:
+		lat = sgn * maxi(bw / 2, sw / 2 + gap / 2)
+		back = _depth(sim, b) + TERCIO_REAR
+	var px: int = sim.u_ax[b] + (rx * lat - fx * back) / FM.TRIG_ONE
+	var py: int = sim.u_ay[b] + (ry * lat - fy * back) / FM.TRIG_ONE
+	return Vector2i(clampi(px, 4 * M, sim.field_w - 4 * M), clampi(py, 4 * M, sim.field_h - 4 * M))
+
+
+static func _block_think(sim, u: int) -> bool:
+	if sim.u_fighting[u] > 0:
+		return false
+	var side: int = sim.u_side[u]
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] != UT.CLS_CAV or _skip(sim, o):
+			continue
+		if sim.hidden_from(o, side) or not _closing(sim, o, u, TERCIO_TURN_R):
+			continue
+		var d := _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if d < TERCIO_TURN_R and (best < 0 or d < bd):
+			best = o
+			bd = d
+	var st := _pm(sim, u, PU_STATE)
+	if best >= 0:
+		_pmset(sim, u, PU_T, sim.tick)
+		var a := ((FM.atan2_a(sim.u_cy[best] - sim.u_cy[u], sim.u_cx[best] - sim.u_cx[u]) + 8) >> 4 << 4) & FM.ANGLE_MASK
+		if absi(FM.angle_diff(sim.u_face[u], a)) > TERCIO_FLANK:
+			# Turn in place (about the block's centre) to face the riders.
+			var h := _depth(sim, u) / 2
+			var px: int = clampi(sim.u_cx[u] + FM.cos_a(a) * h / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+			var py: int = clampi(sim.u_cy[u] + FM.sin_a(a) * h / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+			_move(sim, u, px, py, a, _width(sim, u), 0, 6)
+			_pmset(sim, u, PU_STATE, 1)
+			return true
+		return st == 1
+	if st == 1:
+		if sim.tick - _pm(sim, u, PU_T) < TERCIO_CLEAR_T:
+			return true
+		_pmset(sim, u, PU_STATE, 0)
+	return false
+
+
+## Enemy rider o closing on unit u: an attack order on it within 2 r, or
+## within r with its order taking it nearer to u (a move's end point or its
+## attack target nearer u than it is).
+static func _closing(sim, o: int, u: int, r: int) -> bool:
+	var d := _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+	if sim.u_order[o] == O_ATTACK and sim.u_target[o] == u:
+		return d < 2 * r
+	if d >= r:
+		return false
+	var tx := 0
+	var ty := 0
+	if sim.u_order[o] == O_MOVE:
+		tx = sim.u_dx[o]
+		ty = sim.u_dy[o]
+	elif sim.u_order[o] == O_ATTACK and sim.u_target[o] >= 0:
+		tx = sim.u_cx[sim.u_target[o]]
+		ty = sim.u_cy[sim.u_target[o]]
+	else:
+		return false
+	return _d(tx - sim.u_cx[u], ty - sim.u_cy[u]) < d
+
+
+# -------------------------------------------------------------- helpers ---
+
+static func _clear(sim, u: int) -> void:
+	for k in PU_K:
+		_pmset(sim, u, k, 0)
+
+
+## A gun foot row (BattleAI.line_gun: a gun that does not skirmish), not horse or a battery.
+static func _gun_type(ty: int) -> bool:
+	return UT.stat(ty, "m_gun") != 0 and UT.stat(ty, "skirm") == 0 \
+		and UT.cls(ty) != UT.CLS_CAV and UT.cls(ty) != UT.CLS_ART
+
+
+static func _gun_foot(sim, u: int) -> bool:
+	return _gun_type(sim.u_type[u])
+
+
+## Wagons and characters (BattleAI.is_wagon / is_char) are no part of a play's count.
+static func _skip(sim, u: int) -> bool:
+	return UT.stat(sim.u_otype[u], "wagon") >= 0 or (sim.ch_on != 0 and sim.u_char[u] != 0)
+
+
+static func _width(sim, u: int) -> int:
+	var files := mini(sim.u_files[u], sim.u_alive[u])
+	return files * UT.stat(sim.u_type[u], "file_sp")
+
+
+## Depth of unit u's formation front to rear rank (sim units).
+static func _depth(sim, u: int) -> int:
+	var files := maxi(mini(sim.u_files[u], sim.u_alive[u]), 1)
+	var ranks: int = (sim.u_alive[u] + files - 1) / files
+	return maxi(ranks - 1, 0) * UT.stat(sim.u_type[u], "rank_sp")
+
+
+static func _d(dx: int, dy: int) -> int:
+	return FM.approx_len(dx, dy)
+
+
+## (BattleAI._order / _move: the same orders, the same skip of a move the
+## unit already has.)
+static func _order(sim, u: int, o: Dictionary, k: int) -> void:
+	if sim.u_hand[u] >= 0:
+		return
+	o["tick"] = sim.tick
+	o["unit"] = u
+	o["player"] = AI_PLAYER_BASE + sim.u_side[u]
+	o["seq"] = u * 32 + k
+	sim.queue_order(o)
+
+
+static func _move(sim, u: int, x: int, y: int, face: int, width: int, run: int, k: int) -> void:
+	var ox: int = sim.u_dx[u] if sim.u_order[u] == O_MOVE else sim.u_ax[u]
+	var oy: int = sim.u_dy[u] if sim.u_order[u] == O_MOVE else sim.u_ay[u]
+	var kn := AP.of(sim, sim.u_side[u])
+	if _d(x - ox, y - oy) < kn[AP.REPLAN_DIST] / 3 and absi(FM.angle_diff(sim.u_dface[u], face)) < kn[AP.REPLAN_FACE] \
+			and sim.u_order[u] != O_ATTACK:
+		return
+	_order(sim, u, {"type": ORDER_MOVE, "x": x, "y": y, "facing": face, "width": width,
+		"run": run, "ground": 1}, 1 + k % 8)
