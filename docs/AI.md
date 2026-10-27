@@ -2888,3 +2888,40 @@ Open: the sea captain is now an AI hero of the Brethren only (their armies are b
 nation raises one only for a marine-heavy army. The mortar line waits for a Workshop 3 the build-up seldom pays
 (England 6 of 141 at turn 60). The Itza / Miskito swing (24 / 22 -> 14 / 28) is within the spread of the earlier
 144-seed runs (section 37: 18-23 / 21-23).
+
+## 41. Rome under the diplomacy rules (2026-10-27)
+
+The format-10 pins (6 x 60) had Rome eliminated in 2 of 6 seeds (1077 at turn 45, 1385 at turn 57), the format-6
+and format-8 pins in 0 of 6. Diagnosis: **variance, nothing changed.**
+
+1. The two deaths (`campaign_sim --format=10 --trace-faction=rome`, new): in 1077 Rome, at war with nobody since
+   turn 33, declared war on its trade partner Gaul at turn 35 (repute -30: a treaty break and an unprovoked war),
+   lost Roma the next turn and Aleria and Arretium the turn after (strength 17,449 -> 5,507 by turn 39); Carthage
+   (turn 41) and the Greeks (turn 42) declared on a two-region Rome. In 1385 Rome declared three wars itself, on
+   its trade partners Syracuse (turn 23) and Macedon (turn 29) and on the Greeks (turn 40; repute -49), took
+   Syracuse; Gaul declared on a Rome busy with two wars at turn 44 (Gaul 28,137 against Rome 21,518, the
+   WAR_RATIO_BUSY 90 test on its own strength) and took Arretium, Roma and Capua in one turn, the Greeks the south.
+   Both are the military AI over-reaching and leaving its core open, which the format-8 runs show as well.
+2. The diplomacy rules in those two seeds: no call to arms brought anyone in against Rome (in 1077 Rome's ally
+   Syracuse refused both of Rome's calls, "too weak", and Macedon refused Epirus' call against Rome, "wars
+   enough"; in 1385 Rome had no ally and no call was posted). The common-enemy alliances that formed (Macedon-
+   Epirus at turn 24 in 1077, before Rome's war on Epirus; Gaul-Iberia at turn 22 and Macedon-Greeks at turn 44 in
+   1385) brought no faction into a war: Gaul's alliance with Iberia only made Gaul's bloc (46,074) too strong for
+   Rome to attack. Deterrence never stopped a Rome war in the traces.
+3. The first divergence from format 8 is at turn 1-3 and is not a decision: `_seek_ally` draws from the state's RNG
+   for every threatened AI, so every later roll differs (Rome's treasury at turn 3 is 1,114 against 1,186; in 1077
+   the turn-5 Rome-Carthage trade of format 8 never happens, and Carthage declares war at turn 9). From there the
+   seeds are different histories, which is why the deaths fall on different seeds in every run.
+4. Rome's deaths over more seeds (seeds 1000 + 77 n): 12 seeds, format 6 1, format 8 1, format 10 2, format 10
+   with `ai_alliances` 0 2 (each on a different seed: 1847 / 1847 / 1077, 1385 / 1154, 1770); 48 seeds, format 8
+   7, format 10 10, `ai_alliances` 0 9; 96 seeds, format 8 18 (19 %), format 10 20 (21 %), median turn of death 46
+   against 44.5. The six format-8 pin seeds were the lucky draw (18.8 % a seed gives 0 of 6 in 29 % of draws).
+5. All factions, 96 seeds, format 8 -> 10: eliminations 217 -> 239 (2.26 -> 2.49 a seed, sd 1.05 / 1.25; about
+   1.3 standard errors), Rome 18 -> 20, Carthage 14 -> 12, Macedon 29 -> 35, Epirus 79 -> 73, Greeks 5 -> 10,
+   Syracuse 33 -> 34, Iberia 9 -> 21, Gauls 30 -> 34. 48 seeds without AI alliances: 120 against 121 with them, so
+   the alliances are not what moves it either. Iberia's 9 -> 21 is the one row worth watching in a later pass.
+
+No rule changed; the format-10 pins stand (`5af35d0f 16aa22f3 97e93bf2 81dc9f4d cc80b514 96159b8e`). `campaign_sim`
+gained `--trace-faction=KEY` (that faction's wars, peace, trade, alliances, calls answered and sat out, cities
+gained and lost, and a line a turn: regions, treasury, armies, strength, repute, each enemy's strength / bloc
+strength, allies) and `--ai-alliances=0|1` (the creation setting); neither moves a hash.

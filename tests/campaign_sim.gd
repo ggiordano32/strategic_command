@@ -33,6 +33,10 @@ extends SceneTree
 ## --no-buildup: no military build-up or wagons (CAI.no_buildup).
 ## --no-water: amphibious armies plan by the land fields only (CAI.no_water).
 ## --seed0=N: start at seed index N (seeds 1000 + 77 n; shards a long run).
+## --trace-faction=KEY: per turn, that faction's wars, peace, trade, alliances,
+## calls, cities gained and lost, and a status line (regions, treasury, armies,
+## strength, repute, each enemy's strength / bloc strength, allies; docs/AI.md
+## 41). --ai-alliances=0|1: the creation setting ai_alliances (format 10).
 ## Each seed also prints the build-up (docs/AI.md 23): per faction alive at
 ## the end its regions, best Workshop / Range / Barracks / Stables level,
 ## wagons, scorpions, gastraphetes, light horse and missile units with a
@@ -47,6 +51,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CAI := preload("res://campaign/cai.gd")
+const CDip := preload("res://campaign/cdip.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 var seeds := 4
@@ -70,6 +75,9 @@ var bu_all := {}              # faction -> build-up sums over the seeds (_buildu
 var built := []               # buildings finished per chain (this seed)
 var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
 var elim_all := {}            # faction -> turns it was eliminated, over the seeds
+var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
+var ai_alliances := -1
+var _trace_key := ""        # --ai-alliances=0|1: the creation setting (format 10; -1 the default)
 var at40 := [0, 0, 0]         # over the seeds: factions with 4+ regions at turn 40, with a Range 2, with a Workshop 1
 const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
 	"town_att_lost", "town_def_won", "town_def_lost", "siege_fights_won", "siege_fights_lost", "gained", "gained_surrender",
@@ -115,12 +123,18 @@ func _init() -> void:
 		elif a.begins_with("--skill-f="):
 			var v := a.get_slice("=", 1)
 			skill_f[_faction(v.get_slice(":", 0))] = _level(v.get_slice(":", 1))
+		elif a.begins_with("--trace-faction="):
+			_trace_key = a.get_slice("=", 1)
+		elif a.begins_with("--ai-alliances="):
+			ai_alliances = int(a.get_slice("=", 1))
 		elif a.begins_with("--knob="):
 			# --knob=LEVEL:ID=VALUE: override one campaign AI knob for the run.
 			var v := a.substr(7)
 			var lk := v.get_slice("=", 0)
 			knobs.append([_level(lk.get_slice(":", 0)), int(lk.get_slice(":", 1)), int(v.get_slice("=", 1))])
 	CData.use_pack(pack)
+	if _trace_key != "":
+		trace = _faction(_trace_key)
 	for f in CData.FACTIONS:
 		short.append(str(f["key"]).substr(0, 4))
 	for kv in knobs:
@@ -183,6 +197,8 @@ func _run(sd: int, verbose: bool) -> String:
 		var settings := {}
 		if skill_all >= 0:
 			settings["ai_campaign_skill"] = skill_all
+		if ai_alliances >= 0:
+			settings["ai_alliances"] = ai_alliances
 		var st := CState.new_campaign("sim", 1000 + sd * 77, [], settings, [], pack)
 		var keys: Array = skill_f.keys()
 		keys.sort()
@@ -222,6 +238,8 @@ func _run(sd: int, verbose: bool) -> String:
 					tr_max = maxi(tr_max, int(st["factions"][f]["treasury"]))
 			_count_sieges(st, t)
 			_tally(st, t)
+			if verbose and trace >= 0:
+				_trace(st, t)
 			var land1 := _army_lands(st)
 			for id in land1:
 				if last_land.has(id) and int(land1[id]) != int(last_land[id]):
@@ -531,6 +549,47 @@ func _buildup(st: Dictionary) -> void:
 			n[0], n[1], n[2], n[3], n[4]]
 		for k in add.size():
 			b[k] += int(add[k])
+
+
+## --trace-faction: the traced faction's diplomacy events of turn t (wars,
+## peace, trade, alliances, calls), its region gains and losses, and a status
+## line: regions, treasury, armies, strength, wars and allies (with each
+## enemy's strength and bloc strength against it).
+func _trace(st: Dictionary, t: int) -> void:
+	var f := trace
+	var ev: Array = []
+	for e in st["events"]:
+		if int(e["turn"]) != t:
+			continue
+		var k := str(e["k"])
+		var who: Array = []
+		for key in ["a", "b", "f", "from", "to", "vs", "with"]:
+			if e.has(key) and typeof(e[key]) != TYPE_STRING:
+				who.append(int(e[key]))
+		if not who.has(f) and not (k == "alliance" or k == "war"):
+			continue
+		match k:
+			"war", "peace", "trade", "trade_end", "alliance", "alliance_left", "alliance_notice", "call_answered", "call_sat_out", "eliminated":
+				var d := {}
+				for key in e.keys():
+					if key != "turn":
+						d[key] = short[int(e[key])] if (typeof(e[key]) == TYPE_INT or typeof(e[key]) == TYPE_FLOAT) and ["a", "b", "f", "from", "to", "vs", "with"].has(key) and int(e[key]) >= 0 else e[key]
+				if who.has(f) or k == "alliance":
+					ev.append("%s %s" % [k, str(d)])
+			"captured":
+				ev.append("captured %s %s<-%s" % [CData.REGIONS[int(e["r"])]["city"], short[int(e["f"])] if int(e["f"]) >= 0 else "-",
+					short[int(e["from"])] if int(e["from"]) >= 0 else "-"])
+	var ws: Array = []
+	for g in CAI.wars(st, f):
+		ws.append("%s(%d/%d)" % [short[g], CAI.faction_strength(st, g), CAI.bloc_strength(st, f, g)])
+	var al: Array = []
+	for g in CState.nf():
+		if g != f and CState.alive(st, g) and CState.dip(st, f, g) == CState.ALLIED:
+			al.append(short[g])
+	var na := CState.armies_of(st, f).size()
+	print("  [trace %s t%d] regions %d treasury %d armies %d strength %d repute %d | wars %s | allies %s%s" % [short[f], int(st["turn"]),
+		CState.regions_of(st, f).size(), int(st["factions"][f]["treasury"]) if CState.alive(st, f) else 0, na,
+		CAI.faction_strength(st, f), CDip.repute(st, f), str(ws), str(al), ("\n    " + "\n    ".join(ev)) if not ev.is_empty() else ""])
 
 
 func _report(st: Dictionary, us: int) -> void:
