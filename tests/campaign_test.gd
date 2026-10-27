@@ -5129,7 +5129,7 @@ func _amphibious() -> void:
 	# Ends the turn afloat, then lands.
 	var s1 := CState.copy(st)
 	var a1 := CState.army(s1, int(canoes["id"]))
-	a1["mp"] = 60
+	a1["mp"] = 140
 	CRules.execute_moves6(s1, [[int(a1["id"]), goal, eng, CData.MODE_MARCH, 1, -1, -1]])
 	_check(CGrid.is_wet(CState.cell(a1)) and CRules.afloat(a1) and CFleet.afloat(a1) and int(a1["mp"]) < 20 and CState.cell(a1) != goal,
 		"amphibious: with few points left it ends its turn afloat on a coastal sea cell (%d, %d)" % [CGrid.cx(CState.cell(a1)), CGrid.cy(CState.cell(a1))])
@@ -5144,14 +5144,24 @@ func _amphibious() -> void:
 	var a2 := CState.army(s2, int(canoes["id"]))
 	var path: Array = pp["path"]
 	var wc := -1
+	var far := -1
+	# (the strait is one wet cell since the wading cost rose to 20: the foe sails in from open sea 6 cells off it)
 	for i in path.size():
-		if CGrid.is_wet(int(path[i])) and i + 6 < path.size() and CFleet.is_sea(int(path[i + 6])):
-			wc = i
+		if not CGrid.is_wet(int(path[i])):
+			continue
+		for dy in range(-6, 7):
+			for dx in range(-6, 7):
+				if maxi(absi(dx), absi(dy)) != 6 or far >= 0:
+					continue
+				var q := CGrid.at(CGrid.cx(int(path[i])) + dx, CGrid.cy(int(path[i])) + dy)
+				if q >= 0 and CFleet.is_sea(q):
+					far = q
+					wc = i
+		if far >= 0:
 			break
-	_check(wc >= 0, "amphibious: a wet cell of the path with open sea six cells on (test setup)")
+	_check(wc >= 0, "amphibious: a wet cell of the path with open sea six cells off (test setup)")
 	if wc >= 0:
 		CState.place(a2, int(path[wc]))
-		var far := int(path[wc + 6])
 		var foe := _lane_fleet(9601, ns, far)
 		foe["id"] = 9601
 		var friend := _lane_fleet(9602, eng, far)

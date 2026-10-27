@@ -64,7 +64,7 @@ static var _port: Array[int] = []
 static var _wet := PackedByteArray()
 static var _nbw := PackedInt32Array()
 static var _nbcw := PackedInt32Array()
-const WATER_STEP := 10
+const WATER_STEP := 20   # the ridge cost (2026-10-27; was 10): wading is a last resort, a land path of flat/hill/woods is preferred
 static var _camp: Array[int] = []
 
 

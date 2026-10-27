@@ -834,7 +834,7 @@ in the army makes it land-bound. Pack-agnostic rules; in a pack without ships (R
 
 - **Movement.** An amphibious army may step onto the coastal sea (`CFleet.is_sea` cells with `CFleet.coast_dist` <= 1,
   the same water a coastal fleet keeps to; `CFleet.ensure` hands the mask to `CGrid.set_wet`) at foot pace: a water step
-  costs `CGrid.WATER_STEP` (10, x 14 / 10 on a diagonal; the flat land step), a landing the land cell's own cost. The
+  costs `CGrid.WATER_STEP` (20 since 2026-10-27, was 10; x 14 / 10 on a diagonal; the ridge cost, so an army wades only where no land path of lower cost exists), a landing the land cell's own cost. The
   planner is the same: `CGrid.find_path` / `CGrid.reach` take `water` (the neighbour tables `_nbw` / `_nbcw`, built on
   first use, nothing stored in the state), `CRules.plan_path` / `reach6` / `_move_targets6` pass `amphibious`, the march
   preview and the stored `dest_x` / `dest_y` work unchanged. The water is not crossed wider than two cells of coast
