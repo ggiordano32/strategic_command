@@ -217,3 +217,52 @@ Owner: "Rome the edges of the overworld fade out to a drawn map style which I li
 - **Zoomed-out level of detail** (`MapView.far_lod`, `LOD_ZOOM` 0.55 = `Minis.SITE_MIN_ZOOM`, hysteresis 4 %: far below 0.528, near again from 0.572; `update_lod` is called every frame from the screen's `_tick` and redraws the map and the coast node only when it flips). Far: ordinary settlements are dots at half the marker radius (no walls ring, no harbour mark; capitals and key cities keep their marker, star and name; other names are hidden; a modelled town still shows its mini between 0.528 and 0.572), the owner washes are 1.6 x their alpha capped at 0.5 (terrain 0.30 -> 0.48, table 0.15 -> 0.24), the sea lanes' width 0.7 x (dash lengths unchanged); the flota route, the Key page and the hint text unchanged.
 - **The hint's plate**: a translucent dark rounded `Panel` (0.04, 0.05, 0.07 at 58 %) behind the hint label, sized to the wrapped text (`_fit_hint_plate`, refit when the text or width changes). **The vignette** of `table_frame.gdshader` is a third lighter (0.27 -> 0.18).
 - Probe: `tests/zoom_probe.gd` gains a middle-zoom shot on the Gulf coast (West: Veracruz, Rome: Massalia) and `--nofog`; `tests/look_bench.gd` times steady frames at 1.2, 0.6 and the minimum zoom.
+
+### The visual pass (plan, 2026-10-27; agreed with the owner)
+
+The owner, on the visual review of 2026-10-27: "I like all of your suggestions
+for visual improvements. Lets do that next." The overworld's identity is the
+painted-miniature towns, the inked coasts over the relief, and the chart sea on
+the parchment table; everything below is brought to that standard. View only,
+no sim or campaign change, no hash moves; each part its own build and commit.
+
+1. **Lines as ink.** Province borders are drawn as curves: each shared edge
+   between two regions (junction to junction) is smoothed once (Chaikin, two
+   rounds, the same polyline for both neighbours so they agree), and a border
+   vertex within 12 map px of a river snaps to the river. Roads are Catmull-Rom
+   curves through their traced cell centres with a hand-drawn waver (a small
+   deterministic offset per vertex, seeded by the road index), drawn as a dark
+   edge with a lighter centre in the table's brown. The map's geometry (the
+   grid, the cells) is untouched: smoothing is a drawing step over
+   `MapGeo` cells and `road_line` in `map_view.gd`.
+2. **Markers in the chart's language.** Armies: a standard (a pole with a
+   swallow-tailed pennant in the faction colour carrying the crest) with the
+   strength on a small roundel at its foot; fleets: a sail glyph with the
+   same roundel. Towns below the minis' zoom: ink symbols by level (a dot, a
+   small circle, a circle with a tick, a ring with battlements, a star for
+   capitals) instead of the grey discs; the last-seen (faded) markers keep
+   their meaning. Sea lanes: faint rhumb lines (thin, long dashes, 0.35
+   alpha); the flota route keeps its red dashes. Legibility first: the
+   strength number and the crest stay readable at phone size.
+3. **Woods as patches.** The map's tree sprites cluster into patches by the
+   region's forest share, each patch with a soft drawn edge (a darker green
+   scalloped outline under it) and fewer single trees in the open; the same
+   density as today over a region, so the forest reads as a wood, not as
+   confetti.
+4. **HUD chrome in the table's language.** The campaign and battle panels,
+   bars and plate buttons keep their dark fills and contrast (phones over a
+   busy map) and gain an inked double rule with small corner marks, the top
+   bars a dark wood band with a thin brass rule; the same theme kit for both
+   screens (`ui_kit.gd` / the theme): one pass through the kit, not per
+   screen.
+5. **The battlefield ground.** `game/terrain_layer.gd` + `terrain.gdshader`:
+   painterly variation of the base ground (two octaves of grass and earth
+   patches tinted from the palette, a soft brushed grain), the woods' canopy
+   drawn as clumped crowns with a drop shadow and a darker scalloped edge
+   rather than a uniform carpet, field and track edges softened; the diorama
+   and painterly looks both get it (their grading applies after). Soldiers,
+   houses and the kit pieces are unchanged.
+
+Each part is measured for cost on the desktop benchmarks (`tests/look_bench.gd`
+for the overworld; the battle's `--bench` run for the ground) and ships with
+before / after screenshots for the owner's eye.
