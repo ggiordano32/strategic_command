@@ -58,9 +58,9 @@ original art.
 
 ### Diplomacy
 
-- States per faction pair: war, peace, trade agreement.
-- The two players are permanently allied.
-- AI accepts or refuses proposals from a simple score (relative strength, war weariness, shared enemies).
+- States per faction pair: war, peace, trade agreement, alliance (state format 10: dip ALLIED between factions on different teams, which includes trade; team mates are ALLIED too). Military passage is a treaty on top of peace or trade (10 turns). Trust: repute per faction and regard per pair, both fading (`campaign/cdip.gd`; "Diplomacy: trust, alliances and passage" below).
+- The players are allied through the teams (format 7); a team now comes through an alliance (format 10).
+- AI accepts or refuses proposals from a score (format 10: regard + repute against each treaty's floor, with the old strength and timing tests kept as a second gate where the plan says so; `CAI.why`, the one place the rule is); it never starts a war on a faction it regards 30 or more, twice as often on one it regards -30 or less, and a threatened AI seeks allies (creation setting `ai_alliances`).
 - Team victory option (2026-10-23, owner: a few AI team-ups ended the game early): the creation setting `team_regions` (1 default, the old rule: the regions of every member of the players' team count toward the regions and key cities to win; 0: only the regions the human players hold count, AI factions that joined the team do not; co-op players always count). Stored in `settings` only when 0 (absent reads 1, no `CState.VERSION` bump); `CRules.victory_progress` / `_check_victory_teams` honour it; the Goals panel says which rule is on. The victory goal is otherwise `victory_regions` (default 20) with `victory_capitals` (default 3) key cities.
 
 ### Diplomacy: trust, alliances and passage (plan, 2026-10-26; agreed with the owner)
@@ -165,6 +165,65 @@ determinism check; `campaign_sim` pins move), then the diplomacy screen
 alliance / team, Gift with 100 / 250 / 500, Call to arms when at war, Leave
 alliance, the inbox answering calls and alliances, the creation setting, the
 trespass toast and map marking, the raise-dialog refusal).
+
+**As built (rules, 2026-10-26; the screen is next).** Built as planned in
+`campaign/cdip.gd` (every number of the plan in its const table; the AI's
+per-level ALLY_PROPOSE 0 / 15 / 25 % and ALLY_MAX 2 in `cai_profile.gd`),
+state format 10 (server StateVersion 10), with these decisions where the
+plan left a point open or was changed:
+
+- State keys `repute [n]`, `regard`, `gift`, `passage`, `fought [n*n]`,
+  `regard_log [n*n]` (lists of `[turn, delta, why]`), optional `aleaving
+  [[a, b, turn]]` and `called [[a, b, c, turn]]` (the calls a human ally has
+  not answered: the sitting-out rule reads it); `settings.ai_alliances`
+  stored only when 0. A state without `regard` (format 9 and older, an
+  unmigrated online campaign) plays the old rules exactly: no trespass, no
+  alliances, the old team rule, no treaty lines (`campaign_sim`, which plays
+  format 6 by default, and its `--format=8` rows reproduce their pins).
+  Migration 9 -> 10 adds zeros; no treaty is applied to a running game.
+  `as_format(st, < 10)` undoes the starting treaties of a new campaign.
+- Unprovoked war: not an answer to a call and the victim has no army in
+  the declarer's land; a war on a trade partner or an ally costs both
+  (-30). Declaring war on an ally is allowed (team mates still not): the
+  alliance drops with the broken treaty. The trespass war is declared by
+  the rules at the end of a turn (`why: "trespass"`), costs no repute and
+  needs a trespass that turn.
+- The fade: regard = gift share + the rest; the gift share falls 2 a
+  turn, the rest 1 toward 0 (a regard of 10 that is all gift is 8 a turn
+  later). A gift past the cap still moves the gold. Trespass costs come
+  after the fade (the first turn's -2 is exact), and only human armies pay
+  (an AI army without passage is sent home by the rules before it could).
+- The call to arms is a **defensive pact** (owner, 2026-10-26): when `c`
+  declares war on `a`, `a`'s allies are called; when `a` declares war on
+  `c`, nobody is (so sitting out only follows a defensive call). An AI ally
+  answers at once (`CAI.why "call"`); a call is not posted to an ally that
+  is allied to the enemy too.
+- Deterrence: the AI's opportunistic war test (and `_unwise_war`) weighs
+  the target's bloc, its own strength plus that of each ally not at war
+  with the AI already and not allied to it (`CAI.bloc_strength`);
+  WAR_RATIO / WAR_RATIO_BUSY unchanged. The pirates' war rule uses no
+  strength ratio and is unchanged. Measured (`campaign_sim --format=10`, 6
+  x 60): without these two the Spanish-Dutch bloc called each other into
+  every war and the Miskito fell in 3 of 6 West seeds, the Greeks in 3 of
+  6 Rome seeds; with them no faction falls in 3+ seeds that did not before. Sitting out is
+  judged 5 turns after the call (`CDip.CALL_WAIT`, a rule for humans too,
+  so in `cdip.gd`, not a per-level knob). A human's unanswered proposal
+  expires as others do; the `called` record stays until answered, sat out
+  or moot (the war over, the alliance gone).
+- AI-AI alliances: the plan's score alone (all regard 0 at the start, no
+  source but peace +5 and the battles of allies) never reached the
+  alliance floor of 25, so an alliance's score adds `COMMON_ENEMY` 25 when
+  both sides are at war with one faction (the old diplomacy bullet's
+  "shared enemies"). Pirates sign no alliances. With `ai_alliances` 0 the
+  AI still proposes alliances to players.
+- The team rule (format 10): no war between the two teams, allied, regard
+  >= 50, a battle fought together; formats 7-9 keep the old rule.
+  TEAM_ACCEPT_TURNS / TEAM_ACCEPT_PCT remain only for them.
+- Shared sight: `csight.gd` reads `CState.friendly` (team or alliance).
+  Live-battle guests (`battle_side_of`) and the gifts between players stay
+  team-only.
+- Starting treaties: a story campaign is created with settings `treaties`
+  0 (not stored): none (the Brethren's story gives its own letters).
 
 ### Settlement attacks
 

@@ -108,6 +108,7 @@ static func new_story(p_name: String, p_seed: int, settings: Dictionary = {}, ke
 	var stt: Dictionary = (m["START"] as Dictionary).get("settings", {}).duplicate()
 	for k in settings:
 		stt[k] = settings[k]
+	stt["treaties"] = 0  # (format 10) none of the pack's starting treaties: the story deals its own letters
 	CData.use_pack("west")
 	var pf := CData.faction_index(str(m["PLAYER"]))
 	var humans: Array = [pf]

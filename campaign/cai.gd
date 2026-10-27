@@ -38,7 +38,11 @@ extends RefCounted
 ## Diplomacy (diplomacy()): peace when losing a long war, trade with
 ## neighbours at peace, and opportunistic wars on weaker neighbours, paced
 ## (no wars in the first turns, at most one new war on the players every few
-## turns, few wars at a time).
+## turns, few wars at a time). State format 10 (campaign/cdip.gd): never a
+## war on a faction it regards CDip.NO_WAR_REGARD or more, twice the chance
+## on one it regards CDip.HATE_REGARD or less; a threatened AI proposes an
+## alliance (CP.ALLY_PROPOSE, settings ai_alliances); answers (why()) need
+## the score regard + repute at each treaty's floor.
 ## Easy (docs/AI.md 9; knobs of campaign/cai_profile.gd, the overworld of
 ## version 6 mainly): cheapest building first, piecemeal recruiting leaning
 ## to the line it already has, the nearest targets first at lower odds,
@@ -78,6 +82,7 @@ const CP := preload("res://campaign/cai_profile.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CDip := preload("res://campaign/cdip.gd")
 
 ## The lines added since the step-4 goldens, recruited only through a
 ## faction's mix (never as _any_type's fallback): camels, elephants (both
@@ -777,6 +782,8 @@ static func _live_lines(st: Dictionary, f: int, mix: Dictionary, scored: Array) 
 		if not mix.has(line):
 			continue
 		var ok := false
+		if CDip.line_why(st, f, line) != "":
+			continue  # (format 10) a treaty line the faction cannot raise now
 		for tier in [1, 2, 3]:
 			var key := CState.roster_type(f, line, tier)
 			if key == "":
@@ -1745,10 +1752,17 @@ static func accepts(st: Dictionary, from: int, to: int, what: String) -> bool:
 
 ## Why AI faction `to` would refuse `what` from `from`, in plain words for
 ## the diplomacy screen; "" when it would accept. The one place the rule is.
-static func why(st: Dictionary, from: int, to: int, what: String) -> String:
+## State format 10 (campaign/cdip.gd): the score regard[to][from] +
+## repute[from] must reach each treaty's floor (trade CDip.FLOOR_TRADE before
+## its old tests, passage FLOOR_PASSAGE, alliance FLOOR_ALLIANCE with
+## COMMON_ENEMY added when both are at war with one faction, and `to`
+## threatened); "call" (vs: the enemy): an ally's call to arms, joined while
+## `to` has fewer than MAX_WARS wars and WAR_RATIO_BUSY % of vs's strength.
+static func why(st: Dictionary, from: int, to: int, what: String, vs: int = -1) -> String:
 	var mine := faction_strength(st, to)
 	var theirs := faction_strength(st, from)
 	var kn := CP.of(st, to)
+	var sc := CDip.score(st, to, from)
 	match what:
 		"peace":
 			if CSea.pirate(to) and st.has("fleets") and not _losing_war(st, to):
@@ -1763,6 +1777,8 @@ static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 				return ""
 			return "they expect to win (the war is %d of %d turns old)" % [since, kn[CP.PEACE_ACCEPT_LONG]]
 		"trade":
+			if CDip.on(st) and sc < CDip.FLOOR_TRADE:
+				return "they do not trust you (%d, %d needed)" % [sc, CDip.FLOOR_TRADE]
 			var since2 := CState.dip_since(st, from, to)
 			if since2 < kn[CP.TRADE_ACCEPT_TURNS]:
 				return "at peace only %d of %d turns" % [since2, kn[CP.TRADE_ACCEPT_TURNS]]
@@ -1775,17 +1791,88 @@ static func why(st: Dictionary, from: int, to: int, what: String) -> String:
 			return _why_team(st, from, to, kn)
 		"marque":
 			return CSea.why_marque(st, from, to)
+		"passage":
+			if sc < CDip.FLOOR_PASSAGE:
+				return "they do not trust you (%d, %d needed)" % [sc, CDip.FLOOR_PASSAGE]
+			return ""
+		"alliance":
+			if CSea.pirate(to) and st.has("fleets"):
+				return "pirates sign no alliances (a letter of marque is their peace)"
+			if CDip.allies(st, to).size() >= kn[CP.ALLY_MAX]:
+				return "they have allies enough"
+			var asc := sc + (CDip.COMMON_ENEMY if _common_enemy(st, from, to) else 0)
+			if asc < CDip.FLOOR_ALLIANCE:
+				return "they do not trust you enough (%d, %d needed)" % [asc, CDip.FLOOR_ALLIANCE]
+			if not threatened(st, to, kn):
+				return "they feel safe without allies"
+			return ""
+		"call":
+			if wars(st, to).size() >= kn[CP.MAX_WARS]:
+				return "they have wars enough"
+			if vs >= 0 and mine * 100 < faction_strength(st, vs) * kn[CP.WAR_RATIO_BUSY]:
+				return "they are too weak to fight %s" % CData.faction_name(vs)
+			return ""
 	return "unknown proposal"
 
 
-## A "team" proposal: accepted after TEAM_ACCEPT_TURNS turns at peace with
-## every member of the proposer's team, with no war between either team,
-## when the proposer's team is at most TEAM_ACCEPT_PCT % of our strength or
-## we are losing a war (a region lost in the last 5 turns).
+## Faction f is threatened (format 10, the alliance rule): at war, or a
+## neighbour that is not friendly is stronger than it by WAR_RATIO.
+static func threatened(st: Dictionary, f: int, kn: PackedInt32Array) -> bool:
+	if not wars(st, f).is_empty():
+		return true
+	var mine := faction_strength(st, f)
+	for g in CState.nf():
+		if g == f or not CState.alive(st, g) or CState.friendly(st, f, g) or not _neighbours(st, f, g):
+			continue
+		if faction_strength(st, g) * 100 >= mine * kn[CP.WAR_RATIO]:
+			return true
+	return false
+
+
+## (Format 10, deterrence) The strength f would face in a war on g: g's own
+## plus that of every ally of g not at war with f already and not allied to
+## f (the bloc a defensive call to arms would bring). Older formats: g's own.
+static func bloc_strength(st: Dictionary, f: int, g: int) -> int:
+	var s := faction_strength(st, g)
+	if not CDip.on(st):
+		return s
+	for h in CDip.allies(st, g):
+		if h != f and not CState.at_war(st, h, f) and not CDip.allied(st, h, f):
+			s += faction_strength(st, h)
+	return s
+
+
+## a and b are both at war with one faction.
+static func _common_enemy(st: Dictionary, a: int, b: int) -> bool:
+	for c in CState.nf():
+		if c != a and c != b and CState.alive(st, c) and CState.at_war(st, a, c) and CState.at_war(st, b, c):
+			return true
+	return false
+
+
+## A "team" proposal: state format 10 (campaign/cdip.gd): no war between
+## the two teams, already allied, regard[to][from] at least CDip.FLOOR_TEAM
+## and a battle fought side by side. Formats 7-9: accepted after
+## TEAM_ACCEPT_TURNS turns at peace with every member of the proposer's
+## team, with no war between either team, when the proposer's team is at
+## most TEAM_ACCEPT_PCT % of our strength or we are losing a war (a region
+## lost in the last 5 turns).
 static func _why_team(st: Dictionary, from: int, to: int, kn: PackedInt32Array) -> String:
 	var tf := CState.team(st, from)
 	if tf == CState.team(st, to):
 		return "already on one team"
+	if CDip.on(st):
+		for p in CState.team_members(st, tf):
+			for q in CState.team_members(st, CState.team(st, to)):
+				if CState.alive(st, p) and CState.alive(st, q) and CState.at_war(st, p, q):
+					return "their teams are at war"
+		if not CDip.allied(st, from, to):
+			return "make an alliance first"
+		if CDip.regard(st, to, from) < CDip.FLOOR_TEAM:
+			return "their regard is %d of %d" % [CDip.regard(st, to, from), CDip.FLOOR_TEAM]
+		if CDip.fought(st, to, from) < 1:
+			return "you have never fought side by side"
+		return ""
 	var theirs := 0
 	for p in CState.team_members(st, tf):
 		if not CState.alive(st, p):
@@ -1850,6 +1937,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		if CState.dip_since(st, f, g) >= kn[CP.TRADE_ASK_TURNS] and _neighbours(st, f, g) \
 				and CState.rand(st, 100) < kn[CP.TRADE_ASK_CHANCE]:
 			_propose(st, f, g, "trade")
+	if CDip.on(st) and kn[CP.ALLY_PROPOSE] > 0:
+		_seek_ally(st, f, kn)
 	if st.has("fleets"):
 		# N2: a nation at war offers pirates a letter of marque.
 		var mq := CSea.marque_offer(st, f)
@@ -1868,7 +1957,9 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			continue
 		if CSea.has_marque(st, f, g):
 			continue  # (N2) privateers and their patron keep the peace
-		var theirs := faction_strength(st, g)
+		if CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
+			continue  # (format 10) never on a faction we regard well
+		var theirs := bloc_strength(st, f, g)  # (format 10) with the allies a defensive call would bring
 		# Weaker neighbours, or ones already fighting someone else.
 		var busy := not wars(st, g).is_empty()
 		if mine * 100 < theirs * (kn[CP.WAR_RATIO_BUSY] if busy else kn[CP.WAR_RATIO]):
@@ -1881,6 +1972,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			chance = kn[CP.WAR_CHANCE_PLAYERS] * aggr / 100
 		if CState.dip(st, f, g) == CState.TRADE:
 			chance /= kn[CP.TRADE_WAR_DIV]
+		if CDip.regard(st, f, g) <= CDip.HATE_REGARD:
+			chance *= 2  # (format 10) twice on a faction we regard badly
 		if CSea.pirate(g) and st.has("fleets"):
 			chance = chance * (100 + 2 * CSea.infamy(st, g)) / 100  # (N2) the nations hunt the infamous
 		# Big realms start fewer wars.
@@ -1919,6 +2012,8 @@ static func _pirate_diplomacy(st: Dictionary, f: int) -> void:
 			continue
 		if CState.dip(st, f, g) == CState.WAR or CSea.has_marque(st, f, g) or CState.dip_since(st, f, g) < PIRATE_WAR_CALM:
 			continue
+		if CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
+			continue  # (format 10)
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
 			var kn := CP.of(st, f)
@@ -2001,13 +2096,13 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 			continue
 		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
 			continue
-		if CSea.has_marque(st, f, g):
+		if CSea.has_marque(st, f, g) or CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
 			continue
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
 			if turn < kn[CP.FIRST_WAR_ON_PLAYERS] or turn - last < kn[CP.PLAYER_WAR_GAP]:
 				continue
-		if mine * 100 < faction_strength(st, g) * kn[CP.WAR_RATIO]:
+		if mine * 100 < bloc_strength(st, f, g) * kn[CP.WAR_RATIO]:
 			cands.append(g)
 	if cands.is_empty() or not _mistake(st, f, kn, CP.M_UNWISE_WAR):
 		return false
@@ -2016,6 +2111,40 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 	if CState.is_human(st, g):
 		st["stats"]["last_war_on_players"] = turn
 	return true
+
+
+## (Format 10) A threatened AI with fewer than ALLY_MAX allies, ALLY_PROPOSE
+## % a turn, proposes an alliance to the live neighbour it regards best
+## (ties: the lowest index) that is not friendly and not at war with it or
+## any of its allies; an AI answers at once (accepts), a player gets the
+## proposal. With settings ai_alliances 0 only players are asked.
+static func _seek_ally(st: Dictionary, f: int, kn: PackedInt32Array) -> void:
+	var mine_allies := CDip.allies(st, f)
+	if mine_allies.size() >= kn[CP.ALLY_MAX] or not threatened(st, f, kn):
+		return
+	if CState.rand(st, 100) >= kn[CP.ALLY_PROPOSE]:
+		return
+	var ai_too := int(st["settings"].get("ai_alliances", 1)) != 0
+	var side: Array = [f] + mine_allies
+	var best := -1
+	var bv := -1000000
+	for g in CState.nf():
+		if g == f or not CState.alive(st, g) or CState.friendly(st, f, g) or not _neighbours(st, f, g):
+			continue
+		if not ai_too and not CState.is_human(st, g):
+			continue
+		var bad := false
+		for x in side:
+			if CState.at_war(st, int(x), g):
+				bad = true
+		if bad or CRules.check_proposal(st, f, g, "alliance") != "":
+			continue
+		var v := CDip.regard(st, f, g)
+		if v > bv:
+			bv = v
+			best = g
+	if best >= 0:
+		_propose(st, f, best, "alliance")
 
 
 static func _neighbours(st: Dictionary, f: int, g: int) -> bool:

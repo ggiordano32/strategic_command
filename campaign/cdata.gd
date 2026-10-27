@@ -109,6 +109,12 @@ static var AI_SPECIALISTS: Array = []
 static var AI_LIVE_MIX := 0
 ## View-only display names (west.gd UNIT_NAMES): faction key -> unit key -> [name, short].
 static var UNIT_NAMES: Dictionary = {}
+## Starting treaties (state format 10; campaign/cdip.gd start_treaties; none:
+## Rome): [faction key, faction key, "alliance" | "marque"].
+static var START_TREATIES: Array = []
+## Treaty lines (format 10; cdip.gd line_why): faction key -> unit line -> the
+## faction keys a trade agreement (or alliance) with any of which unlocks it.
+static var TREATY_LINES: Dictionary = {}
 
 const INDEPENDENT := -1
 const INDEPENDENT_COLOR := "8c8c84"
@@ -403,6 +409,8 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	AI_SPECIALISTS = c.get("AI_SPECIALISTS", [])
 	AI_LIVE_MIX = int(c.get("AI_LIVE_MIX", 0))
 	UNIT_NAMES = c.get("UNIT_NAMES", {})
+	START_TREATIES = c.get("START_TREATIES", [])
+	TREATY_LINES = c.get("TREATY_LINES", {})
 	SHIPS = c.get("SHIPS", null)
 	var pack_chains: Array[Dictionary] = c.get("CHAINS", BASE_CHAINS)  # (a pack's own texts / levels)
 	_ship_c = SHIPS.get_script_constant_map() if SHIPS != null else {}

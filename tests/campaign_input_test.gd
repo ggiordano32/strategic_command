@@ -2391,8 +2391,15 @@ func _j_board() -> void:
 	cs.select_fleet(fid)
 	cs._refresh_map()
 	await process_frame
-	_check(cs.overlay.board_cells.is_empty() and cs.overlay.pickup_cells == CFleet.pickup_cells(cs.ps, CState.army(cs.ps, aid)),
-		"boarding: the fleet selected lights the army's pickup cells (%d)" % cs.overlay.pickup_cells.size())
+	# (the overlay lights the pickup cells of every army of ours the fleet has room for: the army's are among them;
+	# format 10, 2026-10-26: the Miskito may hold a second army by now)
+	var own_pc := CFleet.pickup_cells(cs.ps, CState.army(cs.ps, aid))
+	var all_in := not own_pc.is_empty()
+	for c in own_pc:
+		if not cs.overlay.pickup_cells.has(c):
+			all_in = false
+	_check(cs.overlay.board_cells.is_empty() and all_in,
+		"boarding: the fleet selected lights the army's pickup cells (%d of %d)" % [own_pc.size(), cs.overlay.pickup_cells.size()])
 	cs.select_fleet(-1)
 	# The Shipyard tab after one war canoe.
 	var r := -1

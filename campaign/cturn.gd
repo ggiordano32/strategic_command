@@ -27,7 +27,8 @@ extends RefCounted
 ##      moving onto a city; an army with recruits queued for it this turn
 ##      is mustering and stays, its stored march kept); then the players' assault,
 ##      sally and (version 5) siege orders, faction by faction;
-##   4. players' proposals, answered by the AI at once;
+##   4. players' proposals, answered by the AI at once (to a player: a team,
+##      a letter of marque, an alliance or passage waits for its answer);
 ##   5. AI factions act in faction order (build, recruit, move; version 5:
 ##      they plan in faction order, then all AI moves run in rounds; a pack
 ##      with ships: the fleets' voyages and the flota's first);
@@ -38,7 +39,9 @@ extends RefCounted
 ##      a player become pending (phase "battles") and must be resolved
 ##      (apply_battle) before the next turn can be planned;
 ##   8. AI diplomacy; end of turn (buildings, recruits, money, replenishment,
-##      garrisons, growth); eliminations and victory; turn + 1;
+##      garrisons, growth; version 10: alliance notices, calls to arms sat
+##      out, the fade of trust, trespass and the trespass war, passage
+##      lapsing: campaign/cdip.gd end_turn); eliminations and victory; turn + 1;
 ##   9. (format 8) every faction's fog-of-war memory from its sight now
 ##      (campaign/csight.gd update_memory; apply_battle does it too).
 ## A faction that submitted nothing simply holds (turn timeout, later).
@@ -272,7 +275,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			if CRules.check_proposal(st, f, g, what) != "":
 				continue
 			if CState.is_human(st, g):
-				if what == "team" or what == "marque":  # a player answers it next turn
+				if what == "team" or what == "marque" or what == "alliance" or what == "passage":  # a player answers it next turn
 					CRules.post_proposal(st, f, g, what)
 				continue
 			if CAI.accepts(st, f, g, what):

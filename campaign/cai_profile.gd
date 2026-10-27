@@ -200,7 +200,14 @@ const AMPHIB_BAND := SK_SUPPORT + 44      # amphibious recruits (the canoe raide
 const MIX_LIVE := SK_SUPPORT + 45         # in a pack with CData.AI_LIVE_MIX, recruiting picks the line furthest below its share among the mix lines some recruiting centre can raise now (1: a line no centre has the buildings for gives its share to the rest), or among all of them (0: such a line takes the pick and the recruit is any unit the centre allows, as before)
 const CHAR_AURA_PCT := SK_SUPPORT + 46    # a hero whose row lists au_roles (the West's sea captain, shaman) only for an army whose units his aura serves are at least this % of its units (0: any army, as before; docs/AI.md 39)
 const BU_LINE_TREASURY := SK_SUPPORT + 47 # a build-up step on the Barracks when a pack build-up line needs its level 3 (England's grenadiers) is paid from the whole treasury, the reserve left out (1; docs/AI.md 39), or from the money above the reserve (0, as before)
-const N_KNOBS := SK_SUPPORT + 48
+# Alliances (state format 10; campaign/cdip.gd, docs/design/campaign_rules.md
+# "Diplomacy: trust, alliances and passage"): a threatened AI proposes an
+# alliance (% a turn; 0 never, Easy) while it has fewer than ALLY_MAX allies,
+# and refuses one past ALLY_MAX. TEAM_ACCEPT_TURNS / TEAM_ACCEPT_PCT are the
+# team rule of formats 7-9 only (format 10: CDip FLOOR_TEAM, allied, fought).
+const ALLY_PROPOSE := SK_SUPPORT + 48
+const ALLY_MAX := SK_SUPPORT + 49
+const N_KNOBS := SK_SUPPORT + 50
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -374,6 +381,9 @@ const KNOBS: Array = [
 	[CHAR_AURA_PCT, 0, 34, 34],
 	# (docs/AI.md 39) England's Barracks 3 (grenadiers) from the whole treasury.
 	[BU_LINE_TREASURY, 0, 1, 1],
+	# Alliances (format 10, 2026-10-26): Easy never proposes one.
+	[ALLY_PROPOSE, 0, 15, 25],
+	[ALLY_MAX, 2, 2, 2],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

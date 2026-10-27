@@ -11,7 +11,10 @@ extends RefCounted
 ## by the rules (JSON load does not keep key order). The state carries its own
 ## RNG ("rng", xorshift32) used by the rules and the AI.
 ##
-## Format (VERSION 9; version 9 adds the breached walls (regions[r].breach, optional, absent = 0);
+## Format (VERSION 10; version 10 adds trust, alliances and passage (repute, regard, gift,
+## passage, fought, regard_log, optional aleaving and called, settings
+## ai_alliances; campaign/cdip.gd; migrated with zeros);
+## version 9 adds the breached walls (regions[r].breach, optional, absent = 0);
 ## version 8 adds the fog of war ("fog", factions[f].mem);
 ## version 7 adds the teams; version 1 has no city_seed, versions 1-2 no builder
 ## data "built", versions 1-3 no "sieges", versions 1-4 no free movement
@@ -23,7 +26,8 @@ extends RefCounted
 ##   settings {victory_regions, victory_capitals, turn_timeout_h, autoresolve
 ##     ("ask" | "auto"), ai_aggression (50-150, %); optional (absent =
 ##     Average, campaign/cai_profile.gd): ai_battle_skill, ai_campaign_skill
-##     (0 Easy, 1 Average, 2 Skilled)},
+##     (0 Easy, 1 Average, 2 Skilled); version 10: ai_alliances (absent = 1;
+##     0: AI factions never propose alliances to one another)},
 ##   humans [faction ...] (who is a player, sorted; any count; version 6:
 ##     permanently allied, version 7: allied through "teams" below),
 ##   teams [team id per faction] (version 7; factions with one id are on one
@@ -42,8 +46,15 @@ extends RefCounted
 ##     campaign/cai_profile.gd): ai_skill, ai_battle_skill, ai_style (0
 ##     Cautious, 1 Balanced, 2 Aggressive; written from CData when not
 ##     Balanced)}] indexed like CData.FACTIONS,
-##   dip [n*n] 0 war / 1 peace / 2 trade / 3 allied; dip_turn [n*n] turn of
-##     the last change,
+##   dip [n*n] 0 war / 1 peace / 2 trade / 3 allied (team mates; version 10
+##     also an alliance between factions on different teams, which includes
+##     trade: campaign/cdip.gd); dip_turn [n*n] turn of the last change,
+##   version 10 (campaign/cdip.gd, which documents them): repute [n], regard
+##     [n*n] (regard[a*n+b]: how a regards b), gift [n*n], passage [n*n] (the
+##     turn until which b may cross a's land), fought [n*n], regard_log [n*n]
+##     (the last 4 [turn, delta, why] a pair), optional aleaving [[a, b,
+##     turn]] (alliance notices) and called [[a, b, c, turn]] (calls to arms
+##     a human ally has not answered),
 ##   regions [{owner (-1 independent), level, growth, slots [[chain, level]],
 ##     build [chain, level, turns_left] or [], queue [unit keys], gar (garrison
 ##     strength %), city_seed (the settlement's battle map seed: fixed for
@@ -73,7 +84,8 @@ extends RefCounted
 ##     supplies left), held (turns maintained without an assault), from
 ##     [[army id, region it came from]...]}] sorted by region (version 4;
 ##     a state without the key plays without sieges, see sieges_on),
-##   proposals [{id, from, to, what, turn}] (AI proposals to humans; a
+##   proposals [{id, from, to, what, turn}] (AI proposals to humans; version
+##     10: what "call" (a call to arms) adds vs, the enemy; a
 ##     city offer between the human players adds kind, r, price, see
 ##     crules.gd "gifts between players"),
 ##   next_proposal, events [{turn, k, ...}] (what happened, for the turn
@@ -84,7 +96,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 const FORMAT := "strategic_command_campaign"
-const VERSION := 9
+const VERSION := 10
 ## Oldest format this build reads (older states are migrated on load).
 const MIN_VERSION := 1
 
@@ -140,6 +152,13 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	# so a default campaign keeps its hash.
 	if s.has("team_regions") and int(s["team_regions"]) != 0:
 		s.erase("team_regions")
+	# AI-AI alliances (version 10): kept only when 0 (absent reads as 1).
+	if s.has("ai_alliances") and int(s["ai_alliances"]) != 0:
+		s.erase("ai_alliances")
+	# The pack's starting treaties (version 10; a story campaign passes 0):
+	# not kept in the settings.
+	var treaties := int(s.get("treaties", 1)) != 0
+	s.erase("treaties")
 	# Fog of war (version 8): a top-level key, 1 unless the option says 0.
 	st["fog"] = 0 if s.has("fog") and int(s["fog"]) == 0 else 1
 	s.erase("fog")
@@ -233,9 +252,19 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	if CData.ships_on():
 		# Fleets (a pack with ships; campaign/cfleet.gd, loaded here: it preloads this file).
 		(load("res://campaign/cfleet.gd") as GDScript).call("init", st)
+	# Trust, alliances and passage (version 10), then the pack's starting
+	# treaties (after the dip matrix, the teams and the fleets).
+	_dip().call("init", st)
+	if treaties:
+		_dip().call("start_treaties", st)
 	# Fog of war (version 8): every faction remembers what it sees at the start.
 	_sight().call("update_memory", st)
 	return st
+
+
+## campaign/cdip.gd (it preloads this file: loaded at run time here).
+static func _dip() -> GDScript:
+	return load("res://campaign/cdip.gd")
 
 
 ## campaign/csight.gd (it preloads this file: loaded at run time here).
@@ -284,6 +313,8 @@ static func from_json(text: String, upto: int = VERSION) -> Dictionary:
 ## 2 -> 3: every settlement gets an empty builder list "built".
 ## 7 -> 8: the fog of war (_migrate8).
 ## 8 -> 9: the breached walls (the version only: the key is absent = 0).
+## 9 -> 10: trust, alliances and passage: the arrays of campaign/cdip.gd, all
+## zeros (regard_log empty lists); no treaty is applied to a running game.
 ## 6 -> 7: the teams (_migrate7).
 ## 1 -> 2: every settlement gets its city_seed (default_city_seed, the same
 ## value a new campaign gives it, so migrating on two devices agrees).
@@ -302,6 +333,9 @@ static func migrate(st: Dictionary, upto: int = VERSION) -> Dictionary:
 		_migrate8(st)
 	if int(st.get("version", 0)) < 9 and upto >= 9:
 		st["version"] = 9  # (8 -> 9: the breached walls; no town has one yet)
+	if int(st.get("version", 0)) < 10 and upto >= 10:
+		_dip().call("init", st)
+		st["version"] = 10
 	return st
 
 
@@ -467,6 +501,15 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 		for b in c["battles"]:
 			for k in ["x", "y", "app"]:
 				(b as Dictionary).erase(k)
+	if v < 10:
+		if _dip().call("undo_start_treaties", c) and v >= 8:
+			# (the memory of the start as a build without the treaties saw it: no shared sight)
+			for fs in c["factions"]:
+				(fs as Dictionary).erase("mem")
+			_sight().call("update_memory", c)
+		for k in ["repute", "regard", "gift", "passage", "fought", "regard_log", "aleaving", "called"]:
+			c.erase(k)
+		(c["settings"] as Dictionary).erase("ai_alliances")
 	if v < 9:
 		for rs in c["regions"]:
 			(rs as Dictionary).erase("breach")

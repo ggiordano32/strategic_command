@@ -5,7 +5,9 @@ extends RefCounted
 ## (computed, never stored) and what each faction remembers of what it saw
 ## (stored per faction, written by update_memory at the end of every turn).
 ##
-## Sight (Rome 2 style), the union over the factions of f's team:
+## Sight (Rome 2 style), the union over the factions of f's team (state
+## format 10: and of its allies, CState.friendly: an alliance shares sight as
+## a team does; before format 10 only team mates are ALLIED):
 ##   - its regions and their land neighbours (CData.adjacent, land routes):
 ##     every cell of those regions;
 ##   - each army: the cells within ARMY_R (Chebyshev) of its cell, HILL_R
@@ -110,7 +112,7 @@ static func compute(st: Dictionary, f: int) -> PackedByteArray:
 	var mine := PackedByteArray()  # factions of f's team
 	mine.resize(CState.nf())
 	for g in CState.nf():
-		mine[g] = 1 if CState.same_team(st, f, g) else 0
+		mine[g] = 1 if CState.friendly(st, f, g) else 0
 	# Regions: our own and their land neighbours.
 	var nr := CData.region_count()
 	var seen_r := PackedByteArray()
@@ -293,7 +295,7 @@ static func markers(st: Dictionary, f: int, vis_in: PackedByteArray = PackedByte
 	var vis := _vis(st, f, vis_in)
 	for m in mem["mk"]:
 		var c := int(m["cell"])
-		if c < 0 or c >= vis.size() or vis[c] != 0 or CState.same_team(st, f, int(m["f"])):
+		if c < 0 or c >= vis.size() or vis[c] != 0 or CState.friendly(st, f, int(m["f"])):
 			continue
 		out.append((m as Dictionary).duplicate())
 	return out
@@ -305,7 +307,7 @@ static func army_visible(st: Dictionary, f: int, army_index: int, vis: PackedByt
 	if army_index < 0 or army_index >= arr.size():
 		return false
 	var a: Dictionary = arr[army_index]
-	if not on(st) or CState.same_team(st, f, int(a["f"])) or not CState.grid_on(st):
+	if not on(st) or CState.friendly(st, f, int(a["f"])) or not CState.grid_on(st):
 		return true
 	return _vis(st, f, vis)[CState.cell(a)] != 0
 
@@ -316,7 +318,7 @@ static func fleet_visible(st: Dictionary, f: int, fleet_index: int, vis: PackedB
 	if fleet_index < 0 or fleet_index >= arr.size():
 		return false
 	var fl: Dictionary = arr[fleet_index]
-	if not on(st) or CState.same_team(st, f, int(fl["f"])):
+	if not on(st) or CState.friendly(st, f, int(fl["f"])):
 		return true
 	return _vis(st, f, vis)[int(fl["y"]) * CGrid.width() + int(fl["x"])] != 0
 
@@ -328,7 +330,7 @@ static func char_visible(st: Dictionary, f: int, char_index: int, vis_in: Packed
 	if char_index < 0 or char_index >= arr.size():
 		return false
 	var ch: Dictionary = arr[char_index]
-	if not on(st) or CState.same_team(st, f, int(ch["f"])):
+	if not on(st) or CState.friendly(st, f, int(ch["f"])):
 		return true
 	var vis := _vis(st, f, vis_in)
 	var id := int(ch["army"])
@@ -354,12 +356,12 @@ static func battle_visible(st: Dictionary, f: int, bid: int, vis: PackedByteArra
 	if not on(st):
 		return true
 	for h in CRules.battle_humans(st, b):
-		if CState.same_team(st, f, int(h)):
+		if CState.friendly(st, f, int(h)):
 			return true
 	var side := CRules.battle_factions(st, b)
 	for s in 2:
 		for g in side[s]:
-			if CState.same_team(st, f, int(g)):
+			if CState.friendly(st, f, int(g)):
 				return true
 	return _vis(st, f, vis)[battle_cell(b)] != 0
 
@@ -392,7 +394,7 @@ static func shown_armies(st: Dictionary, viewer: int, list: Array, vis: PackedBy
 	var v := _vis(st, viewer, vis)
 	var out: Array = []
 	for a in list:
-		if CState.same_team(st, viewer, int(a["f"])) or not CState.grid_on(st) or v[CState.cell(a)] != 0:
+		if CState.friendly(st, viewer, int(a["f"])) or not CState.grid_on(st) or v[CState.cell(a)] != 0:
 			out.append(a)
 	return out
 
@@ -418,7 +420,7 @@ static func zone_armies_for(st: Dictionary, f: int, vis: PackedByteArray = Packe
 ## in viewer's team's own lands always are: the lands are in sight).
 static func raider_for(st: Dictionary, r: int, viewer: int, vis: PackedByteArray = PackedByteArray()) -> int:
 	var g := CRules.raider(st, r)
-	if g < 0 or not on(st) or not CState.grid_on(st) or CState.same_team(st, viewer, g):
+	if g < 0 or not on(st) or not CState.grid_on(st) or CState.friendly(st, viewer, g):
 		return g
 	var v := _vis(st, viewer, vis)
 	for a in st["armies"]:
@@ -437,13 +439,13 @@ static func event_seen(st: Dictionary, viewer: int, e: Dictionary, vis: PackedBy
 		return true
 	for k in ["f", "from", "to", "a", "b", "o", "by"]:
 		var x = e.get(k)
-		if (x is int) and CState.same_team(st, viewer, int(x)):
+		if (x is int) and CState.friendly(st, viewer, int(x)):
 			return true
 	for k in ["att", "def"]:
 		var l = e.get(k)
 		if l is Array:
 			for x in l:
-				if (x is int) and CState.same_team(st, viewer, int(x)):
+				if (x is int) and CState.friendly(st, viewer, int(x)):
 					return true
 	var r = e.get("r")
 	if (r is int) and int(r) >= 0 and int(r) < CData.region_count():
@@ -481,9 +483,9 @@ static func update_memory(st: Dictionary) -> void:
 	CGrid.ensure()
 	var turn := int(st.get("turn", 0))
 	var nr := CData.region_count()
-	var team_vis := {}  # team id -> sight (lookups only)
+	var team_vis := {}  # the friendly factions (a mask: a team, format 10 with its allies) -> sight (lookups only)
 	for f in CState.nf():
-		var t := CState.team(st, f)
+		var t := _friends(st, f)
 		if not team_vis.has(t):
 			team_vis[t] = compute(st, f)
 		var vis: PackedByteArray = team_vis[t]
@@ -535,7 +537,7 @@ static func update_memory(st: Dictionary) -> void:
 
 static func _seen(st: Dictionary, f: int, vis: PackedByteArray, fresh: Array, at: Dictionary, g: int, c: int,
 		kind: int, units: int, nm: String, turn: int) -> void:
-	if c < 0 or c >= vis.size() or vis[c] == 0 or CState.same_team(st, f, g):
+	if c < 0 or c >= vis.size() or vis[c] == 0 or CState.friendly(st, f, g):
 		return
 	if at.has(c):
 		var m: Dictionary = fresh[int(at[c])]
@@ -559,7 +561,7 @@ static func _army_name(st: Dictionary, id: int) -> String:
 ## A cheap fingerprint of everything compute() reads (view memo only).
 static func _signature(st: Dictionary, f: int) -> PackedInt64Array:
 	var s := PackedInt64Array()
-	s.resize(8)
+	s.resize(9)
 	s[0] = f
 	s[1] = int(st.get("version", 0))
 	s[2] = int(st.get("turn", 0))
@@ -583,4 +585,15 @@ static func _signature(st: Dictionary, f: int) -> PackedInt64Array:
 	for t in st.get("teams", []):
 		h = h * 31 + int(t) + 1
 	s[7] = h & 0xFFFFFFFFFFFF
+	s[8] = _friends(st, f)  # (format 10: allies share sight)
 	return s
+
+
+## The factions friendly to f (team mates and, format 10, allies) as a bit
+## mask: f's sight is the union over them.
+static func _friends(st: Dictionary, f: int) -> int:
+	var m := 0
+	for g in CState.nf():
+		if CState.friendly(st, f, g):
+			m |= 1 << g
+	return m

@@ -53,11 +53,23 @@ extends RefCounted
 ##        x, y / tgt: march to it and merge into it on arrival (it keeps its
 ##        id, stance and cell); with persist the army keeps following it
 ##        (army key "dest_army") until it merges or the army is gone.
-##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade" | "team"}
+##   {"t": "propose", "to": faction, "what": "peace" | "trade" | "cancel_trade" | "team"
+##        | "alliance" | "passage"}
 ##        ("team": join my team; an AI answers by CAI.why at once, a human
 ##        gets a proposal to answer next turn; see "teams" below; a pack
 ##        with ships also "marque", a letter of marque between a nation and
-##        a pirate faction: campaign/csea.gd)
+##        a pirate faction: campaign/csea.gd; version 10 (campaign/cdip.gd):
+##        "alliance" (peace or trade, no war between the two sides; dip
+##        ALLIED between factions on different teams), "passage" (the
+##        receiver lets the proposer's armies cross its land for
+##        CDip.PASSAGE_TURNS turns); "cancel_trade" costs regard; a "call"
+##        (to arms) is never proposed: the rules post it to a human ally
+##        when a war starts, answered with "answer")
+##   {"t": "leave_alliance", "with": faction}   (version 10: notice of
+##        CDip.ALLIANCE_NOTICE turns, then TRADE)
+##   {"t": "gift", "to": faction, "gold": n}    (version 10: n >= 50 from the
+##        treasury to a faction not at war with us; regard + n / 50, the
+##        gift share capped: campaign/cdip.gd)
 ##   {"t": "sack_policy", "v": 0 auto | 1 sack | 2 hold}  (pirates, csea.gd)
 ##   {"t": "leave_team"}                                (a player; notice turns)
 ##   {"t": "war", "to": faction}                        (declare war)
@@ -113,6 +125,7 @@ const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CLanes := preload("res://campaign/clanes.gd")
+const CDip := preload("res://campaign/cdip.gd")
 
 
 # --------------------------------------------------------------- orders ---
@@ -166,6 +179,12 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return check_proposal(st, f, int(o.get("to", -1)), str(o.get("what", "")))
 		"leave_team":
 			return _leave_team(st, f)
+		"leave_alliance":
+			if not CDip.on(st):
+				return "unknown order"
+			return CDip.leave_alliance(st, f, int(o.get("with", -1)))
+		"gift":
+			return CDip.gift(st, f, int(o.get("to", -1)), int(o.get("gold", 0)))
 		"war":
 			return _declare_war(st, f, int(o.get("to", -1)))
 		"answer":
@@ -310,6 +329,9 @@ static func recruit_check(st: Dictionary, f: int, r: int, key: String) -> String
 		ok = (ro[UT.line_of(ty)] as Array).has(key)
 	if not ok:
 		return "not in your roster"
+	var tw := CDip.line_why(st, f, UT.line_of(ty))  # (version 10) a treaty line
+	if tw != "":
+		return tw
 	var nd := needs(key)
 	if CState.building(st, r, nd[0]) < int(nd[1]):
 		return "needs %s %d" % [CData.CHAINS[nd[0]]["name"], nd[1]]
@@ -956,7 +978,8 @@ const INF := 1 << 30
 
 ## "" if faction f may enter region r (pass through or stop there), else
 ## why not: a battle pending from an earlier turn (one started this turn
-## can be joined), a siege by a third party, a faction at peace.
+## can be joined), a siege by a third party, a faction at peace (version
+## 10: unless f holds passage, or f is a human: a trespass, CDip.may_cross).
 static func can_enter(st: Dictionary, f: int, r: int) -> String:
 	var b := CState.battle_at(st, r)
 	if not b.is_empty() and int(b.get("new", 0)) == 0:
@@ -967,7 +990,7 @@ static func can_enter(st: Dictionary, f: int, r: int) -> String:
 		if (CState.friendly(st, f, int(sg["f"])) and CState.at_war(st, f, o)) or CState.friendly(st, f, o):
 			return ""
 		return "besieged by " + CData.faction_name(int(sg["f"]))
-	if CState.friendly(st, f, o) or CState.at_war(st, f, o):
+	if CState.friendly(st, f, o) or CState.at_war(st, f, o) or CDip.may_cross(st, f, o):
 		return ""
 	return "at peace with " + CData.faction_name(o)
 
@@ -1495,7 +1518,8 @@ static func _check_trespass(st: Dictionary) -> void:
 		var af := int(a["f"])
 		if not CState.friendly(st, af, o) and CState.stance(a) != CData.STANCE_FIELD:
 			a["stance"] = CData.STANCE_FIELD
-		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty():
+		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty() \
+				and not CDip.may_cross(st, af, o):
 			_retreat(st, a, -1, true)
 
 
@@ -2092,8 +2116,10 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		return
 	if b.has("sea"):
 		# (N3a) A sea battle: the fleets (campaign/cfleet.gd apply_sea).
+		var sfacs := battle_factions(st, b)
 		st["battles"].erase(b)
 		CFleet.apply_sea(st, b, outcome)
+		CDip.on_battle(st, sfacs)  # (version 10) fought side by side
 		check_eliminations(st)
 		CChars.sweep(st)
 		check_victory(st)
@@ -2227,7 +2253,9 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		for a in arm[0]:
 			if int(a["f"]) == sacked:
 				raiders.append(a)
+		var sacked_from := CState.owner(st, r)
 		CSea.sack(st, r, sacked, raiders)
+		CDip.on_sack(st, sacked_from, sacked)  # (version 10)
 	var stats: Dictionary = st["stats"]
 	var mode := str(outcome.get("mode", "formula"))
 	stats["battles"] = int(stats.get("battles", 0)) + 1
@@ -2242,6 +2270,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	if int(outcome.get("fort_holds", 0)) != 0 and winner == 0 and new_owner < 0 and sacked < 0:
 		ev["fort_holds"] = 1
 	event(st, ev)
+	CDip.on_battle(st, facs)  # (version 10) fought side by side
 	check_eliminations(st)
 	CChars.sweep(st)
 	check_sieges(st)
@@ -2264,6 +2293,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	if how != "":
 		e["how"] = how
 	event(st, e)
+	CDip.on_capture(st, old, f)  # (version 10)
 	var sg := CState.siege_at(st, r)
 	if not sg.is_empty():
 		st["sieges"].erase(sg)
@@ -2359,16 +2389,29 @@ static func _drop_empty_armies(st: Dictionary) -> void:
 
 
 # ------------------------------------------------------------- diplomacy ---
+# Events: war {a, b; version 10 optional why "called" | "trespass"}, peace,
+# trade, trade_end, refused, proposal {from, to, what, id; a call adds vs}.
+# Version 10 (campaign/cdip.gd, which lists its own): regard, repute,
+# alliance, alliance_notice, alliance_left, passage, passage_end, call,
+# call_answered, call_sat_out, gold_gift, trespass; the chronicle keeps
+# alliance, alliance_notice, alliance_left, passage, call_answered,
+# call_sat_out and gold_gift (CHRONICLE_KINDS).
 
 static func check_proposal(st: Dictionary, f: int, g: int, what: String) -> String:
 	if g < 0 or g >= CState.nf() or g == f or not CState.alive(st, g):
 		return "no such faction"
-	if CState.friendly(st, f, g):
+	if CState.same_team(st, f, g):
 		return "you are allies" if what != "team" else "you are on one team"
+	if CState.friendly(st, f, g) and what != "team":
+		return "you are allies"
 	var d := CState.dip(st, f, g)
 	match what:
 		"team":
 			return team_merge_check(st, f, g)
+		"alliance":
+			return CDip.alliance_check(st, f, g)  # (version 10)
+		"passage":
+			return CDip.passage_check(st, f, g)
 		"peace":
 			return "" if d == CState.WAR else "not at war"
 		"trade":
@@ -2383,27 +2426,40 @@ static func check_proposal(st: Dictionary, f: int, g: int, what: String) -> Stri
 static func _declare_war(st: Dictionary, f: int, g: int) -> String:
 	if g < 0 or g >= CState.nf() or g == f or not CState.alive(st, g):
 		return "no such faction"
-	if CState.friendly(st, f, g):
-		return "allies cannot go to war"
+	if CState.friendly(st, f, g) and not CDip.allied(st, f, g):
+		return "allies cannot go to war"  # (team mates; an alliance is broken by the war: CDip.on_war)
 	if CState.dip(st, f, g) == CState.WAR:
 		return "already at war"
 	declare_war(st, f, g)
 	return ""
 
 
-static func declare_war(st: Dictionary, f: int, g: int) -> void:
+## f declares war on g. why (version 10, on the event when set): "called"
+## (answering an ally's call to arms) or "trespass" (an AI's answer to a
+## trespasser); trust and the calls to arms: CDip.on_war.
+static func declare_war(st: Dictionary, f: int, g: int, why: String = "") -> void:
+	var old := CState.dip(st, f, g)
 	CState.set_dip(st, f, g, CState.WAR)
-	event(st, {"k": "war", "a": f, "b": g})
+	var e := {"k": "war", "a": f, "b": g}
+	if why != "":
+		e["why"] = why
+	event(st, e)
+	CDip.on_war(st, f, g, why, old)
 
 
 static func make_peace(st: Dictionary, f: int, g: int) -> void:
 	CState.set_dip(st, f, g, CState.PEACE)
 	event(st, {"k": "peace", "a": f, "b": g})
+	CDip.on_peace(st, f, g)
 
 
 static func _answer(st: Dictionary, f: int, id: int, accept: int) -> String:
 	for p in st["proposals"]:
 		if int(p["id"]) == id and int(p["to"]) == f and not p.has("kind"):
+			if str(p["what"]) == "call":
+				st["proposals"].erase(p)
+				CDip.answer_call(st, f, p, accept != 0)  # (version 10) a call to arms
+				return ""
 			if accept != 0:
 				var g := int(p["from"])
 				if check_proposal(st, g, f, str(p["what"])) == "":
@@ -2425,8 +2481,13 @@ static func apply_agreement(st: Dictionary, f: int, g: int, what: String) -> voi
 		"cancel_trade":
 			CState.set_dip(st, f, g, CState.PEACE)
 			event(st, {"k": "trade_end", "a": f, "b": g})
+			CDip.on_cancel_trade(st, f, g)
 		"team":
 			merge_teams(st, f, g)
+		"alliance":
+			CDip.make_alliance(st, f, g)
+		"passage":
+			CDip.grant_passage(st, f, g)
 		"marque":
 			CSea.grant(st, f, g)
 
@@ -2993,6 +3054,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		a["from"] = -1
 	CFleet.end_of_turn(st)  # ships launched, repairs, scurvy (a pack with ships)
 	CSea.after_turn(st)  # (N2) infamy, letters of marque, the next flota
+	CDip.end_turn(st)  # (version 10) notices, calls sat out, the fade, trespass, passage
 	# Proposals last one turn.
 	var keep_p: Array = []
 	for p in st["proposals"]:
@@ -3255,7 +3317,8 @@ const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war"
 	"siege", "siege_lifted", "starving", "victory", "defeat", "team_joined", "team_notice", "team_left",
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
 	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
-	"galleon_lost", "flota_held", "lane_raided", "story", "fleet_taken"]
+	"galleon_lost", "flota_held", "lane_raided", "story", "fleet_taken",
+	"alliance", "alliance_notice", "alliance_left", "passage", "call_answered", "call_sat_out", "gold_gift"]
 const CHRONICLE_TURNS := 60
 
 
@@ -3384,7 +3447,7 @@ static func block_mask(st: Dictionary, f: int) -> PackedByteArray:
 	m.fill(0)
 	for r in CData.region_count():
 		var o := CState.owner(st, r)
-		if not CState.friendly(st, f, o) and not CState.at_war(st, f, o):
+		if not CState.friendly(st, f, o) and not CState.at_war(st, f, o) and not CDip.may_cross(st, f, o):
 			for c in CGrid.cells_of(r):
 				m[c] = 1
 			continue
@@ -4246,7 +4309,8 @@ static func _check_trespass6(st: Dictionary) -> void:
 		var c := CState.cell(a)
 		if CGrid.site_region(c) == r and not CState.friendly(st, af, o):
 			CState.place(a, CState.field_cell(r))
-		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty():
+		if not CState.friendly(st, af, o) and not CState.at_war(st, af, o) and CState.siege_at(st, r).is_empty() \
+				and not CDip.may_cross(st, af, o):
 			var t := _nearest_friendly(st, af, r)
 			if t < 0:
 				event(st, {"k": "destroyed", "f": af, "r": r, "army": int(a["id"]), "men": CState.men(a)})

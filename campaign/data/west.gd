@@ -316,6 +316,16 @@ const START_WARS: Array = [
 	["brethren", "dutch"],
 ]
 
+## Starting treaties (state format 10, campaign/cdip.gd; docs/design/campaign_rules.md
+## "Diplomacy: trust, alliances and passage"): the Miskito begin allied (and so
+## trading) with England, France holds a letter of marque on the Brethren; the
+## Itza begin with nobody.
+const START_TREATIES: Array = [["miskito", "england", "alliance"], ["france", "brethren", "marque"]]
+
+## Treaty lines (format 10, cdip.gd line_why): the Miskito raise their musket
+## line only while they trade (or are allied) with a European nation.
+const TREATY_LINES := {"miskito": {"musket": ["new_spain", "tierra_firme", "england", "france", "dutch"]}}
+
 ## (Guns carry no special kinds yet.) One special arrow per native nation
 ## (owner 2026-10-24): the Itza (the city builders, sieges) fire arrows, the
 ## Miskito (the raiders) poisoned arrows.

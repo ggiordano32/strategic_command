@@ -74,6 +74,7 @@ const CStorm := preload("res://campaign/cstorm.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
+const CDip := preload("res://campaign/cdip.gd")
 
 var fails := 0
 
@@ -139,6 +140,12 @@ func _init() -> void:
 	_war_dogs()
 	_light_art()
 	_teams()
+	_diplomacy()
+	_dip_calls()
+	_dip_passage()
+	_dip_west()
+	_dip_ai_alliances()
+	_dip_deterrence()
 	_team_battles()
 	_ai_skilled()
 	_chars()
@@ -3686,13 +3693,13 @@ func _teams() -> void:
 	_check(CRules.check_proposal(st, mace, syra, "team") == "" and CRules.check_proposal(st, mace, rome, "team") == "",
 		"a player may propose a team to an AI or to another player")
 	_check(CRules.check_proposal(st, rome, carth, "team") != "", "no team proposal to a team mate")
-	# Too short a peace.
-	var young := CState.copy(st)
+	# Formats 7-9 (as_format 9): the old team rule. Too short a peace.
+	var young := CState.as_format(st, 9)
 	CState.set_dip(young, mace, syra, CState.PEACE)  # (dip_turn = 10)
 	_check(CAI.why(young, mace, syra, "team") != "", "refused while the peace is under TEAM_ACCEPT_TURNS old (%s)" % CAI.why(young, mace, syra, "team"))
-	_check(CAI.why(st, mace, syra, "team") == "", "accepted: at peace long enough, similar strength (%s)" % CAI.why(st, mace, syra, "team"))
+	_check(CAI.why(CState.as_format(st, 9), mace, syra, "team") == "", "format 9: accepted: at peace long enough, similar strength (%s)" % CAI.why(CState.as_format(st, 9), mace, syra, "team"))
 	# The strength clause.
-	var big := CState.copy(st)
+	var big := CState.as_format(st, 9)
 	for a in CState.armies_of(big, mace):
 		for u in a["units"]:
 			u["n"] = int(u["n"]) * 60
@@ -3708,9 +3715,29 @@ func _teams() -> void:
 	var war := CState.copy(st)
 	CState.set_dip(war, syra, mace, CState.WAR)
 	_check(CAI.why(war, mace, syra, "team") != "", "refused while at war with the proposer")
+	# Format 10: the team through an alliance: allied, regard 50, a battle fought together.
+	_check(CAI.why(st, mace, syra, "team") == "make an alliance first", "format 10: no team without an alliance (%s)" % CAI.why(st, mace, syra, "team"))
+	var tst := CState.copy(st)
+	CState.set_dip(tst, mace, syra, CState.ALLIED)
+	var n2 := CState.nf()
+	tst["regard"][syra * n2 + mace] = 49
+	tst["fought"][syra * n2 + mace] = 1
+	_check(CAI.why(tst, mace, syra, "team").contains("regard"), "format 10: allied but regard 49: refused (%s)" % CAI.why(tst, mace, syra, "team"))
+	tst["regard"][syra * n2 + mace] = 50
+	tst["fought"][syra * n2 + mace] = 0
+	_check(CAI.why(tst, mace, syra, "team").contains("side by side"), "format 10: regard 50 but never fought together: refused")
+	tst["fought"][syra * n2 + mace] = 1
+	_check(CAI.why(tst, mace, syra, "team") == "", "format 10: allied, regard 50, fought once: accepted (%s)" % CAI.why(tst, mace, syra, "team"))
+	_check(CRules.check_proposal(tst, mace, syra, "team") == "" and CRules.check_proposal(tst, mace, syra, "trade") != "",
+		"allies may propose a team (not trade: they trade already)")
+	var tbig := CState.copy(tst)
+	for a in CState.armies_of(tbig, mace):
+		for u in a["units"]:
+			u["n"] = int(u["n"]) * 60
+	_check(CAI.why(tbig, mace, syra, "team") == "", "format 10: the strength test is gone")
 	# Resolving the turn: the AI accepts the order, the teams merge.
-	var r1 := _turn(CState.copy(st), [CTurn.submission(st, mace, [{"t": "propose", "to": syra, "what": "team"}])])
-	var r2 := _turn(CState.copy(st), [CTurn.submission(st, mace, [{"t": "propose", "to": syra, "what": "team"}])])
+	var r1 := _turn(CState.copy(tst), [CTurn.submission(tst, mace, [{"t": "propose", "to": syra, "what": "team"}])])
+	var r2 := _turn(CState.copy(tst), [CTurn.submission(tst, mace, [{"t": "propose", "to": syra, "what": "team"}])])
 	_check(CState.state_hash(r1) == CState.state_hash(r2), "resolve_turn with teams and a team proposal is deterministic")
 	_check(CState.team(r1, syra) == CState.team(r1, mace) and CState.friendly(r1, mace, syra) and CState.dip(r1, mace, syra) == CState.ALLIED,
 		"the AI joined the proposer's team")
@@ -3883,7 +3910,9 @@ func _ai_skilled() -> void:
 	# (2026-10-23, Docking: the AI docks its free fleets, the repair rule splits; were 653fa85c / 3934412497 and, Easy, 123fe3e4 / 662798570;)
 	# (Format 8: hashed without the fog-of-war keys, as_format 7: the AI
 	# sees everything, so the play is the format 7 play.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "9aca1fcc" and int(g["rng"]) == 2580136663,
+	# (2026-10-26, format 10 (campaign/cdip.gd): trust, AI-AI alliances and
+	# the calls to arms change the play; were 9aca1fcc / 2580136663 and, Easy, f3b40674 / 1790012962.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "eb11d4a4" and int(g["rng"]) == 404660584,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -3892,7 +3921,7 @@ func _ai_skilled() -> void:
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "f3b40674" and int(ge["rng"]) == 1790012962,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "7453315e" and int(ge["rng"]) == 2698612760,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -6202,3 +6231,577 @@ func _board_march() -> void:
 	var am := CState.army(gm2, int(a1["id"]))
 	_check(missed == 1 and not am.is_empty() and not am.has("dest_fleet"),
 		"board march: a fleet that sailed away: the army arrives, board_missed, dest_fleet gone (%d events)" % missed)
+
+
+# ------------------------------------------------- diplomacy (format 10) ---
+
+func _ev(st: Dictionary, k: String, keys: Dictionary = {}) -> Dictionary:
+	for e in st["events"]:
+		if str(e.get("k", "")) != k:
+			continue
+		var ok := true
+		for key in keys:
+			if not e.has(key) or e[key] != keys[key]:
+				ok = false
+		if ok:
+			return e
+	return {}
+
+
+func _chron(st: Dictionary, k: String) -> bool:
+	for e in st.get("chronicle", []):
+		if str(e.get("k", "")) == k:
+			return true
+	return false
+
+
+## Trust (campaign/cdip.gd, docs/design/campaign_rules.md "Diplomacy: trust,
+## alliances and passage"): every delta, the fade, gifts and their cap, the
+## answer floors, trespass and the trespass war, leaving an alliance,
+## migration and determinism.
+func _diplomacy() -> void:
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var mace := _f("macedon")
+	var syra := _f("syracuse")
+	var gaul := _f("gauls")
+	var iber := _f("iberians")
+	var epir := _f("epirus")
+	var n := CState.nf()
+	var base := _new6([rome])
+	base["turn"] = 10
+	_check(int(base["version"]) == 10 and (base["regard"] as Array).size() == n * n and (base["repute"] as Array).size() == n
+		and (base["regard_log"] as Array).size() == n * n and (base["fought"] as Array).size() == n * n
+		and (base["gift"] as Array).size() == n * n and (base["passage"] as Array).size() == n * n,
+		"format 10: the trust arrays are in a new state")
+	var allzero := true
+	for i in n * n:
+		if int(base["regard"][i]) != 0:
+			allzero = false
+	_check(allzero and not base.has("aleaving") and not base.has("called") and not base["settings"].has("ai_alliances"),
+		"a Rome campaign starts with every regard 0, no treaties, ai_alliances not stored")
+	# War declared: -40 regard, an unprovoked war -10 repute; on a trade partner -20 more.
+	var w := CState.copy(base)
+	_check(CRules.apply_order(w, rome, {"t": "war", "to": mace}) == "", "a war order")
+	_check(CDip.regard(w, mace, rome) == -40 and CDip.repute(w, rome) == -10 and CDip.repute(w, mace) == 0,
+		"war declared: regard -40 of the victim, repute -10 for an unprovoked war (%d, %d)" % [CDip.regard(w, mace, rome), CDip.repute(w, rome)])
+	_check(not _ev(w, "regard", {"a": mace, "b": rome, "d": -40, "why": "war"}).is_empty()
+		and not _ev(w, "repute", {"f": rome, "d": -10, "why": "unprovoked_war"}).is_empty(), "the regard and repute events")
+	var lg: Array = CDip.regard_log(w, mace, rome)
+	_check(lg.size() == 1 and int(lg[0][0]) == 10 and int(lg[0][1]) == -40 and str(lg[0][2]) == "war", "the regard log [turn, delta, why]")
+	var wt := CState.copy(base)
+	CState.set_dip(wt, rome, mace, CState.TRADE)
+	CRules.apply_order(wt, rome, {"t": "war", "to": mace})
+	_check(CDip.repute(wt, rome) == -30, "war on a trade partner: a broken treaty -20 and unprovoked -10 (%d)" % CDip.repute(wt, rome))
+	# Provoked: the victim's army trespasses in our land.
+	var wp := CState.copy(base)
+	CState.place(CState.armies_of(wp, mace)[0], CState.field_cell(CState.regions_of(wp, rome)[0]))
+	CRules.apply_order(wp, rome, {"t": "war", "to": mace})
+	_check(CDip.repute(wp, rome) == 0 and CDip.regard(wp, mace, rome) == -40, "war on a trespasser costs no repute (%d)" % CDip.repute(wp, rome))
+	var wc := CState.copy(base)
+	CRules.declare_war(wc, rome, mace, "called")
+	_check(CDip.repute(wc, rome) == 0 and CDip.regard(wc, mace, rome) == -40 and str(_ev(wc, "war", {"a": rome, "b": mace}).get("why", "")) == "called",
+		"a war joined on a call costs no repute (the war event says why)")
+	# Peace +5 both ways.
+	var pc := CState.copy(w)
+	CRules.make_peace(pc, rome, mace)
+	_check(CDip.regard(pc, mace, rome) == -35 and CDip.regard(pc, rome, mace) == 5, "peace made: +5 both ways")
+	# A city taken -15; a town sacked -20 and repute -5.
+	var cp := CState.copy(w)
+	CRules._capture(cp, CState.regions_of(cp, mace)[0], rome)
+	_check(CDip.regard(cp, mace, rome) == -55, "a city taken: -15 (%d)" % CDip.regard(cp, mace, rome))
+	var sk := CState.copy(base)
+	CDip.on_sack(sk, mace, rome)
+	_check(CDip.regard(sk, mace, rome) == -20 and CDip.repute(sk, rome) == -5, "a town sacked: regard -20, repute -5")
+	# Trade cancelled -10.
+	var ct := CState.copy(base)
+	CState.set_dip(ct, rome, mace, CState.TRADE)
+	CRules.apply_agreement(ct, rome, mace, "cancel_trade")
+	_check(CDip.regard(ct, mace, rome) == -10 and CState.dip(ct, rome, mace) == CState.PEACE, "trade cancelled: -10")
+	# Fought side by side (allies or team mates): +10 both ways, repute +2 each, fought +1.
+	var fb := CState.copy(base)
+	CState.set_dip(fb, gaul, iber, CState.ALLIED)
+	CDip.on_battle(fb, [[gaul, iber], [carth, mace]])
+	_check(CDip.fought(fb, gaul, iber) == 1 and CDip.fought(fb, iber, gaul) == 1 and CDip.regard(fb, gaul, iber) == 10
+		and CDip.regard(fb, iber, gaul) == 10 and CDip.repute(fb, gaul) == 2 and CDip.repute(fb, iber) == 2,
+		"a battle fought beside an ally: fought 1, regard +10 both ways, repute +2 each")
+	_check(CDip.fought(fb, carth, mace) == 0 and CDip.regard(fb, carth, mace) == 0, "not allies on one side: nothing")
+	# The log keeps the last 4.
+	var lgs := CState.copy(base)
+	for k in 6:
+		CDip.add_regard(lgs, mace, rome, -(k + 1), "test")
+	lg = CDip.regard_log(lgs, mace, rome)
+	_check(lg.size() == 4 and int(lg[0][1]) == -3 and int(lg[3][1]) == -6, "the regard log keeps the last 4")
+	# Clamps.
+	var cl := CState.copy(base)
+	CDip.add_regard(cl, mace, rome, -500, "test")
+	CDip.add_repute(cl, rome, 500, "test")
+	_check(CDip.regard(cl, mace, rome) == -100 and CDip.repute(cl, rome) == 50, "clamped: regard -100..100, repute -50..50")
+	# The fade: 1 a turn toward 0; a gift's share 2.
+	var fd := CState.copy(base)
+	fd["regard"][mace * n + rome] = 10
+	fd["regard"][carth * n + rome] = -10
+	fd["repute"][rome] = 10
+	fd["repute"][carth] = -10
+	CDip.fade(fd)
+	_check(CDip.regard(fd, mace, rome) == 9 and CDip.regard(fd, carth, rome) == -9 and CDip.repute(fd, rome) == 9 and CDip.repute(fd, carth) == -9,
+		"the fade: regard 10 -> 9, -10 -> -9, repute 10 -> 9, -10 -> -9")
+	var fe := CState.copy(base)
+	fe["regard"][mace * n + gaul] = 10
+	fe["repute"][gaul] = 10
+	CRules.end_of_turn(fe)
+	_check(CDip.regard(fe, mace, gaul) == 9 and CDip.repute(fe, gaul) == 9, "end_of_turn runs the fade once")
+	var gf := CState.copy(base)
+	_check(CRules.apply_order(gf, rome, {"t": "gift", "to": mace, "gold": 500}) == "", "a gift of 500 gold")
+	_check(CDip.regard(gf, mace, rome) == 10 and CDip.gift_share(gf, mace, rome) == 10, "a gift: regard + gold / 50")
+	CDip.fade(gf)
+	_check(CDip.regard(gf, mace, rome) == 8 and CDip.gift_share(gf, mace, rome) == 8, "a gift's share fades 2 a turn (10 -> 8)")
+	# Gifts: the cap, the gold, the refusals.
+	var gc := CState.copy(base)
+	gc["factions"][rome]["treasury"] = 10000
+	var t0 := int(gc["factions"][mace]["treasury"])
+	CRules.apply_order(gc, rome, {"t": "gift", "to": mace, "gold": 1250})
+	_check(CDip.regard(gc, mace, rome) == 25 and int(gc["factions"][mace]["treasury"]) == t0 + 1250 and int(gc["factions"][rome]["treasury"]) == 8750,
+		"a gift of 1250: +25 regard, the gold moves")
+	CRules.apply_order(gc, rome, {"t": "gift", "to": mace, "gold": 2000})
+	_check(CDip.regard(gc, mace, rome) == 25 and CDip.gift_share(gc, mace, rome) == 25 and int(gc["factions"][rome]["treasury"]) == 6750,
+		"a 2000-gold gift does not raise regard past the +25 standing from gifts")
+	_check(not _ev(gc, "gold_gift", {"from": rome, "to": mace, "gold": 2000, "d": 0}).is_empty() and _chron(gc, "gold_gift"), "the gift event and chronicle row")
+	_check(CRules.apply_order(CState.copy(base), rome, {"t": "gift", "to": epir, "gold": 500}) != "", "no gift to a faction at war (%s)" % CDip.gift_check(base, rome, epir, 500))
+	_check(CRules.apply_order(CState.copy(base), rome, {"t": "gift", "to": mace, "gold": 49}) != "", "a gift is 50 gold or more")
+	_check(CRules.apply_order(CState.copy(base), rome, {"t": "gift", "to": mace, "gold": 999999}) != "", "a gift is from the treasury")
+	# The answer floors: trade at -1 refused, at 0 accepted (with its old tests).
+	var trs := CState.copy(base)
+	trs["regard"][mace * n + rome] = -1
+	_check(CAI.why(trs, rome, mace, "trade").contains("trust"), "trade at score -1 refused (%s)" % CAI.why(trs, rome, mace, "trade"))
+	trs["regard"][mace * n + rome] = 0
+	_check(CAI.why(trs, rome, mace, "trade") == "", "trade at score 0 accepted (%s)" % CAI.why(trs, rome, mace, "trade"))
+	trs["regard"][mace * n + rome] = 5
+	trs["repute"][rome] = -6
+	_check(CAI.why(trs, rome, mace, "trade") != "", "the score is regard + repute (5 - 6 refused)")
+	trs["repute"][rome] = 0
+	CState.set_dip(trs, rome, mace, CState.PEACE)  # (dip_turn now: the old turn test)
+	_check(CAI.why(trs, rome, mace, "trade") != "" and not CAI.why(trs, rome, mace, "trade").contains("trust"), "the old timing test is kept (%s)" % CAI.why(trs, rome, mace, "trade"))
+	var ps := CState.copy(base)
+	ps["regard"][mace * n + rome] = 9
+	_check(CAI.why(ps, rome, mace, "passage") != "", "passage at 9 refused")
+	ps["regard"][mace * n + rome] = 10
+	_check(CAI.why(ps, rome, mace, "passage") == "" and CRules.check_proposal(ps, rome, mace, "passage") == "", "passage at 10 accepted")
+	# Alliance: 25 and threatened.
+	var al := CState.copy(base)
+	for g in n:
+		if g != mace:
+			CState.set_dip(al, mace, g, CState.PEACE)
+	al["turn"] = 10
+	al["regard"][mace * n + rome] = 25
+	var safe := CAI.why(al, rome, mace, "alliance")
+	CState.set_dip(al, mace, syra, CState.WAR)
+	_check(CAI.threatened(al, mace, CP.of(al, mace)) and CAI.why(al, rome, mace, "alliance") == "",
+		"alliance at 25 accepted by a threatened AI (%s)" % CAI.why(al, rome, mace, "alliance"))
+	_check(safe == "" or safe.contains("safe"), "an AI threatened or not: no other reason (%s)" % safe)
+	var sa := CState.copy(al)
+	CState.set_dip(sa, mace, syra, CState.PEACE)
+	for a in CState.armies_of(sa, mace):
+		for u in a["units"]:
+			u["n"] = int(u["n"]) * 30
+	sa["regard"][mace * n + rome] = 25
+	_check(not CAI.threatened(sa, mace, CP.of(sa, mace)) and CAI.why(sa, rome, mace, "alliance").contains("safe"),
+		"a strong AI at peace is not threatened: it refuses (%s)" % CAI.why(sa, rome, mace, "alliance"))
+	al["regard"][mace * n + rome] = 24
+	_check(CAI.why(al, rome, mace, "alliance").contains("trust"), "alliance at 24 refused (%s)" % CAI.why(al, rome, mace, "alliance"))
+	al["regard"][mace * n + rome] = 0
+	CState.set_dip(al, mace, epir, CState.WAR)  # (Rome is at war with Epirus from the start: a common enemy)
+	_check(CAI.why(al, rome, mace, "alliance") == "", "a common enemy adds %d to the alliance score (%s)" % [CDip.COMMON_ENEMY, CAI.why(al, rome, mace, "alliance")])
+	_check(CRules.check_proposal(al, rome, epir, "alliance") != "", "no alliance with an enemy")
+	var al2 := CState.copy(al)
+	CState.set_dip(al2, rome, syra, CState.ALLIED)
+	_check(CRules.check_proposal(al2, rome, mace, "alliance").contains("war"), "no alliance across a war between the two sides (%s)" % CRules.check_proposal(al2, rome, mace, "alliance"))
+	# Through a turn: the AI accepts, allies are friendly and trade.
+	var at := _turn(CState.copy(al), [CTurn.submission(al, rome, [{"t": "propose", "to": mace, "what": "alliance"}])])
+	_check(CDip.allied(at, rome, mace) and CState.friendly(at, rome, mace) and not CState.same_team(at, rome, mace) and _chron(at, "alliance"),
+		"the alliance made: allied, friendly, not one team, in the chronicle")
+	var inc := CRules.income(at, rome)
+	_check(int(inc.get("trade", 0)) > 0, "an alliance includes trade income (%d)" % int(inc.get("trade", 0)))
+	_check(CRules.check_proposal(at, rome, mace, "trade") != "" and CRules.check_proposal(at, rome, mace, "team") == "", "allies: no trade proposal, a team proposal may be made")
+	# Leaving with notice: nothing for 5 turns, then TRADE.
+	var lv := CState.copy(at)
+	var lt := int(lv["turn"])
+	_check(CRules.apply_order(lv, rome, {"t": "leave_alliance", "with": mace}) == "" and CDip.leaving_since(lv, rome, mace) == lt, "leave_alliance: notice given")
+	_check(CRules.apply_order(CState.copy(lv), rome, {"t": "leave_alliance", "with": mace}) != "", "no second notice")
+	var lv4 := CState.copy(lv)
+	lv4["turn"] = lt + 4
+	CDip.end_turn(lv4)
+	_check(CDip.allied(lv4, rome, mace), "4 turns on: still allied")
+	var lv5 := CState.copy(lv)
+	lv5["turn"] = lt + 5
+	CDip.end_turn(lv5)
+	_check(not CDip.allied(lv5, rome, mace) and CState.dip(lv5, rome, mace) == CState.TRADE and not lv5.has("aleaving")
+		and _chron(lv5, "alliance_left"), "after the notice: TRADE, alliance_left in the chronicle")
+	_check(not _ev(lv, "regard", {"a": mace, "b": rome, "d": CDip.REG_LEFT_AT_WAR}).is_empty(), "leaving while the ally is at war costs -20")
+	var lp := CState.copy(at)
+	for g in n:
+		if g != mace and g != rome:
+			CState.set_dip(lp, mace, g, CState.PEACE)
+	CRules.apply_order(lp, rome, {"t": "leave_alliance", "with": mace})
+	_check(_ev(lp, "regard", {"a": mace, "b": rome, "d": CDip.REG_LEFT_AT_WAR}).is_empty(), "leaving an ally at peace costs nothing")
+	# War on an ally drops the alliance with a broken treaty.
+	var wa := CState.copy(at)
+	var rep0 := CDip.repute(wa, rome)
+	_check(CRules.apply_order(wa, rome, {"t": "war", "to": mace}) == "" and CState.at_war(wa, rome, mace) and CDip.repute(wa, rome) == rep0 - 30,
+		"war on an ally: the alliance drops, a broken treaty and unprovoked (%d)" % (CDip.repute(wa, rome) - rep0))
+	# Trespass: a human army in a peaceful AI's land.
+	var tp := CState.copy(base)
+	var mr: int = CState.regions_of(tp, mace)[0]
+	_check(CRules.can_enter(tp, rome, mr) == "" and CRules.can_enter(tp, carth, mr) != "", "a human may enter a peaceful faction's land (a trespass); an AI may not")
+	var bm := CRules.block_mask(tp, rome)
+	_check(bm[CState.field_cell(mr)] == 0 and bm[CGrid.site(mr)] != 0 and CRules.block_mask(tp, carth)[CState.field_cell(mr)] != 0,
+		"the human's path may cross that land, not its settlement; the AI's may not")
+	var ra := CState.armies_of(tp, rome)
+	for a in ra:
+		CState.place(a, CState.field_cell(mr))
+	CRules.check_sieges(tp)
+	_check(CState.army(tp, int(ra[0]["id"]))["r"] == mr, "the trespassing army is not sent home")
+	CDip.end_turn(tp)
+	var k := ra.size()
+	_check(CDip.regard(tp, mace, rome) == -2 * k and not _ev(tp, "trespass", {"f": rome, "g": mace, "armies": k}).is_empty(),
+		"trespass: -2 per army per turn (%d armies: %d), one event" % [k, CDip.regard(tp, mace, rome)])
+	tp["regard"][mace * n + rome] = -45
+	CDip.end_turn(tp)
+	var tw := _ev(tp, "war", {"a": mace, "b": rome})
+	_check(CState.at_war(tp, mace, rome) and str(tw.get("why", "")) == "trespass" and CDip.repute(tp, mace) == 0,
+		"regard below -40: the AI declares war on the trespasser (why trespass, no repute lost)")
+	var tq := CState.copy(base)
+	tq["regard"][mace * n + rome] = -45
+	CDip.end_turn(tq)
+	_check(not CState.at_war(tq, mace, rome), "no trespass war without a trespass")
+	# The AI never stands in a peaceful human's land without passage.
+	var ai := _new6([rome], 777)
+	var bad := 0
+	for t in 8:
+		ai = _turn(ai, [])
+		for a in ai["armies"]:
+			var o := CState.owner(ai, int(a["r"]))
+			var af := int(a["f"])
+			if CState.is_human(ai, o) and not CState.is_human(ai, af) and not CState.friendly(ai, af, o) \
+					and not CState.at_war(ai, af, o) and not CDip.has_passage(ai, af, o):
+				bad += 1
+	_check(bad == 0, "no AI army ends a turn in a peaceful human's land without passage (%d)" % bad)
+	# Migration: a format 9 state loads with the arrays (zeros) and hashes stably.
+	var v9 := CState.as_format(CState.new_campaign("test", 4242, [rome]), 9)
+	_check(int(v9["version"]) == 9 and not v9.has("regard") and not v9.has("repute"), "as format 9: no trust keys")
+	var m1 := CState.from_json(CState.to_json(v9))
+	var m2 := CState.from_json(CState.to_json(m1))
+	_check(int(m1["version"]) == 10 and (m1["regard"] as Array).size() == n * n and (m1["regard_log"] as Array).size() == n * n
+		and int(m1["regard"][1]) == 0 and (m1["regard_log"][1] as Array).is_empty(), "migration 9 -> 10: the arrays, zeros")
+	_check(CState.state_hash(m1) == CState.state_hash(m2), "the migrated state hashes stably")
+	var old9 := CState.as_format(base, 9)
+	_check(CRules.can_enter(old9, rome, mr) != "" and CRules.check_proposal(old9, rome, mace, "alliance") != "",
+		"a format 9 state keeps its rules (no trespass, no alliances)")
+	# Determinism: the same state and orders twice.
+	var ds := CState.copy(base)
+	ds["factions"][rome]["treasury"] = 5000
+	for a in CState.armies_of(ds, rome):
+		CState.place(a, CState.field_cell(mr))
+	var subs := [CTurn.submission(ds, rome, [{"t": "gift", "to": carth, "gold": 300}, {"t": "propose", "to": mace, "what": "alliance"},
+		{"t": "propose", "to": gaul, "what": "passage"}])]
+	var d1 := _turn(CState.copy(ds), subs)
+	var d2 := _turn(CState.copy(ds), subs)
+	d1 = _turn(d1, [])
+	d2 = _turn(d2, [])
+	_check(CState.state_hash(d1) == CState.state_hash(d2), "resolving the same state and orders twice: equal hashes (diplomacy)")
+
+
+## Calls to arms: created for every ally the turn a war starts; an AI ally
+## joins or refuses by the rule; a human's refusal costs; sitting out.
+func _dip_calls() -> void:
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var mace := _f("macedon")
+	var gaul := _f("gauls")
+	var iber := _f("iberians")
+	var n := CState.nf()
+	var base := _new6([rome])
+	base["turn"] = 10
+	for g in n:
+		for h in n:
+			if g != h and CState.dip(base, g, h) == CState.WAR:
+				CState.set_dip(base, g, h, CState.PEACE)
+	CState.set_dip(base, gaul, iber, CState.ALLIED)
+	CState.set_dip(base, gaul, carth, CState.ALLIED)
+	CState.set_dip(base, gaul, rome, CState.ALLIED)
+	base["turn"] = 12
+	# Expectation by the rule (CAI.why "call"), then the war.
+	var exp_i := CAI.why(base, gaul, iber, "call", mace)
+	var exp_c := CAI.why(base, gaul, carth, "call", mace)
+	var w := CState.copy(base)
+	CRules.declare_war(w, mace, gaul)
+	_check(_ev(w, "call_answered", {"from": gaul, "to": iber, "vs": mace}).size() > 0 and _ev(w, "call_answered", {"from": gaul, "to": carth, "vs": mace}).size() > 0,
+		"every AI ally is called the turn the war starts")
+	_check(CState.at_war(w, iber, mace) == (exp_i == "") and CState.at_war(w, carth, mace) == (exp_c == ""),
+		"each AI ally joins or refuses by the rule (iberians: %s; carthage: %s)" % [exp_i if exp_i != "" else "joins", exp_c if exp_c != "" else "joins"])
+	var pid := -1
+	for p in w["proposals"]:
+		if str(p["what"]) == "call" and int(p["from"]) == gaul and int(p["to"]) == rome and int(p["vs"]) == mace:
+			pid = int(p["id"])
+	_check(pid >= 0 and (w["called"] as Array).size() == 1, "a human ally gets the call as a proposal (and the sitting-out record)")
+	# The AI ally that joins: a called war costs no repute; one that refuses pays.
+	var strong := CState.copy(base)
+	for a in CState.armies_of(strong, iber):
+		for u in a["units"]:
+			u["n"] = int(u["n"]) * 20
+	CRules.declare_war(strong, mace, gaul)
+	var we := _ev(strong, "war", {"a": iber, "b": mace})
+	_check(CState.at_war(strong, iber, mace) and str(we.get("why", "")) == "called" and CDip.repute(strong, iber) == 0 and CDip.regard(strong, mace, iber) == -40,
+		"a strong AI ally joins: war on the enemy as called, no repute lost")
+	var weak := CState.copy(base)
+	for a in CState.armies_of(weak, iber):
+		for u in a["units"]:
+			u["n"] = 1
+	var weak_why := CAI.why(weak, gaul, iber, "call", mace)
+	CRules.declare_war(weak, mace, gaul)
+	_check(weak_why != "" and not CState.at_war(weak, iber, mace) and CDip.regard(weak, gaul, iber) == -20 and CDip.repute(weak, iber) == -5
+		and int(_ev(weak, "call_answered", {"from": gaul, "to": iber}).get("accept", -1)) == 0,
+		"a weak AI ally refuses: regard -20, repute -5 (%s)" % weak_why)
+	# A human's answers.
+	var hr := CState.copy(w)
+	_check(CRules.apply_order(hr, rome, {"t": "answer", "id": pid, "accept": 0}) == "" and not CState.at_war(hr, rome, mace)
+		and CDip.regard(hr, gaul, rome) == -20 and CDip.repute(hr, rome) == -5 and not hr.has("called"),
+		"a human refuses: regard -20, repute -5, the record gone")
+	var ha := CState.copy(w)
+	_check(CRules.apply_order(ha, rome, {"t": "answer", "id": pid, "accept": 1}) == "" and CState.at_war(ha, rome, mace)
+		and CDip.repute(ha, rome) == 0 and _chron(ha, "call_answered"), "a human answers the call: at war with the enemy, no repute lost")
+	# Through a turn: the proposal waits a turn.
+	var tw2 := CState.copy(base)
+	CRules.declare_war(tw2, mace, gaul)
+	var nx := _turn(tw2, [])
+	var still := false
+	for p in nx["proposals"]:
+		if str(p["what"]) == "call" and int(p["to"]) == rome:
+			still = true
+	_check(still, "the call waits for the human's answer next turn")
+	# A defensive pact: the attacker's allies are not called.
+	var off := CState.copy(base)
+	CRules.declare_war(off, gaul, mace)
+	var calls := 0
+	for p in off["proposals"]:
+		if str(p["what"]) == "call":
+			calls += 1
+	_check(CState.at_war(off, gaul, mace) and _ev(off, "call_answered").is_empty() and calls == 0 and not off.has("called")
+		and not CState.at_war(off, iber, mace) and not CState.at_war(off, carth, mace) and not CState.at_war(off, rome, mace),
+		"an offensive war calls nobody (the pact is defensive)")
+	# A battle resolved with two allies on one side (apply_outcome): fought together.
+	var fbs := CState.copy(base)
+	var ga: Dictionary = CState.armies_of(fbs, gaul)[0]
+	var ia: Dictionary = CState.armies_of(fbs, iber)[0]
+	var ma: Dictionary = CState.armies_of(fbs, mace)[0]
+	CState.set_dip(fbs, gaul, mace, CState.WAR)
+	CState.set_dip(fbs, iber, mace, CState.WAR)
+	CState.place(ga, CState.cell(ma))
+	CState.place(ia, CState.cell(ma))
+	var fbb := CRules.start_field_battle(fbs, int(ma["r"]), [ga, ia], [ma])
+	fbb["x"] = int(ma["x"])
+	fbb["y"] = int(ma["y"])
+	fbb.erase("new")
+	CRules.apply_outcome(fbs, int(fbb["id"]), CBattle.formula(fbs, fbb))
+	_check(CDip.fought(fbs, gaul, iber) == 1 and CDip.regard(fbs, gaul, iber) == 10 and CDip.fought(fbs, gaul, mace) == 0,
+		"a resolved battle: the allies on one side fought together (%d)" % CDip.fought(fbs, gaul, iber))
+	# Sitting out: still at peace with the enemy 5 turns after the call.
+	var so := CState.copy(w)
+	so["proposals"] = []
+	var so4 := CState.copy(so)
+	so4["turn"] = 16
+	CDip.end_turn(so4)
+	_check(so4.has("called") and CDip.allied(so4, gaul, rome), "4 turns after the call: nothing yet")
+	var so5 := CState.copy(so)
+	so5["turn"] = 17
+	CDip.end_turn(so5)
+	_check(not _ev(so5, "call_sat_out", {"from": gaul, "to": rome, "vs": mace}).is_empty()
+		and not _ev(so5, "regard", {"a": gaul, "b": rome, "d": -20, "why": "call_refused"}).is_empty()
+		and not _ev(so5, "repute", {"f": rome, "d": -5, "why": "call_refused"}).is_empty(),
+		"5 turns sitting out: the refusal's costs")
+	_check(not CDip.allied(so5, gaul, rome) and CState.dip(so5, gaul, rome) == CState.TRADE
+		and str(_ev(so5, "alliance_left", {"f": gaul, "with": rome}).get("why", "")) == "sat_out" and not so5.has("called"),
+		"and the AI caller leaves the alliance at once")
+	var sp := CState.copy(so)
+	CRules.make_peace(sp, mace, gaul)
+	sp["turn"] = 17
+	CDip.end_turn(sp)
+	_check(_ev(sp, "call_sat_out").is_empty() and not sp.has("called"), "a war that ended: the call is forgotten")
+
+
+## Military passage: granted for 10 turns, entry allowed, no trespass cost, lapses.
+func _dip_passage() -> void:
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var carth := _f("carthage")
+	var mace := _f("macedon")
+	var n := CState.nf()
+	var st := _new6([rome])
+	st["turn"] = 10
+	var mr: int = CState.regions_of(st, mace)[0]
+	CRules.apply_agreement(st, carth, mace, "passage")
+	_check(int(st["passage"][mace * n + carth]) == 20 and CDip.has_passage(st, carth, mace) and not CDip.has_passage(st, mace, carth)
+		and _chron(st, "passage"), "passage granted for 10 turns (one way), in the chronicle")
+	_check(CRules.can_enter(st, carth, mr) == "" and CRules.check_proposal(st, carth, mace, "passage") != "", "entry allowed; no second grant")
+	CRules.apply_agreement(st, rome, mace, "passage")
+	for a in CState.armies_of(st, rome):
+		CState.place(a, CState.field_cell(mr))
+	var e9 := CState.copy(st)
+	e9["turn"] = 18
+	CDip.end_turn(e9)
+	_check(CDip.regard(e9, mace, rome) == 0 and _ev(e9, "trespass").is_empty() and CDip.has_passage(e9, carth, mace),
+		"with passage: no trespass cost; still in force before its last turn")
+	var e10 := CState.copy(st)
+	e10["turn"] = 19
+	CDip.end_turn(e10)
+	_check(not CDip.has_passage(e10, carth, mace) and int(e10["passage"][mace * n + carth]) == 0
+		and not _ev(e10, "passage_end", {"a": mace, "b": carth}).is_empty(), "passage lapses after 10 turns")
+	e10["turn"] = 20
+	_check(CRules.can_enter(e10, carth, mr) != "", "the AI is refused entry again")
+	# A human proposal answered by the AI: passage at the floor.
+	var hp := CState.copy(st)
+	hp["passage"][mace * n + rome] = 0
+	hp["regard"][mace * n + rome] = 10
+	var r1 := _turn(hp, [CTurn.submission(hp, rome, [{"t": "propose", "to": mace, "what": "passage"}])])
+	_check(int(r1["passage"][mace * n + rome]) == 20, "the AI grants a player passage at score 10 (%d)" % int(r1["passage"][mace * n + rome]))
+
+
+## The West's starting treaties and the Miskito musket line; Rome has none.
+func _dip_west() -> void:
+	var st := CState.new_campaign("test", 4242, [], {}, [], "west")
+	var misk := _f("miskito")
+	var eng := _f("england")
+	var fra := _f("france")
+	var bre := _f("brethren")
+	var n := CState.nf()
+	_check(CDip.allied(st, misk, eng) and CState.dip(st, misk, eng) >= CState.TRADE and CDip.regard(st, misk, eng) == 30
+		and CDip.regard(st, eng, misk) == 30, "West: the Miskito begin allied (and trading) with England, regard 30 both ways")
+	_check(CSea.has_marque(st, fra, bre) and CState.dip(st, fra, bre) == CState.PEACE, "West: France holds a letter of marque on the Brethren")
+	_check(not CDip.allied(st, _f("itza"), eng) and CDip.allies(st, _f("itza")).is_empty(), "the Itza begin with nobody")
+	var v9 := CState.as_format(st, 9)
+	_check(CState.dip(v9, misk, eng) == CState.PEACE and not CSea.has_marque(v9, fra, bre), "as format 9: the treaties undone (the state an older build made)")
+	var cab := CData.region_index("cabo_gracias")
+	_check(CRules.recruit_check(st, misk, cab, "musketeers") == "", "the Miskito raise musketmen at the start (%s)" % CRules.recruit_check(st, misk, cab, "musketeers"))
+	var g := CState.copy(st)
+	CState.set_dip(g, misk, eng, CState.TRADE)
+	CRules.apply_agreement(g, misk, eng, "cancel_trade")
+	var other := false
+	for k in ["new_spain", "tierra_firme", "france", "dutch"]:
+		if CState.dip(g, misk, _f(k)) >= CState.TRADE:
+			other = true
+	_check(not other and CRules.recruit_check(g, misk, cab, "musketeers") == CDip.TREATY_LINE_WHY,
+		"no European trade partner: the musket line refused (%s)" % CRules.recruit_check(g, misk, cab, "musketeers"))
+	_check(CRules.recruit_check(g, misk, cab, "native_warriors") == "", "the other lines are not")
+	_check(CRules.recruit_check(g, eng, CData.region_index("port_royal"), "musketeers") == "", "England's own muskets unaffected")
+	var g2 := CState.copy(g)
+	CState.set_dip(g2, misk, fra, CState.TRADE)
+	_check(CRules.recruit_check(g2, misk, cab, "musketeers") == "", "a trade agreement with France opens it again")
+	var start_muskets := 0
+	for a in CState.armies_of(g, misk):
+		for u in a["units"]:
+			if str(u["t"]) == "musketeers":
+				start_muskets += 1
+	_check(start_muskets >= 1, "the Miskito start army keeps its musketmen")
+	var raised := [0, 0]
+	var ss := [CState.copy(g), CState.copy(st)]
+	for k in 2:
+		var rr: Dictionary = ss[k]
+		for t in 10:
+			var shut := CDip.line_why(rr, misk, "musket") != ""
+			rr = CTurn.resolve_turn(rr, [])
+			if k == 0 and not shut:
+				continue  # (the AI may trade with a European again: the gate opens)
+			for e in rr["events"]:
+				if str(e.get("k", "")) == "recruited" and int(e["f"]) == misk and int(e["turn"]) == int(rr["turn"]) - 1:
+					for u in e["units"]:
+						if str(u) == "musketeers":
+							raised[k] += 1
+	print("Miskito musketmen raised in 10 turns: gated %d, with the English alliance %d" % [raised[0], raised[1]])
+	_check(raised[0] == 0, "the Miskito AI plans no muskets it cannot raise")
+	var rs := CState.new_campaign("test", 4242, [], {}, [], "rome")
+	var any := false
+	for a in CState.nf():
+		for b in CState.nf():
+			if CDip.allied(rs, a, b) or CDip.regard(rs, a, b) != 0:
+				any = true
+	_check(not any and not rs.has("marques"), "Rome: no starting treaties")
+	var story_like := CState.new_campaign("test", 4242, [bre], {"treaties": 0}, [], "west")
+	_check(not CDip.allied(story_like, misk, eng) and not story_like["settings"].has("treaties"), "settings treaties 0 (a story campaign): none, not stored")
+	CData.use_pack("rome")
+	_check(n > 0, "(west factions %d)" % n)
+
+
+## AI-AI alliances: with the setting on some AI pair allies within a few
+## turns in at least one of several seeds; with it 0 none.
+func _dip_ai_alliances() -> void:
+	CData.use_pack("rome")
+	var made := 0
+	var made0 := 0
+	for sd in [4242, 4243, 4244]:
+		for setting in [1, 0]:
+			var st := CState.new_campaign("test", sd, [], {"ai_alliances": setting})
+			_check(st["settings"].has("ai_alliances") == (setting == 0), "ai_alliances stored only when 0")
+			for t in 24:
+				st = CTurn.resolve_turn(st, [])
+			var pairs := 0
+			for e in st.get("chronicle", []):
+				if str(e.get("k", "")) == "alliance":
+					pairs += 1
+			if setting == 1:
+				made += pairs
+			else:
+				made0 += pairs
+	print("AI-AI alliances over 3 seeds x 24 turns: %d (setting 0: %d)" % [made, made0])
+	_check(made > 0, "with ai_alliances on, AI factions make alliances (%d)" % made)
+	_check(made0 == 0, "with ai_alliances 0, none (%d)" % made0)
+
+
+## Deterrence (format 10): the AI weighs a target with the allies that a
+## defensive call would bring (CAI.bloc_strength), not the target alone.
+func _dip_deterrence() -> void:
+	CData.use_pack("rome")
+	var mace := _f("macedon")
+	var epir := _f("epirus")
+	var gree := _f("greeks")
+	var n := CState.nf()
+	var st := CState.new_campaign("test", 4242, [])
+	for g in n:
+		for h in n:
+			if g != h and CState.dip(st, g, h) == CState.WAR:
+				CState.set_dip(st, g, h, CState.PEACE)
+	CState.set_dip(st, epir, gree, CState.ALLIED)
+	st["turn"] = 20
+	for g in n:
+		if g != mace and g != epir:
+			st["regard"][mace * n + g] = CDip.NO_WAR_REGARD  # (only Epirus is a candidate)
+	for a in CState.armies_of(st, epir):
+		for u in a["units"]:
+			u["n"] = maxi(1, int(u["n"]) / 10)
+	var kn := CP.of(st, mace)
+	var m := CAI.faction_strength(st, mace)
+	var guard := 0
+	while CAI.bloc_strength(st, mace, epir) * kn[CP.WAR_RATIO] <= m * 100 and guard < 12:
+		for a in CState.armies_of(st, gree):
+			for u in a["units"]:
+				u["n"] = int(u["n"]) * 2
+		guard += 1
+	var alone := CAI.faction_strength(st, epir)
+	var bloc := CAI.bloc_strength(st, mace, epir)
+	_check(CAI._neighbours(st, mace, epir) and m * 100 >= alone * kn[CP.WAR_RATIO] and m * 100 < bloc * kn[CP.WAR_RATIO],
+		"deterrence setup: Epirus alone is weak enough, with its ally not (%d vs %d / %d)" % [m, alone, bloc])
+	var wc0: int = kn[CP.WAR_CHANCE]
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)  # (every eligible war is declared)
+	var d1 := CState.copy(st)
+	CAI.diplomacy(d1, mace)
+	_check(not CState.at_war(d1, mace, epir), "an AI does not attack a weaker neighbour whose ally makes the bloc too strong")
+	var d2 := CState.copy(st)
+	CState.set_dip(d2, gree, mace, CState.WAR)
+	d2["turn"] = 20
+	_check(CAI.bloc_strength(d2, mace, epir) == CAI.faction_strength(d2, epir), "an ally already at war with us is not counted")
+	CAI.diplomacy(d2, mace)
+	_check(CState.at_war(d2, mace, epir), "... and the AI declares war on the neighbour then")
+	var d3 := CState.as_format(st, 9)
+	_check(CAI.bloc_strength(d3, mace, epir) == CAI.faction_strength(d3, epir), "format 9: the target's own strength (no alliances)")
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)

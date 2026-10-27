@@ -314,6 +314,27 @@ not at war.
 - Skilled: declares war when the player's armies are far from the shared
   border; coordinates with its ally's wars; accepts peace to rebuild then
   returns.
+- Trust-driven answers and AI alliances (state format 10, 2026-10-26;
+  `campaign/cdip.gd`, `docs/design/campaign_rules.md` "Diplomacy: trust,
+  alliances and passage"): `CAI.why` scores an offer as regard[to][from] +
+  repute[from] (wars declared, cities taken, sacks, trespass, calls refused,
+  cancelled trade and gifts move them; both fade a point a turn) and needs
+  a floor per treaty: trade 0 (before its old timing and strength tests),
+  passage 10, alliance 25 (+25 when both are at war with one faction) and
+  the answering AI threatened (at war, or a stronger neighbour that is not
+  friendly), a team allied with regard 50 and a battle fought together.
+  An ally's call to arms (a defensive pact: only the attacked side's allies
+  are called) is joined while the AI has fewer than MAX_WARS
+  wars and WAR_RATIO_BUSY % of the enemy's strength, else refused at a
+  cost. The AI never starts a war on a faction it regards 30 or more and
+  doubles its chance on one it regards -30 or less, and weighs a target
+  with its allies that would answer a defensive call (`bloc_strength`); it answers a trespasser
+  it regards below -40 with war. A threatened AI with fewer than ALLY_MAX
+  (2) allies proposes an alliance ALLY_PROPOSE % a turn (Easy 0, Average
+  15, Skilled 25) to the neighbour it regards best that is at war with
+  none of its side; with the creation setting `ai_alliances` 0 it asks
+  only players. Old formats (an unmigrated online campaign) keep the old
+  rules.
 
 ### 4.9 Preservation and retreat
 Good: an army is worth more than a region; retreat from a lost battle to
