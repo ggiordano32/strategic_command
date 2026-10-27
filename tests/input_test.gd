@@ -147,6 +147,7 @@ func _initialize() -> void:
 		_step_pause_again,
 		_step_group_cav,
 		_step_withdraw_button,
+		_step_withdraw_confirm,
 		_step_check_withdraw_pending,
 		_step_withdraw_army_first,
 		_step_check_withdraw_army_confirm,
@@ -479,9 +480,24 @@ func _drag(idx: int, pos: Vector2, rel: Vector2) -> void:
 
 func _tap_control(c: Control) -> void:
 	_no_double_tap()
+	_open_more_for(c)
 	var p := _vp_to_window(c.get_global_rect().get_center())
 	_touch(0, p, true)
 	_touch(0, p, false)
+
+
+## A chip that did not fit the bar (a phone-width viewport with a wide selection capsule) lives in the More popover:
+## open it, and lay it out at once, so the tap lands on the chip.
+func _open_more_for(c: Control) -> void:
+	if not is_instance_valid(battle) or battle.hud == null:
+		return
+	var h = battle.hud
+	if h.more_box == null or c.get_parent() != h.more_box:
+		return
+	if not h.more_panel.visible:
+		h._set_more_open(true)
+	h.more_panel.notification(Container.NOTIFICATION_SORT_CHILDREN)
+	h.more_box.notification(Container.NOTIFICATION_SORT_CHILDREN)
 
 
 func _check(cond: bool, what: String) -> void:
@@ -1065,6 +1081,13 @@ func _step_withdraw_button() -> void:
 	_tap_control(battle.hud.withdraw_button)
 
 
+## (2026-10-27) Withdraw asks to confirm in a popover above the button: the first tap only opens it.
+func _step_withdraw_confirm() -> void:
+	_check(battle.hud.confirm_panel.visible, "Withdraw opens its confirmation popover")
+	_check(battle.overlay._v(u_cav, "order") != BattleSim.O_WITHDRAW, "the first tap on Withdraw orders nothing yet")
+	_tap_control(battle.hud.confirm_ok)
+
+
 func _step_check_withdraw_pending() -> void:
 	var ov := battle.overlay
 	_check(ov._v(u_cav, "order") == BattleSim.O_WITHDRAW and battle.sim.u_order[u_cav] != BattleSim.O_WITHDRAW,
@@ -1082,11 +1105,11 @@ func _step_withdraw_army_first() -> void:
 
 func _step_check_withdraw_army_confirm() -> void:
 	_check(battle.sim._order_seq == _seq_before_army, "first tap on Withdraw army only asks to confirm")
-	_check(battle.hud.withdraw_all_button.text.begins_with("Tap"), "button asks for confirmation (%s)" % battle.hud.withdraw_all_button.text)
+	_check(battle.hud.confirm_panel.visible and battle.hud.confirm_ok.visible, "button asks for confirmation (the popover is open)")
 
 
 func _step_withdraw_army_second() -> void:
-	_tap_control(battle.hud.withdraw_all_button)
+	_tap_control(battle.hud.confirm_ok)  # (2026-10-27) the popover's Withdraw army row confirms
 
 
 func _step_check_withdraw_army_pending() -> void:
@@ -1099,7 +1122,7 @@ func _step_check_withdraw_army_pending() -> void:
 		_predicted[u] = {}
 		for k in ["order", "target", "run", "dx", "dy", "dface"]:
 			_predicted[u][k] = ov._v(u, k)
-	_check(all, "second tap withdraws the whole army (drawn while paused)")
+	_check(all, "the popover's Withdraw army confirms: the whole army withdraws (drawn while paused)")
 
 
 func _step_check_withdraw_handover() -> void:
@@ -3515,7 +3538,7 @@ func _step_ch_select() -> void:
 
 func _step_ch_check_buttons() -> void:
 	var cb: Dictionary = battle.hud.char_buttons
-	_check((cb["sabotage"] as Button).is_visible_in_tree() and (cb["attempt"] as Button).is_visible_in_tree()
+	_check((cb["sabotage"] as Button).visible and (cb["attempt"] as Button).visible   # (.visible: the chips may sit under More)
 		and not (cb["parley"] as Button).visible, "the assassin selected: Sabotage and Attempt in the order row, no Parley")
 	_key(KEY_P, {"shift": true})
 
