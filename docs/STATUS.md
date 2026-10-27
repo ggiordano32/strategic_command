@@ -71,6 +71,7 @@ Next, in order (the open items of the list; detail in the areas below): (00) rol
 One bullet per open item pulled from the rows' **Open:** texts; the bracket names the archive row (or paragraph) that holds the detail, in `docs/history/2026-10.md` unless it says `overview`. Bullets about "not played on a phone / tablet" are collected under Tests and devices.
 
 ### Battle sim
+- Line of sight reads as a glitch (owner 2026-10-27: "enemy units seem to pop in and out of sight"; agreed plan, briefed 2026-10-27): the seen check is binary and instant (once a second, no memory) and a hidden unit is simply not drawn on a fully drawn field. (1) The view keeps a last-seen ghost: the unit stays drawn greyed at its last seen place and facing, fading over 4 s to a faint outline and marker that stay until it is seen again (view only, each side its own). (2) The sim lingers: a unit seen in the open stays seen `VIS_LINGER` 3 s after its last sight line is lost, once per hiding (hashed; woods and cover gone to ground do not linger). Later if still needed: a drawn shroud of the ground the side cannot see.
 - Waypoints: no keyboard key; the Orders overlay (all units) does not draw chains; three-finger group moves still replace. [row "Battle waypoints"]
 - Men turn to their march: engines and routed men keep the sim's facing. [row "Men turn to their march"]
 - Mid-battle reinforcements: ambush stance; no cap on the number of armies in a battle; no choice of which units wait. [row "Mid-battle reinforcements"]
