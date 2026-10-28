@@ -178,7 +178,7 @@ func _ready() -> void:
 			sr0.add_child(sb)
 			_pack_buttons[str(c[0])] = sb
 		v.add_child(sr0)
-	if CData.has_pack("west") and (story_only or CData.pack == "west"):
+	if CData.has_pack("west") and (story_only or (online and CData.pack == "west")):  # (the offline sandbox has no story cards: the Campaign page is the story's home; the Host screen keeps "Host the story")
 		v.add_child(_build_story())
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
