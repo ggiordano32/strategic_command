@@ -29,6 +29,7 @@ const CFleet := preload("res://campaign/cfleet.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/campaign/water.gdshader")
 const SeaWaves := preload("res://game/campaign/sea_waves.gd")
+const InkLines := preload("res://game/campaign/ink_lines.gd")
 
 const SEA := Color(0.13, 0.25, 0.34)
 const SEA_SHALLOW := Color(0.22, 0.38, 0.47)
@@ -141,6 +142,19 @@ var _sel_node: Node2D = null    # the selected region's outline (over the edges,
 var _reach_rt := PackedInt32Array()      # the reach set_reach last outlined
 var _owners_drawn := PackedInt32Array()   # the owners the map was last drawn for (refresh_state)
 var _edges: Node2D = null     # children drawn after the map's own drawing, redrawn a frame apart (see _process)
+var _edges_batch: InkLines = null   # the edges' ink mesh (_edges_ink) and what it was built for
+var _edges_key := ""
+var _edges_band := {}               # region -> the ids of its owner band polylines in _edges_batch
+var _coast_batch: InkLines = null   # the coastline, roads and rivers (_draw_coast_body)
+var _coast_key := ""
+var _beach_batch: InkLines = null   # the beaches and cliffs (_draw_beach_node)
+var _beach_key := ""
+var _ink_state := -1                # InkLines.state the lines were drawn for
+var _lane_node: Node2D = null       # the sea lanes' ink (a child of the coast node: drawn right after it)
+var _lane_batch: InkLines = null
+var _lane_ink_key := ""
+var _beach_cache := {}              # key -> InkLines (one per cliff-tick stride)
+var _beach_cache_gen := -1
 var _coast_node: Node2D = null
 var _beach_node: Node2D = null   # the beaches and cliffs (see "beaches and cliffs")
 var _beach_band := -9999         # the zoom band (and style, pack) the beach node was drawn for
@@ -239,6 +253,8 @@ func _ready() -> void:
 	load_view_pref()
 	instance = self
 	_make_water()
+	_ink_state = InkLines.state
+	InkLines.probe(self)   # (ink_lines.gd: until it passes, the batches replay their draw_polyline calls; see _process)
 
 
 ## The sea: one quad behind this node's own drawing (the land polygons cover
@@ -290,6 +306,11 @@ func _make_water() -> void:
 	_coast_node = Node2D.new()
 	_coast_node.draw.connect(_draw_coast)
 	add_child(_coast_node)
+	_lane_node = Node2D.new()
+	_lane_node.draw.connect(_draw_lane_node)
+	_coast_node.add_child(_lane_node)
+	for nd in [_edges, _beach_node, _coast_node, _lane_node]:
+		InkLines.no_cull(nd)   # (ink meshes: their vertices are codes, not positions)
 
 
 ## The chart sea's distance field (2026-10-27, rounded and pushed out the same day, owner): the true Euclidean
@@ -573,6 +594,10 @@ static func _elevation_tex() -> ImageTexture:
 
 ## The wave clock (SeaWaves.t, also the shader's `wave_t`): the sea only moves on "high".
 func _process(delta: float) -> void:
+	if _ink_state != InkLines.state:
+		_ink_state = InkLines.state   # the ink probe passed (or failed): the lines are drawn again, by the mesh
+		_beach_band = -9999
+		queue_redraw()
 	if _stage == 1:
 		_stage = 2
 		_heavy_frame = Engine.get_process_frames()
@@ -1085,36 +1110,11 @@ func _draw_edges() -> void:
 	var t0 := ZProf.begin()
 	var lw := 1.0 / maxf(zoom, 0.05)
 	var tbl := _tbl
-	# Owner edge: a band of the owner's colour inside each territory, so the
-	# owner reads at once whatever the ground.
-	for r in CData.region_count():
-		if FogView.never(r):
-			continue   # (fog: no border round land never seen)
-		var o := FogView.shown_owner(state, r)
-		if o < 0:
-			if tbl:
-				# Independent land: no wash, a neutral grey dashed border.
-				for dsh in _indep_dashes(r):
-					_edges.draw_multiline(dsh, Color(0.12, 0.08, 0.05, 0.5), (TABLE_EDGE_W + 1.0) * lw, true)
-					_edges.draw_multiline(dsh, INDEP_EDGE, TABLE_EDGE_W * 0.8 * lw, true)
-			continue
-		var ec := CData.faction_color(o)
-		ec.a = OWNER_EDGE_A
-		for piece in Geo.smooth_cell(r):
-			var closed: PackedVector2Array = piece.duplicate()
-			closed.append(piece[0])
-			if tbl:
-				_edges.draw_polyline(closed, TABLE_BORDER, (TABLE_EDGE_W + 1.6) * lw, true)
-			_edges.draw_polyline(closed, ec, (TABLE_EDGE_W if tbl else OWNER_EDGE_W) * lw, true)
-	# Borders between territories (darker where owners differ is implied by
-	# the tint; one thin line everywhere keeps it light).
-	for r in CData.region_count():
-		if FogView.never(r):
-			continue
-		for piece in Geo.smooth_cell(r):
-			var closed: PackedVector2Array = piece.duplicate()
-			closed.append(piece[0])
-			_edges.draw_polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), (1.8 if tbl else 1.2) * lw, true)
+	# The owner bands, the independent dashes and the borders: one ink mesh (ink_lines.gd), rebuilt only when a
+	# region turns seen / independent / owned or the style changes; an owner change only recolours it.
+	var ink := _edges_ink(tbl)
+	ink.draw(_edges, lw)
+	# (the targets' outlines are drawn as before, after the mesh: they pass through the ink shader unchanged)
 	for r in targets:
 		var te := target_edge(attack_targets.has(r), int(target_turns.get(r, 0)))
 		for piece in Geo.smooth_cell(r):
@@ -1129,6 +1129,61 @@ func _draw_edges() -> void:
 		# A small cross on the settlement: "not this turn".
 		draw_blocked_cross(_edges, Geo.site(r), lw)
 	ZProf.add("mv_edges", t0)
+
+
+## The edges' ink: in drawing order, per region an owner band (a band of the owner's colour inside each territory,
+## so the owner reads at once whatever the ground; in the table style over a dark border) or, independent land in
+## the table style, a neutral grey dashed border (no wash); then one thin border line round every region (darker
+## where owners differ is implied by the tint; one thin line everywhere keeps it light). No border round land
+## never seen (fog).
+func _edges_ink(tbl: bool) -> InkLines:
+	var n := CData.region_count()
+	var cls := PackedByteArray()
+	cls.resize(n)
+	var owners := PackedInt32Array()
+	owners.resize(n)
+	for r in n:
+		if FogView.never(r):
+			continue
+		owners[r] = FogView.shown_owner(state, r)
+		cls[r] = 1 if owners[r] < 0 else 2
+	var key := "%d:%d:%s" % [_gen, 1 if tbl else 0, cls.hex_encode()]
+	if key != _edges_key or _edges_batch == null:
+		_edges_key = key
+		_edges_batch = InkLines.new()
+		_edges_band = {}
+		var b := _edges_batch
+		for r in n:
+			if cls[r] == 0:
+				continue
+			if cls[r] == 1:
+				if tbl:
+					for dsh in _indep_dashes(r):
+						b.multiline(dsh, Color(0.12, 0.08, 0.05, 0.5), TABLE_EDGE_W + 1.0)
+						b.multiline(dsh, INDEP_EDGE, TABLE_EDGE_W * 0.8)
+				continue
+			var ids := PackedInt32Array()
+			for piece in Geo.smooth_cell(r):
+				var closed: PackedVector2Array = piece.duplicate()
+				closed.append(piece[0])
+				if tbl:
+					b.polyline(closed, TABLE_BORDER, TABLE_EDGE_W + 1.6)
+				ids.append(b.polyline(closed, Color.WHITE, TABLE_EDGE_W if tbl else OWNER_EDGE_W))
+			_edges_band[r] = ids
+		for r in n:
+			if cls[r] == 0:
+				continue
+			for piece in Geo.smooth_cell(r):
+				var closed: PackedVector2Array = piece.duplicate()
+				closed.append(piece[0])
+				b.polyline(closed, Color(0.1, 0.1, 0.08, 0.7 if tbl else 0.45), 1.8 if tbl else 1.2)
+		b.commit()
+	for r in _edges_band:
+		var ec := CData.faction_color(owners[r])
+		ec.a = OWNER_EDGE_A
+		for id in _edges_band[r]:
+			_edges_batch.set_color(id, ec)
+	return _edges_batch
 
 
 ## The selected region's outline (its own node over the edges: selecting a region does not redraw them).
@@ -1148,38 +1203,57 @@ func _draw_reach_node() -> void:
 
 
 ## The coastline, roads, rivers, crossings and sea lanes (child node `_coast_node`).
+func _draw_lane_node() -> void:
+	if grid:
+		_draw_lanes_ink(1.0 / maxf(zoom, 0.05))
+
+
 func _draw_coast() -> void:
 	var t0 := ZProf.begin()
+	_lane_node.queue_redraw()
 	_draw_coast_body()
 	ZProf.add("mv_coast", t0)
 
 
 func _draw_coast_body() -> void:
 	var lw := 1.0 / maxf(zoom, 0.05)
-	# Coastline.
-	for poly in Geo.lands() + Geo.islands():
-		var closed: PackedVector2Array = poly.duplicate()
-		closed.append(poly[0])
-		_coast_node.draw_polyline(closed, COAST, 1.6 * lw, true)
+	# Coastline, then (grid) the roads and rivers: one ink mesh (ink_lines.gd) per pack and style.
+	var tbl := table_on()
+	var key := "%d:%d:%d" % [_gen, 1 if tbl else 0, 1 if grid else 0]
+	if key != _coast_key or _coast_batch == null:
+		_coast_key = key
+		_coast_batch = InkLines.new()
+		var b := _coast_batch
+		for poly in Geo.lands() + Geo.islands():
+			var closed: PackedVector2Array = poly.duplicate()
+			closed.append(poly[0])
+			b.polyline(closed, COAST, 1.6)
+		if grid:
+			if tbl:
+				var c := COL_TRACK
+				for ln in _track_lines:
+					b.polyline(ln, Color(c.r * 0.38, c.g * 0.34, c.b * 0.3, 0.62), TRACK_CORE_W + 1.6)
+					b.polyline(ln, Color(c.lightened(0.38), 0.9), TRACK_CORE_W - 0.5)
+			else:
+				for ln in _road_lines:
+					b.polyline(ln, Color(0.16, 0.10, 0.04, 0.6), ROAD_W + 1.5)
+					b.polyline(ln, COL_ROAD, ROAD_W)
+			for ln in _river_lines:
+				b.polyline(ln, COL_RIVER, RIVER_W)
+		b.commit()
+	_coast_batch.draw(_coast_node, lw)
+	# (what follows passes through the ink shader unchanged)
 	# Land routes (dashed) and sea lanes (dotted, light blue).
 	if grid:
-		# Roads, rivers and the crossings over them.
-		if table_on():
-			for ln in _track_lines:
-				draw_track(_coast_node, ln, lw)
-		else:
-			for ln in _road_lines:
-				draw_road(_coast_node, ln, lw)
-		for ln in _river_lines:
-			draw_river(_coast_node, ln, lw)
+		# The crossings over the rivers.
 		for cm in _cross_marks:
 			if int(cm[2]) == 0:
 				draw_ford(_coast_node, cm[0], cm[1], lw)
 			else:
 				draw_bridge(_coast_node, cm[0], cm[1], lw)
 		# Sea lanes (every pack, both styles): curves through the sea between the ports. They are trade routes
-		# in a pack with ships, where armies cross on fleets, and the armies' links in one without.
-		_draw_lanes(_coast_node, lw)
+		# in a pack with ships, where armies cross on fleets, and the armies' links in one without. (Drawn by the
+		# child `_lane_node`, right after this node: _draw_lanes_ink.)
 		return
 	for pair in CData.ROUTES:
 		var p0 := Geo.site(CData.region_index(pair[0]))
@@ -1191,8 +1265,9 @@ func _draw_coast_body() -> void:
 		draw_sea_lane(_coast_node, p0, p1, lw)
 
 
-## The sea lanes as dashed curves (dashes cut for this line scale and style, cached).
-static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
+## The sea lanes as dashed curves (dashes cut for this line scale and style, cached), as one ink mesh
+## (ink_lines.gd) on the coast node's child `_lane_node` (drawn right after the coast node: the same order).
+func _draw_lanes_ink(lw: float) -> void:
 	var tbl := table_on()
 	var rh := rhumb_on()
 	var wk := LOD_LANE if far_lod else 1.0   # (zoomed out the lanes are thinner, the dashes the same)
@@ -1202,15 +1277,22 @@ static func _draw_lanes(ci: CanvasItem, lw: float) -> void:
 		_lane_dashes = []
 		for ln in _lane_lines:
 			_lane_dashes.append(dash_polyline(ln, lane_dash(tbl) * lw, lane_gap(tbl) * lw))
-	for segs in _lane_dashes:
-		if (segs as PackedVector2Array).size() >= 2:
-			if rh:
-				ci.draw_multiline(segs, COL_RHUMB, RHUMB_W * lw * wk, true)
-			elif tbl:
-				ci.draw_multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * lw * wk, true)
-				ci.draw_multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * lw * wk, true)
-			else:
-				ci.draw_multiline(segs, COL_SEA_LANE, LANE_W * lw * wk, true)
+	var ikey := "%s:%.3f" % [key, wk]
+	if ikey != _lane_ink_key or _lane_batch == null:
+		_lane_ink_key = ikey
+		_lane_batch = InkLines.new()
+		var b := _lane_batch
+		for segs in _lane_dashes:
+			if (segs as PackedVector2Array).size() >= 2:
+				if rh:
+					b.multiline(segs, COL_RHUMB, RHUMB_W * wk)
+				elif tbl:
+					b.multiline(segs, Color(0.05, 0.12, 0.2, 0.10), (LANE_TABLE_W + 1.6) * wk)
+					b.multiline(segs, COL_LANE_TABLE, LANE_TABLE_W * wk)
+				else:
+					b.multiline(segs, COL_SEA_LANE, LANE_W * wk)
+		b.commit()
+	_lane_batch.draw(_lane_node, lw)
 
 
 # ----------------------------------------------------------- beaches and cliffs ---
@@ -1484,8 +1566,76 @@ func _draw_beach_node() -> void:
 	if not grid:
 		return
 	var t0 := ZProf.begin()
-	_draw_coast_dressing(_beach_node, 1.0 / maxf(zoom, 0.05))
+	var lw := 1.0 / maxf(zoom, 0.05)
+	var lq := pow(BEACH_BAND, float(int(round(log(maxf(lw, 0.001)) / log(BEACH_BAND)))))
+	var ink := _beach_ink(lq)
+	ink.draw(_beach_node, lq, lq)
 	ZProf.add("mv_beach", t0)
+
+
+## The beaches and cliffs as one ink mesh (ink_lines.gd): the strips are the coast runs moved along their normals
+## by the zoom band's scale (the shader's `ls`), so one mesh serves every band; only the cliff ticks' spacing
+## (a stride of samples) depends on the band, a mesh per stride (at most a handful). The same drawing as
+## _draw_coast_dressing (draw_beach, draw_cliff).
+func _beach_ink(lq: float) -> InkLines:
+	var tbl := table_on()
+	var stride := maxi(1, int(ceil(CLIFF_TICK_GAP * lq / BEACH_STEP))) if tbl else 0
+	var key := "%d:%d:%d" % [_gen, 1 if tbl else 0, stride]
+	if key == _beach_key and _beach_batch != null:
+		return _beach_batch
+	if _beach_cache_gen != _gen:
+		_beach_cache = {}
+		_beach_cache_gen = _gen
+	_beach_key = key
+	if _beach_cache.has(key):
+		_beach_batch = _beach_cache[key]
+		return _beach_batch
+	var b := InkLines.new()
+	for run in _coast_runs:
+		var pts: PackedVector2Array = run[1]
+		var nrm0: PackedVector2Array = run[2]
+		var n := pts.size()
+		if n < 2:
+			continue
+		var nrm := PackedVector2Array()   # (the normals averaged over their neighbours: no kinks at the polygon's corners)
+		nrm.resize(n)
+		for i in n:
+			var sum := nrm0[i] * 2.0
+			if i > 0:
+				sum += nrm0[i - 1]
+			if i < n - 1:
+				sum += nrm0[i + 1]
+			nrm[i] = sum.normalized() if sum.length() > 0.01 else nrm0[i]
+		if int(run[0]) == 1:
+			var off := Transform2D(0.0, Vector2(3.0 if tbl else 1.7, 3.0 if tbl else 1.7), 0.0, Vector2.ZERO) * nrm
+			if tbl:
+				var c := COL_SAND
+				b.polyline(pts, Color(COL_FOAM.r, COL_FOAM.g, COL_FOAM.b, 0.5), 1.3,
+					Transform2D(0.0, Vector2(-1.2, -1.2), 0.0, Vector2.ZERO) * nrm)
+				b.polyline(pts, Color(c.r, c.g, c.b, 0.25), 7.0, off)
+				b.polyline(pts, Color(c.r, c.g, c.b, 0.5), 5.6, off)
+				b.polyline(pts, Color(c.r, c.g, c.b, 0.95), 4.0, off)
+			else:
+				b.polyline(pts, Color(COL_SAND.r, COL_SAND.g, COL_SAND.b, 0.95), 2.2, off)
+		else:
+			var off2 := Transform2D(0.0, Vector2(0.7, 0.7), 0.0, Vector2.ZERO) * nrm
+			if tbl:
+				b.polyline(pts, Color(COL_ROCK.r, COL_ROCK.g, COL_ROCK.b, 0.95), 2.6, off2)
+				var tp := PackedVector2Array()
+				var to := PackedVector2Array()
+				for i in range(0, n, stride):
+					tp.append(pts[i])
+					tp.append(pts[i])
+					to.append(nrm[i] * 0.7)
+					to.append(nrm[i] * (0.7 + CLIFF_TICK_LEN))
+				if tp.size() >= 2:
+					b.multiline(tp, Color(COL_ROCK.r, COL_ROCK.g, COL_ROCK.b, 0.8), 1.1, to)
+			else:
+				b.polyline(pts, Color(COL_ROCK_RELIEF.r, COL_ROCK_RELIEF.g, COL_ROCK_RELIEF.b, 0.97), 2.8, off2)
+	b.commit()
+	_beach_cache[key] = b
+	_beach_batch = b
+	return b
 
 
 ## Beach and cliff strips along the coastline, in the table or the relief style, widths for the zoom band of lw.

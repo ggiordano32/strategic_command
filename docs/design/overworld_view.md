@@ -301,3 +301,78 @@ Parts 1 and 3 of the visual pass, view only (no sim, campaign or map data change
 - **Woods as patches** (`landscape.gd _patchify`): the plain scatter gives each region its count N (the `base` trees, positions unchanged). The same loop also makes a candidate pool 2.5 x as big (extra trees hash with `q + 4099`; pool trees never enter a town's ring list). Per region: 10 % of the base trees stay where they are (singles); one patch centre per about 22 trees (1 to 24, picked from candidates in hash order at least 34 px apart, each with a reach of 12 to 28 px); the other N - singles trees are the candidates with the highest `exp(-(d/reach)^2)` of their nearest centre plus 0.25 noise, so the count per region is the same and the trees gather round the centres. Under each kept patch tree one soft disc of darker green (0.07, 0.20, 0.06 at 14 %, radius 8 + tree radius, a wobbly broadleaf ring, one per 8 px cell so they do not stack to black) goes into the glyph mesh below the specks, so the wood has a scalloped shadowed edge (also in the table style, whose tree models draw above the mesh). `LOW_TREE_ZOOM` and Quality Low unchanged; `tree_count` unchanged.
 - **Cost** (`tests/look_bench.gd`, steady frame mean, ms, base 4bf0a05 / after; the desktop's frames are 38 ms west, 19 ms Rome, noise about 0.5 ms): west table 1.2: 38.4, 38.0 / 39.5, 39.3 (+0.7 to +1.1); 0.6: 36.2 / 37.5; 0.226: 31.5 / 32.6. Rome table 1.2: 18.6 / 19.7 to 19.8 (+1.1); 0.6: 18.8 / 20.9; 0.379: 17.8 / 19.5. The border curves are the cost (about 1.2 ms with 14 px steps, about 0.7 with 24); the roads and the discs measured nothing. Bake: the pool adds a third of a second to a glyph bake at most (not measured separately).
 - **Open**: the border waver and the soft discs are by eye, not tuned on the phone; `zoom_probe.gd` gained `--at=REGION_KEY` for the middle shot.
+
+### Overworld frame time (as built, 2026-10-27)
+
+View only (nothing under `sim/` or `campaign/` changed, no hash moves). The owner: "The web build is starting to lag a
+bit even on my desktop."
+
+- **Profile, not guess** (`tests/look_prof.gd`, new: the look_bench campaign at zooms 1.2, 0.6 and the minimum, each
+  layer hidden in turn, 120 steady frames each; a layer's cost is the median frame with everything minus the median
+  frame without it; also the draw calls per frame). West, table style, 2000 x 923, this desktop (RTX 3070, GL
+  Compatibility), ms (draw calls the layer removes, read at 0.6; noise about +-1 ms):
+
+  | layer | before 1.2 | 0.6 | 0.226 | after 1.2 | 0.6 | 0.226 |
+  |---|---|---|---|---|---|---|
+  | whole frame (median) | 27.2 | 27.9 | 25.1 | 6.1 | 6.1 | 4.7 |
+  | territory edges (owner bands, borders, independent dashes) | 6.5 | 7.2 (460) | 6.5 | 0 | 0 (1) | 0 |
+  | coast node (coastline, roads, rivers, crossings, sea lanes) | 8.0 | 8.5 (889) | 7.0 | 0 | 0 (34) | 0 |
+  | beaches and cliffs | 6.1 | 8.1 (2757) | 5.2 | 0 | 0 (1) | 0 |
+  | overlay (sites, fleets, armies, paths) | 2.6 | 6.1 (1180) | 4.5 | 2.9 | 3.5 (1180) | 3.3 |
+  | ... of it settlements and names / fleets / armies | | | | 0.8 / 1.1 / 0.4 | 1.7 / 1.3 / 1.1 | 0.1 / 0.4 / 0 |
+  | water shader, table frame shader, land / relief, map's own drawing, trees, towns, minis, fog, UI | each within noise (under 1 ms) | | | the same | | |
+  | the sea, land and frame shaders alone (everything else hidden) | 1.4 | 1.7 | 0.6 | 1.4 | 1.6 | 0.6 |
+  | draw calls a frame | 5444 | 5693 | 5676 | 1374 | 1624 | 1609 |
+
+  The frame was the CPU recording draw calls, not the GPU: in GL Compatibility every antialiased `draw_polyline` is
+  three polygon commands (the middle strip and two feather strips), each its own draw call, and every antialiased
+  `draw_multiline` segment nine primitives recorded one by one each frame. The edges, the coast and the beaches were
+  about 4300 of the 5700 draw calls; the shaders (the sea, the frame's screen-texture read, the land) cost little on
+  this GPU, so they were left alone. The beach node's 2757 calls came from four polylines per beach run (289 runs).
+- **The change: ink meshes** (`game/campaign/ink_lines.gd`, `ink_lines.gdshader`). A batch records polylines and
+  multiline segments in drawing order and makes ONE triangle-strip mesh whose vertices are only codes (side, cap,
+  segment corner; the polyline's id); the vertex shader rebuilds, per vertex, exactly the geometry Godot's
+  `canvas_item_add_polyline` / `canvas_item_add_line` make for `antialiased = true` (renderer_canvas_cull.cpp 4.7: the
+  compensated width, the bisector clamped to 3, the 1.25 px feathers, the caps and the end corner's swapped
+  diagonal; a line's quad and eight feather quads) from the points (a float texture, read with `texelFetch`) and the
+  width scale `lw` (a uniform). Colours are a parameter texture (an owner change recolours without a rebuild).
+  Templates are cached per polyline length, so a batch is built with native array calls per polyline, not per
+  point. A zoom sets a uniform; the mesh is rebuilt only when what it shows changes. Anything else drawn on the
+  node passes through the shader unchanged. Used by:
+  `_draw_edges` (`_edges_ink`: per region the owner band or the independent dashes, then every border; rebuilt when
+  a region turns seen / independent / owned or the style changes; the target and blocked outlines stay ordinary
+  draws after it), `_draw_coast_body` (coastline, tracks or roads, rivers: per pack and style), `_draw_beach_node`
+  (`_beach_ink`: the runs moved along their normals by the band's scale as the shader's offset scale `ls`, so one
+  mesh serves every zoom band; the cliff ticks' stride is per band, a mesh per stride, at most a handful), and the
+  sea lanes (`_draw_lanes_ink` on a new child `_lane_node` of the coast node, drawn right after it: rebuilt when the
+  dash cut changes, as the dashes were).
+- **Devices without vertex texture reads** (Chrome on the Tab S7's Adreno 650 draws nothing from them, see
+  `soldier_layer.gd`): `InkLines.probe` draws one line by the shader into a 16 px SubViewport once when the map opens
+  and reads it back (console `INK_PROBE drawn=N state=S`); a device the battle's soldier probe already sent to the CPU
+  path (`[video] soldiers = cpu`) and headless runs skip it. Until it passes, and where it fails, each batch replays
+  its recorded calls as the `draw_polyline` / `draw_multiline` they stand for: the old picture at the old cost.
+  `--ink=0|1` (web `?ink=0|1`) forces either.
+- **Measured** (`tests/look_bench.gd`, steady frame mean, ms, two rounds each; base de2f911):
+
+  | | West table 1.2 | 0.6 | 0.226 | Rome relief 1.2 | 0.6 | 0.379 | Rome table 1.2 | 0.6 | 0.379 | West relief 1.2 | 0.6 | 0.226 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | base | 30.6, 29.7 | 29.6, 29.4 | 29.2, 28.8 | 10.5, 9.6 | 9.7, 8.9 | 9.0, 8.7 | 16.6, 17.0 | 18.4, 17.2 | 16.9, 17.1 | 22.7, 22.9 | 19.7, 19.8 | 17.8, 17.9 |
+  | edges, coast, beaches as ink | 13.4, 14.0 | 13.9, 13.7 | 12.4, 12.5 | 6.3, 6.2 | 5.7, 5.6 | 5.3, 5.2 | | | | | | |
+  | + the sea lanes as ink | 7.9, 7.1 | 8.0, 8.2 | 6.1, 6.9 | | | | | | | | | |
+  | final (with the probe) | 7.0, 7.2 | 7.5, 7.8 | 6.2, 6.4 | 4.4, 4.4 | 4.3, 4.5 | 4.1, 4.4 | 4.4, 4.8 | 5.6, 5.5 | 5.0, 5.2 | 7.5, 8.0 | 6.7, 7.3 | 6.9, 6.6 |
+  | `--ink=0` (the replay) | 29.0 | 29.3 | 27.5 | | | | | | | | | |
+
+  `tests/zoom_sweep.gd` West table (2000 x 923): pan 20.1 -> 4.3 ms median (worst frame 54 -> 6 at 1.2), wheel zoom
+  24.0 -> 5.0 (worst 62 -> 20), pinch 24.0 -> 6.7 (worst 58 -> 15), frames over 16 ms in the steady and pan phases
+  60 / 90 -> 0 or 1. Another agent's battle benches ran on the machine during some runs.
+- **Same picture**: `tests/zoom_probe.gd --nofog` shots (min, max, the corner at 0.6, Veracruz / Massalia at 1.0;
+  `--fixed-fps 60` so the waves match) of base and after, all four pack / style pairs in the Terrain and Political
+  views and the West table with fog: pixels differing by more than 2 of 255 in any channel 0 to 0.0008 % (at most
+  14 px of 1.85 M, single anti-aliasing pixels); the `--ink=0` replay 0 px. A web export in headless Chromium
+  (SwiftShader WebGL2, `?campaign=rome`) logs `INK_PROBE drawn=160 state=1` and matches `?ink=0` but for the waves.
+- **Left**: the overlay is now most of the frame (about 3 ms: the settlements and names, the fleets, redrawn 14 times
+  a second for the bobbing ships, and the armies, about 1200 draw calls of circles, AA arcs and text); the ink meshes
+  carry about twice the old triangles (degenerate joins, lines as 4 triangles a quad), about 1.2 M a frame on the
+  West, so on a weak GPU a level of detail (Douglas-Peucker per zoom band) may pay; the Tab S7 keeps the old cost
+  (the replay); the table frame's full-screen screen-texture read and the water / fog shaders measured within noise
+  here and were not changed; not yet seen on a phone.
