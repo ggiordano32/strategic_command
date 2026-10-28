@@ -9,6 +9,7 @@ const AudioFx := preload("res://game/audio.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
+const TrayLayer := preload("res://game/tray_layer.gd")
 const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const BTheme := preload("res://game/battle_theme.gd")
@@ -158,6 +159,7 @@ var works_mode := ""
 var _works_drag := false
 var trees: TreeLayer
 var soldiers: SoldierLayer
+var trays   # TrayLayer: the movement trays under the men
 var overlay: Overlay
 var hud: Hud
 var orders: OrderPreview  # queued-but-unapplied orders, for immediate display
@@ -311,8 +313,15 @@ func _ready() -> void:
 	add_child(works)
 	works.setup(sim, PX_PER_M)
 
+	# Movement trays under the men (tabletop pass 1).
+	trays = TrayLayer.new()
+	trays.player_side = player_side
+	add_child(trays)
+	trays.setup(sim, PX_PER_M)
+
 	soldiers = SoldierLayer.new()
 	soldiers.viewer_side = player_side
+	soldiers.base_low = Quality.is_low()
 	soldiers.unit_faction = unit_faction
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--factions=") and unit_faction.is_empty():
@@ -324,6 +333,7 @@ func _ready() -> void:
 			soldiers.unit_faction = uf
 	add_child(soldiers)
 	soldiers.setup(sim, PX_PER_M)
+	trays.soldiers = soldiers
 	soldiers.probed.connect(_on_soldier_probe)
 
 	# Trees above the soldiers; their canopies fade over men under them.
@@ -342,6 +352,9 @@ func _ready() -> void:
 	overlay.sim = sim
 	soldiers.shot_src = overlay
 	overlay.orders = orders
+	overlay.trays = trays
+	overlay.soldiers = soldiers
+	overlay.token_states = _card_states
 	overlay.px_per_m = PX_PER_M
 	add_child(overlay)
 
@@ -453,6 +466,7 @@ func _ready() -> void:
 	hud.set_orders_text(show_all_orders)
 	overlay.show_all_orders = show_all_orders
 	overlay.player_side = player_side
+	trays.player_side = player_side
 	hud.update_cards(sim)
 	_select(-1)
 	_update_speed_text()
@@ -1005,6 +1019,7 @@ func _process(delta: float) -> void:
 		_paths_apply()
 	# Redrawn every frame, paused or not, so order changes show at once.
 	overlay.zoom = camera.zoom.x
+	trays.zoom = camera.zoom.x
 	overlay.append_on = _wp_append() or (Input.is_key_pressed(KEY_SHIFT) and sim.phase == BattleSim.PHASE_BATTLE \
 		and not UiScale.is_touch())
 	overlay.queue_redraw()

@@ -12,6 +12,8 @@ const WorksLayer := preload("res://game/works_layer.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
 const Quality := preload("res://game/quality.gd")
 const LastSeen := preload("res://game/last_seen.gd")
+const Marks := preload("res://game/tabletop_marks.gd")
+const CData := preload("res://campaign/cdata.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -22,9 +24,27 @@ const PROP_PX_PER_M := 24.0
 const MARKER_SCREEN_R := 11.0
 const MARKER_MIN_R := 5.5
 const M := 1024.0
+## Standard: scale 1 is 29 px tall (the overworld's banner; about 28 at zoom 1), scaled with the zoom, never under 18 px.
+const STD_MIN_SCALE := 0.62
+const STD_MAX_SCALE := 2.0
+## State tokens: diameter in screen px at zoom 1, scaled with the zoom, clamped.
+const TOKEN_D := 14.0
+const TOKEN_MIN := 12.0
+const TOKEN_MAX := 28.0
 const GROUP_GAP_M := 2.0   # metres left between units lined up by a drag
 
 var sim
+## The tabletop's tray layer (the formation quads the standards and tokens sit on) and the soldier layer (the unit's colour).
+var trays
+var soldiers
+## Battle._card_states: the card strip's state list of a unit, [glyph, word] each (the tokens show the same).
+var token_states := Callable()
+var standards_us := 0
+var _std_col: Array[Color] = []
+var _std_emb: Array[String] = []
+var _std_tex: Array = []
+var _tok_at := PackedInt32Array()
+var _tok_cache: Array = []   # microseconds the last standards-and-tokens pass cost (benchmarks)
 var px_per_m: float = 10.0
 var selected_units: Array[int] = []   # first = primary
 var zoom: float = 1.0
@@ -596,6 +616,8 @@ func _draw() -> void:
 		_draw_free_engines(r, lw)
 	if sim.sg_on != 0:
 		_draw_free_towers(r, lw)
+	if trays != null:
+		_draw_standards(r)
 	_draw_markers(r, lw)
 	if not last_seen.recs.is_empty():
 		_draw_last_seen(r, lw)
@@ -978,6 +1000,150 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_line(c + Vector2(0, down * r), b, COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(-r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
+
+
+## Tabletop pass 1: each unit's standard at its tray's rear-left corner (rear-right when it would sit on the unit marker) and
+## the state tokens along the tray's front edge. Drawn in screen pixels (a transform of 1 / zoom about each anchor), so the
+## sizes are the overworld's and stay readable; the marker disc stays where it was and is the only tap target.
+func _draw_standards(r: float) -> void:
+	var t0 := Time.get_ticks_usec()
+	if _std_col.size() != sim.n_units:
+		_std_prep()
+	var w := 1.0 / zoom
+	var sm := clampf(zoom, STD_MIN_SCALE, STD_MAX_SCALE)
+	var tok_r := clampf(TOKEN_D * zoom, TOKEN_MIN, TOKEN_MAX) * 0.5
+	var vr := _view_rect().grow(px_per_m * 12.0)
+	var fogged: bool = sim.ch_on != 0 or sim.vis_on != 0
+	var nq: int = trays.quads.size()
+	var f := sm / Marks.BAKE_SM
+	var o := Vector2(9.0, -8.0) * sm   # the pole's foot at the corner
+	var tex_off := (o + Marks.BOX.position * sm - Vector2(Marks.BAKE_PAD, Marks.BAKE_PAD) * f) * w
+	var tex_size := Marks.BAKE_SIZE * f * w
+	# The standard's box (screen px about its pole foot) as an offset rectangle, for the marker test.
+	var box_off := (o + Marks.BOX.position * sm) * w
+	var box_size := Marks.BOX.size * sm * w
+	var mr := r * 1.7
+	for u in sim.n_units:
+		var st: int = sim.u_state[u]
+		if st > BattleSim.U_ROUTING:
+			continue
+		var q: PackedVector2Array
+		if st == BattleSim.U_READY:
+			if u >= nq:
+				continue
+			q = trays.quads[u]
+			if q.is_empty():
+				continue
+		elif sim.u_alive[u] > 0:
+			# Routed: the tray is lifted off; the standard stays with the men.
+			var cc := to_px(sim.u_cx[u], sim.u_cy[u])
+			q = PackedVector2Array([cc, cc, cc, cc + Vector2(-px_per_m * 2.0, 0)])
+		else:
+			continue
+		if fogged and sim.hidden_from(u, player_side):
+			continue
+		var corner := q[3]
+		if not vr.has_point(corner):
+			continue
+		var mc := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
+		if st == BattleSim.U_READY and _box_hits(corner + box_off, box_size, mc, mr):
+			var alt := q[2]
+			if not _box_hits(alt + box_off, box_size, mc, mr):
+				corner = alt
+		var sel := selected_units.has(u)
+		var ci: int = u * 2 + (1 if sel else 0)
+		var stex: Texture2D = _std_tex[ci]
+		if stex == null:
+			stex = Marks.standard_tex(_std_col[u], sel, sim.u_side[u] == player_side, str(u + 1), _std_emb[u])
+			_std_tex[ci] = stex
+		if stex == null:
+			Marks.draw_standard_tex(self, null, corner + o * w, sm * w, _std_col[u])
+		else:
+			draw_texture_rect(stex, Rect2(corner + tex_off, tex_size), false)
+		if st != BattleSim.U_READY:
+			continue
+		var toks := _tokens(u)
+		if toks.is_empty():
+			continue
+		var dirv := q[1] - q[0]
+		var len_w := dirv.length()
+		dirv = dirv / maxf(len_w, 0.001)
+		var rw := tok_r * w
+		var fit := maxi(1, int((len_w - 0.4 * rw) / (2.4 * rw)))
+		var half := Vector2.ONE * (Marks.TOK_PX * 0.5 / Marks.TOK_R * rw)
+		for i in mini(toks.size(), fit):
+			var tk: Array = toks[i]
+			var tt: Texture2D = tk[2]
+			if tt == null:
+				tt = Marks.token_tex(str(tk[0]), tk[1])
+				tk[2] = tt
+			var tc: Vector2 = q[0] + dirv * (rw * 1.4 + rw * 2.4 * i)
+			if tt == null:
+				draw_circle(tc, rw, tk[1])
+			else:
+				draw_texture_rect(tt, Rect2(tc - half, half * 2.0), false)
+	standards_us = Time.get_ticks_usec() - t0
+
+
+## Each unit's pennant colour (its palette's primary: the men's main colour) and crest key, and the baked standards' slots.
+func _std_prep() -> void:
+	_std_col.clear()
+	_std_emb.clear()
+	_std_tex.clear()
+	_std_tex.resize(sim.n_units * 2)
+	for u in sim.n_units:
+		_std_col.append(soldiers.pal_color(u) if soldiers != null else COL_SIDE[sim.u_side[u] & 1])
+		var emblem := ""
+		var f := int(soldiers.unit_faction[u]) if soldiers != null and u < soldiers.unit_faction.size() else -1
+		if f >= 0 and f < CData.FACTIONS.size():
+			emblem = str(CData.FACTIONS[f]["key"])
+		_std_emb.append(emblem)
+
+
+## Does the standard's box (top left p, size sz, world px) touch the marker circle?
+func _box_hits(p: Vector2, sz: Vector2, mc: Vector2, mr: float) -> bool:
+	var dx := mc.x - clampf(mc.x, p.x, p.x + sz.x)
+	var dy := mc.y - clampf(mc.y, p.y, p.y + sz.y)
+	return dx * dx + dy * dy < mr * mr
+
+
+const TOKEN_BODY := {"hold_fire": Color(0.55, 0.2, 0.16), "stance_cover": Color(0.25, 0.4, 0.3), "stance_hold": Color(0.25, 0.32, 0.5),
+	"stance_line": Color(0.3, 0.34, 0.42)}
+
+
+## Unit u's state counters, the card strip's states first in its order (battle.gd `_card_states`: hold fire, a stance that is
+## not the default, an ability on Hold or Use now), then out of ammunition, shaken, disordered. [glyph, body colour] each; only
+## our own ready units (the enemy's orders are not ours to see).
+func _tokens(u: int) -> Array:
+	if sim.u_side[u] != player_side or sim.u_state[u] != BattleSim.U_READY:
+		return []
+	# (refreshed every 6th frame: the lists change with an order or a tick, not with the frame)
+	var fr := Engine.get_frames_drawn()
+	if _tok_at.size() != sim.n_units:
+		_tok_at.resize(sim.n_units)
+		_tok_at.fill(-100)
+		_tok_cache.clear()
+		_tok_cache.resize(sim.n_units)
+	if fr - _tok_at[u] < 6 and fr >= _tok_at[u]:
+		return _tok_cache[u]
+	_tok_at[u] = fr
+	var out := []
+	if token_states.is_valid():
+		for g in token_states.call(u):
+			var gl := str(g[0])
+			var body: Color = TOKEN_BODY.get(gl, Color(0.5, 0.2, 0.16) if gl.ends_with("!") else Color(0.36, 0.28, 0.1))
+			out.append([gl, body, null])
+	var ty: int = sim.u_type[u]
+	if UT.stat(ty, "m_ammo") > 0 and sim.u_ammo[u] <= 0 and (sim.u_neng[u] == 0 or sim.u_reserve[u] <= 0):
+		out.append(["ammo!", Color(0.42, 0.3, 0.1), null])
+	var m: int = sim.u_morale[u] - sim.u_fright[u]
+	if m < 450 and sim.u_order[u] != BattleSim.O_WITHDRAW:
+		out.append(["shaken", Color(0.9, 0.74, 0.2), null])
+	if sim.u_disorder[u] >= BattleSim.DISORDERED:
+		out.append(["disordered", Color(0.74, 0.4, 0.14), null])
+	_tok_cache[u] = out
+	return out
+
 
 
 ## The last-seen ghosts: the men frozen where they were, greyed and fading

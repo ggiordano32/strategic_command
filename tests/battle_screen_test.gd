@@ -387,6 +387,7 @@ func _process(_d: float) -> bool:
 			_check(_eb_exit, "and returns to the campaign")
 			_end_close()
 			_facing_cases()
+			_casualty_cases()
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 	return false
@@ -523,6 +524,66 @@ func _facing_run(move_m: Vector2, ticks: int, probe: Callable, settle := 0) -> D
 	st["sim"] = sim
 	st["lay"] = lay
 	return st
+
+
+## Tabletop pass 1: casualties stay on the table (the dead man's last frame and base), fading over 60 s, at most 40 a unit and
+## 2000 in all, the oldest first; a routed unit's are lifted off with it.
+func _casualty_cases() -> void:
+	var sim := BattleSim.new()
+	sim.setup(Scenarios.make("bench_2000"), 42)
+	var lay := SoldierLayer.new()
+	root.add_child(lay)
+	lay.setup(sim, 24.0)
+	var peak_total := 0
+	var peak_unit := 0
+	var seen_fade := false
+	for t in 1800:
+		sim.step()
+		lay.upload()
+		peak_total = maxi(peak_total, lay._cas_total)
+		for u in sim.n_units:
+			peak_unit = maxi(peak_unit, lay._cas_kept[u])
+	var dead := 0
+	var shown := 0
+	var gone := 0
+	var sts: PackedInt32Array = lay._casualties(sim.state)
+	for i in sim.n:
+		if sim.state[i] != 4:
+			continue
+		dead += 1
+		if sts[i] == 5:
+			gone += 1
+		elif sts[i] >= 20 and sts[i] / 16 <= 32:
+			shown += 1
+			seen_fade = true
+	_check(dead > 200, "the battle has casualties to keep (%d dead)" % dead)
+	_check(peak_unit <= SoldierLayer.CAS_UNIT and peak_total <= SoldierLayer.CAS_TOTAL,
+		"casualties kept: at most %d a unit (peak %d) and %d in all (peak %d)" % [SoldierLayer.CAS_UNIT, peak_unit, SoldierLayer.CAS_TOTAL, peak_total])
+	_check(shown + gone == dead and seen_fade and gone > 0, "every dead man is on the table fading (%d) or gone (%d) of %d" % [shown, gone, dead])
+	# A unit that routs lifts its casualties off with it.
+	var ru := -1
+	for u in sim.n_units:
+		if lay._cas_kept[u] > 0:
+			ru = u
+			break
+	if ru >= 0:
+		sim.u_state[ru] = BattleSim.U_ROUTING
+		sts = lay._casualties(sim.state)
+		var lifted := true
+		for i in range(lay._cas_first[ru], lay._cas_first[ru] + lay._cas_n[ru]):
+			if sim.state[i] == 4 and sts[i] != 5:
+				lifted = false
+		_check(lifted, "a routed unit's casualties are not drawn")
+	# Sixty seconds on, a casualty is gone.
+	for t in 620:
+		sim.step()
+		lay.upload()
+	var old := 0
+	for i in sim.n:
+		if lay._cas_dt[i] >= 0 and sim.tick - lay._cas_dt[i] >= SoldierLayer.CAS_LIFE:
+			old += 1
+	_check(old == 0, "no casualty stays past %d s (%d older ones kept)" % [SoldierLayer.CAS_LIFE / 10, old])
+	lay.queue_free()
 
 
 func _facing_cases() -> void:

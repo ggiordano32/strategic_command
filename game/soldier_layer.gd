@@ -27,6 +27,8 @@ extends Node2D
 const SHADER := preload("res://game/soldiers.gdshader")
 const PR_SHADER := preload("res://game/projectiles.gdshader")
 const SHADER_CPU := preload("res://game/soldiers_cpu.gdshader")
+const BASE_SHADER := preload("res://game/soldier_bases.gdshader")
+const BASE_SHADER_CPU := preload("res://game/soldier_bases_cpu.gdshader")
 const PR_SHADER_CPU := preload("res://game/projectiles_cpu.gdshader")
 const UT := preload("res://sim/unit_types.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
@@ -138,6 +140,15 @@ var selected_units: Dictionary = {}
 ## The side whose view this is: the men of a unit hidden from it (the
 ## enemy's assassin before he acts, BattleSim.hidden_from) are not drawn.
 var viewer_side := -1
+## The interpolation of the frame (0 = the previous tick, 1 = this one; set_alpha): the trays and standards follow it.
+var alpha := 1.0
+## Tabletop pass 1: Graphics Low draws the bases as plain dark ellipses (set before setup).
+var base_low := false
+## Casualties stay on the table (tabletop pass 1): a dead man keeps his last frame and base for CAS_LIFE ticks,
+## at most CAS_UNIT per unit and CAS_TOTAL in all (the oldest go first). View only: the sim keeps its dead.
+const CAS_LIFE := 600
+const CAS_UNIT := 40
+const CAS_TOTAL := 2000
 ## Campaign faction index per unit (CBattle "unit_faction", sim unit order;
 ## set before setup; -1 or missing: from its side, see _palette_rows).
 var unit_faction: Array = []
@@ -150,6 +161,7 @@ var cpu_fed := false
 var auto_fallback := true
 
 var _layers: Array[MultiMeshInstance2D] = []
+var _base_layer: MultiMeshInstance2D
 var _pr_layer: MultiMeshInstance2D
 var _materials: Array[ShaderMaterial] = []   # the soldier materials in use
 var _pr_mat: ShaderMaterial                  # the missile material in use
@@ -256,11 +268,14 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	# the whole field to avoid culling.
 	_aabb = AABB(Vector3(-pad, -pad, -1.0), Vector3(fw + 2.0 * pad, fh + 2.0 * pad, 2.0))
 	_atlas = _make_atlas()
+	_base_layer = MultiMeshInstance2D.new()   # the figure bases, under the corpses and the living
+	add_child(_base_layer)
 	for pass_id in 2:
 		var mmi := MultiMeshInstance2D.new()
 		mmi.texture = _atlas
 		add_child(mmi)
 		_layers.append(mmi)
+	_cas_init()
 	_pr_layer = MultiMeshInstance2D.new()
 	add_child(_pr_layer)
 
@@ -286,6 +301,8 @@ func set_cpu_fed(on: bool) -> void:
 	for k in 2:
 		_layers[k].multimesh = _mm_cpu if on else _mm
 		_layers[k].material = _materials[k]
+	_base_layer.multimesh = _mm_cpu if on else _mm
+	_base_layer.material = _materials[2]
 	_pr_layer.multimesh = _pr_mm_cpu if on else _pr_mm
 	_pr_mat = _pr_cpu_mat if on else _pr_gpu_mat
 	_pr_layer.material = _pr_mat
@@ -306,6 +323,29 @@ func _soldier_material(shader: Shader, pass_id: int) -> ShaderMaterial:
 	mat.set_shader_parameter("pal_tex", palette_texture())
 	mat.set_shader_parameter("anim_on", 1.0 if animate else 0.0)
 	return mat
+
+
+## The faction colour of unit u (its palette's primary: the men's main colour, the standard's pennant).
+func pal_color(u: int) -> Color:
+	var r: int = _pal_rows[u] if u < _pal_rows.size() else 0
+	return SpriteAtlas.PALETTES[clampi(r, 0, SpriteAtlas.PALETTES.size() - 1)][0]
+
+
+func _base_material(shader: Shader) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+	mat.set_shader_parameter("px_per_unit", px_per_m / 1024.0)
+	mat.set_shader_parameter("pal_tex", palette_texture())
+	mat.set_shader_parameter("low", 1.0 if base_low else 0.0)
+	return mat
+
+
+## Graphics Low (or back): the bases as plain dark ellipses.
+func set_base_low(on: bool) -> void:
+	base_low = on
+	for m in _gpu_mats + _cpu_mats:
+		if m.shader == BASE_SHADER or m.shader == BASE_SHADER_CPU:
+			m.set_shader_parameter("low", 1.0 if on else 0.0)
 
 
 ## Hold (false) or run the atlas men's animation (Graphics Low may hold it).
@@ -427,6 +467,10 @@ func _build_gpu() -> void:
 		mat.set_shader_parameter("spr_rect", rects)
 		mat.set_shader_parameter("frame_tab", SpriteAtlas.TABLE)
 		_gpu_mats.append(mat)
+	_gpu_mats.append(_base_material(BASE_SHADER))
+	_gpu_mats[2].set_shader_parameter("data_tex", _tex)
+	_gpu_mats[2].set_shader_parameter("rows_per_block", _rows)
+	_gpu_mats[2].set_shader_parameter("tex_width", TEX_W)
 	# Projectiles: one instance per sim projectile slot.
 	_pr_rows = maxi(1, (maxi(_pr_cap, sim.n_units) + TEX_W - 1) / TEX_W)
 	var pbytes := PackedByteArray()
@@ -472,6 +516,7 @@ func _build_cpu() -> void:
 	_build_runs()
 	for pass_id in 2:
 		_cpu_mats.append(_soldier_material(SHADER_CPU, pass_id))
+	_cpu_mats.append(_base_material(BASE_SHADER_CPU))
 	_pr_mm_cpu = _cpu_multimesh(0)
 	_pr_n = 0
 	_pr_free_tail.resize(_pr_cap)
@@ -665,6 +710,7 @@ func upload() -> void:
 			var base: int = sim.u_slot_base[u]
 			for s in sim.u_alive[u]:
 				sts[sim.slot_soldier[base + s]] = 5  # (off the field: the shaders skip it)
+	sts = _casualties(sts)
 	var active: bool = sim.pr_count > 0
 	var missiles := active or _pr_was_active  # skip while nothing flies (and nothing flew)
 	_pr_was_active = active
@@ -673,6 +719,120 @@ func upload() -> void:
 	else:
 		_upload_gpu(xs, ys, pxs, pys, fs, sts, missiles)
 	upload_us = Time.get_ticks_usec() - t0
+
+
+# --- Casualties on the table (tabletop pass 1) -------------------------------------------------
+# A man the sim lists dead (state 4) stays drawn with his last frame and base for CAS_LIFE ticks, his fade riding in the state
+# word's heading code (1..32, soldiers.gdshaderinc); a unit keeps at most CAS_UNIT of them and the field CAS_TOTAL (oldest first);
+# those past a limit or their time are sent off the field (state 5) for the shaders. A routed unit is lifted off, casualties and all.
+var _cas_dt := PackedInt32Array()       # per man: tick he was first seen dead, -1 alive, -2 gone from the table
+var _cas_first := PackedInt32Array()    # per unit: its first man
+var _cas_n := PackedInt32Array()        # per unit: its men
+var _cas_seen := PackedInt32Array()     # per unit: alive count at the last look (-1 none yet)
+var _cas_kept := PackedInt32Array()     # per unit: casualties kept
+var _cas_uq: Array = []                 # per unit: PackedInt32Array of kept men, oldest first
+var _cas_uh := PackedInt32Array()       # per unit: head of its queue
+var _cas_q := PackedInt32Array()        # all kept men, oldest first
+var _cas_h := 0
+var _cas_total := 0
+var _cas_gone := PackedInt32Array()     # men sent off the table
+var _cas_tick := -1
+var cas_us := 0                         # microseconds the last pass cost (benchmarks)
+
+
+func _cas_init() -> void:
+	var nu: int = sim.n_units
+	_cas_dt.resize(sim.n)
+	_cas_dt.fill(-1)
+	_cas_first.resize(nu)
+	_cas_first.fill(0)
+	_cas_n.resize(nu)
+	_cas_n.fill(0)
+	_cas_seen.resize(nu)
+	_cas_seen.fill(-1)
+	_cas_kept.resize(nu)
+	_cas_kept.fill(0)
+	_cas_uh.resize(nu)
+	_cas_uh.fill(0)
+	_cas_uq.clear()
+	for u in nu:
+		_cas_uq.append(PackedInt32Array())
+	for i in sim.n:
+		var u: int = sim.unit_of[i]
+		if _cas_n[u] == 0:
+			_cas_first[u] = i
+		_cas_n[u] += 1
+	_cas_q.clear()
+	_cas_gone.clear()
+	_cas_h = 0
+	_cas_total = 0
+
+
+func _cas_drop(i: int) -> void:
+	if _cas_dt[i] < 0:
+		return
+	_cas_dt[i] = -2
+	_cas_gone.append(i)
+	var u: int = sim.unit_of[i]
+	_cas_kept[u] -= 1
+	_cas_total -= 1
+
+
+## The state words with the casualties applied (a copy when anything changes).
+func _casualties(sts: PackedInt32Array) -> PackedInt32Array:
+	var t0 := Time.get_ticks_usec()
+	var tick: int = sim.tick
+	if tick < _cas_tick or _cas_dt.size() != sim.n:
+		_cas_init()   # (a restore or a new sim: start again)
+	_cas_tick = tick
+	var nu: int = sim.n_units
+	for u in nu:
+		var alive: int = sim.u_alive[u]
+		var seen: int = _cas_seen[u]
+		if alive == seen:
+			continue
+		_cas_seen[u] = alive
+		var f: int = _cas_first[u]
+		for i in range(f, f + _cas_n[u]):
+			if _cas_dt[i] == -1 and sim.state[i] == 4:
+				_cas_dt[i] = tick
+				_cas_q.append(i)
+				_cas_uq[u].append(i)
+				_cas_kept[u] += 1
+				_cas_total += 1
+		var q: PackedInt32Array = _cas_uq[u]
+		while _cas_kept[u] > CAS_UNIT:
+			var h: int = _cas_uh[u]
+			_cas_uh[u] = h + 1
+			_cas_drop(q[h])
+		if _cas_uh[u] > 64:
+			_cas_uq[u] = q.slice(_cas_uh[u])
+			_cas_uh[u] = 0
+	while _cas_h < _cas_q.size() and (_cas_total > CAS_TOTAL or _cas_dt[_cas_q[_cas_h]] < 0 \
+			or tick - _cas_dt[_cas_q[_cas_h]] >= CAS_LIFE):
+		_cas_drop(_cas_q[_cas_h])
+		_cas_h += 1
+	if _cas_h > 2048:
+		_cas_q = _cas_q.slice(_cas_h)
+		_cas_h = 0
+	if _cas_h >= _cas_q.size() and _cas_gone.is_empty():
+		cas_us = Time.get_ticks_usec() - t0
+		return sts
+	sts = sts.duplicate()
+	for i in _cas_gone:
+		sts[i] = 5
+	var ustate: PackedInt32Array = sim.u_state
+	for k in range(_cas_h, _cas_q.size()):
+		var i: int = _cas_q[k]
+		var dt: int = _cas_dt[i]
+		if dt < 0:
+			continue
+		if ustate[sim.unit_of[i]] == 1:   # routing: lifted off the tray, its dead with it
+			sts[i] = 5
+		else:
+			sts[i] = 4 + 16 * maxi(1, 32 - (tick - dt) * 32 / CAS_LIFE)
+	cas_us = Time.get_ticks_usec() - t0
+	return sts
 
 
 ## The state words of the soldiers: state + 16 x the drawn-heading code (see
@@ -954,6 +1114,7 @@ func set_alpha(a: float) -> void:
 		m.set_shader_parameter("now", now)
 	# Positions on screen are those of tick (sim.tick - 1) + alpha.
 	_pr_mat.set_shader_parameter("now", now)
+	alpha = a
 
 
 ## The command line's user args plus, on the web, the page URL's query

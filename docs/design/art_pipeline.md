@@ -555,3 +555,72 @@ carry it unchanged; the phone and friends joining by link are the loop. A
 native desktop export preset is added beside the web one (no code change)
 for the owner's desktop sessions and for profiling; a native-only direction
 reopens only if a pass needs true 3D that the phones cannot take.
+
+### Pass 1, trays and bases (as built, 2026-10-27)
+
+Pass 1 of the tabletop plan above. View only: nothing under `sim/` changed, no hash moved, no lockstep input; `game/campaign/`
+(`map_overlay.gd`) is untouched. Code: `game/tray_layer.gd` + `tray.gdshader` (new, the trays), `game/soldier_bases.gdshaderinc` +
+`soldier_bases.gdshader` / `soldier_bases_cpu.gdshader` (new, the bases), `game/soldier_layer.gd` (the base layer, the casualties),
+`game/soldiers.gdshaderinc` (a dead man's fade), `game/tabletop_marks.gd` (new, the standard and the token drawing),
+`game/glyph_bake.gd` (new, one-shot texture bakes), `game/overlay.gd` (`_draw_standards`, `_tokens`), `game/battle.gd` (wiring),
+`tests/battle_screen_test.gd` (`_casualty_cases`).
+
+- **Trays.** One MultiMesh quad per visible unit under the men (between the works and the soldier layers); the card is drawn in the
+  fragment shader from the pixel distance to the edge: a 1.5 screen px dark edge (the ink tone), a faint lighter bevel line just
+  inside, a 12 % dark translucent fill. The quad is the footprint's rectangle (files x ranks from `u_files`, `u_alive`, the type's
+  `file_sp` / `rank_sp`, 0.6 m margin) at the unit's anchor and facing, **interpolated between ticks like the men** (previous
+  anchor kept per unit; a jump over 14 px, or the deployment, is not interpolated), so it turns with the facing and shrinks with
+  the alive count. None for a unit routing (lifted off; it returns on rally), off the field, reserve, or an enemy not seen
+  (`hidden_from`: the last-seen ghost keeps its own outline). `TrayLayer.quads[u]` (front left, front right, rear right, rear
+  left) is what the standards and tokens sit on. First tried as polylines in `_draw`: each polyline or polygon cost about 0.35
+  ms a frame for 19 units, so the whole layer is a shader.
+- **Bases.** A third MultiMesh layer on the soldiers' own MultiMesh, drawn first (under corpses and men), with its own small shader
+  pair (texture-fed and CPU-fed like the men's; Tab S7 path included), not a second instance per man and not part of the men's
+  quad: a darker ring in the faction palette's primary (x 0.4), the colour at 50 % saturation inside, a lit top, a soft contact
+  shadow to the lower right. **Diameter 1.0 m (radius 0.5), not the planned 0.7 m**: the top-down figure (a head, shield and
+  shoulders about 0.9 m wide) hides a 0.7 m base completely; at 1.0 m the ring shows round the shield. Horse and rider and camel 0.65
+  m radius, elephant 1.1, dog 0.36. Graphics Low (`base_low`, set at battle start): a plain dark ellipse, no ring. Cost within
+  noise (0.05 ms): the vertex work is a small second pass over the same instances.
+- **Standards.** The overworld's pennant language (`Overlay.draw_banner`: pole, swallow-tailed pennant, parchment roundel, gold rim
+  when selected, the faction crest where `FactionEmblem` has one) at the tray's rear-left corner (the pole's foot on the corner),
+  upright, drawn in the overlay above the men. 29 px tall at zoom 1 (the banner's own size), scale `clamp(zoom, 0.62, 2.0)`, so
+  never under 18 px. The pennant is the unit's palette primary (the men's main colour), the roundel the card number (`u + 1`). If
+  its box would touch the marker's selection ring (1.7 r) it moves to the rear-right corner. **The drawing is copied into
+  `tabletop_marks.gd` (not moved out of `map_overlay.gd`)**, so the campaign file does not change while the overworld is being
+  profiled in another tree; merge them later if wanted. The marker disc stays where it was and is still the only tap target
+  (`input_test` PASS). Routed units keep a standard (at the men's centroid) but no tray.
+- **Tokens.** The card strip's states (`Battle._card_states`, passed to the overlay as a Callable: hold fire, a non-default stance,
+  an ability on Hold or Use now, in its order, the glyphs the strip uses) plus out of ammunition (`ammo`, struck through), shaken
+  (morale - fright < 450; a zigzag) and disordered (`u_disorder >= DISORDERED`; scattered dots), as round plastic counters (dark
+  rim, body colour, a lit arc, a shadow) along the tray's front edge from the unit's left, as many as fit. Own ready units only.
+  **14 px across at zoom 1, never under 12 (the plan said 8 / 6: at 8 the glyphs could not be read on the 886 x 409 phone, 14 px
+  reads at 4 x magnification and next to the 22 px marker)**. The lists are rebuilt every 6th frame.
+- **Casualties.** `SoldierLayer._casualties` (once a tick, inside `upload`): a man seen dead (state 4) keeps his last frame and base
+  for 600 ticks (60 s), at most 40 a unit and 2000 in all, the oldest first; the remaining life rides in the state word's heading
+  code (`4 + 16 x fade`, fade 1..32; the shader fades the sprite and the base, and greys the dead a little more), men past a limit
+  or their time are sent off the field (state 5), and a routed unit's casualties are not drawn while it routs. Cost 50 us a tick. The
+  sim keeps its dead; before this pass every corpse stayed for the whole battle.
+- **Baked draws.** The vector drawing is cheap to look at and dear to run (a standard 36 us, a UI icon 280 us, a counter with its
+  icon 280 us), so `glyph_bake.gd` renders a standard (per colour, number, rim, crest) or a token (per glyph and colour) once in a
+  SubViewport and the overlay draws the texture (one call). While a bake is pending (two frames) and in headless runs a plain
+  pennant or disc is drawn.
+- **Cost** (desktop RTX 3070, 1280 x 720, vsync off, 8 s after tick 600, mean frame ms, 3 runs each, before = de2f911):
+
+  | scenario, zoom, path | before | after | delta |
+  |---|---|---|---|
+  | bench_4000_hills, default fit, GPU, running | 6.03 | 6.50 | +0.47 |
+  | bench_4000_hills, default fit, GPU, paused | 5.63 | 5.98 | +0.35 |
+  | bench_4000_hills, default fit, CPU path (`--soldiers=cpu`), running | 6.01 | 6.46 | +0.45 (+7 %) |
+  | bench_4000_hills, default fit, CPU path, paused | 5.59 | 6.01 | +0.42 (+7 %) |
+  | bench_4000_hills, zoom 2.0, running | 6.07 | 6.25 | +0.18 |
+  | test_woods, default fit, GPU, running | 1.16 | 1.20 | +0.04 |
+  | test_woods, zoom 2.0, running | 1.08 | 1.12 | +0.04 |
+
+  Under the 1 ms and 20 % limits. On the first build (trays as polylines, standards and counters as vector draws) the same bench
+  was +1.5 ms: the lesson is in "Baked draws" and "Trays".
+- **Checked:** scripts clean (warnings as errors); `battle_screen_test` (casualty caps, fade, lifted when routed, none past 60 s),
+  `hud_fit_test`, `lockstep_test`, `determinism_test`, windowed `input_test` PASS; `git diff --stat sim/` empty.
+- **Open.** The owner's eye on the base size (1.0 m), the tokens' size and the standard against the marker on the phone; the Tab S7
+  (the CPU-fed base shader runs on the desktop's `--soldiers=cpu`, not on the device); the standards and tokens are screen-scale
+  marks and will want their lift and anchor reworked with pass 3's oblique camera; the standard's pennant for the Rome pack has
+  no crest (as on the overworld); the tray's fill is faint on dark ground.

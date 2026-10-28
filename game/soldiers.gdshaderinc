@@ -241,6 +241,8 @@ void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, in
 		int set, int pal, bool shoot, bool fired, bool gun, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
 	bool engine = st >= 6;
 	bool dead = st == 4 || st == 7 || st == 8;
+	// A dead man's heading code is his fade (1..32 over the 60 s he stays on the table, 0: not fading).
+	float deadfade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
 	float yaw = facing;
 	if (hd > 0 && st == 0) {
@@ -267,8 +269,8 @@ void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, in
 		if (st == 8) {
 			tint(add, k, vec3(0.24, 0.2, 0.16), 0.25);  // an abandoned engine
 		} else if (dead) {
-			tint(add, k, vec3(0.24, 0.18, 0.13), 0.35);
-			a = 0.9;
+			tint(add, k, vec3(0.22, 0.19, 0.16), 0.4);   // greyed a little
+			a = 0.9 * deadfade;
 		} else {
 			if (st == 2) {
 				tint(add, k, vec3(1.0, 0.95, 0.5), 0.3);   // routing
@@ -295,7 +297,7 @@ void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, in
 		col = vec4(c, 1.0);
 	} else if (dead) {
 		v *= vec2(0.8, 0.55);
-		col = vec4(mix(base, vec3(0.22, 0.16, 0.12), 0.75), 0.75);
+		col = vec4(mix(base, vec3(0.22, 0.16, 0.12), 0.75), 0.75 * deadfade);
 	} else {
 		vec3 c = base;
 		if (st == 1) {
