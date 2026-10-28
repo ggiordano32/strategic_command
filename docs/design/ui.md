@@ -673,6 +673,8 @@ Campaign's Host card (`host_pack_west` / `host_pack_rome` then Host: the faction
 online story card shows on the West setting only). "Your campaigns" and Continue open saves of either setting as before.
 `NewCampaign.build_state` is the one place a faction campaign's state is made (tests assert Host + Rome gives a Rome state).
 
+**2026-10-27, offline play restored.** Owner: "The grand campaign should be playable single player without needing to be online or attached to a server." The Grand Campaign page has a third card, Play offline (`offline_card`, `offline_pack_west` / `offline_pack_rome` sharing the Host card's pick, then `home_offline`), which opens the faction page with `online` false and `story_only` false: the full faction pick, teams and rules, and Start runs the offline `_start` (a local save, listed under "Your campaigns" and Continue). The cards sit three across from 900 px of page width, stacked below it and on a phone. View only.
+
 **Title screen.** The wordmark top-left (the last-played setting's emblem, "STRATEGIC COMMAND" in Cinzel Bold from
 `assets/ui/fonts/` when present, else the UI font, and the setting's subtitle), a left-aligned stack of five entries
 over a full-bleed background with a dark gradient under the stack (phones, `UiScale.is_touch()` and a logical

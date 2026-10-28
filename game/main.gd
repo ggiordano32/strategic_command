@@ -120,6 +120,7 @@ var _online_box: VBoxContainer
 var _grand_cards: BoxContainer   # the Host and Join cards (side by side, stacked on a phone)
 var _grand_col: VBoxContainer
 var _gh_pack := "west"           # the Host card's picked setting
+var _go_cards := {}              # the Play offline card's mini-cards (same pick as the Host card)
 var _gh_cards := {}              # pack key -> its mini-card
 var _gj_edit: LineEdit           # the Join card's code field
 var _gj_info: Label
@@ -891,7 +892,7 @@ const CARD_TITLES := {"west": "The Caribbean, 1650", "rome": "Rome, 280 BC"}
 
 ## The page's content width: the two cards side by side, or the screen's width on a phone.
 func _grand_width() -> float:
-	return minf(740.0, get_viewport_rect().size.x - 32.0)
+	return minf(1100.0, get_viewport_rect().size.x - 32.0)
 
 
 ## Grand Campaign (online co-op): the Host card and the Join card, this device's online campaigns, the game server.
@@ -900,7 +901,7 @@ func _build_grand(bg: Control) -> Control:
 	_grand_col = vb
 	vb.add_theme_constant_override("separation", 12)
 	vb.add_child(_heading("Grand Campaign"))
-	var intro := Kit.label("Pick a setting (Rome or the Caribbean) and a faction: online, alone or with friends; the turn resolves when everyone has submitted.", 14, Kit.COL_DIM, true)
+	var intro := Kit.label("Pick a setting (Rome or the Caribbean) and a faction: online, alone or with friends, or offline on this device with no server.", 14, Kit.COL_DIM, true)
 	intro.name = "grand_intro"
 	vb.add_child(intro)
 	_grand_cards = BoxContainer.new()
@@ -909,6 +910,7 @@ func _build_grand(bg: Control) -> Control:
 	vb.add_child(_grand_cards)
 	_grand_cards.add_child(_build_host_card())
 	_grand_cards.add_child(_build_join_card())
+	_grand_cards.add_child(_build_offline_card())
 	vb.add_child(Kit.title("Your grand campaigns", 20))
 	_online_box = Kit.vbox(6)
 	_online_box.name = "online_box"
@@ -942,9 +944,9 @@ func _layout_grand() -> void:
 		return
 	var w := _grand_width()
 	_phone_layout = _is_phone()
-	_grand_cards.vertical = w < 640.0 or _phone_layout
+	_grand_cards.vertical = w < 900.0 or _phone_layout
 	for c in _grand_cards.get_children():
-		(c as Control).custom_minimum_size.x = w if _grand_cards.vertical else (w - 14.0) * 0.5
+		(c as Control).custom_minimum_size.x = w if _grand_cards.vertical else (w - 28.0) / 3.0
 		(c as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_grand_col.custom_minimum_size.x = w
 
@@ -962,15 +964,40 @@ func _build_host_card() -> Control:
 	card.add_child(v)
 	v.add_child(Kit.title("Host a grand campaign", 20))
 	v.add_child(Kit.label("Pick a setting, then choose who plays each faction. The others join with a code.", 13, Kit.COL_DIM, true))
-	var pr := Kit.hbox(8)
 	var first := ""
+	for key in ["west", "rome"]:
+		if CData.has_pack(key):
+			first = key
+			break
+	var pr := _pack_row("host_pack_", _gh_cards)
+	v.add_child(pr)
+	if not _gh_cards.has(_gh_pack):
+		_gh_pack = first
+	var hb := Kit.hero_button("Host", "", func(): _new_campaign_page(true, _gh_pack), 0, 20)
+	hb.name = "home_Online_co-op"
+	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (one at least: alone on the server, or with friends who join by code) and the rules.")
+	v.add_child(hb)
+	var st := Kit.hbox(8)
+	_net_dot = Kit.dot(Kit.COL_DIM)
+	st.add_child(_net_dot)
+	_net_line = Kit.label("", 13, Kit.COL_DIM, true)
+	_net_line.name = "net_line"
+	_net_line.mouse_filter = Control.MOUSE_FILTER_STOP
+	_net_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	st.add_child(_net_line)  # (the Change button is the Game server row's at the foot of the page, 2026-10-23: one, not two)
+	v.add_child(st)
+	_gh_select(_gh_pack)
+	return card
+
+
+## The setting mini-cards (West, Rome), registered in `cards` by pack key; the Host and Play offline cards share the pick (`_gh_pack`).
+func _pack_row(prefix: String, cards: Dictionary) -> Control:
+	var pr := Kit.hbox(8)
 	for key in ["west", "rome"]:
 		if not CData.has_pack(key):
 			continue
-		if first == "":
-			first = key
 		var b := Kit.button("", _gh_select.bind(key), 0, 14)
-		b.name = "host_pack_" + key
+		b.name = prefix + key
 		b.custom_minimum_size = Vector2(0, 58)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var inner := Kit.hbox(8)
@@ -997,43 +1024,46 @@ func _build_host_card() -> Control:
 		b.add_child(inner)
 		Kit.tip(b, CARD_TITLES[key], PackView.subtitle(key))
 		pr.add_child(b)
-		_gh_cards[key] = b
-	v.add_child(pr)
-	if not _gh_cards.has(_gh_pack):
-		_gh_pack = first
-	var hb := Kit.hero_button("Host", "", func(): _new_campaign_page(true, _gh_pack), 0, 20)
-	hb.name = "home_Online_co-op"
-	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (one at least: alone on the server, or with friends who join by code) and the rules.")
-	v.add_child(hb)
-	var st := Kit.hbox(8)
-	_net_dot = Kit.dot(Kit.COL_DIM)
-	st.add_child(_net_dot)
-	_net_line = Kit.label("", 13, Kit.COL_DIM, true)
-	_net_line.name = "net_line"
-	_net_line.mouse_filter = Control.MOUSE_FILTER_STOP
-	_net_line.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	st.add_child(_net_line)  # (the Change button is the Game server row's at the foot of the page, 2026-10-23: one, not two)
-	v.add_child(st)
-	_gh_select(_gh_pack)
-	return card
+		cards[key] = b
+	return pr
 
 
 ## The Host card's setting: the picked mini-card is lit.
 func _gh_select(key: String) -> void:
 	_gh_pack = key
 	for k in _gh_cards:
-		var b: Button = _gh_cards[k]
-		var on: bool = k == key
-		var cols := {"normal": [Color(0.30, 0.22, 0.08, 1.0) if on else Color(0.11, 0.13, 0.12, 0.94), Kit.COL_GOLD if on else Color(Kit.COL_RULE, 0.6)],
-			"hover": [Color(0.36, 0.27, 0.10, 1.0) if on else Color(0.17, 0.19, 0.16, 0.97), Kit.COL_GOLD],
-			"pressed": [Color(0.40, 0.30, 0.11, 1.0), Color(1.0, 0.9, 0.55)]}
-		for st in cols:
-			var sb := Kit.box(cols[st][0], 6.0, 5)
-			sb.set_border_width_all(2 if on else 1)
-			sb.border_color = cols[st][1]
-			b.add_theme_stylebox_override(st, sb)
-		b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
-		b.set_meta("on", on)
+		_gh_light(_gh_cards[k], k == key)
+	for k in _go_cards:
+		_gh_light(_go_cards[k], k == key)
+
+
+func _gh_light(b: Button, on: bool) -> void:
+	var cols := {"normal": [Color(0.30, 0.22, 0.08, 1.0) if on else Color(0.11, 0.13, 0.12, 0.94), Kit.COL_GOLD if on else Color(Kit.COL_RULE, 0.6)],
+		"hover": [Color(0.36, 0.27, 0.10, 1.0) if on else Color(0.17, 0.19, 0.16, 0.97), Kit.COL_GOLD],
+		"pressed": [Color(0.40, 0.30, 0.11, 1.0), Color(1.0, 0.9, 0.55)]}
+	for st in cols:
+		var sb := Kit.box(cols[st][0], 6.0, 5)
+		sb.set_border_width_all(2 if on else 1)
+		sb.border_color = cols[st][1]
+		b.add_theme_stylebox_override(st, sb)
+	b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
+	b.set_meta("on", on)
+
+
+## Play offline: a sandbox on this device (the faction page with `online` false; saved locally, no server).
+func _build_offline_card() -> Control:
+	var card := _card_panel("offline_card")
+	var v := Kit.vbox(8)
+	card.add_child(v)
+	v.add_child(Kit.title("Play offline", 20))
+	v.add_child(Kit.label("A sandbox on this device: pick the setting and your faction; no server, no code", 13, Kit.COL_DIM, true))
+	v.add_child(_pack_row("offline_pack_", _go_cards))
+	var ob := Kit.hero_button("Play offline", "", func(): _new_campaign_page(false, _gh_pack), 0, 20)
+	ob.name = "home_offline"
+	Kit.tip(ob, "Play offline", "Opens the faction page for the chosen setting: pick your faction, teams and rules. The campaign is saved on this device; no server is used.")
+	v.add_child(ob)
+	_gh_select(_gh_pack)
+	return card
 
 
 ## Join a grand campaign: a code field (uppercase as typed), Paste, Join, and the result under it.

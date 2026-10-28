@@ -318,7 +318,7 @@ func _grand_page() -> void:
 	_check(m._pages["grand"].is_ancestor_of(m._net_line), "the server line is on the Grand Campaign page")
 	for nm in ["home_Online_co-op", "grand_join", "grand_join_code", "grand_join_paste", "home_server", "host_pack_west", "host_pack_rome"]:
 		_check(_btn(nm) != null and _btn(nm).is_visible_in_tree() or (nm == "grand_join_code" and m._gj_edit.is_visible_in_tree()), "%s is on the Grand Campaign page" % nm)
-	_check(m._grand_cards.get_child_count() == 2 and not m._grand_cards.vertical, "the Host and Join cards sit side by side")
+	_check(m._grand_cards.get_child_count() == 3 and not m._grand_cards.vertical, "the Host and Join cards sit side by side")
 	_check(m.find_child("online_empty", true, false) != null or net == null, "no campaigns: the empty line shows (the Host card is the call to action)")
 	_check(m._net_line.text.begins_with("Server: "), "the server line reads 'Server: <host> - state' (%s)" % m._net_line.text)
 	for k in 60:
@@ -362,6 +362,23 @@ func _grand_page() -> void:
 		m._new_campaign.back.emit()
 		await _frames(3)
 		_check(m.page == "grand" and m._menu.visible, "... and Back returns to Grand Campaign")
+	# Play offline card: the faction page, offline, local save.
+	_check(m._grand_cards.get_child_count() == 3 and m.find_child("offline_card", true, false) != null, "the Grand page has the Play offline card")
+	for pk in ["rome", "west"]:
+		await _press("offline_pack_" + pk)
+		_check(m._gh_pack == pk and bool(_btn("offline_pack_" + pk).get_meta("on")) and bool(_btn("host_pack_" + pk).get_meta("on")), "the offline %s mini-card is lit (shared pick)" % pk)
+		await _press("home_offline")
+		var on_: Control = m._new_campaign
+		_check(on_ != null and not on_.online and not on_.story_only and on_.pack_pick == pk, "Play offline opens the offline faction page for %s" % pk)
+		_check(on_.find_child("row_" + ("brethren" if pk == "west" else "rome"), true, false) != null and on_.find_child("online_panel", true, false) == null, "... with faction rows and no online fields")
+		var of1 := CData.faction_index("rome" if pk == "rome" else "england")
+		on_._pick(of1)
+		await _frames(2)
+		_check(not (on_.find_child("start_campaign", true, false) as Button).disabled, "... one human enables Start")
+		var ost: Dictionary = on_.build_state("OfflineTest", 7)
+		_check(CData.pack == pk and str(ost.get("pack", "rome")) == pk and (ost["humans"] as Array).has(of1), "... build_state gives a %s state" % pk)
+		on_.back.emit()
+		await _frames(3)
 	await _press("home_server")
 	_check(m.page == "server", "Game server opens its page")
 	m._back_btn.pressed.emit()
@@ -906,6 +923,7 @@ func _phone() -> void:
 	m.show_page("grand")
 	await _frames(3)
 	_check(m._grand_cards.vertical, "phone: the Host and Join cards stack")
+	_check(m.find_child("offline_card", true, false) != null and (m.find_child("offline_card", true, false) as Control).get_global_rect().size.x <= vp.x, "phone: the Play offline card is there and fits the width")
 	await _shot("grand_phone")
 	m.show_page("options")
 	await _frames(3)
