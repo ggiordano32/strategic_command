@@ -21,6 +21,7 @@ const SHADER := preload("res://game/campaign/minis.gdshader")
 const MapLook := preload("res://game/campaign/map_look.gd")
 const CStory := preload("res://campaign/cstory.gd")
 const CChars := preload("res://campaign/cchars.gd")
+const OvBatch := preload("res://game/campaign/ov_batch.gd")
 
 static var on_sites := false
 static var on_ships := false
@@ -41,13 +42,14 @@ const SHIP_K := 1.0
 var overlay: Node2D
 var _tex := {}   # set name -> [shade, mask material]
 var _t_acc := 0.0
-var _draw_key: Array = []   # [xform, zoom] the ships were last drawn for (Low's 10 Hz bobbing redraw never skips a frame where this moved)
+var _draw_key: Array = []   # [xform, zoom, the overlay's state epoch, voyages] the ships were last drawn for (the 10 Hz bobbing redraw never skips a frame where this moved)
 ## Test probe (tests/zoom_sweep.gd --lag): what the last draws put where, and in which frame.
 static var probe := false
 static var probe_legacy := false   # test only: the old throttle (no redraw for a moved view on Low), to measure the lag it caused
 static var probe_rec := {}
 var _under: Node2D       # drawn behind the sprites: ship wakes and contact shadows
 var _wakes: Array = []   # [position, scale, heading]
+var _ub := OvBatch.new()   # _under's drawing, batched
 var _moored: Array = []  # (Docking) [position, scale, the town's site on screen]: ships lying docked (no wake, no bob, a mooring line)
 static var texture_bytes := 0
 
@@ -224,16 +226,29 @@ func _process(delta: float) -> void:
 		return
 	visible = true
 	_t_acc += delta
-	# Low redraws the bobbing at 10 Hz only; a frame where the view moved (pan or zoom) always redraws, so the
-	# ships stay put under the finger like the overlay's armies (the screen sets the overlay's view in its own
-	# _process, a parent of this layer's canvas layer, so it runs first in the same frame: no one-frame lag)
-	var dk := [overlay.xform, z]
+	# The bobbing is redrawn 10 times a second, on the overlay's `ships_redraw` (its fleets' roundels move in the same frames;
+	# 2026-10-29: every frame before on High), and otherwise only when needed: a frame where the view moved (pan or
+	# zoom), the state was redrawn or the voyages changed always redraws, so the ships stay put under the finger like the
+	# overlay's armies (the screen sets the overlay's view in its own _process, a parent of this layer's canvas layer,
+	# so it runs first in the same frame: no one-frame lag). Quality Low has no bobbing, only the 10 Hz redraw.
+	if not overlay.is_connected("ships_redraw", _on_bob):
+		overlay.connect("ships_redraw", _on_bob)
+	var dk := [overlay.xform, z, overlay.get("_epoch"), overlay.get("fleet_paths")]
 	var moved := dk != _draw_key
 	_draw_key = dk
-	if Quality.is_low() and _t_acc < 0.1 and not (moved and not probe_legacy):
+	if probe_legacy and Quality.is_low():
+		if _t_acc < 0.1:
+			return
+	elif not moved:
 		return
 	_t_acc = 0.0
 	queue_redraw()
+
+
+func _on_bob() -> void:
+	if visible and not probe_legacy:
+		_t_acc = 0.0
+		queue_redraw()
 
 
 func _draw() -> void:
@@ -342,12 +357,13 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	_blit(table, shade, "ship_%s__h%d" % [types[0], h], pos, sc, col)
 
 
-## A soft contact shadow (south-east, the light is north-west) and a small wake behind each ship.
+## A soft contact shadow (south-east, the light is north-west) and a small wake behind each ship (one triangle array).
 func _draw_under() -> void:
 	if probe:
 		probe_rec["wakes"] = _wakes.duplicate()
 		probe_rec["wakes_f"] = Engine.get_process_frames()
 	var low := Quality.is_low()
+	_ub.begin()   # (recorded, then emitted as one triangle array: ov_batch.gd)
 	for mo in _moored:
 		var mc: Vector2 = mo[0]
 		var mk_: float = mo[1]
@@ -355,12 +371,12 @@ func _draw_under() -> void:
 		for j in 16:
 			var t2 := TAU * float(j) / 16.0
 			pts2.append(mc + Vector2(4.0, 3.0) * mk_ + Vector2(cos(t2) * 15.0, sin(t2) * 7.5) * mk_)
-		_under.draw_colored_polygon(pts2, Color(0.03, 0.10, 0.20, 0.18))
+		_ub.draw_colored_polygon(pts2, Color(0.03, 0.10, 0.20, 0.18))
 		if not low:
 			var to_town: Vector2 = (mo[2] as Vector2) - mc
 			if to_town.length() > 1.0:
 				var rope := mc + to_town.normalized() * minf(to_town.length(), 16.0 * mk_)
-				_under.draw_line(mc + Vector2(0.0, 2.0 * mk_), rope, Color(0.35, 0.26, 0.15, 0.85), maxf(1.0, 1.1 * mk_), true)
+				_ub.draw_line(mc + Vector2(0.0, 2.0 * mk_), rope, Color(0.35, 0.26, 0.15, 0.85), maxf(1.0, 1.1 * mk_), true)
 	for w in _wakes:
 		var c: Vector2 = w[0]
 		var k: float = w[1]
@@ -373,7 +389,7 @@ func _draw_under() -> void:
 			for j in 16:
 				var t := TAU * float(j) / 16.0
 				pts.append(c + Vector2(4.0, 3.0) * k + Vector2(cos(t) * 15.0, sin(t) * 7.5) * k * (0.6 + 0.4 * f))
-			_under.draw_colored_polygon(pts, Color(0.03, 0.10, 0.20, 0.13))
+			_ub.draw_colored_polygon(pts, Color(0.03, 0.10, 0.20, 0.13))
 		if low:
 			continue
 		var foam := Color(1, 1, 1, 0.5)
@@ -384,8 +400,9 @@ func _draw_under() -> void:
 				var sp: float = (3.0 + float(s) * 2.2 * k) * side
 				pl.append(c + Vector2(0.0, 2.0 * k) + (back * d + Vector2(-back.y, back.x) * sp) * Vector2(1.0, 0.62))
 			foam.a = 0.5
-			_under.draw_polyline(pl, foam, maxf(1.0, 1.5 * k), true)
-		_under.draw_arc(c + dir * 4.0 * k + Vector2(0.0, 2.0 * k), 9.0 * k, 0.0, TAU, 20, Color(1, 1, 1, 0.28), maxf(1.0, 1.2 * k), true)
+			_ub.draw_polyline(pl, foam, maxf(1.0, 1.5 * k), true)
+		_ub.draw_arc(c + dir * 4.0 * k + Vector2(0.0, 2.0 * k), 9.0 * k, 0.0, TAU, 20, Color(1, 1, 1, 0.28), maxf(1.0, 1.2 * k), true)
+	_ub.flush(_under)
 
 
 # ----------------------------------------------------------- characters ---

@@ -46,6 +46,8 @@ const SeaWaves := preload("res://game/campaign/sea_waves.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const Minis := preload("res://game/campaign/minis_layer.gd")  # miniatures replace the icons / hulls when Minis.on_*
 const MenuStyle := preload("res://game/menu/menu_style.gd")
+const OvBatch := preload("res://game/campaign/ov_batch.gd")
+const InkLines := preload("res://game/campaign/ink_lines.gd")
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
@@ -285,11 +287,15 @@ static func text_w(text: String, fs: int, display: bool = false) -> float:
 	return text_line(text, fs, display).get_size().x
 
 
-## draw_string / draw_string_outline at the baseline point `at`, with an outline of width ow (0 none).
-static func put(ci: CanvasItem, at: Vector2, text: String, fs: int, col: Color, ow := 0, oc := Color(0, 0, 0), display := false) -> void:
+## draw_string / draw_string_outline at the baseline point `at`, with an outline of width ow (0 none), on a
+## CanvasItem or an OvBatch.
+static func put(ci, at: Vector2, text: String, fs: int, col: Color, ow := 0, oc := Color(0, 0, 0), display := false) -> void:
 	var tl := text_line(text, fs, display)
 	var top := at - Vector2(0.0, tl.get_line_ascent())
-	var rid := ci.get_canvas_item()
+	if not ci is CanvasItem:
+		(ci as OvBatch).text_line(tl, top, col, ow, oc, fs, display)
+		return
+	var rid := (ci as CanvasItem).get_canvas_item()
 	if ow > 0:
 		tl.draw_outline(rid, top, ow, oc)
 	tl.draw(rid, top, col)
@@ -671,20 +677,28 @@ func _army_positions6() -> Dictionary:
 	return out
 
 
-## The overlay is six canvas items drawn in this order (children of this node, which itself draws nothing and
-## never moves): the planned paths, the settlements and names, the fleets, the selected army's halo, the armies. Each
-## keeps the view it was drawn for. When the view moves, a pure pan only slides a node (translation) and a small zoom
-## step also scales it about the screen origin: positions stay exact, markers are a few percent off in size until
-## that node is drawn again, one node per frame (the one furthest off first), so a pinch never redraws everything in
-## one frame. A change of the state (queue_redraw on this node) redraws all five at once.
-enum { P_PATHS, P_SITES, P_FLEETS, P_GLOW, P_ARMIES, P_TIPS }
-const PART_NAMES := ["ov_paths", "ov_sites", "ov_fleets", "ov_glow", "ov_armies", "ov_tips"]
+## The overlay is eight canvas items drawn in this order (children of this node, which itself draws nothing and
+## never moves): the planned paths, the settlements and names, the selected fleet's reach (and its landing beaches and
+## boarding cells), the sea (blockades, the lanes at war and raided, wrecks: static), the fleets (storms, the flota's
+## course, voyages and the ships: redrawn 10 times a second, the ships bob), the selected army's halo, the armies, the
+## paths' badges. Each keeps the view it was drawn for. When the view moves, a pure pan only slides a node
+## (translation) and a small zoom step also scales it about the screen origin: positions stay exact, markers are a few
+## percent off in size until that node is drawn again, one node per frame (the one furthest off first), so a pinch
+## never redraws everything in one frame. A change of the state (queue_redraw on this node) redraws all at once.
+## Each part is recorded into an OvBatch (ov_batch.gd) and emitted in a few draw calls (2026-10-29).
+enum { P_PATHS, P_SITES, P_REACH, P_SEA, P_FLEETS, P_GLOW, P_ARMIES, P_TIPS }
+const PART_NAMES := ["ov_paths", "ov_sites", "ov_reach", "ov_sea", "ov_fleets", "ov_glow", "ov_armies", "ov_tips"]
+const BOB_DT := 0.1          # s between the fleets' redraws for the bobbing (10 Hz, as Quality Low's ships were)
+## The miniatures' ships (minis_layer.gd) are to be redrawn in this frame: a bob step (BOB_DT; the fleets here move
+## in the same frames), the state redrawn, or the voyages or the selected fleet changed.
+signal ships_redraw
 const ZOOM_SLIDE := 0.16     # a node further off than this is redrawn at once
 const ZOOM_EAGER := 0.02     # ... one a frame once it is further off than this
 var _nodes: Array = []
 var _dx: Array = []          # Transform2D each node was drawn for
 var _dz: Array = []          # the zoom each node was drawn for
-var _ci: CanvasItem = null   # the item being drawn
+var _ci = null               # what the part draws on: _b (or a CanvasItem)
+var _b := OvBatch.new()      # the parts are recorded into this batch and emitted in a few draw calls (ov_batch.gd)
 var _drawn_once := false
 var _pos_cache := {}
 var _pos_key: Array = []
@@ -692,11 +706,20 @@ var _army_pos := {}          # the positions the armies were drawn at (the halo'
 var _army_epoch := -1
 var _epoch := 0              # bumped by a state redraw: the cached positions are void
 var _last_xf := Transform2D.IDENTITY
-var _devs := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # each node's scale error as last slid
+var _devs := [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # each node's scale error as last slid
+var _bob_due := false        # the fleets asked to be redrawn for the bobbing (at the next bob step)
+var _bob_acc := 0.0          # s since the last bob step
+var _sea_raid: Array = []    # the raid_lanes the sea part was drawn with
+var _fpos_cache := {}        # fleet_positions() for _fpos_key
+var _fpos_key: Array = []
+var _raid_epoch := -1        # the state redraw _raider_ids is of
+## Profiling only (tests/look_prof.gd --parts): parts of the overlay left out: "markers", "names", "standards",
+## "lastseen", "fleets", "lanes" (the lanes at war and raided, blockades, wrecks, storms, the flota's course).
+static var prof_off := {}
 
 
 func _ready() -> void:
-	for i in 6:
+	for i in PART_NAMES.size():
 		var nd := Node2D.new()
 		nd.draw.connect(_draw_part.bind(i))
 		add_child(nd)
@@ -713,6 +736,7 @@ func _draw() -> void:
 	_drawn_once = true
 	for nd in _nodes:
 		(nd as Node2D).queue_redraw()
+	ships_redraw.emit()
 
 
 ## The view moved to xf (called by the screen every frame it moves): nodes are slid, and one is queued for a redraw
@@ -752,12 +776,19 @@ func _slide(nd: Node2D, d: Transform2D, xf: Transform2D) -> float:
 	return maxf(absf(sx - 1.0), absf(sy - 1.0))
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	# the bobbing steps (10 Hz, by the frames' time: the same frames on every run at a fixed frame rate)
+	_bob_acc += delta
+	if _bob_acc >= BOB_DT:
+		_bob_acc = fmod(_bob_acc, BOB_DT)
+		if _bob_due and _drawn_once:
+			(_nodes[P_FLEETS] as Node2D).queue_redraw()
+		ships_redraw.emit()
 	# once the view has stopped, any node still off is drawn again, one a frame (not in a frame of the map's staged redraw)
 	if _drawn_once and xform == _last_xf:
 		var mv: Node = MapView.instance
 		if mv == null or not is_instance_valid(mv) or not mv.heavy_pending():
-			for i in [P_ARMIES, P_SITES, P_PATHS, P_FLEETS]:
+			for i in [P_ARMIES, P_SITES, P_SEA, P_PATHS, P_REACH, P_FLEETS]:
 				if float(_devs[i]) > 0.0005:
 					(_nodes[i] as Node2D).queue_redraw()
 					break
@@ -765,7 +796,9 @@ func _process(_delta: float) -> void:
 
 
 func _begin_part(i: int) -> void:
-	_ci = _nodes[i]
+	_b.begin()
+	_b.ink = InkLines.new() if i == P_SEA and InkLines.state == 1 else null   # (the lanes' dashes: ink_lines.gd)
+	_ci = _b
 	if i == P_GLOW or i == P_TIPS:
 		return   # (they ride with the armies / the paths: same transform, set when those are drawn)
 	_dx[i] = xform
@@ -773,6 +806,8 @@ func _begin_part(i: int) -> void:
 	_devs[i] = 0.0
 	(_nodes[i] as Node2D).position = Vector2.ZERO
 	(_nodes[i] as Node2D).scale = Vector2.ONE
+	if i == P_FLEETS:
+		_bob_due = false
 	if i == P_PATHS:   # the badges node takes the paths' transform
 		(_nodes[P_TIPS] as Node2D).position = Vector2.ZERO
 		(_nodes[P_TIPS] as Node2D).scale = Vector2.ONE
@@ -793,6 +828,10 @@ func _draw_part(i: int) -> void:
 			_paths_body()
 		P_SITES:
 			_sites_body()
+		P_REACH:
+			_reach_body()
+		P_SEA:
+			_sea_body()
 		P_FLEETS:
 			_fleets_body()
 		P_GLOW:
@@ -801,6 +840,7 @@ func _draw_part(i: int) -> void:
 			_armies_body()
 		P_TIPS:
 			_tips_body()
+	_b.flush(_nodes[i])
 	_ci = null
 	ZProf.add(PART_NAMES[i], t0)
 
@@ -815,16 +855,21 @@ func redraw_parts(p_paths: bool, p_fleets: bool, p_armies: bool) -> void:
 	if p_paths:
 		(_nodes[P_PATHS] as Node2D).queue_redraw()
 	if p_fleets:
+		ships_redraw.emit()
+		(_nodes[P_REACH] as Node2D).queue_redraw()
 		(_nodes[P_FLEETS] as Node2D).queue_redraw()
+		if raid_lanes != _sea_raid:
+			(_nodes[P_SEA] as Node2D).queue_redraw()   # (the lanes the selected fleet can raid are drawn with the sea)
 	if p_armies:
 		(_nodes[P_ARMIES] as Node2D).queue_redraw()
 	(_nodes[P_GLOW] as Node2D).queue_redraw()
 
 
-## Redraw only the fleets (the ships bob) or only the armies' halo (a selected army): nothing before the first draw.
+## Redraw only the fleets (the ships bob: at the next bob step, see _process) or only the armies' halo (a selected
+## army): nothing before the first draw.
 func redraw_fleets() -> void:
 	if _drawn_once:
-		(_nodes[P_FLEETS] as Node2D).queue_redraw()
+		_bob_due = true
 
 
 func redraw_armies() -> void:
@@ -914,18 +959,25 @@ func _sites_body() -> void:
 		var big := CData.is_capital(r) or CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"]))   # (capitals and key cities keep their look when far)
 		var far_sym := MapView.far_lod and (not Minis.on_sites or zoom < Minis.SITE_MIN_ZOOM)   # zoomed out: an ink symbol by level
 		var oc := CData.faction_color(FogView.shown_owner(state, r)) if FogView.shown_owner(state, r) >= 0 else Color(0.62, 0.62, 0.58)
-		if far_sym:
-			draw_far_site(_ci, p, lvl, CData.is_capital(r) or big, CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])),
-					FogView.shown_owner(state, r) >= 0, oc, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
+		if prof_off.has("markers"):
+			pass
+		elif far_sym:
+			var star := CData.is_capital(r) or big
+			var kc := CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"]))
+			var owned := FogView.shown_owner(state, r) >= 0
+			var fport := (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r)
+			_glyph(_ci, ["far", lvl, star, kc, owned, oc, fport], p, func(gb, q: Vector2): draw_far_site(gb, q, lvl, star, kc, owned, oc, fport))
 		elif not Minis.on_sites or Minis.weak(zoom, r):
-			draw_site(_ci, p, rad * (1.0 if not Minis.on_sites else 0.85), oc, w, m, (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r))
+			var sr0 := rad * (1.0 if not Minis.on_sites else 0.85)
+			var sport := (CFleet.harbour(r) >= 0 or CFleet.dock(r) >= 0) and not FogView.never(r)
+			_glyph(_ci, ["site", sr0, oc, w, m, sport], p, func(gb, q: Vector2): draw_site(gb, q, sr0, oc, w, m, sport))
 		var sg := CState.siege_at(state, r) if FogView.region_seen(r) else {}   # (fog: a siege out of sight is not shown)
-		if not sg.is_empty():
+		if not sg.is_empty() and not prof_off.has("markers"):
 			var sr := siege_ring_radius(r)   # (round the ring the besiegers stand on)
 			draw_siege_ring(_ci, p, sr, CData.faction_color(int(sg["f"])), m)
-		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])) and not far_sym:
-			draw_key_city(_ci, p, rad)
-		if (show_names or lvl == CData.CITY) and (not MapView.far_lod or big) and not FogView.never(r):
+		if CData.KEY_CITIES.has(str(CData.REGIONS[r]["key"])) and not far_sym and not prof_off.has("markers"):
+			_glyph(_ci, ["key", rad], p, func(gb, q: Vector2): draw_key_city(gb, q, rad))
+		if (show_names or lvl == CData.CITY) and (not MapView.far_lod or big) and not FogView.never(r) and not prof_off.has("names"):
 			var nm := str(CData.REGIONS[r]["city"])
 			var fs := int(round(FONT * (0.85 + 0.15 * m)))
 			# At the diorama zoom the names are 18 px or more and use the display face; smaller zooms are as before.
@@ -953,14 +1005,13 @@ func _sites_body() -> void:
 		var p := to_screen(Geo.site(int(b["r"]))) + Vector2(16, -14)
 		if grid and b.has("x"):
 			p = to_screen(cell_point(CGrid.at(int(b["x"]), int(b["y"])))) + Vector2(0, -16)
-		draw_battle(_ci, p, 1.0)
+		_glyph(_ci, ["bat"], p, func(gb, q: Vector2): draw_battle(gb, q, 1.0))
 	for mkr in markers:
 		draw_battle(_ci, to_screen(mkr[0]) + Vector2(0, -16), clampf(float(mkr[1]), 0.0, 1.0))
 
 
-func _fleets_body() -> void:
-	var m := mk()
-	# Fleets: the selected one's reach, voyages, then the ships.
+## The selected fleet's reach this turn, the beaches a landing can aim for, the boarding cells.
+func _reach_body() -> void:
 	for lp in _sea_reach_fill:
 		_ci.draw_colored_polygon(xform * (lp as PackedVector2Array), Color(1.0, 0.98, 0.85, 0.16))
 	for lp in sea_reach:
@@ -977,26 +1028,52 @@ func _fleets_body() -> void:
 	for bcs in [board_cells, pickup_cells]:
 		for c in bcs:
 			_draw_board_cell(int(c))
-	if state.has("fleets"):
-		var fpos := fleet_positions()
-		for r in CData.region_count():
-			var bk := CSea.blockader(state, r)
-			if bk >= 0 and CFleet.harbour(r) >= 0 and FogView.region_seen(r):
-				draw_blockade(_ci, to_screen(cell_point(CFleet.harbour(r))),
-					(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
-				var hp := to_screen(cell_point(CFleet.harbour(r)))   # (lanes) the blockaded harbour mark: a red ring
-				_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, Color(0, 0, 0, 0.7), 4.6 * m, true)
-				_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, COL_RAID, 2.6 * m, true)
+
+
+## The sea, static between state redraws: blockaded ports, the lanes (raidable by the selected fleet, at war,
+## raided), wrecks.
+func _sea_body() -> void:
+	_sea_raid = raid_lanes.duplicate()
+	if not state.has("fleets"):
+		return
+	var m := mk()
+	for r in (CData.region_count() if not prof_off.has("lanes") else 0):
+		var bk := CSea.blockader(state, r)
+		if bk >= 0 and CFleet.harbour(r) >= 0 and FogView.region_seen(r):
+			draw_blockade(_ci, to_screen(cell_point(CFleet.harbour(r))),
+				(CSea.k("BLOCKADE_CELLS", 3) + 0.5) * CGrid.cell_px() * zoom, CData.faction_color(bk), m)
+			var hp := to_screen(cell_point(CFleet.harbour(r)))   # (lanes) the blockaded harbour mark: a red ring
+			_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, Color(0, 0, 0, 0.7), 4.6 * m, true)
+			_ci.draw_arc(hp, 9.0 * m, 0.0, TAU, 24, COL_RAID, 2.6 * m, true)
+	if not prof_off.has("lanes"):
 		_draw_lanes(m)
 		_draw_wrecks(m)
-		_draw_storms(m)
-		_flota_course(fpos)
+
+
+## Fleets: storms, the flota's course, the planned voyages, then the ships.
+func _fleets_body() -> void:
+	if state.has("fleets"):
+		var fpos := _fleet_positions()
+		if not prof_off.has("lanes"):
+			_draw_storms(mk())
+			_flota_course(fpos)
 		for fp in fleet_paths:
 			_fleet_path(fp, fpos)
-		_raider_ids = raider_fleet_ids()
-		for fl in state["fleets"]:
+		if _raid_epoch != _epoch:
+			_raid_epoch = _epoch
+			_raider_ids = raider_fleet_ids()
+		for fl in (state["fleets"] if not prof_off.has("fleets") else []):
 			if fpos.has(int(fl["id"])):
 				_fleet_marker(fpos[int(fl["id"])], fl)
+
+
+## fleet_positions() for this frame's draw (kept while neither the state, the view nor the zoom changed).
+func _fleet_positions() -> Dictionary:
+	var key := [_epoch, xform, zoom, Minis.on_sites]
+	if _fpos_key != key:
+		_fpos_cache = fleet_positions()
+		_fpos_key = key
+	return _fpos_cache
 
 
 func _armies_body() -> void:
@@ -1004,9 +1081,10 @@ func _armies_body() -> void:
 	var pos := _positions()
 	_army_pos = pos
 	_army_epoch = _epoch
-	_last_seen_markers(m)
+	if not prof_off.has("lastseen"):
+		_last_seen_markers(m)
 	# Armies.
-	for a in state["armies"]:
+	for a in (state["armies"] if not prof_off.has("standards") else []):
 		var id := int(a["id"])
 		if not pos.has(id):
 			continue
@@ -1056,7 +1134,9 @@ func _last_seen_markers(m: float) -> void:
 	for e in marker_spots():
 		var mkr: Dictionary = e[0]
 		var col := CData.faction_color(int(mkr["f"]))
-		draw_last_seen(_ci, e[1], m, int(mkr["kind"]) == 1, col, str(int(mkr["units"])))
+		var lsf := int(mkr["kind"]) == 1
+		var lsn := str(int(mkr["units"]))
+		_glyph(_ci, ["seen", m, lsf, col, lsn], e[1], func(gb, q: Vector2): draw_last_seen(gb, q, m, lsf, col, lsn))
 		var c: Vector2 = e[1]
 		var tt := "seen t%d" % int(mkr["turn"])
 		var tfs := int(round(11 * maxf(m, 0.8)))
@@ -1064,7 +1144,7 @@ func _last_seen_markers(m: float) -> void:
 
 
 ## The last-seen marker itself (shield for an army, hull for a fleet) at c, scale m, with its count n.
-static func draw_last_seen(ci: CanvasItem, c: Vector2, m: float, fleet: bool, col: Color, n: String) -> void:
+static func draw_last_seen(ci, c: Vector2, m: float, fleet: bool, col: Color, n: String) -> void:
 	var fcol := Color(col.r, col.g, col.b, MARKER_A)
 	var pts: PackedVector2Array
 	if fleet:
@@ -1083,10 +1163,10 @@ static func draw_last_seen(ci: CanvasItem, c: Vector2, m: float, fleet: bool, co
 
 
 # ------------------------------------------------------------- painters ---
-# Static, on any CanvasItem: the map draws with them and so does the map key.
+# Static, on any CanvasItem (the map key) or an OvBatch (the map: ov_batch.gd records the same calls as triangles).
 
 ## A battle: a red disc with crossed swords (alpha fades a popped marker).
-static func draw_battle(ci: CanvasItem, p: Vector2, alpha: float) -> void:
+static func draw_battle(ci, p: Vector2, alpha: float) -> void:
 	ci.draw_circle(p, 11.0, Color(COL_BATTLE, 0.95 * alpha))
 	ci.draw_arc(p, 11.0, 0, TAU, 20, Color(1, 1, 1, alpha), 1.5, true)
 	ci.draw_line(p + Vector2(-5, -5), p + Vector2(5, 5), Color(1, 1, 1, alpha), 2.2, true)
@@ -1094,7 +1174,7 @@ static func draw_battle(ci: CanvasItem, p: Vector2, alpha: float) -> void:
 
 
 ## Version 6 replay: a faint line in the army's colour behind it.
-static func draw_trail(ci: CanvasItem, pts: PackedVector2Array, faction_col: Color) -> void:
+static func draw_trail(ci, pts: PackedVector2Array, faction_col: Color) -> void:
 	var col := faction_col.lightened(0.3)
 	col.a = 0.8
 	ci.draw_polyline(pts, Color(0, 0, 0, 0.5), 6.0, true)
@@ -1102,14 +1182,14 @@ static func draw_trail(ci: CanvasItem, pts: PackedVector2Array, faction_col: Col
 
 
 ## Version 6: an enemy army's zone of control (red circle).
-static func draw_zone(ci: CanvasItem, c: Vector2, rad: float) -> void:
+static func draw_zone(ci, c: Vector2, rad: float) -> void:
 	ci.draw_circle(c, rad, ZONE_FILL)
 	ci.draw_arc(c, rad, 0, TAU, 40, Color(0.0, 0.0, 0.0, 0.45), 3.0, true)
 	ci.draw_arc(c, rad, 0, TAU, 40, ZONE_EDGE, 1.6, true)
 
 
 ## Version 6: a support (kind 0, yellow) or attack (kind 1, red) line.
-static func draw_link(ci: CanvasItem, a: Vector2, b: Vector2, kind: int) -> void:
+static func draw_link(ci, a: Vector2, b: Vector2, kind: int) -> void:
 	ci.draw_line(a, b, Color(0, 0, 0, 0.5), 5.0, true)
 	ci.draw_dashed_line(a, b, COL_SUPPORT if kind == 0 else COL_THREAT, LINK_W, LINK_DASH, true)
 
@@ -1127,7 +1207,7 @@ static func path_color(kind: String, caption: String = "") -> Color:
 
 
 ## Version 6: one step of a planned path: solid this turn, dashed after.
-static func draw_path_step(ci: CanvasItem, a: Vector2, b: Vector2, col: Color, this_turn: bool, m: float) -> void:
+static func draw_path_step(ci, a: Vector2, b: Vector2, col: Color, this_turn: bool, m: float) -> void:
 	if this_turn:
 		ci.draw_line(a, b, Color(0, 0, 0, 0.6), (PATH_W_NOW + 3.0) * m, true)
 		ci.draw_line(a, b, col, PATH_W_NOW * m, true)
@@ -1137,7 +1217,7 @@ static func draw_path_step(ci: CanvasItem, a: Vector2, b: Vector2, col: Color, t
 
 
 ## Version 6: the ring where this turn's march ends.
-static func draw_turn_end(ci: CanvasItem, e: Vector2, col: Color, m: float) -> void:
+static func draw_turn_end(ci, e: Vector2, col: Color, m: float) -> void:
 	ci.draw_circle(e, 7.0 * m, Color(0, 0, 0, 0.55))
 	ci.draw_arc(e, 7.0 * m, 0, TAU, 20, col, 3.0 * m, true)
 
@@ -1160,7 +1240,7 @@ static func has_intent(kind: String) -> bool:
 	return ATTACK_KINDS.has(kind) or SIEGE_KINDS.has(kind) or kind == "merge" or kind == "inside" or kind == "trespass"
 
 
-static func draw_intent(ci: CanvasItem, p: Vector2, kind: String, col: Color, m: float) -> void:
+static func draw_intent(ci, p: Vector2, kind: String, col: Color, m: float) -> void:
 	if not has_intent(kind):
 		return
 	if kind == "trespass":
@@ -1196,7 +1276,7 @@ static func draw_intent(ci: CanvasItem, p: Vector2, kind: String, col: Color, m:
 ## A merge candidate's glyph at p: kind 0 an army of ours it can merge
 ## into (in reach, room for the units: green plus), 1 an allied player's
 ## army next to it to give units to (gold gift box).
-static func draw_merge_glyph(ci: CanvasItem, p: Vector2, kind: int, m: float) -> void:
+static func draw_merge_glyph(ci, p: Vector2, kind: int, m: float) -> void:
 	var r := 7.0 * m
 	ci.draw_circle(p, r + 1.2, Color(0, 0, 0, 0.85))
 	ci.draw_circle(p, r, MERGE_COLS[clampi(kind, 0, 1)])
@@ -1212,7 +1292,7 @@ static func draw_merge_glyph(ci: CanvasItem, p: Vector2, kind: int, m: float) ->
 
 ## A settlement: walls (w 0-3), a white rim and the owner's colour (the
 ## same faction colour as its banners and the land's owner band).
-static func draw_site(ci: CanvasItem, p: Vector2, rad: float, owner_col: Color, w: int, m: float, port := false) -> void:
+static func draw_site(ci, p: Vector2, rad: float, owner_col: Color, w: int, m: float, port := false) -> void:
 	if w > 0:
 		draw_wall_ring(ci, p, rad, w, m)
 	ci.draw_circle(p, rad + 2.5, COL_OUTLINE)
@@ -1229,7 +1309,7 @@ const PARCH := Color(0.93, 0.87, 0.7)
 ## A settlement below the miniatures' zoom (visual pass part 2): an ink symbol by level over a tiny parchment disc,
 ## the owner's colour a thin ring round it. Level 0 a small circle, 1 a circle with a tick (a tiny tower), 2 a ring
 ## with battlement notches; a capital a star, a key city the white star; a port gets a small ink anchor.
-static func draw_far_site(ci: CanvasItem, p: Vector2, lvl: int, star: bool, key: bool, owned: bool, owner_col: Color, port: bool) -> void:
+static func draw_far_site(ci, p: Vector2, lvl: int, star: bool, key: bool, owned: bool, owner_col: Color, port: bool) -> void:
 	var r: float = [3.0, 4.0, 5.0][clampi(lvl, 0, 2)] + (2.0 if star else 0.0)
 	var dr := r + 2.2
 	ci.draw_circle(p, dr + 0.8, Color(0.08, 0.05, 0.03, 0.5))
@@ -1263,7 +1343,7 @@ static func draw_far_site(ci: CanvasItem, p: Vector2, lvl: int, star: bool, key:
 
 
 ## A harbour mark: a small white anchor on a dark disc (a settlement with a port).
-static func draw_harbour_mark(ci: CanvasItem, p: Vector2, m: float) -> void:
+static func draw_harbour_mark(ci, p: Vector2, m: float) -> void:
 	var s := maxf(m, 0.7) * 4.1   # (75 % of its first size, and a quieter disc: owner 2026-10-23)
 	ci.draw_circle(p, s * 1.35, Color(0.06, 0.1, 0.16, 0.6))
 	var wc := Color(0.95, 0.96, 0.98)
@@ -1275,7 +1355,7 @@ static func draw_harbour_mark(ci: CanvasItem, p: Vector2, m: float) -> void:
 
 ## A key city (the default victory condition): a white star with a dark
 ## edge on the settlement (no gold: gold is the gift glyph).
-static func draw_key_city(ci: CanvasItem, p: Vector2, rad: float) -> void:
+static func draw_key_city(ci, p: Vector2, rad: float) -> void:
 	var ro := maxf(rad * 0.78, 3.5)
 	var ri := ro * 0.45
 	var pts := PackedVector2Array()
@@ -1290,7 +1370,7 @@ static func draw_key_city(ci: CanvasItem, p: Vector2, rad: float) -> void:
 
 ## Walls: a stone ring round the settlement with towers on it, thicker and
 ## with more towers per wall level (1-3).
-static func draw_wall_ring(ci: CanvasItem, p: Vector2, rad: float, w: int, m: float) -> void:
+static func draw_wall_ring(ci, p: Vector2, rad: float, w: int, m: float) -> void:
 	var rr := rad + (3.0 + 1.2 * w) * m
 	var th := (1.6 + 0.9 * w) * m
 	ci.draw_arc(p, rr, 0, TAU, 32, Color(0.12, 0.11, 0.09, 0.95), th + 1.6, true)
@@ -1306,7 +1386,7 @@ static func draw_wall_ring(ci: CanvasItem, p: Vector2, rad: float, w: int, m: fl
 
 ## Siege: a dashed ring in the besieger's colour with tents on its upper
 ## half (the army banners stand below the settlement).
-static func draw_siege_ring(ci: CanvasItem, p: Vector2, rad: float, col: Color, m: float) -> void:
+static func draw_siege_ring(ci, p: Vector2, rad: float, col: Color, m: float) -> void:
 	var rr := rad + 6.0 * m
 	var n := 12
 	for k in n:
@@ -1326,7 +1406,7 @@ static func draw_siege_ring(ci: CanvasItem, p: Vector2, rad: float, col: Color, 
 
 ## A blockaded port: a dashed ring of radius rad round its harbour at p in
 ## the blockader's colour, a bar across the harbour mouth.
-static func draw_blockade(ci: CanvasItem, p: Vector2, rad: float, col: Color, m: float) -> void:
+static func draw_blockade(ci, p: Vector2, rad: float, col: Color, m: float) -> void:
 	var n := 16
 	for k in n:
 		var a0 := TAU * k / n
@@ -1385,7 +1465,7 @@ func _draw_lanes(m: float) -> void:
 
 
 ## The dashes (screen px, cut as MapView cuts the pale ones) of a lane at war: dull dark red-brown, bolder than the pale.
-static func draw_war_dashes(ci: CanvasItem, dashes: PackedVector2Array, tbl: bool) -> void:
+static func draw_war_dashes(ci, dashes: PackedVector2Array, tbl: bool) -> void:
 	if dashes.size() < 2:
 		return
 	var w := (MapView.LANE_TABLE_W if tbl else MapView.LANE_W) * 2.4
@@ -1434,7 +1514,7 @@ func lane_at_info(p: Vector2) -> int:
 
 ## (N2b) A hurricane at p (screen) of radius rad: a pale disc with three
 ## spiral arms turning with t (seconds) round a dark eye.
-static func draw_storm(ci: CanvasItem, p: Vector2, rad: float, t: float, m: float) -> void:
+static func draw_storm(ci, p: Vector2, rad: float, t: float, m: float) -> void:
 	ci.draw_circle(p, rad, Color(0.82, 0.86, 0.92, 0.16))
 	ci.draw_arc(p, rad, 0, TAU, 40, Color(0.92, 0.94, 1.0, 0.35), 1.5 * m, true)
 	for arm in 3:
@@ -1450,7 +1530,7 @@ static func draw_storm(ci: CanvasItem, p: Vector2, rad: float, t: float, m: floa
 
 ## (N2b) A storm's forecast cone: the hull of its disc now and at the ends
 ## of the two tracks it may take (screen points a, b1, b2; radius rad).
-static func draw_cone(ci: CanvasItem, a: Vector2, b1: Vector2, b2: Vector2, rad: float, m: float) -> void:
+static func draw_cone(ci, a: Vector2, b1: Vector2, b2: Vector2, rad: float, m: float) -> void:
 	var pts := PackedVector2Array()
 	for c in [a, b1, b2]:
 		for i in 20:
@@ -1466,7 +1546,7 @@ static func draw_cone(ci: CanvasItem, a: Vector2, b1: Vector2, b2: Vector2, rad:
 
 ## (N2b) A wreck at p: a broken mast and yard out of the water, a gold dot
 ## when treasure went down with her.
-static func draw_wreck(ci: CanvasItem, p: Vector2, gold: bool, m: float) -> void:
+static func draw_wreck(ci, p: Vector2, gold: bool, m: float) -> void:
 	var d := Vector2(3.0, -11.0) * m
 	ci.draw_arc(p + Vector2(0, 1.5 * m), 7.0 * m, 0.2, PI - 0.2, 10, Color(0.05, 0.08, 0.12, 0.6), 2.0 * m, true)
 	ci.draw_line(p, p + d, Color(0, 0, 0, 0.85), 4.0 * m, true)
@@ -1533,7 +1613,7 @@ func _draw_wrecks(m: float) -> void:
 
 
 ## The treasure mark on a flota ship (a gold coin with a dark edge).
-static func draw_treasure(ci: CanvasItem, p: Vector2, m: float) -> void:
+static func draw_treasure(ci, p: Vector2, m: float) -> void:
 	ci.draw_circle(p, 6.5 * m, Color(0, 0, 0, 0.85))
 	ci.draw_circle(p, 5.0 * m, Color(1.0, 0.82, 0.25))
 	ci.draw_circle(p, 2.2 * m, Color(0.75, 0.55, 0.1))
@@ -1603,15 +1683,34 @@ func _flota_course(fpos: Dictionary) -> void:
 ## full strength, frac), the selection frame (glow > 0), versions 1-5 the
 ## grey "moved" dot (version 6 shows marches as paths and has the stance
 ## badge there). Returns the banner's rect.
-static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human: bool, count: int, frac: float,
+static func draw_banner(ci, c: Vector2, col: Color, m: float, human: bool, count: int, frac: float,
 		glow: float = 0.0, moved: bool = false, emblem: String = "") -> Rect2:
 	var rect := Rect2(c - Vector2(ARMY_W, ARMY_H) * 0.5 * m, Vector2(ARMY_W, ARMY_H) * m)   # (the tap area: unchanged)
 	var sel := glow > 0.0
 	var sm := maxf(m, 0.8)   # the standard keeps a readable size when zoomed out (the hit rect shrinks, it does not)
 	var o := c + Vector2(0, -3.0 * sm if sel else 0.0)   # the selected standard lifts a little
 	var rim := COL_SELECTED if sel else Color(1, 1, 1)
+	# The pole, then the swallow-tailed pennant in the faction colour with the crest (a glyph on a batch).
+	_glyph(ci, ["std", col, sm, human, sel, emblem], o, func(gb, q: Vector2): _standard(gb, q, col, sm, human, sel, rim, emblem))
+	# The strength on a parchment roundel with an ink rim at the pole's foot.
+	var rc := Vector2(o.x - 9.0 * sm + 4.0 * sm, o.y + 6.0 * sm)
+	var rr := 9.0 * sm
+	var n := str(count)
+	var afs := int(round(14 * maxf(m, 0.75)))
+	if text_w(n, afs) > rr * 1.75:
+		afs = maxi(int(afs * rr * 1.75 / text_w(n, afs)), 9)
+	_glyph(ci, ["rnd", rr, human or sel, rim, n, afs], rc, func(gb, q: Vector2): _roundel(gb, q, rr, human or sel, rim, n, afs))
+	var by := rect.end.y + 5.0 * m
+	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x, 4 * m), Color(0, 0, 0, 0.7))
+	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), BAR_GOOD if frac > 0.6 else BAR_LOW)
+	if moved:
+		ci.draw_circle(rect.position + Vector2(rect.size.x, 0), 3.5, COL_MOVED)
+	return rect
+
+
+## The standard's pole, finial and pennant with the crest, the standard at o (draw_banner).
+static func _standard(ci, o: Vector2, col: Color, sm: float, human: bool, sel: bool, rim: Color, emblem: String) -> void:
 	var pole_x := o.x - 9.0 * sm
-	# The pole, then the swallow-tailed pennant in the faction colour with the crest.
 	var top := o.y - 17.0 * sm
 	ci.draw_line(Vector2(pole_x, top - 4.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), COL_OUTLINE, 3.2, true)
 	ci.draw_line(Vector2(pole_x, top - 3.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), Color(0.55, 0.42, 0.26), 1.5, true)
@@ -1629,28 +1728,28 @@ static func draw_banner(ci: CanvasItem, c: Vector2, col: Color, m: float, human:
 	if emblem != "" and FactionEmblem.has(emblem):
 		var es := 13.0 * sm
 		FactionEmblem.draw(ci, emblem, Rect2(Vector2(pole_x + 3.0 * sm, top + 8.0 * sm - es * 0.5), Vector2(es, es)))
-	# The strength on a parchment roundel with an ink rim at the pole's foot.
-	var rc := Vector2(pole_x + 4.0 * sm, o.y + 6.0 * sm)
-	var rr := 9.0 * sm
+
+
+## A count (n, font size fs) on a parchment roundel of radius rr with an ink rim (and a rim of colour `rim`) at rc.
+static func _roundel(ci, rc: Vector2, rr: float, rimmed: bool, rim: Color, n: String, fs: int) -> void:
 	ci.draw_circle(rc, rr + 1.6, COL_OUTLINE)
-	if human or sel:
+	if rimmed:
 		ci.draw_arc(rc, rr + 1.2, 0, TAU, 24, rim, 1.4, true)
 	ci.draw_circle(rc, rr, Color(0.93, 0.87, 0.7))
-	var n := str(count)
-	var afs := int(round(14 * maxf(m, 0.75)))
-	if text_w(n, afs) > rr * 1.75:
-		afs = maxi(int(afs * rr * 1.75 / text_w(n, afs)), 9)
-	put(ci, rc + Vector2(-text_w(n, afs) * 0.5, afs * 0.34), n, afs, Color(0.1, 0.06, 0.03))
-	var by := rect.end.y + 5.0 * m
-	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x, 4 * m), Color(0, 0, 0, 0.7))
-	ci.draw_rect(Rect2(rect.position.x, by, rect.size.x * frac, 4 * m), BAR_GOOD if frac > 0.6 else BAR_LOW)
-	if moved:
-		ci.draw_circle(rect.position + Vector2(rect.size.x, 0), 3.5, COL_MOVED)
-	return rect
+	put(ci, rc + Vector2(-text_w(n, fs) * 0.5, fs * 0.34), n, fs, Color(0.1, 0.06, 0.03))
+
+
+## What f(ci, p) draws at p: on an OvBatch a glyph kept under `key` (everything the drawing depends on but the place:
+## drawn once, then stamped; ov_batch.gd), on a CanvasItem the drawing itself.
+static func _glyph(ci, key: Array, p: Vector2, f: Callable) -> void:
+	if ci is OvBatch:
+		(ci as OvBatch).glyph(key, p, f)
+	else:
+		f.call(ci, p)
 
 
 ## Afloat (2026-10-23): a small canoe under the banner of an amphibious army on the water.
-static func draw_canoe(ci: CanvasItem, rect: Rect2, m: float) -> void:
+static func draw_canoe(ci, rect: Rect2, m: float) -> void:
 	var c := Vector2(rect.get_center().x, rect.end.y + 5.0 * m)
 	var hull := PackedVector2Array([c + Vector2(-11, -2) * m, c + Vector2(-5, 2.5) * m, c + Vector2(5, 2.5) * m,
 		c + Vector2(11, -2) * m, c + Vector2(0, -0.5) * m])
@@ -1662,7 +1761,7 @@ static func draw_canoe(ci: CanvasItem, rect: Rect2, m: float) -> void:
 
 
 ## Inside the walls: a small crenellated tower on the banner's corner.
-static func draw_tower(ci: CanvasItem, rect: Rect2, m: float) -> void:
+static func draw_tower(ci, rect: Rect2, m: float) -> void:
 	var tw2 := 8.0 * m
 	var tp := rect.position + Vector2(-tw2 * 0.6, -tw2 * 0.4)
 	var stone := Color(0.85, 0.8, 0.7)
@@ -1674,7 +1773,7 @@ static func draw_tower(ci: CanvasItem, rect: Rect2, m: float) -> void:
 
 ## Version 6: a letter on the banner's top right for a stance other than
 ## the default (F forced march, D fortified, R raiding).
-static func draw_stance(ci: CanvasItem, rect: Rect2, st_v: int) -> void:
+static func draw_stance(ci, rect: Rect2, st_v: int) -> void:
 	if not STANCE_LETTERS.has(st_v):
 		return
 	var txt := str(STANCE_LETTERS[st_v])
@@ -1687,7 +1786,7 @@ static func draw_stance(ci: CanvasItem, rect: Rect2, st_v: int) -> void:
 
 
 ## Version 5: one hop of a march (s0 -> e0): solid this turn, dotted after.
-static func draw_hop(ci: CanvasItem, s0: Vector2, e0: Vector2, col: Color, this_turn: bool, m: float) -> void:
+static func draw_hop(ci, s0: Vector2, e0: Vector2, col: Color, this_turn: bool, m: float) -> void:
 	if this_turn:
 		ci.draw_line(s0, e0, Color(0, 0, 0, 0.6), (PATH_W_NOW + 3.0) * m, true)
 		ci.draw_line(s0, e0, col, PATH_W_NOW * m, true)
@@ -1697,7 +1796,7 @@ static func draw_hop(ci: CanvasItem, s0: Vector2, e0: Vector2, col: Color, this_
 
 
 ## Versions 1-4: a planned move as an arrow.
-static func draw_arrow(ci: CanvasItem, from: Vector2, to: Vector2, col: Color) -> void:
+static func draw_arrow(ci, from: Vector2, to: Vector2, col: Color) -> void:
 	var d := to - from
 	var ln := d.length()
 	if ln < 4.0:
@@ -1797,7 +1896,7 @@ func _draw_board_cell(c: int) -> void:
 
 
 ## A small boat glyph (hull and a sail) at p.
-static func draw_boat(ci: CanvasItem, p: Vector2, col: Color, m: float) -> void:
+static func draw_boat(ci, p: Vector2, col: Color, m: float) -> void:
 	var hull := PackedVector2Array([p + Vector2(-6, 1) * m, p + Vector2(6, 1) * m, p + Vector2(3.5, 5) * m, p + Vector2(-3.5, 5) * m])
 	var sail := PackedVector2Array([p + Vector2(0.5, -7) * m, p + Vector2(5, 0) * m, p + Vector2(0.5, 0) * m])
 	for poly in [hull, sail]:
@@ -1884,11 +1983,7 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 	var fs := int(round(14 * maxf(m, 0.75)))
 	var rr := 8.5 * maxf(m, 0.8)
 	var tp := xf * Vector2(0, -1.05 * s - (Minis.label_lift() * 0.5 if Minis.on_ships else 0.0)) + Vector2(4.0 * m + rr, fs * 0.2 - rr * 0.6)
-	_ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr + 1.6, COL_OUTLINE)
-	if human:
-		_ci.draw_arc(tp + Vector2(0, -fs * 0.34), rr + 1.2, 0, TAU, 24, Color(1, 1, 1), 1.3, true)
-	_ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr, Color(0.93, 0.87, 0.7))
-	put(_ci, tp + Vector2(-text_w(txt, fs) * 0.5, 0), txt, fs, Color(0.1, 0.06, 0.03))
+	_glyph(_ci, ["frnd", rr, human, txt, fs], tp, func(gb, q: Vector2): _fleet_roundel(gb, q, rr, human, txt, fs))
 	tp += Vector2(-rr, rr * 0.4)
 	if _raider_ids.has(int(fl["id"])):   # (lanes) the fleet raiding a lane
 		var rfs := int(round(10 * maxf(m, 0.8)))
@@ -1914,6 +2009,15 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 		var fw := text_w(ft, fs)
 		var fp := c + Vector2(-fw * 0.5, s * 0.62 + fs + 4.0)
 		put(_ci, fp, ft, fs, Color(1.0, 0.85, 0.35), 4, Color(0, 0, 0, 0.8))
+
+
+## The ship count on a fleet's roundel, its text's baseline origin at tp (_fleet_marker).
+static func _fleet_roundel(ci, tp: Vector2, rr: float, human: bool, txt: String, fs: int) -> void:
+	ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr + 1.6, COL_OUTLINE)
+	if human:
+		ci.draw_arc(tp + Vector2(0, -fs * 0.34), rr + 1.2, 0, TAU, 24, Color(1, 1, 1), 1.3, true)
+	ci.draw_circle(tp + Vector2(0, -fs * 0.34), rr, Color(0.93, 0.87, 0.7))
+	put(ci, tp + Vector2(-text_w(txt, fs) * 0.5, 0), txt, fs, Color(0.1, 0.06, 0.03))
 
 
 ## A path's caption ("Merge into army (5 units)") above its end.

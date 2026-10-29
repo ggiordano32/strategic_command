@@ -10,7 +10,7 @@ extends RefCounted
 const KEYS: Array[String] = ["new_spain", "tierra_firme", "england", "france", "dutch", "brethren", "itza", "miskito"]
 const INK := Color(0.07, 0.06, 0.06)
 
-static var _ci: CanvasItem
+static var _ci   # a CanvasItem, or anything with its drawing methods (the overworld overlay's OvBatch)
 static var _c := Vector2.ZERO
 static var _s := 1.0
 
@@ -43,7 +43,7 @@ class Mark extends Control:
 
 ## Draw the emblem filling the square centred in rect (a thin dark edge
 ## included). Does nothing for an unknown key.
-static func draw(ci: CanvasItem, key: String, rect: Rect2) -> void:
+static func draw(ci, key: String, rect: Rect2) -> void:
 	if not has(key):
 		return
 	var side := minf(rect.size.x, rect.size.y)

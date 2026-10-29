@@ -376,3 +376,107 @@ bit even on my desktop."
   West, so on a weak GPU a level of detail (Douglas-Peucker per zoom band) may pay; the Tab S7 keeps the old cost
   (the replay); the table frame's full-screen screen-texture read and the water / fog shaders measured within noise
   here and were not changed; not yet seen on a phone.
+
+### Overworld overlay cost (as built, 2026-10-29)
+
+View only (nothing under `sim/` or `campaign/`, no hash moves). After the ink meshes the overlay was about half of
+the West table's frame: about 1000 to 1200 draw calls of circles, antialiased arcs, polygons and text, its fleets part
+redrawn 14 times a second and the miniatures' ships every frame (High), for the bobbing.
+
+- **Profile** (`tests/look_prof.gd --parts`: the look_bench campaign, West, table style, 2000 x 923, this desktop;
+  each part's cost is the median frame with everything minus the median frame without it, its draw calls in
+  brackets; ms; noise about +-0.1 after, +-0.3 before; base f63c064):
+
+  | part | before 1.2 | 0.6 | 0.226 | after 1.2 | 0.6 | 0.226 |
+  |---|---|---|---|---|---|---|
+  | whole frame (median ms, draw calls) | 7.21 (1912) | 6.67 (1624) | 4.98 (1609) | 2.61 (991) | 1.64 (462) | 1.59 (445) |
+  | ... its GPU time | 4.88 | 4.17 | 3.80 | 1.43 | 0.85 | 0.79 |
+  | the overlay | 3.74 (939) | 4.04 (1180) | 3.53 (1196) | 0.04 (25) | 0.11 (29) | 0.10 (32) |
+  | ... settlement markers, far-town symbols, key-city stars | 1.02 (372) | 1.64 (613) | 1.15 (553) | 0.03 (2) | 0.05 (5) | 0.10 (4) |
+  | ... names | 0.22 (98) | 0.24 (98) | 0.11 (10) | under 0.1 (5) | 0.05 (9) | under 0.1 (4) |
+  | ... army standards and roundels | 0.88 (415) | 0.95 (415) | 0.85 (415) | 0.07 (9) | 0.05 (11) | 0.12 (14) |
+  | ... fleet markers | 0.19 (53) | 0.08 (53) | 0.45 (217) | 0 (4) | 0.05 (6) | 0.04 (1) |
+  | ... lanes at war and raided, blockades, wrecks, storms, the flota's course | 1.15 (2) | 1.08 (2) | 1.20 (2) | 0.08 (6) | 0 (7) | 0.07 (0) |
+  | ... planned paths, last-seen markers (none at turn 1), fog | within noise | | | within noise | | |
+  | the ships' wakes (`minis_layer.gd`) | 0.16 (8) | 0.12 (12) | 0 (0) | 0 (1) | 0.02 (3) | 0.08 (0) |
+  | an army selected (frame with minus without) | +1.71 (+329) | +1.37 (+284) | +1.56 (+284) | +1.26 (+236) | +1.15 (+187) | +0.86 (+193) |
+  | ... the overlay with the army selected | 4.31 (1102) | 4.41 (1278) | 4.24 (1294) | 0.36 (95) | 0.31 (30) | 0.16 (39) |
+  | ... the map's reach, pulse and selected-region nodes | 1.00 (79) | 0.50 (14) | 0.51 (14) | 0.81 (79) | 0.70 (14) | 0.42 (15) |
+  | ... the UI (the side panel) | 2.34 (846) | 0.41 (263) | 0.68 (263) | 1.70 (846) | 0.66 (263) | 0.51 (264) |
+
+  At 1.2 (the first zoom of the run) about 530 of the frame's draw calls are a start-of-campaign UI panel, before
+  and after. As in the frame-time pass the frame was the CPU recording draw calls: every circle and polygon is its own
+  draw call in GL Compatibility and an antialiased arc or polyline three; the lanes at war cost no draw calls but
+  about 1 ms of antialiased line primitives recorded one by one each frame.
+- **The batch** (`game/campaign/ov_batch.gd`, new; the gain: the overlay 3.5 to 4.0 ms -> about 0.1, 940 to 1200
+  draw calls -> 25 to 35). Each overlay part is recorded into an OvBatch instead of its canvas item: the same calls by
+  the same names (`draw_circle`, `draw_arc`, `draw_polyline`, `draw_line`, `draw_multiline`, `draw_dashed_line`,
+  `draw_rect`, `draw_colored_polygon`, `draw_string(_outline)`; the overlay's painters and `FactionEmblem.draw` take
+  either a CanvasItem, as the map key passes, or a batch), tessellated on the CPU exactly as Godot 4.7 does
+  (`renderer_canvas_cull.cpp` / `canvas_item.cpp`: a circle a 64-triangle fan, an antialiased polyline its middle
+  strip and two feather strips with the compensated width and the bisector clamped to 3, a line its quad and eight
+  feather quads, a rect its quad and feathers, a polygon by `Geometry2D.triangulate_polygon`), the same colours, in
+  drawing order. `flush` emits ONE `canvas_item_add_triangle_array` per run of shapes and the text of a run together
+  (TextLine glyph rects, which the renderer batches by glyph texture). An op is moved into an earlier run only when
+  nothing drawn in between overlaps it (a grid of 48 px cells keeping the last run drawn over each cell; an op over
+  more than 40 cells is checked by its rectangle and placed after everything), so a name still covers the marker under
+  it and a later marker still covers an earlier name. No vertex texture reads: it draws on every device, the Tab S7
+  included. The overlay's tap areas are computed as before (`army_positions`, `settlement_at`, `fleet_at`, ...).
+- **Glyphs** (the gain: the redraw of the armies part 4.4 -> 1.5 ms, the settlements 4.0 -> 2.8, same session).
+  The tessellation is on the CPU, so a redraw cost more than the calls it replaces until repeated shapes were kept:
+  `OvBatch.glyph(key, at, f)` draws f once round (0, 0) and stamps it (its triangles moved by a native
+  `Transform2D * PackedVector2Array`, its text placed); arcs are kept by radius, angles, points, colour and width. Kept:
+  the standard's pole and pennant with the crest, the strength roundel, a settlement marker (disc, rim, walls, harbour
+  mark), the far-town symbol, the key-city star, the battle mark, the fleet roundel, the last-seen marker (keys: what
+  each depends on but its place). The caches empty past 400 000 vertices; their keys hold the marker scale, so between
+  zoom 0.35 and 0.7 (where it follows the zoom) a pinch draws them anew: a part redrawn while zooming there costs
+  about 1.5 times the old redraw (settlements 4.0 -> 6.3 ms, armies 2.5 -> 3.4, one part a frame), and the frame is
+  still faster (below).
+- **Static and moving parts apart** (eight nodes, was six; the drawing order is the old one): the fleets part was the
+  selected fleet's reach, the landing beaches and boarding cells, the blockades, the lanes at war and raided, wrecks,
+  storms, the flota's course, the voyages and the ships, all redrawn 14 times a second for the bobbing. Now `P_REACH`
+  (the selection's: a fleet tap redraws it), `P_SEA` (blockades, the raidable lanes, the lanes at war and raided,
+  wrecks: redrawn only with the state, the zoom, or when the raidable lanes change) and `P_FLEETS` (storms, the flota's
+  course, voyages, ships). The settlements and the sea stay as drawn when a selection changes; the armies, paths, reach
+  and fleets are redrawn as before (`redraw_parts`). The fleet positions and the raider tags are kept per state redraw
+  and view.
+- **The bobbing at 10 Hz** (the gain: the fleets part's redraw 14 x 1.9 ms -> 10 x 1.5 ms a second; the ships every
+  frame, 0.65 to 0.86 ms, -> 10 a second: about 0.7 ms a frame of script time on High). `MapOverlay` steps a 0.1 s
+  clock by the frames' time (`BOB_DT`, the throttle Quality Low's ships had) and redraws the fleets on a step when the
+  screen asked (`redraw_fleets`); it emits `ships_redraw` then, and on a state redraw and a fleet selection or
+  voyage change, and `minis_layer.gd` redraws the ships on it, so the roundels and the ships move in the same frames. A
+  pan or zoom still redraws the ships in that frame (no lag under the finger). Quality Low: as before (no bobbing,
+  redrawn at the steps).
+- **The lanes' dashes on the ink shader** (the gain: the sea part's redraw about 11 ms with the dashes tessellated in
+  script -> 2.2 ms, the old fleets part with the lanes 3.3). `InkLines.multiline_tris` (ink_lines.gd) records a
+  multiline and returns its codes as a triangle list; with `ink` set (the sea part, when `InkLines.state` is 1) the batch
+  puts them into its triangle array beside its own shapes and `flush` sets the node's material to the ink batch's
+  (the shapes pass through the shader unchanged). Where the ink probe failed (the Tab S7) the dashes are tessellated
+  on the CPU: the same picture.
+- **The ships' wakes** (`minis_layer.gd _draw_under`: the shadow ellipses, foam lines and rings) are one OvBatch too
+  (8 to 12 draw calls -> 1).
+- **Not done**: a level of detail for the ink meshes at the minimum zoom: the edges, coast and beach meshes (about
+  1.2 M triangles) measured within noise on this desktop's CPU and GPU (+-0.05 ms GPU each), so nothing to gain here;
+  names through a Label or a text atlas: the batch already draws them in one or two runs of glyph rects.
+- **Measured** (`tests/look_bench.gd`, steady frame mean, ms, two rounds each, base and after run in turn):
+
+  | | West table 1.2 | 0.6 | 0.226 | West relief 1.2 | 0.6 | 0.226 | Rome table 1.2 | 0.6 | 0.379 | Rome relief 1.2 | 0.6 | 0.379 |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | base | 6.81, 7.17 | 7.69, 7.90 | 6.26, 6.47 | 8.04, 8.02 | 7.50, 7.61 | 6.83, 6.42 | 4.45, 4.24 | 5.65, 5.44 | 5.18, 4.94 | 4.45, 4.33 | 4.55, 4.33 | 4.29, 4.14 |
+  | after | 2.76, 2.90 | 2.76, 2.87 | 2.66, 2.73 | 3.18, 3.13 | 3.23, 3.18 | 3.21, 3.13 | 2.63, 2.53 | 2.82, 2.63 | 2.63, 2.61 | 2.82, 2.85 | 2.84, 2.76 | 2.89, 2.77 |
+
+  `tests/zoom_sweep.gd` West table (2000 x 923), median ms (frames over 16 ms): steady at 1.2 4.8 -> 2.4, wheel zoom in
+  6.3 -> 3.3 (3 -> 1), pinch in 7.7 -> 4.3, pinch out 7.7 -> 4.1, pan 5.3 -> 2.7, the x1.25 stress 13.7 -> 8.7 (11 ->
+  0). Other agents' tests ran on the machine meanwhile.
+- **Same picture**: `tests/zoom_probe.gd --nofog --fixed-fps 60` (min, max, the corner at 0.6, Veracruz / Massalia at
+  1.0), both packs, table and relief, Terrain and Political views, before and after: pixels differing by more than 2
+  of 255 in any channel 0 to 0.027 % (at most 490 px of 1.85 M), all of them on the bobbing ships and their roundels,
+  drawn at another instant of the bob (10 Hz steps); with the waves held still (the same probe with `SeaWaves.t` fixed)
+  0 to 1 px in all 32 shots, and 0 px with the fog on (West table); an army selected (zones, boarding cells, halo)
+  0 px, a fleet selected 30 px (its pulsing halo's phase). `tests/campaign_input_test.gd` (taps on markers by
+  position) passes.
+- **Profiling**: `tests/look_prof.gd --parts` (the parts above; `MapOverlay.prof_off` leaves a part out), `--fog`, a
+  warm-up per zoom, the GPU time and the selection rows (`sel`, `sel+X`).
+- **Left**: an army selected costs about 1 ms, most of it the side panel's UI (about 260 draw calls; at 1.2 the
+  846 include the start panel) and the map's reach node, outside the overlay; the overlay's settlements part still costs 2.8 to 3.5 ms to redraw (names, label
+  placement, fog lookups), on a state change or zoom step only; not yet measured on a phone or the web build.

@@ -70,6 +70,29 @@ func multiline(segs: PackedVector2Array, col: Color, k: float, off := PackedVect
 		"l%d" % (n / 2), n)
 
 
+## Segments as multiline() records them, but returned as a triangle list of codes (each segment's quad and eight
+## feather quads, Godot's order) for the caller's own triangles (ov_batch.gd: one triangle array with the overlay's
+## other shapes, drawn with this batch's `material`), not put in this batch's mesh. Empty when nothing to draw.
+func multiline_tris(segs: PackedVector2Array, col: Color, k: float) -> PackedVector2Array:
+	var n := segs.size()
+	var out := PackedVector2Array()
+	if n < 2 or n % 2 != 0:
+		return out
+	var id := _n
+	_n += 1
+	_rec.append([true, segs, PackedVector2Array(), col, k])
+	var first := _pts.size()
+	_pts.append_array(segs)
+	_off.resize(_off.size() + n)   # (zeros)
+	_par.append_array(PackedFloat32Array([col.r, col.g, col.b, col.a, k, float(first), float(n), float(FLAG_LINE)]))
+	if not _tmpl.has("lt"):
+		_tmpl["lt"] = _line_tris_template()
+	var t: PackedVector2Array = _tmpl["lt"]
+	for sg in n / 2:
+		out.append_array(Transform2D(0.0, Vector2(float(sg * 64), Y0 - float(id))) * t)
+	return out
+
+
 func _add(pts: PackedVector2Array, off: PackedVector2Array, col: Color, k: float, flags: int, key: String, n: int) -> int:
 	var id := _n
 	_n += 1
@@ -276,21 +299,35 @@ static func _poly_template(n: int, loop: bool) -> PackedVector2Array:
 	return out
 
 
+## One line segment's quads (Godot's order: the quad, then its eight feather quads), each corner [E, U (+1 / -1), sv, sw].
+const LINE_QUADS := [
+	[[0, 1, 0, 0], [0, -1, 0, 0], [1, -1, 0, 0], [1, 1, 0, 0]],
+	[[0, 1, 0, 0], [0, 1, 1, 0], [1, 1, 1, 0], [1, 1, 0, 0]],
+	[[0, -1, 0, 0], [0, -1, -1, 0], [1, -1, -1, 0], [1, -1, 0, 0]],
+	[[0, 1, 0, 0], [0, 1, 0, 1], [0, -1, 0, 1], [0, -1, 0, 0]],
+	[[1, 1, 0, 0], [1, 1, 0, -1], [1, -1, 0, -1], [1, -1, 0, 0]],
+	[[0, 1, 0, 0], [0, 1, 0, 1], [0, 1, 1, 1], [0, 1, 1, 0]],
+	[[0, -1, 0, 0], [0, -1, 0, 1], [0, -1, -1, 1], [0, -1, -1, 0]],
+	[[1, 1, 0, 0], [1, 1, 0, -1], [1, 1, 1, -1], [1, 1, 1, 0]],
+	[[1, -1, 0, 0], [1, -1, 0, -1], [1, -1, -1, -1], [1, -1, -1, 0]],
+]
+
+
+## Codes of one segment as a triangle list: its quad and eight feather quads, each [a, b, c, d] as (a, b, c), (a, c, d).
+static func _line_tris_template() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for q in LINE_QUADS:
+		var c := PackedVector2Array()
+		for e in q:
+			c.append(Vector2(int(e[0]) + (2 if int(e[1]) > 0 else 0) + 4 * (int(e[2]) + 1) + 12 * (int(e[3]) + 1), 0))
+		out.append_array(PackedVector2Array([c[0], c[1], c[2], c[0], c[2], c[3]]))
+	return out
+
+
 ## Codes of `segs` lines: per segment the quad and its eight feather quads (Godot's order), each quad [a, b, c, d]
 ## drawn as the triangles (a, b, c), (a, c, d): the strip b, a, c, d.
 static func _line_template(segs: int) -> PackedVector2Array:
-	# [E, U(+1/-1), sv, sw] per corner of each quad
-	var quads := [
-		[[0, 1, 0, 0], [0, -1, 0, 0], [1, -1, 0, 0], [1, 1, 0, 0]],
-		[[0, 1, 0, 0], [0, 1, 1, 0], [1, 1, 1, 0], [1, 1, 0, 0]],
-		[[0, -1, 0, 0], [0, -1, -1, 0], [1, -1, -1, 0], [1, -1, 0, 0]],
-		[[0, 1, 0, 0], [0, 1, 0, 1], [0, -1, 0, 1], [0, -1, 0, 0]],
-		[[1, 1, 0, 0], [1, 1, 0, -1], [1, -1, 0, -1], [1, -1, 0, 0]],
-		[[0, 1, 0, 0], [0, 1, 0, 1], [0, 1, 1, 1], [0, 1, 1, 0]],
-		[[0, -1, 0, 0], [0, -1, 0, 1], [0, -1, -1, 1], [0, -1, -1, 0]],
-		[[1, 1, 0, 0], [1, 1, 0, -1], [1, 1, 1, -1], [1, 1, 1, 0]],
-		[[1, -1, 0, 0], [1, -1, 0, -1], [1, -1, -1, -1], [1, -1, -1, 0]],
-	]
+	var quads := LINE_QUADS
 	var out := PackedVector2Array()
 	for sg in segs:
 		for q in quads:
