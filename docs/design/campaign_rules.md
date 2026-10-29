@@ -957,6 +957,101 @@ disagree.
 `tests/tutorial_test.gd` driving the ten turns headless (each gate met by
 the scripted order, the skip and the leave paths, the tips file written).
 
+### The tutorial (as built, 2026-10-29)
+
+All three parts of the plan are built; every one is view only except the one rules line (the campaign AI's shield).
+No `CState.VERSION` bump, no pin moved (`== sim:` / `== simw:` equal `tools/balance/pins.json`: the setting is absent in the
+campaign sims).
+
+**One text source (`game/campaign/howto.gd`).** A static table `T` (key to text) with the eight How to play sections
+(`SECTIONS`: id, title, three line keys each), the ten lessons (`lesson_<n>_title`, `lesson_<n>`, `lesson_<n>_obj`), the battle
+tutorial (`step_1` .. `step_6`, `step_1b`, `step_win`) and the eight tips (`tip_<key>`), plus the cards' button words (`ui_*`).
+Every other file reads from it (`tests/tutorial_test.gd` checks they all exist, and that a tip is one sentence).
+
+**The How to play page.** `howto_page.gd` fills any VBox with the eight sections (heading, three lines, a rule). Three homes: the
+title menu's page `howto` (entry `home_howto`, between Battles and Options; heading and the kit's trim panel, scrolling like the
+Options page; `menu_test` checks it at 886x409, 844x390 and 1280x720), and the in-game Menu of the campaign and of the battle
+(entry `menu_howto`, page `howto` in the column, Back returns to the entries).
+
+**First-time tips (`tips.gd`).** `Tips.show(key)` shows the sentence in a toast with a "Got it" the first time a key fires and
+remembers it in `user://tips.cfg` (`[seen]`, one key each); keys `army_selected`, `town_opened`, `siege_laid`, `deployment`,
+`first_chip`, `fleet_boarded`, `proposal_received`, `battle_won`. A screen registers a presenter (`Tips.presenter`: the campaign
+screen's toast, the battle's card at the top left); with none, nothing is shown and nothing is used up. Wired in
+`campaign_screen.gd` (`select_army`, `select_region`, `tip_scan()` from `_refresh`: a siege of ours, a fleet carrying an army, a
+proposal made to us; the win in `_apply_battle`), `online_ui.gd` (`tip_scan()` after `step()`, so a proposal reaches an online
+seat) and `battle.gd` (`_refresh_deploy`: the deployment, `_refresh_actions`: the first selection in the battle, campaign
+battles only). Options: "Show the tips again" (`<prefix>_tips_reset`, in the Help row of the title's Options and a Tips row of
+the in-game ones) deletes the file. Test mode: a scripted run (Saves' test-run rule) keeps its file in the tests folder
+(`user://campaigns/<test folder>/tips.cfg`) and shows no tips unless `Tips.in_tests` is set (`tutorial_test` sets it), so a
+tip toast never covers a toast another test waits for. While the tutorial runs `Tips.suppress` is on (its cards say the same).
+
+**The guided first campaign.**
+- *Entry.* The Campaign page's first card `card_tutorial` ("Your first command"); `NewCampaign.tutorial_only` (with
+  `story_only`) is a setup with a Name row and one Difficulty row (the campaign AI's skill, default Easy; the seed row is hidden,
+  the seed is `Tutorial.SEED` 1670); Start makes the state with `Tutorial.make_state` and saves it under a new slot (a second run
+  keeps the first save). The plan's "offered once on the first launch" is not built.
+- *The state* (`Tutorial.make_state`, made once, before the campaign exists): `new_campaign` for England on the West with
+  `settings` `tutorial` 1, `tutorial_turns` 10, `ai_battle_skill` 0 (Easy: the tutorial battle is always easy), the chosen
+  `ai_campaign_skill`, `deploy_time` -1 (deployment waits for the player). The West start has Sevilla la Nueva (the region
+  `sevilla_jamaica`, Santiago de la Vega) English, so the tutorial hands it to New Spain (with Belize: a far English region that
+  a Spanish raid would turn into a battle in turn 2), removes England's second army and shapes the one at Port Royal to a pike,
+  two musketeers, a horse and the general (the lesson 2 recruits make the four musketeer companies); England starts with 3000
+  gold. England and Spain are at war from the West start, and Port Royal's army stands on the ring of Sevilla (two cells away).
+- *The rules line.* `cai.gd` `tutorial_shield(st, g)`: `settings.tutorial` is set, `g` is human and `turn < tutorial_turns`.
+  The three places the campaign AI declares a war on its own (the opportunistic war, the pirates', the "unwise war" mistake) skip
+  such a `g`. Not shielded: a war declared for trespass or a call to arms (`cdip.gd`), a Spanish attack under the war that
+  already exists. A 9-turn passive run of the tutorial state gives England no new war and no battle (the test runs it).
+- *The lessons* (`game/campaign/tutorial.gd`, a view object of the campaign screen; the card is `tutor_card.gd`, the pointer
+  `tutor_pointer.gd`). Where the player is lives in the save's session, key `tutorial` (`n` the lesson 1..10, 11 the closing card,
+  `turn` the turn it was last looked at, `done` its objective held when the turn was sent, `region`, `realm`, `goals` the pages
+  opened, `left`, `off`); `CState` is never written. Each turn the lesson of `n` is a card at the top left (title "Lesson n of 10:
+  ...", the words, the objective, Skip the lesson, Leave the tutorial; a dialog or a battle hides it), a pointer, and a gate:
+  `holds_end()` disables the End turn button (tip "Finish the lesson first" with the objective; `end_turn()` also refuses with a
+  toast). The lesson advances on the next turn when `done` was set at End turn; lesson 6 advances when Sevilla is English.
+
+| n | lesson | the gate (the objective's check on the plan being made) | the pointer |
+|---|---|---|---|
+| 1 | The map | Port Royal's panel was opened (`select_region`) | Port Royal |
+| 2 | Recruiting | two `recruit` orders for `musketeers*` at Port Royal | the army, then Recruit, then the + button |
+| 3 | Building | a `build` order for the Range chain at Port Royal (the town has Range 1: the order is the upgrade to 2) | Port Royal, then Build |
+| 4 | Moving | a `move` order ending at `CGrid.camp(sevilla)` | the army, then the camp cell |
+| 5 | The siege | a siege laid or a `siege` order, or a `move` to Sevilla's own cell (laying siege on arrival) | the army, then the town |
+| 6 | The battle | an `assault` order on Sevilla (or Sevilla already English); the battle tutorial runs in the battle | Assault |
+| 7 | After | the Realm page was opened (`show_faction`) | the Realm button |
+| 8 | Diplomacy | a `propose` `trade` order to the Dutch | the Diplomacy button |
+| 9 | The sea | the army boarded the fleet (a `move` with `fleet`, an `embark` order, or already aboard) and an `fmove` of that fleet ending within 6 cells of Port de Paix's harbour | the army, the fleet, then the sea off Tortuga |
+| 10 | Goals | the Goals page was opened (`show_objectives`) | the Goals button |
+
+  Once the objective holds the pointer goes to End turn. After lesson 10 the card says the lessons are over; "Got it" ends it
+  and the campaign is the free sandbox. "Skip the lesson" does the lesson's order for the player (`add_order`, `set_move6`,
+  `set_board` + `set_fmove`; for the page lessons it sets the flag), which opens the gate; the player still presses End turn
+  (it does not end the turn itself). "Leave the tutorial" sets `left` and the cards stop: the rules have no settings order, so
+  `tutorial` stays in the state and the AI's peace runs out by itself at turn 10.
+- *The battle tutorial* (`tutorial_battle.gd`, handed to `battle.gd` as `battle.tutorial` by `fight()` when lesson 6 is current
+  and the battle is Sevilla's; `battle.gd` calls `tutorial.seen(order)` for every order it queues and `tutorial.update()` with its
+  card timer). Six steps, each a card at the top left (Skip, Leave the tutorial) and a pointer on the HUD control or the map spot,
+  each gating the next: 1 place the line (a place order in the deployment; then a second card for Start battle), 2 move
+  forward (a move order in the battle), 3 fire at will, 4 charge with the horse (an attack order by the cavalry unit that is not
+  the general's guard), 5 hold (Halt), 6 withdraw a unit (Withdraw, its confirmation), then a closing card. Step 3: the Fire chip is
+  a multi-state chip (a press opens At will / Hold) and the musketeers start at will, so the tutorial selects the musketeers, queues
+  a hold-fire order for them (its own order, not counted) and opens the chip's long-press explanation once for the player; the
+  step ends when the player's own order has put them back at will. The defender is the village garrison at Easy (the siege AI has
+  no `hold` flag for scripted defenders, so Easy alone); the player's four musketeer companies, pike and horse win it in the
+  test with every unit attacking.
+
+**What differs from the plan, and why.** The pointer is a control drawn over the interface (`tutor_pointer.gd`, a ring that follows
+a Callable answering a screen point: a map cell through `overlay.to_screen`, a button's rectangle), not a `MapOverlay.pulse_at`:
+one class serves the map, the interface and the battle HUD, and the overlay is redrawn in parts. The plan's "start a Range 1" is the
+upgrade to Range 2 (Port Royal starts with Range 1 and no free slot). Sevilla la Nueva is English in the West data and made Spanish
+by the tutorial state, not by a seed (a seed does not change ownership); the camp outside it is three cells from the town, so
+lesson 5 lays siege by tapping the town, which the move to the town's cell does. Lesson 9 says "fleet" (the English fleet is two
+frigates and two sloops; only the whole fleet carries the army's seven units). "Leave the tutorial" cannot clear the setting (no
+rules order for it). Tips also wait during the test runs (above).
+
+**Open.** A playtest with someone who has never played such a game (the measure the plan names); the first-launch offer; the
+battle tutorial's pointer on the long-press explanation of the other chips; a tutorial for hot-seat or online (the cards are
+offline only); the AI's peace after turn 10 (a Spanish attack under the existing war is possible earlier, with Easy the odds are low).
+
 ### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
 
 The owner: "It's crazy hard to assault cities as the miskito. They have no

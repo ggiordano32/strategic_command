@@ -67,6 +67,8 @@ const CSea := preload("res://campaign/csea.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
+const Tutorial := preload("res://game/campaign/tutorial.gd")
+const Tips := preload("res://game/campaign/tips.gd")
 const CommandBar := preload("res://game/campaign/command_bar.gd")
 const GameMenu := preload("res://game/campaign/game_menu.gd")
 const FogView := preload("res://game/campaign/fog_view.gd")
@@ -152,6 +154,7 @@ var cover: ColorRect
 var book: UnitBook
 var controls_page: Controls
 var panels: Panels
+var tutorial: Tutorial  # the guided first campaign (game/campaign/tutorial.gd): its cards, pointer and End turn gate
 var story: StoryView  # a story campaign's dialogue, pressures and log (game/campaign/story_view.gd)
 var battle = null  # Battle, or SeaBattle for a sea battle (N3a)
 var _battle_built: Dictionary = {}
@@ -254,6 +257,9 @@ func _ready() -> void:
 	_build_ui()
 	story = StoryView.new(self)
 	story.setup()
+	tutorial = Tutorial.new(self)
+	tutorial.setup()
+	Tips.presenter = _show_tip
 	book = UnitBook.new()
 	ui.add_child(book)
 	controls_page = Controls.new()
@@ -628,6 +634,35 @@ func save_plan() -> void:
 	_save_due = Time.get_ticks_msec() + SAVE_DELAY_MS
 
 
+## First-time tips (game/campaign/tips.gd): a toast with a Got it.
+func _show_tip(text: String, _key: String) -> void:
+	show_toast(text, ["Got it", func(): pass])
+
+
+func _exit_tree() -> void:
+	if Tips.presenter == Callable(self, "_show_tip"):
+		Tips.presenter = Callable()
+	Tips.suppress = false
+
+
+## The tips that follow the state (not a tap): a siege of ours, a fleet carrying an army, a proposal made to us.
+func tip_scan() -> void:
+	if f < 0 or ps.is_empty():
+		return
+	for sg in ps.get("sieges", []):
+		if int(sg["f"]) == f:
+			Tips.show("siege_laid")
+			break
+	for fl in ps.get("fleets", []):
+		if int(fl["f"]) == f and not (fl["carry"] as Array).is_empty():
+			Tips.show("fleet_boarded")
+			break
+	for p in st.get("proposals", []):
+		if int(p["to"]) == f and CState.is_human(st, f):
+			Tips.show("proposal_received")
+			break
+
+
 func _save_tick() -> void:
 	if _save_due > 0 and Time.get_ticks_msec() >= _save_due:
 		save()
@@ -764,6 +799,8 @@ func end_turn(skip_warnings: bool = false) -> void:
 		return
 	if story.guard_end():
 		return
+	if tutorial.guard_end():
+		return
 	if online != null and online.i_submitted():
 		return
 	if not skip_warnings:
@@ -772,6 +809,7 @@ func end_turn(skip_warnings: bool = false) -> void:
 			panels.show_warnings(warn)
 			return
 	AudioFx.play("end_turn", 0.9, 0.0, "ui")
+	tutorial.on_end()
 	if online != null:
 		online.set_plan(orders)
 		onl.submit(orders.duplicate(true))
@@ -1818,6 +1856,8 @@ func _refresh() -> void:
 			side.visible = false
 			_update_deselect()
 	panels.refresh_popup()
+	tutorial.refresh()
+	tip_scan()
 
 
 ## The map key's rows follow the campaign's format; its samples use the
@@ -1898,6 +1938,7 @@ func _refresh_top() -> void:
 		var eb := onl.end_button_state()
 		end_button.text = str(eb[0])
 		end_button.disabled = bool(eb[1]) or nb > 0
+	tutorial.gate_end_button()
 
 
 ## One clause for the idle hint: what the faded markers in the fog are.
@@ -2707,6 +2748,8 @@ func select_army(id: int) -> void:
 	sel_region = -1
 	if not a.is_empty():
 		show_side(func(box): panels.army_panel(box, id))
+		if int(a["f"]) == f:
+			Tips.show("army_selected")
 	_defer_sel = true
 	_refresh_map()
 	_defer_sel = false
@@ -2718,6 +2761,9 @@ func select_region(r: int) -> void:
 	sel_army = -1
 	sel_fleet = -1
 	show_side(func(box): panels.region_panel(box, r))
+	if f >= 0 and CState.owner(ps, r) == f:
+		Tips.show("town_opened")
+	tutorial.note("region", r)
 	_refresh_map()
 	_update_hint()
 
@@ -3084,9 +3130,15 @@ func _apply_battle(bid: int, outcome: Dictionary) -> void:
 		_after_battle_refresh()
 		return
 	var before := (st["events"] as Array).size()
+	var bt := CState.battle(st, bid)
+	var won := false
+	if not bt.is_empty() and f >= 0 and int(outcome.get("draw", 0)) == 0:
+		won = CRules.battle_side_of(st, bt, f) == (0 if int(outcome.get("winner", 1)) == 0 else 1)
 	st = CTurn.apply_battle(st, bid, outcome)
 	save()
 	_replan()
+	if won:
+		Tips.show("battle_won")
 	panels.show_battle_result(before, outcome)
 
 
@@ -3113,6 +3165,7 @@ func fight(bid: int) -> void:
 	battle.seed_value = int(_battle_built["seed"])
 	battle.scenario_id = "campaign"
 	battle.campaign_mode = true
+	battle.tutorial = tutorial.battle_script(b)
 	battle.exit_requested.connect(_on_battle_exit)
 	close_dialog()
 	_set_visible(false)

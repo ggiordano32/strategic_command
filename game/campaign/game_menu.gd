@@ -11,6 +11,7 @@ const AudioFx := preload("res://game/audio.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const OptionsRows := preload("res://game/menu/options_rows.gd")
+const HowtoPage := preload("res://game/campaign/howto_page.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -133,6 +134,8 @@ func _build() -> void:
 	match page:
 		"options":
 			_build_options()
+		"howto":
+			_build_howto()
 		"confirm":
 			_build_confirm()
 		_:
@@ -182,6 +185,9 @@ func _build_main() -> void:
 	_entry("Options", "menu_options", func():
 		page = "options"
 		_build())
+	_entry("How to play", "menu_howto", func():
+		page = "howto"
+		_build())
 	_entry("Controls", "menu_controls", func():
 		close()
 		s.controls_page.open())
@@ -229,6 +235,21 @@ func _build_confirm() -> void:
 # The same rows, settings and saved values as the title screen's Options page (game/menu/options_rows.gd).
 
 var _rows: OptionsRows = null
+
+
+func _build_howto() -> void:
+	body.add_child(Kit.title("How to play", 24))
+	body.add_child(Kit.rule())
+	var inner := Kit.vbox(8)
+	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(inner)
+	HowtoPage.fill(inner, minf(COL_W, get_viewport_rect().size.x) - 40.0)
+	var bb := Kit.button("Back", func(): back(), 120)
+	bb.name = "menu_howto_back"
+	Kit.nav_style(bb)
+	var brow := Kit.hbox(8)
+	brow.add_child(bb)
+	body.add_child(brow)
 
 
 func _build_options() -> void:

@@ -167,6 +167,7 @@ func step() -> void:
 		s._plan_start_ms = Time.get_ticks_msec()
 	refresh_status()
 	_warn_rules()
+	s.tip_scan()   # (first-time tips: an offer made to us, game/campaign/tips.gd)
 
 
 ## Setting "battles: always auto": this seat's own unclaimed battle to

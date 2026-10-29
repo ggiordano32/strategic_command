@@ -32,6 +32,7 @@ const LoadingPanel := preload("res://game/campaign/loading_panel.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 const CStory := preload("res://campaign/cstory.gd")
+const Tutorial := preload("res://game/campaign/tutorial.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 
 const PANEL_WARM := Color(0.075, 0.066, 0.052, 0.97)
@@ -71,6 +72,9 @@ var pack_pick := ""
 ## The Campaign page's screen (2026-10-27): the single-player story only, "The Brethren's Due" (West): no setting pick,
 ## no faction rows or teams, only the settings the story reads. Rome and the faction pick are the Grand Campaign's (`online`).
 var story_only := false
+## "Your first command" (the Campaign page's second card, 2026-10-29): the guided first campaign (game/campaign/tutorial.gd).
+## Like `story_only` (which it also sets) but only a Name and a Difficulty row; the seed is fixed.
+var tutorial_only := false
 var _online_box: Control
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
@@ -134,7 +138,7 @@ func _ready() -> void:
 	_title_emblem = Kit.emblem(pk, 36)
 	_title_emblem.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(_title_emblem)
-	_title_label = Kit.title("New grand campaign" if online else ("The Brethren's Due" if story_only else "New campaign"), 24 if not _narrow else 18)
+	_title_label = Kit.title("New grand campaign" if online else (("Your first command" if tutorial_only else "The Brethren's Due") if story_only else "New campaign"), 24 if not _narrow else 18)
 	_title_label.name = "nc_title"
 	_title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_title_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -178,7 +182,7 @@ func _ready() -> void:
 			sr0.add_child(sb)
 			_pack_buttons[str(c[0])] = sb
 		v.add_child(sr0)
-	if CData.has_pack("west") and (story_only or (online and CData.pack == "west")):  # (the offline sandbox has no story cards: the Campaign page is the story's home; the Host screen keeps "Host the story")
+	if CData.has_pack("west") and not tutorial_only and (story_only or (online and CData.pack == "west")):  # (the offline sandbox has no story cards: the Campaign page is the story's home; the Host screen keeps "Host the story")
 		v.add_child(_build_story())
 	var team_row := Kit.flow(8)
 	var b_one := Kit.button("All humans one team", _all_humans_one_team, 0, 14)
@@ -433,8 +437,18 @@ func _build_settings() -> Control:
 		for pp in [Vector2(-0.5, -0.5), Vector2(0.5, 0.5), Vector2.ZERO, Vector2(0.5, -0.5), Vector2(-0.5, 0.5)]:
 			dice.draw_circle(c + pp * r * 1.1, 1.6, Kit.COL_BONE))
 	sh.add_child(dice)
-	_srow(body, "seed", "Seed", "The same seed gives the same map.", sh)
-	body.add_child(Kit.rule())
+	var seed_row := _srow(body, "seed", "Seed", "The same seed gives the same map.", sh)
+	var seed_rule := Kit.rule()
+	body.add_child(seed_rule)
+	if tutorial_only:
+		seed_row.visible = false
+		seed_rule.visible = false
+		seed_edit.text = str(Tutorial.SEED)
+		_build_tutorial_settings(body)
+		if _narrow:
+			body.visible = false
+			_fold_button.text = "Settings  +"
+		return panel
 	if story_only:
 		_build_story_settings(body)
 		if _narrow:
@@ -481,6 +495,13 @@ func _build_settings() -> Control:
 		body.visible = false
 		_fold_button.text = "Settings  +"
 	return panel
+
+
+## The guided first campaign's one setting: how well the AI nations run their empires (the tutorial battle is always easy).
+func _build_tutorial_settings(body: Control) -> void:
+	settings["ai_campaign_skill"] = 0
+	_setting_seg(body, "ai_campaign_skill", "Difficulty", "How well the other nations play. The lessons stay easy either way.", SKILL_LABELS,
+		"Difficulty", "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time. The first ten turns are peaceful whatever you pick.")
 
 
 ## The story's settings: only what `_start_story` reads (battles, the two AI skills, deployment and battle time).
@@ -654,7 +675,11 @@ func _update() -> void:
 		_name_labels[f].text = CData.faction_name(f) + (" (you)" if picks.find(f) == 0 else "")
 		_style_row(f, is_h)
 	var teams_txt := _team_text()
-	if story_only:
+	if tutorial_only:
+		_info.text = "Your first command: Port Royal on Jamaica, ten lessons with a guide, one step a turn."
+		_start_button.disabled = _creating
+		Kit.tip(_start_button, "Start", "Begin the guided first campaign as the English governor of Port Royal.")
+	elif story_only:
 		_info.text = "The Brethren's Due: the Caribbean, 1665. One captain, or two on this device."
 		_start_button.disabled = _creating
 		Kit.tip(_start_button, "Start", "Play the story with one captain; Two captains is below.")
@@ -693,6 +718,9 @@ func _update() -> void:
 
 
 func _start() -> void:
+	if tutorial_only:
+		_start_tutorial()
+		return
 	if story_only:
 		_start_story(false)
 		return
@@ -713,6 +741,27 @@ func _start() -> void:
 	await lp.step("Creating the campaign")
 	var st := build_state(nm, sd)
 	var slot := Saves.slot_for(nm, sd)
+	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
+	Saves.save(slot, data)
+	start.emit(data, slot, lp)
+
+
+## Start "Your first command": the tutorial's own state (fixed seed), the name and difficulty from this screen.
+func _start_tutorial() -> void:
+	if _creating:
+		return
+	var nm := name_edit.text.strip_edges()
+	if nm == "" or nm == "Campaign":
+		nm = "Your first command"
+	_creating = true
+	_update()
+	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
+	await lp.step("Sailing to Jamaica")
+	PackView.use_pack("west")
+	var st := Tutorial.make_state(nm, Tutorial.SEED, int(settings.get("ai_campaign_skill", 0)))
+	var slot := Saves.slot_for(nm, Tutorial.SEED)
+	if not Saves.load_slot(slot).is_empty():
+		slot += "_%d" % (Time.get_ticks_msec() % 100000)   # (the seed is fixed: a second run keeps the first save)
 	var data := {"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}
 	Saves.save(slot, data)
 	start.emit(data, slot, lp)

@@ -21,6 +21,7 @@ const BattleLook := preload("res://game/battle_look.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
+const Tips := preload("res://game/campaign/tips.gd")
 
 var seg := {}            # key -> Kit.Segmented
 var sliders := {}        # "master" / "effects" / "ambient" -> HSlider
@@ -117,8 +118,27 @@ func build(parent: Control, o: Dictionary) -> void:
 			tb.name = "%s_tests" % str(o["prefix"])
 			row.add_child(tb)
 			buttons["tests"] = tb
+		row.add_child(_tips_button())
+	else:
+		_section(parent, "Tips", true)
+		var trow := Kit.flow(8)
+		parent.add_child(trow)
+		trow.add_child(_tips_button())
 	_building = false
 	refresh()
+
+
+## "Show the tips again": forgets which first-time tips were shown (game/campaign/tips.gd).
+func _tips_button() -> Button:
+	var tb := Kit.button("Show the tips again", Callable(), 170)
+	Kit.nav_style(tb)
+	tb.name = "%s_tips_reset" % str(_o["prefix"])
+	Kit.tip(tb, "Show the tips again", "The short first-time tips (the first army you select, the first battle...) appear again, as if this device were new.")
+	tb.pressed.connect(func():
+		Tips.reset()
+		tb.text = "The tips will show again")
+	buttons["tips"] = tb
+	return tb
 
 
 ## Fit the page to a short window (wide layout only; the narrow one scrolls): the first level that `fits` (a Callable

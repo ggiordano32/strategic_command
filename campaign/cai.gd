@@ -1971,6 +1971,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 	for g in CState.nf():
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
 			continue
+		if tutorial_shield(st, g):
+			continue  # (the guided first campaign: no war on the player's faction for its first turns)
 		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
 			continue
 		if CSea.has_marque(st, f, g):
@@ -2115,7 +2117,7 @@ static func _pirate_diplomacy(st: Dictionary, f: int) -> void:
 	var best := -1
 	var bv := -1
 	for g in CState.nf():
-		if g == f or not CState.alive(st, g) or CSea.pirate(g) or CState.friendly(st, f, g):
+		if g == f or not CState.alive(st, g) or CSea.pirate(g) or CState.friendly(st, f, g) or tutorial_shield(st, g):
 			continue
 		if CState.dip(st, f, g) == CState.WAR or CSea.has_marque(st, f, g) or CState.dip_since(st, f, g) < PIRATE_WAR_CALM:
 			continue
@@ -2191,6 +2193,13 @@ static func _one_front(st: Dictionary, f: int, my_wars: Array[int], kn: PackedIn
 			_propose(st, f, g, "peace")
 
 
+## The guided first campaign (settings `tutorial` 1, `tutorial_turns` default 10; absent in every other
+## campaign): the AI declares no war on a human faction until that many turns have passed.
+static func tutorial_shield(st: Dictionary, g: int) -> bool:
+	var sets: Dictionary = st["settings"]
+	return int(sets.get("tutorial", 0)) != 0 and CState.is_human(st, g) and int(st["turn"]) < int(sets.get("tutorial_turns", 10))
+
+
 ## Mistake: war on a neighbour that is stronger than the level's war ratio
 ## allows (the same pacing as any war: calm turns, the players' war gap).
 ## The candidate is found from a random start among the factions.
@@ -2199,7 +2208,7 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 	var nf := CState.nf()
 	var cands: Array[int] = []
 	for g in nf:
-		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
+		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR or tutorial_shield(st, g):
 			continue
 		if CState.friendly(st, f, g) or not _neighbours(st, f, g) or CState.dip_since(st, f, g) < kn[CP.WAR_CALM_TURNS]:
 			continue

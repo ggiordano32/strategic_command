@@ -33,6 +33,7 @@ const MenuBg := preload("res://game/menu/menu_bg.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const OptionsRows := preload("res://game/menu/options_rows.gd")
+const HowtoPage := preload("res://game/campaign/howto_page.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -82,7 +83,7 @@ var _subtitle: Label = null
 ## "import", "join", "share", "server". BACK says where a page's Back goes.
 var _pages := {}
 var page := "home"
-const BACK := {"campaign": "home", "grand": "home", "battles": "home", "options": "home", "sandbox": "battles",
+const BACK := {"campaign": "home", "grand": "home", "battles": "home", "options": "home", "howto": "home", "sandbox": "battles",
 	"import": "campaign", "join": "grand", "server": "grand", "share": "grand"}
 var _bg: Control = null          # the title menu's background (game/menu/menu_bg.gd)
 var _back_btn: Button = null
@@ -380,6 +381,7 @@ func _build_menu() -> Control:
 	_pages["grand"] = _build_grand(bg)
 	_pages["battles"] = _build_battles(bg)
 	_pages["options"] = _build_options(bg)
+	_pages["howto"] = _build_howto(bg)
 	_pages["import"] = _build_import(bg)
 	_pages["join"] = _build_join(bg)
 	_pages["share"] = _build_share(bg)
@@ -546,6 +548,7 @@ func _build_home(bg: Control) -> Control:
 	_entry("Campaign", "home_campaign", show_page.bind("campaign"))
 	_entry("Grand Campaign", "home_grand", show_page.bind("grand"))
 	_entry("Battles", "home_battles", show_page.bind("battles"))
+	_entry("How to play", "home_howto", show_page.bind("howto"))
 	_entry("Options", "home_options", show_page.bind("options"))
 	var info := Kit.label("Godot %s, %s renderer" % [Engine.get_version_info()["string"],
 		ProjectSettings.get_setting("rendering/renderer/rendering_method", "?")], 12, Color(1, 1, 1, 0.45))
@@ -827,15 +830,24 @@ func _slide_in(nodes: Array) -> void:
 
 
 func _story_card() -> Button:
+	return _campaign_card("card_story", "The Brethren's Due", "The Caribbean, 1665: one captain, or two on this device.", _new_campaign_page.bind(false, "west", true))
+
+
+## "Your first command": the guided first campaign (game/campaign/tutorial.gd), a setup with a name and a difficulty.
+func _tutorial_card() -> Button:
+	return _campaign_card("card_tutorial", "Your first command", "New to strategy games? Ten short lessons on Jamaica, with a guide.",
+		_new_campaign_page.bind(false, "west", true, true))
+
+
+func _campaign_card(nm: String, label: String, subtitle: String, on_press: Callable) -> Button:
 	var pack := "west"
-	var label := "The Brethren's Due"
 	var b := Button.new()
-	b.name = "card_story"
+	b.name = nm
 	b.focus_mode = Control.FOCUS_NONE
 	b.custom_minimum_size = Vector2(250, 220)
 	MenuStyle.card_style(b)
 	b.pressed.connect(AudioFx.click)
-	b.pressed.connect(_new_campaign_page.bind(false, pack, true))
+	b.pressed.connect(on_press)
 	b.mouse_entered.connect(func(): _bg.show_pack(pack))
 	var v := VBoxContainer.new()
 	v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -855,7 +867,7 @@ func _story_card() -> Button:
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(t)
-	var sub := Kit.label("The Caribbean, 1665: one captain, or two on this device.", 13, Kit.COL_DIM, true)
+	var sub := Kit.label(subtitle, 13, Kit.COL_DIM, true)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(sub)
@@ -866,12 +878,13 @@ func _story_card() -> Button:
 func _build_campaign(bg: Control) -> Control:
 	var vb := _page_box(bg)
 	vb.add_child(_heading("Campaign"))
-	vb.add_child(Kit.label("The story campaign: the Brethren of the Coast, one player or several taking turns on this device.", 14, Kit.COL_DIM))
+	vb.add_child(Kit.label("Start with Your first command, or play the story of the Brethren of the Coast: one player or several on this device.", 14, Kit.COL_DIM))
 	var cards := HFlowContainer.new()
 	cards.add_theme_constant_override("h_separation", 16)
 	cards.add_theme_constant_override("v_separation", 12)
 	cards.alignment = FlowContainer.ALIGNMENT_CENTER
 	if CData.has_pack("west"):
+		cards.add_child(_tutorial_card())
 		cards.add_child(_story_card())
 	vb.add_child(cards)
 	var yh := Kit.hbox(8)
@@ -1125,6 +1138,21 @@ func _build_battles(bg: Control) -> Control:
 		var l := Kit.label(d[3], 13, Kit.COL_DIM, true)
 		l.custom_minimum_size.x = 420
 		vb.add_child(l)
+	return vb.get_parent().get_parent()
+
+
+## How to play: the eight sections of game/campaign/howto.gd as a scrolling text in the kit's trim panel.
+func _build_howto(bg: Control) -> Control:
+	var vb := _page_box(bg)
+	vb.add_child(_heading("How to play"))
+	var panel := Kit.trim_panel(Color(0.06, 0.055, 0.045, 0.93), 16)
+	panel.name = "howto_panel"
+	vb.add_child(panel)
+	var inner := Kit.vbox(8)
+	var w := minf(660.0, get_viewport_rect().size.x - 72.0)
+	inner.custom_minimum_size.x = w
+	panel.add_child(inner)
+	HowtoPage.fill(inner, w)
 	return vb.get_parent().get_parent()
 
 
@@ -1674,12 +1702,13 @@ func _notification(what: int) -> void:
 		go_back()
 
 
-func _new_campaign_page(online: bool = false, pack: String = "", story: bool = false) -> void:
+func _new_campaign_page(online: bool = false, pack: String = "", story: bool = false, tutorial: bool = false) -> void:
 	_menu.visible = false
 	_new_campaign = NewCampaign.new()
 	_new_campaign.online = online
 	_new_campaign.pack_pick = pack
 	_new_campaign.story_only = story
+	_new_campaign.tutorial_only = tutorial
 	_new_campaign.created_online.connect(func(cid, code):
 		_new_campaign.queue_free()
 		_new_campaign = null

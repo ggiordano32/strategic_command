@@ -141,6 +141,7 @@ func _run() -> void:
 	await _battles_page()
 	await _options_page()
 	await _options_fit()
+	await _howto_fit()
 	await _tooltips()
 	await _emblems()
 	await _backgrounds()
@@ -198,13 +199,13 @@ func _unit_book_names() -> void:
 
 func _entries() -> void:
 	_check(m.page == "home", "starts on the title screen")
-	for nm in ["home_campaign", "home_grand", "home_battles", "home_options"]:
+	for nm in ["home_campaign", "home_grand", "home_battles", "home_howto", "home_options"]:
 		_check(_visible_in_page(_btn(nm)), "%s is on the title screen" % nm)
 	_check(not _visible_in_page(_btn("home_continue")), "Continue is hidden with no saves")
 	_check(m._net_line == null or not m._home.is_ancestor_of(m._net_line), "the title screen has no server line")
 	_check(m._back_btn != null and not m._back_btn.visible, "no Back on the title screen")
 	await _shot_title("title_start")
-	for pair in [["home_campaign", "campaign"], ["home_grand", "grand"], ["home_battles", "battles"], ["home_options", "options"]]:
+	for pair in [["home_campaign", "campaign"], ["home_grand", "grand"], ["home_battles", "battles"], ["home_howto", "howto"], ["home_options", "options"]]:
 		await _press(pair[0])
 		_check(m.page == pair[1], "%s opens the %s page" % [pair[0], pair[1]])
 		_check(m._back_btn.visible and (m._pages[pair[1]] as Control).visible, "the %s page shows a Back button" % pair[1])
@@ -275,7 +276,7 @@ func _campaign_page() -> void:
 	var ncards := 0
 	for c in m._pages["campaign"].find_children("card_*", "Button", true, false):
 		ncards += 1
-	_check(ncards == 1 and _btn("card_story") != null, "the Campaign page has exactly one card, the story (%d)" % ncards)
+	_check(ncards == 2 and _btn("card_story") != null and _btn("card_tutorial") != null, "the Campaign page has two cards, Your first command and the story (%d)" % ncards)
 	_check(_btn("card_west") == null and _btn("card_rome") == null, "... no setting cards (Rome is the Grand Campaign's)")
 	_check(_btn("home_Import") != null, "Import is on the Campaign page")
 	await _shot("campaign_page")
@@ -430,6 +431,53 @@ func _battles_page() -> void:
 	m.custom.back.emit()
 	await _frames(3)
 	_check(m.custom == null and m._menu.visible, "... and returns to the menu")
+
+
+# ------------------------------------------------------------ how to play ---
+
+## The How to play page (game/campaign/howto_page.gd) at phone sizes: the panel fits the width, all eight sections are
+## there and the last line can be scrolled into view (the page scrolls; it is long).
+func _howto_fit() -> void:
+	var size0 := UiScale.size_name()
+	var old := DisplayServer.window_get_size()
+	for sz in [Vector2i(886, 409), Vector2i(844, 390), Vector2i(1280, 720)]:
+		DisplayServer.window_set_size(sz)
+		root.size = sz
+		await _frames(10)
+		await _new_menu()
+		m.show_page("howto")
+		await _frames(8)
+		var tag := "%dx%d" % [sz.x, sz.y]
+		var panel: Control = m.find_child("howto_panel", true, false)
+		var vp := m.get_viewport_rect().size
+		_check(panel != null and panel.is_visible_in_tree() and panel.get_global_rect().position.x >= -0.5 and panel.get_global_rect().end.x <= vp.x + 0.5,
+			"How to play fits the width at %s (panel %s of %s)" % [tag, str(panel.get_global_rect()) if panel != null else "-", str(vp)])
+		var heads := 0
+		for sec in preload("res://game/campaign/howto.gd").SECTIONS:
+			if m.find_child("howto_h_" + str(sec["id"]), true, false) != null:
+				heads += 1
+		_check(heads == 8, "%s: the eight sections are there" % tag)
+		var last: Control = m.find_child("howto_dip_3", true, false)
+		var scroll: ScrollContainer = null
+		var p := panel.get_parent()
+		while p != null and scroll == null:
+			if p is ScrollContainer:
+				scroll = p
+			p = p.get_parent()
+		_check(scroll != null and last != null, "%s: the page scrolls" % tag)
+		if scroll != null and last != null:
+			scroll.ensure_control_visible(last)
+			await _frames(3)
+			var r := last.get_global_rect()
+			_check(r.end.y <= scroll.get_global_rect().end.y + 1.0 and r.size.x <= vp.x, "%s: the last line scrolls into view" % tag)
+		if sz.x == 886:
+			await _shot("howto_886x409")
+	DisplayServer.window_set_size(old)
+	root.size = old
+	await _frames(10)
+	UiScale.set_size_name(root, size0)
+	await _frames(4)
+	await _new_menu()
 
 
 # ------------------------------------------------------------ options ---

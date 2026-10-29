@@ -2150,6 +2150,7 @@ func _lanes_raided_for(ps: Dictionary, f: int) -> bool:
 
 
 func show_faction() -> void:
+	s.tutorial.note("realm")
 	var ps: Dictionary = s.ps
 	var f: int = s.f if s.f >= 0 else int(ps["humans"][0])
 	var box := Kit.vbox(6)
@@ -3760,6 +3761,7 @@ func _team_of_event(t: int, f: int) -> String:
 
 
 func show_objectives() -> void:
+	s.tutorial.note("goals")
 	var st: Dictionary = s.ps
 	var me := _me()
 	var team_names := ""

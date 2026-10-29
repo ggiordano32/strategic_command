@@ -6,6 +6,8 @@ extends Node2D
 signal exit_requested
 
 const AudioFx := preload("res://game/audio.gd")
+const Tips := preload("res://game/campaign/tips.gd")
+const TutorCard := preload("res://game/campaign/tutor_card.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
@@ -114,6 +116,11 @@ var ai_skill := -1
 ## (the army withdraws and the battle counts as lost); the menu buttons
 ## read "Back to campaign".
 var campaign_mode := false
+## The guided first campaign's battle lesson (game/campaign/tutorial_battle.gd), or null: it sees every order queued
+## and shows its cards and pointer on the HUD.
+var tutorial = null
+var _tip_card: TutorCard = null
+var _prev_presenter := Callable()
 ## Campaign battles: Leave / Menu taps are ignored this long after the
 ## battle is shown (stray taps while it opens forfeited battles), then a
 ## tap asks in a modal (Stay / Leave). Seconds left (tests may zero it).
@@ -453,6 +460,11 @@ func _ready() -> void:
 		_select(-1))
 	hud.controls_pressed.connect(_open_controls)
 	hud.ready_pressed.connect(_deploy_ready)
+	if campaign_mode and coop == null:
+		_prev_presenter = Tips.presenter
+		Tips.presenter = _show_tip
+	if tutorial != null:
+		tutorial.attach(self)
 	hud.works_pressed.connect(_on_works_mode)
 	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
 	if coop != null:
@@ -1039,6 +1051,8 @@ func _process(delta: float) -> void:
 	if _card_timer <= 0.0:
 		_card_timer = 0.25
 		hud.update_cards(sim)
+		if tutorial != null:
+			tutorial.update()
 		if coop != null:
 			_coop_cards()
 		_refresh_actions()
@@ -1316,6 +1330,8 @@ func _on_page_hiding() -> void:
 
 
 func _exit_tree() -> void:
+	if Tips.presenter == Callable(self, "_show_tip"):
+		Tips.presenter = _prev_presenter
 	if _au_on:
 		_au_on = false
 		AudioFx.fire_level(0.0)
@@ -1372,6 +1388,8 @@ func _queue(order: Dictionary) -> void:
 		sim.queue_order(order)
 		orders.add(order)
 	overlay.queue_redraw()
+	if tutorial != null:
+		tutorial.seen(order)
 	var tname: String = ORDER_NAMES.get(int(order["type"]), "other")
 	_player_orders += 1
 	_orders_by_type[tname] = int(_orders_by_type.get(tname, 0)) + 1
@@ -1379,6 +1397,25 @@ func _queue(order: Dictionary) -> void:
 		_order_events += 1
 		_t("order", {"type": tname, "tick": sim.tick, "unit": int(order.get("unit", -1)),
 			"run": int(order.get("run", 0)), "group": selection.size()})
+
+
+## A first-time tip (game/campaign/tips.gd) as a card at the top left with a "Got it".
+func _show_tip(text: String, _key: String) -> void:
+	if _tip_card != null and is_instance_valid(_tip_card):
+		hud._ui_controls.erase(_tip_card)
+		_tip_card.queue_free()
+	var card := TutorCard.new()
+	card.name = "tip_card"
+	card.setup("", text, "", 360.0)
+	card.add_button("got", "Got it")
+	card.pressed.connect(func(_k: String):
+		hud._ui_controls.erase(card)
+		card.queue_free()
+		_tip_card = null)
+	hud._root.add_child(card)
+	hud.add_ui_control(card)
+	card.position = Vector2(8.0, hud.top_height() + 6.0)
+	_tip_card = card
 
 
 # ----------------------------------------------------------------- undo ---
@@ -1528,6 +1565,8 @@ func _refresh_deploy() -> void:
 			hud.set_deploy("", "", false)
 			_t("battle_start", {"scenario": scenario_id, "tick": sim.tick})
 		return
+	if interactive and campaign_mode:
+		Tips.show("deployment")
 	var s: int = sim.deploy_secs_left()
 	var text := "Deploying: waiting for players" if s < 0 else "Deployment  %d:%02d" % [s / 60, s % 60]
 	if coop != null and coop.ls != null:
@@ -1683,6 +1722,8 @@ func _refresh_actions() -> void:
 			only_fixed = false
 	hud.engine_only = only_fixed
 	hud.set_abilities(_ability_info())
+	if not selection.is_empty() and sim.phase == BattleSim.PHASE_BATTLE and interactive:
+		Tips.show("first_chip")
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
 	hud.occupy_button.set_pressed_no_signal(occupy_mode and occupy == 0)
 	hud.waypoints_button.visible = not selection.is_empty() and not only_fixed and sim.phase == BattleSim.PHASE_BATTLE
