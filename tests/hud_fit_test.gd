@@ -682,7 +682,7 @@ func _states(by_role: Dictionary) -> void:
 	b._set_paused(true)
 	_check(b.sim.ability_state(gren, UT.AB_GRENADE) == UT.AB_HOLD, "the sim got the Hold order")
 	await _choose(gc, UT.AB_NOW)
-	_check(b.ability_armed == UT.AB_GRENADE and gc.armed and gc.text == "Use now: tap a target", "the Use now row arms the pick (%s)" % gc.text)
+	_check(b.ability_armed == UT.AB_GRENADE and gc.armed and gc.text == gc.text_for(gc.compact_mode) and gc.text in ["Use now: tap a target", "Tap a target"], "the Use now row arms the pick (%s)" % gc.text)
 	_check(not b.overlay.target_lit.is_empty(), "the enemy units are lit for the pick")
 	gc.pressed.emit()
 	await _frames(2)
