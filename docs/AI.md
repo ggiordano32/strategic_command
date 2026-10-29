@@ -3394,10 +3394,10 @@ instead; if walls 0 should stay near 40 % the lever is the defenders' charge dis
 
 ### 44.3 Later plays (not yet)
 
-The Swedish salvo (three ranks firing as one, then the charge), the native
-ambush from cover with a feigned retreat into it, the pirate boarding rush
-at sea, the caracole as a play (the ability exists). Each after the first
-two prove out in the harness.
+The Swedish salvo (three ranks firing as one, then the charge), the pirate
+boarding rush at sea, the caracole as a play (the ability exists). Each
+after the first two prove out in the harness. (The native ambush from cover
+with a feigned retreat into it: built, 44.5.)
 
 ### 44.4 The learned chooser (not yet)
 
@@ -3407,6 +3407,172 @@ id; an int8 multi-layer perceptron evaluated in integer maths in the sim,
 trained from self-play on the balance harness, with the rules of this
 section as the fallback when it picks nothing. Deterministic and small; its
 cost is explainability, which the plays' names in the telemetry keep.
+
+### 44.5 The native ambush (as built, 2026-10-29)
+
+The ambush from cover with a feigned retreat into it: bit 2 of `ai_plays`
+(`Plays.P_AMBUSH`), the Itza's and the Miskito's row in `west.gd` `PLAYS` (4;
+the others unchanged). Code: `sim/plays.gd` (the ambush section), hooks in
+`sim/battle_ai.gd` (`_army_think` passes the plan to `Plays.army_think`;
+`_issue_line` leaves the play's units out of its orders, `Plays.amb_slots`;
+`_unit_think` reaches it through `Plays.unit_think`), knobs and counters in
+`sim/ai_profile.gd`, scenario `ambush_field` in `sim/scenarios.gd`, probe
+flag `--plays1=` in `tests/asym_probe.gd`, test `determinism_test.gd
+--only=plays` (`_check_ambush`).
+
+- **Trigger** (`ambush_trigger`, each army think): no settlement, no town
+  plan, woods (`veg_on`) and line of sight (`vis_on`) on the map; the side
+  has a ready **West** foot row with the cover trait (Rome's javelinmen and
+  slingers have the trait too, so `ty >= UT.ROME_N`: no Rome battle can lay
+  it, and `Plays.wants_mem` gives the plays' memory to a side with the bit,
+  the knob and such a row); the enemy has a ready line foot, pike, gun foot
+  or rider unit. It starts at the first army think where the trigger holds
+  and **a wood lies between the lines on the side's half** (`_amb_woods`:
+  along lines parallel to the plan's facing, lateral 0, -40, 40 ... 120 m
+  from the side's centre in that order, the last wooded sample every 8 m
+  from the centre up to `AMB_REACH` 240 m ahead and no further than halfway
+  to the enemy's centre: the woods' front toward the enemy, on the first
+  line that has one). Never with the tercio running (the two take turns:
+  neither starts while the other runs).
+- **Lie in wait.** Every ready foot unit of the side (foot, pikes, missile
+  foot; not the general, wagons, characters, a retiring or guarding unit),
+  in its lateral order, is laid side by side `LINE_GAP` apart, centred
+  `AMB_HIDE_IN` 8 m behind the woods' front, each post moved to the nearest
+  spot wooded at its anchor and half its depth behind (8-32 m back, else
+  10-40 m toward the centre; `_amb_spot`); it runs there when over
+  `AMB_RUN_R` 30 m away, holds its fire, skirmish off (no fall-back). The
+  bait (`AMBUSH_BAIT` units: skirmish rows first, then the fewest men)
+  stands `AMB_BAIT_AHEAD` 30 m out in front of the woods' front, in the
+  open, fire at will on.
+- **The bait falls back** when an enemy unit the side sees comes within
+  `AMBUSH_PULL_R` (centroids) of it: to its own post in the hidden line at
+  the walk (the run with an enemy within `AMBUSH_SPRING_R`); home, it hides
+  as the others. One that is lost while lying in wait is replaced; one back
+  home is not (the line waits for the spring).
+- **Spring** (army think): an enemy **foot** unit within `AMBUSH_SPRING_R`
+  (box to box) of a hidden unit standing at its post (within 30 m of it), a
+  hidden unit at its post in contact or fighting, or an enemy foot unit
+  `AMB_PASSED` 20 m past the woods' front (along the facing the ambush was
+  laid with). Riders do not spring it (a lancer company scouting ahead blew
+  every ambush in `ambush_field` before this rule; one that finds a hidden
+  unit fights it alone: a hidden unit attacked springs on its own). Every
+  hidden unit and the bait attack at once (`_amb_go`): the nearest enemy
+  the side sees (else the nearest), a charge for melee foot; missile foot
+  fire at will and close only with no target in range. The sim's ambush
+  strike (`u_amb`: hidden 5 s, then seen) does the rest. The side's and the
+  enemy's men are noted.
+- **Fight, melt.** A sprung unit is the ordinary rules' (`u_ai` A_ATTACK)
+  until it has fought `AMBUSH_FIGHT_T` since it sprang; then, out of a melee
+  and **not winning**, it melts: runs back to its post, fire held, hides.
+  Winning: a unit that has lost no man since it sprang while enemy foot is
+  within `AMBUSH_PULL_R` of it; else the enemy lost `AMB_WIN_PCT` 50 % of
+  the side's losses since the spring or more and the unit lost under
+  `AMB_LOSS_PCT` 33 % of its men. Home, a melted unit springs again on its
+  own with enemy foot within `AMBUSH_SPRING_R`, or after `AMBUSH_FIGHT_T`
+  hidden with enemy foot within `AMBUSH_PULL_R` (it strikes again while the
+  others fight near by). With every unit home and hiding, a new cycle: a new
+  bait goes out, lying in wait again.
+- **Drop** (for good; the units back to the ordinary rules, A_ATTACK): the
+  trigger gone `PLAY_DROP_T` 30 s, no foot left to hide (at once), or a
+  cycle with no spring for `AMB_WAIT_T` 3 min (nobody came: the ordinary
+  rules, as before the play).
+- **Skilled** (`AMBUSH_FLANK`): a second wood on the enemy's flank
+  (`_amb_woods` flank: lateral 120, 160, 200 m on the side away from the
+  main wood's line, at least 100 m from it) takes the half of the hidden
+  units on its side (`R_FLANK`); the spring is the same for both.
+- **Memory** (the plays' tail of `ai_mem`, hashed and snapshotted as
+  before; its layout grew: `PU_K` 4 -> 6, `PS_K` 4 -> 14, so every battle
+  with the plays' memory hashes differently, none pinned): per unit the
+  part (`R_HIDE` 4, `R_BAIT` 5, `R_FLANK` 6; the tercio's are 1-3), the men
+  when it sprang, the state (`AS_HIDE`, `AS_FIGHT`, `AS_MELT`), the tick it
+  sprang / got home, its post; per side the ambush's state, phase
+  (`AP_WAIT`, `AP_PULL`, `AP_SPRUNG`), the cycle's start, the trigger's last
+  tick, the woods' front point and facing, the men of both sides at the
+  spring. Integers, index order, no RNG.
+- **Counters** (`stat_aic`, diagnostics): `play_ambush` (laid, once a battle
+  a side), `amb_spring` (the line sprung, or one unit again), `amb_melt`.
+
+| Knob (`ai_profile.gd`) | Easy | Average | Skilled |
+|---|---|---|---|
+| `AMBUSH` 320 | 0 | 1 | 1 |
+| `AMBUSH_BAIT` 321 | 1 | 1 | 1 |
+| `AMBUSH_PULL_R` 322 | 120 m | 120 m | 120 m |
+| `AMBUSH_SPRING_R` 323 | 40 m | 40 m | 40 m |
+| `AMBUSH_FIGHT_T` 324 | 200 (20 s) | 200 | 200 |
+| `AMBUSH_FLANK` 325 | 0 | 0 | 1 |
+
+Ids 312-319 and 326-329 are gaps (`KNOB_GAPS`, read 0). Constants
+(`plays.gd`): `AMB_REACH` 240 m, `AMB_STEP` 8 m, `AMB_HIDE_IN` 8 m,
+`AMB_BAIT_AHEAD` 30 m, `AMB_PASSED` 20 m, `AMB_RUN_R` 30 m, `AMB_HOME_R`
+8 m, `AMB_WAIT_T` 1800 (3 min), `AMB_WIN_PCT` 50, `AMB_LOSS_PCT` 33.
+
+**Measured** (`tests/asym_probe.gd`, 48 seeds from 5000, both sides Average,
+`--plays1=0` off / `-1` on; "lost" the natives' men lost a battle, "Spanish
+lost" theirs, strikes the sim's ambush strikes, either side; new
+`ambush_field`: the Spanish column, lancers 60, 4 musket companies of 100,
+a pike block of 120, up a lane between two woods, x 90-210 and 390-510 m,
+y 210-390 m, at 4 warrior bands of 100 and 2 bow bands of 80 beyond them,
+600 x 600 m):
+
+| Probe | Spanish / natives / draws | natives lost | Spanish lost | length s | reveals | strikes | springs / melts a battle |
+|---|---|---|---|---|---|---|---|
+| asym_woods off | 0 / 47 / 1 | 258 | 263 | 430 | 28.4 | 12.5 | |
+| asym_woods on | 0 / 48 / 0 | 168 | 281 | 320 | 26.8 | 10.0 | 2.1 / 1.8 |
+| asym_woods2 off | 2 / 44 / 2 | 280 | 264 | 492 | 32.4 | 15.9 | |
+| asym_woods2 on | 13 / 35 / 0 | 395 | 311 | 522 | 37.0 | 11.2 | 9.7 / 10.6 |
+| asym_field off = on | 42 / 6 / 0 | 471 | | 319 | 0 | 0 | never laid (no woods): every battle identical |
+| ambush_field off | 42 / 6 / 0 | 277 | 189 | 301 | 2.3 | 0.06 | |
+| ambush_field on | 35 / 13 / 0 | 314 | 228 | 387 | 14.5 | 5.4 | 10.0 / 10.2 |
+
+Skilled natives in `ambush_field` (12 seeds, the Spanish Average): 0 of 12
+on and off; the flank wood is taken in all 12; in most of them the column
+halts south of the woods and the play is dropped by `AMB_WAIT_T`.
+
+The builds measured (natives' wins of 48, the play on):
+
+| Build | asym_woods | asym_woods2 | ambush_field |
+|---|---|---|---|
+| first: posts at the walk, the front up to 60 m short of the enemy, melt anywhere (a melee too) | 17 (13 draws) | | 2 |
+| front halfway, run to posts, melt only out of a melee | 43 | | 9 |
+| foot only spring, only units at their posts | 39 | | 17 |
+| `AMB_WIN_PCT` 100 -> 50; the bait home stays hidden | 46 | 8 | 20 |
+| far melee units stay hidden at the spring (not kept: draws) | 42 (6 draws) | | 19 (3 draws) |
+| unfought units never melt; melted units strike again after 20 s | 47 | 35 | 6 |
+| ... again only with enemy foot within 120 m | 47 | 35 | 7 |
+| ... unfought units melt when not winning (as before) | 47 | 12 | 14 |
+| **as built**: unfought units melt only with no enemy foot within 120 m | **48** | **35** | **13** |
+| riders spring it (a halted gun rider shooting a hidden unit, or riders 5 s within 40 m of a hidden post), lying in wait only | 48 | 35 | 13 (every battle as built: it never fired first) |
+| ... and a hiding unit after the spring too (not kept) | 48 | 34 | 15 |
+| ... and against riders a line foot bait, no bait when the woods face the enemy's advance (not kept) | 47 (1 Spanish) | 27 (5 draws) | 6 |
+
+Reading. In the woods band (`asym_woods`) the play does what it is for: the
+natives win as before with 35 % fewer losses, the Spanish lose more, the
+battles are 25 % shorter. In `ambush_field` the natives' wins double (6 ->
+13) and the Spanish keep 35 of 48 (the floor was 12); the natives lose more
+men a battle (277 -> 314) because they now fight it out instead of breaking
+on the open lane, and the Spanish lose a fifth more. `asym_woods2` (the
+mounted arquebusiers and the slingers) is a regression: 44 -> 35 wins. Its
+counts: springs and melts near 10 a battle (2 in `asym_woods`), reveals up
+32 -> 37, strikes down 16 -> 11: the line springs, fights piecemeal, melts
+and springs again, and the ambush strikes fewer than the ordinary rules'
+own woods fighting did. Both fixes tried within the plan moved it 8 -> 35 at
+the cost of `ambush_field`; the as-built rule keeps both gains it could. A
+second round (the coordinator's, target 42 of 48 with `ambush_field` at 10 or
+better) tested the riders as the cause: riders standing near a hidden post
+or shooting a hidden unit spring it, and against riders a line foot bait or
+none. The riders' spring changed nothing while lying in wait (not one battle
+differed) and within the noise after the spring (35 -> 34, `ambush_field` 13
+-> 15); the bait change cost every probe (27, 6, 47). Neither reached the
+target, so the build is as before: the riders are not what costs
+`asym_woods2`. The Spanish
+line's countermarch was not what beat it: in `asym_woods2` the Spanish lose
+more men with the play on (264 -> 311).
+
+**Open.** `asym_woods2` (above): not the riders (tried); left to look at:
+the slingers and atlatl darts in the hidden line (the batch-2 natives'
+difference from `asym_woods`) and the spring-melt cycle near 10 a battle; the Skilled flank never won a
+battle in `ambush_field` (the Spanish Average column does not come in); a
+spring has no chronicle line (no view element, as the tercio).
 
 ## 45. Native siege: poles and torch raiders (2026-10-29)
 

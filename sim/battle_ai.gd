@@ -113,7 +113,9 @@ extends RefCounted
 ## _army_think (Plays.army_think), laid out in _issue_line (Plays.post_line
 ## reshapes the first line's slots), run per unit before the class rules
 ## (Plays.unit_think). The tercio: pike blocks with musket sleeves at their
-## corners that shelter behind the block from horse.
+## corners that shelter behind the block from horse. The native ambush: the
+## foot hidden along a wood's front, a bait that falls back, the spring
+## (its units are left out of _issue_line's orders while it runs).
 
 const FM := preload("res://sim/fixed_math.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -281,7 +283,7 @@ static func _army_think(sim, side: int) -> void:
 	var plan := _plan(sim, side)
 	if plan.is_empty():
 		return
-	Plays.army_think(sim, side)  # (the play library, docs/AI.md 44: a play starts or is dropped)
+	Plays.army_think(sim, side, plan)  # (the play library, docs/AI.md 44: a play starts or is dropped)
 	if phase == P_DEPLOY and is_camp(sim, side):
 		_camp_deploy(sim, side)
 		sim.ai_phase[side] = P_ADVANCE
@@ -892,6 +894,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		if deploy and not (bolts.is_empty() and stones.is_empty()):
 			guard = _guard_choice(sim, side, bolts[0] if not bolts.is_empty() else stones[0])
 		Plays.post_line(sim, side, line1, slots, guard)
+	if Plays.ambush_on(sim, side):
+		Plays.amb_slots(sim, side, slots)  # (the ambush's hidden line and bait: docs/AI.md 44.5)
 	var seq := 0
 	var keys := slots.keys()
 	keys.sort()  # index order, never Dictionary order

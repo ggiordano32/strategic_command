@@ -43,46 +43,87 @@ const M := 1024
 const ALL := -1                 # every play (the default of a scenario without "ai_plays")
 const P_TERCIO := 0             # bit 0: the tercio (docs/AI.md 44.1)
 const P_COUNTERMARCH := 1       # bit 1: the countermarch (docs/AI.md 44.2; its own build)
+const P_AMBUSH := 2             # bit 2: the native ambush (docs/AI.md 44.5)
 const PLAY_DROP_T := 300        # a play is dropped when its trigger has been gone this long (30 s)
 const TERCIO_CLEAR_T := 100     # sleeves return / a block turns back after this long with no riders closing (10 s)
 const TERCIO_TURN_R := 60 * M   # a block turns to face riders closing from a flank this near
 const TERCIO_FLANK := 128       # ... off its front by more than this (1024 = a full turn: 45 degrees)
 const TERCIO_REAR := 10 * M     # sheltering sleeves stand this far behind the block's rear rank
+const AMB_REACH := 240 * M      # the ambush's wood: searched this far ahead of the side's centre ...
+const AMB_RUN_R := 30 * M       # a hiding unit farther than this from its post runs to it
+const AMB_STEP := 8 * M         # ... sampled this often along each line
+const AMB_HIDE_IN := 8 * M      # the hidden line's anchors stand this far inside the woods' front
+const AMB_BAIT_AHEAD := 30 * M  # the bait stands this far out in front of the woods' front
+const AMB_PASSED := 20 * M      # an enemy unit this far past the woods' front springs the ambush
+const AMB_HOME_R := 8 * M       # a melting / falling back unit this near its hiding post is home
+const AMB_WAIT_T := 1800        # a cycle with no spring this long (3 min): the play is dropped
+const AMB_WIN_PCT := 50        # winning: the enemy lost this % of our losses since the spring, or more ...
+const AMB_LOSS_PCT := 33        # ... and the unit lost less than this % of its men since it sprang
 
 # Mirrored from BattleSim / BattleAI (preloading either here would be circular).
 const U_READY := 0
+const U_DESTROYED := 2
+const O_NONE := 0
 const O_MOVE := 1
 const O_ATTACK := 2
 const ORDER_MOVE := 1
+const ORDER_ATTACK := 2
 const ORDER_FIRE := 5
+const ORDER_SKIRMISH := 6
 const AI_PLAYER_BASE := 100
+const A_LINE := 0
+const A_ATTACK := 1
 const A_RETIRE := 7
 const A_GUARD := 10
 
 # The plays' memory: a tail of BattleSim.ai_mem after the Skilled memory
 # (n_units * AP.MU_K + 2 * AP.SD_K), PU_K ints per unit then PS_K per side.
-const PU_ROLE := 0              # tercio part: 0 none, 1 block, 2 left sleeve, 3 right sleeve
-const PU_OF := 1                # a sleeve's block + 1
-const PU_STATE := 2             # 1: a sleeve sheltering behind its block / a block turned to a flank
-const PU_T := 3                 # the tick riders were last seen closing on it
-const PU_K := 4
+const PU_ROLE := 0              # tercio part: 0 none, 1 block, 2 left sleeve, 3 right sleeve; ambush: R_HIDE, R_BAIT, R_FLANK
+const PU_OF := 1                # a sleeve's block + 1; ambush: its men when it sprang
+const PU_STATE := 2             # 1: a sleeve sheltering behind its block / a block turned to a flank; ambush: AS_*
+const PU_T := 3                 # the tick riders were last seen closing on it; ambush: the tick it sprang
+const PU_X := 4                 # ambush: its hiding post (anchor) in the woods
+const PU_Y := 5
+const PU_K := 6
 const PS_TERCIO := 0            # 0 not chosen, 1 running, 2 dropped
 const PS_TERCIO_T := 1          # the tick it started
 const PS_TERCIO_SEEN := 2       # the tick its trigger last held
-const PS_K := 4
+const PS_AMB := 4               # the ambush: 0 not chosen, 1 running, 2 dropped
+const PS_AMB_PH := 5            # ... its phase: AP_WAIT, AP_PULL, AP_SPRUNG
+const PS_AMB_T := 6             # ... the tick this cycle began (the bait went out)
+const PS_AMB_SEEN := 7          # ... the tick its trigger last held
+const PS_AMB_X := 8             # ... the woods' front point (the hidden line's centre is AMB_HIDE_IN behind it)
+const PS_AMB_Y := 9
+const PS_AMB_FACE := 10         # ... the facing toward the enemy it was laid with
+const PS_AMB_O0 := 11           # ... the side's men when it last sprang
+const PS_AMB_E0 := 12           # ... the enemy's men then
+const PS_K := 14
+
+# The ambush's parts (PU_ROLE) and states (PU_STATE), its phases (PS_AMB_PH).
+const R_HIDE := 4               # hidden in the main wood
+const R_BAIT := 5               # the bait (out in front, or falling back)
+const R_FLANK := 6              # hidden in the flank wood (AMBUSH_FLANK)
+const AS_HIDE := 0              # hiding (the bait: standing out)
+const AS_FIGHT := 1             # sprung (the bait: falling back)
+const AS_MELT := 2              # melting back to its hiding post
+const AP_WAIT := 1              # lying in wait, the bait out
+const AP_PULL := 2              # the bait falling back
+const AP_SPRUNG := 3            # sprung; a melted unit springs again on its own
 
 
 # --------------------------------------------------------------- memory ---
 
 ## A play can run in this battle: some AI side has PLAYS_ON, a play bit and
-## a gun foot unit (scenario rows `units`). Decides whether ai_mem gets the
-## plays' tail (BattleSim.setup).
+## a gun foot unit (scenario rows `units`), or the ambush's bit and knob and
+## a West cover foot row (no Rome row is one). Decides whether ai_mem gets
+## the plays' tail (BattleSim.setup).
 static func wants_mem(sim, units: Array) -> bool:
 	for s in 2:
 		if sim.ai_sides[s] == 0 or sim.ai_plays[s] == 0 or AP.of(sim, s)[AP.PLAYS_ON] == 0:
 			continue
+		var amb: bool = (sim.ai_plays[s] >> P_AMBUSH) & 1 != 0 and AP.of(sim, s)[AP.AMBUSH] != 0
 		for ud in units:
-			if int(ud["side"]) == s and _gun_type(int(ud["type"])):
+			if int(ud["side"]) == s and (_gun_type(int(ud["type"])) or (amb and _cover_foot_type(int(ud["type"])))):
 				return true
 	return false
 
@@ -135,28 +176,34 @@ static func state(sim, u: int) -> int:
 ## Each army think (BattleAI._army_think, after the plan is read): start the
 ## plays whose trigger holds, drop those whose trigger has been gone
 ## PLAY_DROP_T.
-static func army_think(sim, side: int) -> void:
+static func army_think(sim, side: int, plan: Dictionary = {}) -> void:
 	if not has_mem(sim):
 		return
 	var kn := AP.of(sim, side)
 	if kn[AP.PLAYS_ON] == 0:
 		return
-	if kn[AP.TERCIO] != 0 and (sim.ai_plays[side] >> P_TERCIO) & 1 != 0:
-		var st := _ps(sim, side, PS_TERCIO)
-		if st == 2:
-			return
-		var trig := tercio_trigger(sim, side)
-		if trig:
-			_psset(sim, side, PS_TERCIO_SEEN, sim.tick)
-		if st == 0 and trig:
-			_psset(sim, side, PS_TERCIO, 1)
-			_psset(sim, side, PS_TERCIO_T, sim.tick)
-			sim.stat_aic[side * AP.N_COUNTERS + AP.C_PLAY_TERCIO] += 1
-		elif st == 1 and not trig and sim.tick - _ps(sim, side, PS_TERCIO_SEEN) >= PLAY_DROP_T:
-			_psset(sim, side, PS_TERCIO, 2)
-			for u in sim.n_units:
-				if sim.u_side[u] == side:
-					_clear(sim, u)
+	if kn[AP.TERCIO] != 0 and (sim.ai_plays[side] >> P_TERCIO) & 1 != 0 and _ps(sim, side, PS_AMB) != 1:
+		_tercio_army(sim, side)
+	if kn[AP.AMBUSH] != 0 and (sim.ai_plays[side] >> P_AMBUSH) & 1 != 0 and _ps(sim, side, PS_TERCIO) != 1:
+		_amb_army(sim, side, kn, plan)
+
+
+static func _tercio_army(sim, side: int) -> void:
+	var st := _ps(sim, side, PS_TERCIO)
+	if st == 2:
+		return
+	var trig := tercio_trigger(sim, side)
+	if trig:
+		_psset(sim, side, PS_TERCIO_SEEN, sim.tick)
+	if st == 0 and trig:
+		_psset(sim, side, PS_TERCIO, 1)
+		_psset(sim, side, PS_TERCIO_T, sim.tick)
+		sim.stat_aic[side * AP.N_COUNTERS + AP.C_PLAY_TERCIO] += 1
+	elif st == 1 and not trig and sim.tick - _ps(sim, side, PS_TERCIO_SEEN) >= PLAY_DROP_T:
+		_psset(sim, side, PS_TERCIO, 2)
+		for u in sim.n_units:
+			if sim.u_side[u] == side:
+				_clear(sim, u)
 
 
 ## The tercio's trigger: a field battle (no settlement, no town plan); the
@@ -371,6 +418,10 @@ static func unit_think(sim, u: int) -> bool:
 	if not has_mem(sim):
 		return false
 	var r := _pm(sim, u, PU_ROLE)
+	if r >= R_HIDE:
+		if _ps(sim, sim.u_side[u], PS_AMB) != 1 or sim.u_ai[u] == A_RETIRE or sim.u_ai[u] == A_GUARD:
+			return false
+		return _amb_unit(sim, u, r)
 	if r == 0 or _ps(sim, sim.u_side[u], PS_TERCIO) != 1:
 		return false
 	if sim.u_ai[u] == A_RETIRE or sim.u_ai[u] == A_GUARD:
@@ -493,6 +544,500 @@ static func _closing(sim, o: int, u: int, r: int) -> bool:
 	return _d(tx - sim.u_cx[u], ty - sim.u_cy[u]) < d
 
 
+# --------------------------------------------------------------- ambush ---
+# The native ambush from cover with a feigned retreat (P_AMBUSH, docs/AI.md
+# 44.5; knob AMBUSH). Laid once at the first army think its trigger holds and
+# a wood lies between the lines (on the side's half): the side's foot hide
+# along the woods' front toward the enemy (AMB_HIDE_IN inside it, fire held, skirmish off), a bait
+# (AMBUSH_BAIT units: a skirmisher, else the smallest) stands AMB_BAIT_AHEAD
+# out in front. An enemy unit within AMBUSH_PULL_R of the bait: it falls back
+# to its hiding post at the walk. An enemy unit within AMBUSH_SPRING_R of a
+# hidden unit (box to box), one that has seen a hidden unit, or one
+# AMB_PASSED past the woods' front: every hidden unit and the bait attack at
+# once (the sim's ambush strike rewards the first volley or contact). A
+# sprung unit that has fought AMBUSH_FIGHT_T, is out of a melee and is not winning melts back to
+# its post; with every unit home again a new bait goes out. Skilled
+# (AMBUSH_FLANK): half the hidden units take a second wood on the enemy's
+# flank. Dropped when its trigger has been gone PLAY_DROP_T, at once when no
+# foot is left to hide, and when a cycle has waited AMB_WAIT_T for a spring.
+
+## The ambush is running for side `side`.
+static func ambush_on(sim, side: int) -> bool:
+	return has_mem(sim) and _ps(sim, side, PS_AMB) == 1
+
+
+## The ambush's trigger (while it runs): a field battle (no settlement, no
+## town plan) with woods and line of sight; the side has a ready West cover
+## foot unit (a hider: _amb_foot) and the enemy a ready line foot or horse
+## unit. Its start needs a wood between the lines too (_amb_woods).
+static func ambush_trigger(sim, side: int) -> bool:
+	if sim.city_on != 0 or sim.veg_on == 0 or sim.vis_on == 0:
+		return false
+	var city = sim.map_info.get("city", null)
+	if city is Dictionary and int((city as Dictionary).get("tp", 0)) != 0:
+		return false
+	var cov := false
+	var line := false
+	for u in sim.n_units:
+		if sim.u_state[u] != U_READY or _skip(sim, u):
+			continue
+		if sim.u_side[u] == side:
+			if _amb_foot(sim, u) and _cover_foot_type(sim.u_otype[u]):
+				cov = true
+		else:
+			var c: int = sim.u_cls[u]
+			if c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_CAV or _gun_foot(sim, u):
+				line = true
+	return cov and line
+
+
+static func _amb_army(sim, side: int, kn: PackedInt32Array, plan: Dictionary) -> void:
+	var st := _ps(sim, side, PS_AMB)
+	if st == 2:
+		return
+	var trig := ambush_trigger(sim, side)
+	if st == 0:
+		if not trig or plan.is_empty():
+			return
+		var w := _amb_woods(sim, plan, 0, false)
+		if w.is_empty():
+			return
+		_psset(sim, side, PS_AMB, 1)
+		_psset(sim, side, PS_AMB_SEEN, sim.tick)
+		_psset(sim, side, PS_AMB_X, int(w[0]))
+		_psset(sim, side, PS_AMB_Y, int(w[1]))
+		_psset(sim, side, PS_AMB_FACE, int(plan["face"]))
+		sim.stat_aic[side * AP.N_COUNTERS + AP.C_PLAY_AMBUSH] += 1
+		_amb_lay(sim, side, kn, plan, w)
+		_amb_cycle(sim, side, kn)
+		return
+	if trig:
+		_psset(sim, side, PS_AMB_SEEN, sim.tick)
+	var hiders := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _pm(sim, u, PU_ROLE) >= R_HIDE:
+			hiders += 1
+	if hiders == 0 or (not trig and sim.tick - _ps(sim, side, PS_AMB_SEEN) >= PLAY_DROP_T):
+		_amb_drop(sim, side)
+		return
+	var ph := _ps(sim, side, PS_AMB_PH)
+	if ph == AP_SPRUNG:
+		# Back to lying in wait once every unit is home and hiding.
+		for u in sim.n_units:
+			if sim.u_side[u] == side and sim.u_state[u] == U_READY and _pm(sim, u, PU_ROLE) >= R_HIDE \
+					and _pm(sim, u, PU_STATE) != AS_HIDE:
+				return
+		_amb_cycle(sim, side, kn)
+		return
+	if sim.tick - _ps(sim, side, PS_AMB_T) >= AMB_WAIT_T:
+		_amb_drop(sim, side)  # (nobody came: the ordinary rules)
+		return
+	if _amb_springs(sim, side, kn):
+		_amb_spring(sim, side)
+		return
+	# The bait: falls back when an enemy unit comes within AMBUSH_PULL_R;
+	# lost while lying in wait: a new one goes out (one back home after
+	# falling back stays hidden: the line waits for the spring).
+	var out := false
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or _pm(sim, u, PU_ROLE) != R_BAIT:
+			continue
+		out = true
+		if _pm(sim, u, PU_STATE) == AS_HIDE and _enemy_within(sim, u, kn[AP.AMBUSH_PULL_R]):
+			_pmset(sim, u, PU_STATE, AS_FIGHT)  # (falling back: unit_think)
+			_psset(sim, side, PS_AMB_PH, AP_PULL)
+	if not out and ph == AP_WAIT:
+		_amb_bait(sim, side, kn)
+
+
+## A new cycle: lying in wait with a new bait out.
+static func _amb_cycle(sim, side: int, kn: PackedInt32Array) -> void:
+	_psset(sim, side, PS_AMB_PH, AP_WAIT)
+	_psset(sim, side, PS_AMB_T, sim.tick)
+	_amb_bait(sim, side, kn)
+
+
+## Picks AMBUSH_BAIT baits from the hiding units: skirmishers first, then the
+## fewest men, then index.
+static func _amb_bait(sim, side: int, kn: PackedInt32Array) -> void:
+	for k in kn[AP.AMBUSH_BAIT]:
+		var best := -1
+		var bk := 0
+		for u in sim.n_units:
+			if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_fighting[u] > 0:
+				continue
+			var r := _pm(sim, u, PU_ROLE)
+			if (r != R_HIDE and r != R_FLANK) or _pm(sim, u, PU_STATE) != AS_HIDE or sim.u_ai[u] == A_RETIRE:
+				continue
+			var key: int = sim.u_alive[u] + (0 if UT.stat(sim.u_type[u], "skirm") != 0 else 100000)
+			if best < 0 or key < bk:
+				best = u
+				bk = key
+		if best < 0:
+			return
+		_pmset(sim, best, PU_ROLE, R_BAIT)
+		_pmset(sim, best, PU_STATE, AS_HIDE)
+
+
+## The spring: an enemy foot unit (_amb_prey) within AMBUSH_SPRING_R of a
+## hidden unit at its post (box to box), such a unit in contact or fighting,
+## or an enemy foot unit AMB_PASSED past the woods' front (along the facing
+## the ambush was laid with). Riders scouting ahead do not spring it (one
+## that finds a hidden unit fights it alone).
+static func _amb_springs(sim, side: int, kn: PackedInt32Array) -> bool:
+	var face := _ps(sim, side, PS_AMB_FACE)
+	var fx := FM.cos_a(face)
+	var fy := FM.sin_a(face)
+	var wx := _ps(sim, side, PS_AMB_X)
+	var wy := _ps(sim, side, PS_AMB_Y)
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or not _amb_prey(sim, o):
+			continue
+		if ((sim.u_cx[o] - wx) * fx + (sim.u_cy[o] - wy) * fy) / FM.TRIG_ONE < -AMB_PASSED:
+			return true
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY:
+			continue
+		var r := _pm(sim, u, PU_ROLE)
+		if (r != R_HIDE and r != R_FLANK) or _pm(sim, u, PU_STATE) != AS_HIDE:
+			continue
+		if _d(sim.u_ax[u] - _pm(sim, u, PU_X), sim.u_ay[u] - _pm(sim, u, PU_Y)) > AMB_RUN_R:
+			continue  # (still on its way: not hidden yet; attacked, it fights on its own)
+		if sim.u_fighting[u] > 0 or sim.u_contact[u] != 0 or _amb_near(sim, u, kn[AP.AMBUSH_SPRING_R]):
+			return true
+	return false
+
+
+## An enemy unit that springs the ambush: foot (the main body), not riders
+## scouting ahead, batteries, wagons or characters.
+static func _amb_prey(sim, o: int) -> bool:
+	var c: int = sim.u_cls[o]
+	return (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and not _skip(sim, o)
+
+
+## Every hiding unit and the bait attack at once.
+static func _amb_spring(sim, side: int) -> void:
+	_psset(sim, side, PS_AMB_PH, AP_SPRUNG)
+	_psset(sim, side, PS_AMB_O0, _men(sim, side))
+	_psset(sim, side, PS_AMB_E0, _men(sim, 1 - side))
+	sim.stat_aic[side * AP.N_COUNTERS + AP.C_AMB_SPRING] += 1
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or _pm(sim, u, PU_ROLE) < R_HIDE:
+			continue
+		if _pm(sim, u, PU_ROLE) == R_BAIT:
+			_pmset(sim, u, PU_ROLE, R_HIDE)
+		elif _pm(sim, u, PU_STATE) != AS_HIDE:
+			continue
+		_amb_go(sim, u)
+
+
+## Unit u springs: the nearest enemy it sees (else the nearest), a charge for
+## melee foot; missile foot fire at will, and close only with no target in
+## range.
+static func _amb_go(sim, u: int) -> void:
+	var side: int = sim.u_side[u]
+	_pmset(sim, u, PU_STATE, AS_FIGHT)
+	_pmset(sim, u, PU_T, sim.tick)
+	_pmset(sim, u, PU_OF, sim.u_alive[u])
+	sim.u_ai[u] = A_ATTACK
+	sim.u_ai_t[u] = sim.tick
+	var t := -1
+	var td := 0
+	var tseen := false
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or _skip(sim, o):
+			continue
+		var seen: bool = not sim.hidden_from(o, side)
+		var d := _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if t < 0 or (seen and not tseen) or (seen == tseen and d < td):
+			t = o
+			td = d
+			tseen = seen
+	if sim.u_cls[u] == UT.CLS_MISSILE:
+		if sim.u_fire[u] == 0:
+			_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		if t >= 0 and not sim._in_range(u, t, sim.mrange(u)):
+			_attack(sim, u, t, 0)
+	elif t >= 0:
+		_attack(sim, u, t, 1)
+
+
+static func _amb_drop(sim, side: int) -> void:
+	_psset(sim, side, PS_AMB, 2)
+	for u in sim.n_units:
+		if sim.u_side[u] == side and _pm(sim, u, PU_ROLE) >= R_HIDE:
+			_clear(sim, u)
+			if sim.u_state[u] == U_READY and sim.u_ai[u] != A_RETIRE:
+				sim.u_ai[u] = A_ATTACK
+				sim.u_ai_t[u] = sim.tick
+
+
+## The ambush's wood: along lines parallel to the plan's facing (lateral 0,
+## -40, 40, ... 120 m from the side's centre, fixed order), the last wooded
+## sample (every AMB_STEP) from the centre up to AMB_REACH ahead and no
+## further than halfway to the enemy's centre (the hiders get there first): the woods' front toward the
+## enemy on the first line that has one. [x, y, lateral] or []. `flank`:
+## the flank wood instead, lateral 120-200 m on the side away from `wlat`
+## (wlat 0: right first), its line at least 100 m from the main wood's.
+static func _amb_woods(sim, plan: Dictionary, wlat: int, flank: bool) -> Array:
+	var cx: int = plan["cx"]
+	var cy: int = plan["cy"]
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var rx := -fy
+	var ry := fx
+	var de: int = ((int(plan["ex"]) - cx) * fx + (int(plan["ey"]) - cy) * fy) / FM.TRIG_ONE
+	var lim := mini(AMB_REACH, de / 2)
+	var lats: Array = [0, -40, 40, -80, 80, -120, 120]
+	if flank:
+		var sg := -1 if wlat > 0 else 1
+		lats = []
+		for l in [120, 160, 200]:
+			lats.append(sg * l)
+			lats.append(-sg * l)
+	for l in lats:
+		var lat: int = l * M
+		if flank and absi(lat - wlat) < 100 * M:
+			continue
+		var front := -1
+		var k := 0
+		while k <= lim:
+			var x := cx + (fx * k + rx * lat) / FM.TRIG_ONE
+			var y := cy + (fy * k + ry * lat) / FM.TRIG_ONE
+			if x >= 4 * M and y >= 4 * M and x <= sim.field_w - 4 * M and y <= sim.field_h - 4 * M \
+					and sim.veg_d(x, y) > 0 and sim.nav_at(x, y) != 0:
+				front = k
+			k += AMB_STEP
+		if front >= 0:
+			return [cx + (fx * front + rx * lat) / FM.TRIG_ONE, cy + (fy * front + ry * lat) / FM.TRIG_ONE, lat]
+	return []
+
+
+## Lays the hidden line: the side's foot (_amb_foot) in their lateral order,
+## side by side LINE_GAP apart, centred AMB_HIDE_IN behind the woods' front
+## `w`, each post moved to the nearest wooded spot (_amb_spot); with
+## AMBUSH_FLANK and a flank wood, the half toward it there (R_FLANK).
+static func _amb_lay(sim, side: int, kn: PackedInt32Array, plan: Dictionary, w: Array) -> void:
+	var fx: int = plan["fx"]
+	var fy: int = plan["fy"]
+	var rx := -fy
+	var ry := fx
+	var cx: int = plan["cx"]
+	var cy: int = plan["cy"]
+	var units: Array = []
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _amb_foot(sim, u) \
+				and sim.u_ai[u] != A_RETIRE and sim.u_ai[u] != A_GUARD:
+			units.append(u)
+	units.sort_custom(func(a: int, b: int) -> bool:
+		var la: int = ((sim.u_ax[a] - cx) * rx + (sim.u_ay[a] - cy) * ry) / FM.TRIG_ONE
+		var lb: int = ((sim.u_ax[b] - cx) * rx + (sim.u_ay[b] - cy) * ry) / FM.TRIG_ONE
+		return la < lb or (la == lb and a < b))
+	var groups: Array = [[units, w, R_HIDE]]
+	if kn[AP.AMBUSH_FLANK] != 0 and units.size() >= 2:
+		var fw := _amb_woods(sim, plan, int(w[2]), true)
+		if not fw.is_empty():
+			var nf: int = units.size() / 2
+			var main: Array = []
+			var fl: Array = []
+			for k in units.size():
+				# (the half on the flank wood's side of the line)
+				var toward: bool = (k >= units.size() - nf) if int(fw[2]) > int(w[2]) else (k < nf)
+				if toward:
+					fl.append(units[k])
+				else:
+					main.append(units[k])
+			groups = [[main, w, R_HIDE], [fl, fw, R_FLANK]]
+	var gap := kn[AP.LINE_GAP]
+	for g in groups:
+		var us: Array = g[0]
+		var gw: Array = g[1]
+		var hx: int = int(gw[0]) - fx * AMB_HIDE_IN / FM.TRIG_ONE
+		var hy: int = int(gw[1]) - fy * AMB_HIDE_IN / FM.TRIG_ONE
+		var total := 0
+		for u in us:
+			total += _width(sim, u) + gap
+		total -= gap
+		var x := -total / 2
+		for u in us:
+			var wd := _width(sim, u)
+			var lat := x + wd / 2
+			x += wd + gap
+			var p := _amb_spot(sim, u, hx + rx * lat / FM.TRIG_ONE, hy + ry * lat / FM.TRIG_ONE, fx, fy, rx, ry, lat)
+			_clear(sim, u)
+			_pmset(sim, u, PU_ROLE, int(g[2]))
+			_pmset(sim, u, PU_STATE, AS_HIDE)
+			_pmset(sim, u, PU_X, p.x)
+			_pmset(sim, u, PU_Y, p.y)
+
+
+## A hiding post for unit u near (px, py): wooded at its anchor and half its
+## depth behind; else 8-32 m further back, else 10-40 m toward the line's
+## centre (lat's other way), at the front or 16 m back (fixed order); else
+## the spot.
+static func _amb_spot(sim, u: int, px: int, py: int, fx: int, fy: int, rx: int, ry: int, lat: int) -> Vector2i:
+	var h := _depth(sim, u) / 2
+	var sg := -1 if lat > 0 else 1
+	var cands: Array = [Vector2i(0, 0), Vector2i(0, 8), Vector2i(0, 16), Vector2i(0, 24), Vector2i(0, 32)]
+	for l in [10, 20, 30, 40]:
+		cands.append(Vector2i(sg * l, 0))
+		cands.append(Vector2i(sg * l, 16))
+	for c in cands:
+		var x := clampi(px + (rx * c.x - fx * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var y := clampi(py + (ry * c.x - fy * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		if sim.veg_d(x, y) > 0 and sim.veg_d(x - fx * h / FM.TRIG_ONE, y - fy * h / FM.TRIG_ONE) > 0 \
+				and sim.nav_at(x, y) != 0:
+			return Vector2i(x, y)
+	return Vector2i(clampi(px, 4 * M, sim.field_w - 4 * M), clampi(py, 4 * M, sim.field_h - 4 * M))
+
+
+## _issue_line's slots while the side's ambush runs: its units are the
+## play's (unit_think), not the line's.
+static func amb_slots(sim, side: int, slots: Dictionary) -> void:
+	for u in sim.n_units:
+		if sim.u_side[u] == side and _pm(sim, u, PU_ROLE) >= R_HIDE:
+			slots.erase(u)
+
+
+## Each unit think of a unit with a part in its side's running ambush. True
+## if the play gave it its orders (the ordinary rules are skipped).
+static func _amb_unit(sim, u: int, r: int) -> bool:
+	var side: int = sim.u_side[u]
+	var kn := AP.of(sim, side)
+	var st := _pm(sim, u, PU_STATE)
+	var face := _ps(sim, side, PS_AMB_FACE)
+	var hx := _pm(sim, u, PU_X)
+	var hy := _pm(sim, u, PU_Y)
+	if st == AS_FIGHT and r != R_BAIT:
+		# Sprung: the ordinary rules fight; after AMBUSH_FIGHT_T, out of a
+		# melee and not winning: melt.
+		if sim.tick - _pm(sim, u, PU_T) < kn[AP.AMBUSH_FIGHT_T] or sim.u_fighting[u] > 0 or _amb_winning(sim, u):
+			return false
+		_pmset(sim, u, PU_STATE, AS_MELT)
+		sim.u_ai[u] = A_LINE
+		sim.stat_aic[side * AP.N_COUNTERS + AP.C_AMB_MELT] += 1
+		_move(sim, u, hx, hy, face, _width(sim, u), 1, 3)
+		_hold(sim, u)
+		return true
+	if sim.u_fighting[u] > 0:
+		if r == R_BAIT:
+			return false  # (caught: the ordinary rules; the spring check sees the enemy near)
+		_amb_go(sim, u)  # (found and attacked: it fights)
+		sim.stat_aic[side * AP.N_COUNTERS + AP.C_AMB_SPRING] += 1
+		return false
+	if st == AS_MELT:
+		if _d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) < AMB_HOME_R or sim.u_order[u] == O_NONE:
+			_pmset(sim, u, PU_STATE, AS_HIDE)
+			_pmset(sim, u, PU_T, sim.tick)  # (home: it strikes again after AMBUSH_FIGHT_T)
+		else:
+			_move(sim, u, hx, hy, face, _width(sim, u), 1, 3)
+		_hold(sim, u)
+		return true
+	if r == R_BAIT:
+		if st == AS_FIGHT:
+			# Falling back to its hiding post at the walk (the run with an
+			# enemy within AMBUSH_SPRING_R); home: it hides again.
+			if _d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) < AMB_HOME_R:
+				_pmset(sim, u, PU_ROLE, R_HIDE)
+				_pmset(sim, u, PU_STATE, AS_HIDE)
+				_hold(sim, u)
+				return true
+			var run := 1 if _enemy_within(sim, u, kn[AP.AMBUSH_SPRING_R]) else 0
+			_move(sim, u, hx, hy, face, _width(sim, u), run, 4)
+			return true
+		# Out in front of the woods' front, in sight, shooting if it can.
+		var fx := FM.cos_a(face)
+		var fy := FM.sin_a(face)
+		var bx := clampi(_ps(sim, side, PS_AMB_X) + fx * AMB_BAIT_AHEAD / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var by := clampi(_ps(sim, side, PS_AMB_Y) + fy * AMB_BAIT_AHEAD / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		_move(sim, u, bx, by, face, _width(sim, u), 1 if _d(sim.u_ax[u] - bx, sim.u_ay[u] - by) > AMB_RUN_R else 0, 5)
+		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_fire[u] == 0:
+			_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		return true
+	# Hiding: at its post, fire held, no skirmish fall-back; after a spring
+	# (a melted unit, home), an enemy within AMBUSH_SPRING_R springs it
+	# again, and so does AMBUSH_FIGHT_T hidden with an enemy foot unit within
+	# AMBUSH_PULL_R (it strikes again while the others fight near by).
+	if _ps(sim, side, PS_AMB_PH) == AP_SPRUNG and (_amb_near(sim, u, kn[AP.AMBUSH_SPRING_R]) \
+			or (sim.tick - _pm(sim, u, PU_T) >= kn[AP.AMBUSH_FIGHT_T] and _amb_near(sim, u, kn[AP.AMBUSH_PULL_R]))):
+		_amb_go(sim, u)
+		sim.stat_aic[side * AP.N_COUNTERS + AP.C_AMB_SPRING] += 1
+		return true
+	var dh := _d(sim.u_ax[u] - hx, sim.u_ay[u] - hy)
+	if dh >= AMB_HOME_R:
+		_move(sim, u, hx, hy, face, _width(sim, u), 1 if dh > AMB_RUN_R else 0, 3)
+	_hold(sim, u)
+	return true
+
+
+## Fire held and no skirmish fall-back (hiding).
+static func _hold(sim, u: int) -> void:
+	if sim.u_fire[u] != 0:
+		_order(sim, u, {"type": ORDER_FIRE, "on": 0}, 21)
+	if sim.u_skirm[u] != 0:
+		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 0}, 20)
+
+
+## A sprung unit is winning (it fights on): one that has lost no man since it
+## sprang while enemy foot is within AMBUSH_PULL_R of it; else since the side
+## last sprang the enemy lost AMB_WIN_PCT of the side's losses or more and
+## the unit lost under AMB_LOSS_PCT of its men since it sprang.
+static func _amb_winning(sim, u: int) -> bool:
+	var side: int = sim.u_side[u]
+	var own: int = _ps(sim, side, PS_AMB_O0) - _men(sim, side)
+	var theirs: int = _ps(sim, side, PS_AMB_E0) - _men(sim, 1 - side)
+	var lost: int = _pm(sim, u, PU_OF) - sim.u_alive[u]
+	if lost <= 0:
+		# Not fought yet: it carries on while enemy foot is within
+		# AMBUSH_PULL_R (else back to cover: the next cycle's bait draws them).
+		return _amb_near(sim, u, AP.of(sim, side)[AP.AMBUSH_PULL_R])
+	return theirs * 100 >= own * AMB_WIN_PCT and lost * 100 < _pm(sim, u, PU_OF) * AMB_LOSS_PCT
+
+
+## A ready enemy foot unit (_amb_prey) within r of unit u (box to box).
+static func _amb_near(sim, u: int, r: int) -> bool:
+	for o in sim.n_units:
+		if sim.u_side[o] != sim.u_side[u] and sim.u_state[o] == U_READY and _amb_prey(sim, o) and sim._box_gap(u, o) <= r:
+			return true
+	return false
+
+
+## A ready enemy unit the side sees within r of unit u (centroids).
+static func _enemy_within(sim, u: int, r: int) -> bool:
+	var side: int = sim.u_side[u]
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or _skip(sim, o) or sim.hidden_from(o, side):
+			continue
+		if _d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u]) < r:
+			return true
+	return false
+
+
+## The side's men on the field (ready or routing; not wagons or characters).
+static func _men(sim, side: int) -> int:
+	var n := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] < U_DESTROYED and not _skip(sim, u):
+			n += sim.u_alive[u]
+	return n
+
+
+## A foot unit that can hide: foot, pikes or missile foot (not horse, guns,
+## wagons, characters or the general).
+static func _amb_foot(sim, u: int) -> bool:
+	var c: int = sim.u_cls[u]
+	return (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and not _skip(sim, u) \
+		and UT.stat(sim.u_type[u], "cmd_r") <= 0
+
+
+## A West foot row with the cover trait (Rome's skirmishers have it too, so
+## the West's rows only: no Rome battle lays an ambush).
+static func _cover_foot_type(ty: int) -> bool:
+	var c := UT.cls(ty)
+	return ty >= UT.ROME_N and UT.stat(ty, "cover") != 0 \
+		and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE)
+
+
 # -------------------------------------------------------------- helpers ---
 
 static func _clear(sim, u: int) -> void:
@@ -552,3 +1097,9 @@ static func _move(sim, u: int, x: int, y: int, face: int, width: int, run: int, 
 		return
 	_order(sim, u, {"type": ORDER_MOVE, "x": x, "y": y, "facing": face, "width": width,
 		"run": run, "ground": 1}, 1 + k % 8)
+
+
+## (BattleAI._attack, without the caracole riders' charge flag: the ambush
+## has no riders.)
+static func _attack(sim, u: int, t: int, run: int) -> void:
+	_order(sim, u, {"type": ORDER_ATTACK, "target": t, "run": run, "ground": 1}, 0)

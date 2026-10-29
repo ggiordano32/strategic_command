@@ -8706,6 +8706,145 @@ func _check_plays() -> void:
 		if r3.state_hash() != r4.state_hash() or not Plays.has_mem(r3):
 			_fail("plays: play_field restored from a snapshot does not run on exactly")
 	print("PASS plays: tercio formed (2 blocks, 4 sleeves), not without its trigger, bit or a gun; repeat and snapshot exact")
+	_check_ambush()
+
+
+## The native ambush (docs/AI.md 44.5; part of "--only=plays"). A set piece
+## (_amb_piece: two warrior bands and a bow band, AI, north of a wood; a
+## player's musket company marching up through it): the ambush is laid at
+## once (counted once), a bait out in front with fire at will, the others
+## hidden at wooded posts with fire held; the bait falls back when the
+## company is within AMBUSH_PULL_R of it; the spring comes with the company
+## within AMBUSH_SPRING_R (box to box) of a hidden unit and not before, every
+## hidden unit sprung. ambush_field: some sprung unit melts and gets home
+## hidden again; with the natives' bit off no ambush; identical on repeat and
+## across snapshot / restore mid-play.
+func _check_ambush() -> void:
+	var kn := AIP.row(AIP.AVERAGE, AIP.BALANCED)
+	var sim := BattleSim.new()
+	sim.setup(_amb_piece(), 7)
+	var bait := -1
+	var pulled := -1
+	var sprung := -1
+	var bad: Array[String] = []
+	for t in 2000:
+		sim.step()
+		if sim.tick == 20:
+			if not Plays.ambush_on(sim, 1) or sim.stat_aic[AIP.N_COUNTERS + AIP.C_PLAY_AMBUSH] != 1:
+				bad.append("not laid at the start")
+			for u in range(1, 4):
+				var r := Plays.role(sim, u)
+				if r == Plays.R_BAIT:
+					bait = u
+				elif r == Plays.R_HIDE:
+					if sim.veg_d(Plays._pm(sim, u, Plays.PU_X), Plays._pm(sim, u, Plays.PU_Y)) == 0:
+						bad.append("hidden unit %d's post is not in the woods" % u)
+				else:
+					bad.append("unit %d has no part (%d)" % [u, r])
+			if bait < 0:
+				bad.append("no bait")
+		if sim.tick == 300:
+			for u in range(1, 4):
+				if u != bait and sim.u_fire[u] != 0:
+					bad.append("hidden unit %d does not hold its fire" % u)
+			if bait >= 0 and sim.u_fire[bait] == 0:
+				bad.append("the bait holds its fire")
+		if bait >= 0 and pulled < 0 and Plays.state(sim, bait) == Plays.AS_FIGHT:
+			pulled = sim.tick
+			var d := FM.approx_len(sim.u_cx[0] - sim.u_cx[bait], sim.u_cy[0] - sim.u_cy[bait])
+			if d >= kn[AIP.AMBUSH_PULL_R] + 4 * M:
+				bad.append("the bait fell back with the company %d m off" % (d / M))
+		var gap := 1 << 30
+		for u in range(1, 4):
+			if u != bait or pulled >= 0:
+				gap = mini(gap, sim._box_gap(0, u))
+		if sprung < 0 and Plays._ps(sim, 1, Plays.PS_AMB_PH) == Plays.AP_SPRUNG:
+			sprung = sim.tick
+			if gap > kn[AIP.AMBUSH_SPRING_R] + 2 * M:
+				bad.append("sprung with the company %d m off" % (gap / M))
+			for u in range(1, 4):
+				if Plays.state(sim, u) != Plays.AS_FIGHT:
+					bad.append("unit %d not sprung" % u)
+			break
+		if sprung < 0 and pulled >= 0 and gap < kn[AIP.AMBUSH_SPRING_R] - 4 * M:
+			bad.append("not sprung with the company %d m off" % (gap / M))
+			break
+	if pulled < 0 or sprung < 0 or pulled > sprung:
+		bad.append("bait fell back at %d, sprung at %d" % [pulled, sprung])
+	# The melt (ambush_field).
+	var ms := BattleSim.new()
+	ms.setup(Scenarios.make("ambush_field"), AMB_MELT_SEED)
+	var melt := -1
+	var home := -1
+	for t in 6000:
+		ms.step()
+		if melt < 0:
+			for u in ms.n_units:
+				if Plays.role(ms, u) >= Plays.R_HIDE and Plays.state(ms, u) == Plays.AS_MELT:
+					melt = u
+					break
+		elif ms.u_state[melt] != BattleAI.U_READY or Plays.role(ms, melt) == 0:
+			melt = -1  # (lost or the play dropped: the next one)
+		elif Plays.state(ms, melt) == Plays.AS_HIDE:
+			home = ms.tick
+			break
+	if home < 0:
+		bad.append("no sprung unit melted and got home in ambush_field seed %d" % AMB_MELT_SEED)
+	# The natives' bit off.
+	var sc0 := Scenarios.make("ambush_field")
+	sc0["ai_plays"] = [-1, 0]
+	var s0 := BattleSim.new()
+	s0.setup(sc0, 21)
+	for t in 100:
+		s0.step()
+	if Plays.ambush_on(s0, 1) or s0.stat_aic[AIP.N_COUNTERS + AIP.C_PLAY_AMBUSH] != 0:
+		bad.append("an ambush with the natives' bit off")
+	# Repeat and snapshot / restore mid-play.
+	var r1 := BattleSim.new()
+	r1.setup(Scenarios.make("ambush_field"), 21)
+	var r2 := BattleSim.new()
+	r2.setup(Scenarios.make("ambush_field"), 21)
+	var snap := PackedByteArray()
+	for t in 1500:
+		r1.step()
+		r2.step()
+		if t == 600:
+			snap = r1.snapshot()
+		if r1.state_hash() != r2.state_hash():
+			bad.append("ambush_field diverged on repeat at tick %d" % r1.tick)
+			break
+	var r3 := BattleSim.new()
+	r3.setup(Scenarios.make("ambush_field"), 21)
+	if not r3.restore(snap):
+		bad.append("restore failed")
+	else:
+		for t in 899:
+			r3.step()
+		if r3.state_hash() != r1.state_hash() or not Plays.ambush_on(r3, 1):
+			bad.append("ambush_field restored mid-play does not run on exactly")
+	if bad.is_empty():
+		print("PASS plays: ambush laid (bait %d), fell back at %d, sprung at %d; a melt home at %d; bit off none; repeat and snapshot exact" % [
+			bait, pulled, sprung, home])
+	else:
+		for b in bad:
+			_fail("plays: ambush: " + b)
+
+
+const AMB_MELT_SEED := 5000
+
+
+## The ambush set piece: 400 x 400 m, a wood 180 x 80 m across the middle;
+## side 1 (AI) two native warrior bands and a bow band north of it; side 0
+## (a player) a musket company south of it, marching north through it from
+## tick 400 at the walk.
+func _amb_piece() -> Dictionary:
+	return {"width_m": 400, "height_m": 400, "ai_sides": [1], "terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 200, 90, 40, 3]]},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 100, 200, 380, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.index_of("native_warriors"), 100, 160, 90, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.index_of("native_warriors"), 100, 240, 90, Scenarios.FACE_DOWN),
+		Scenarios.unit(1, UT.index_of("native_bowmen"), 80, 200, 100, Scenarios.FACE_DOWN)],
+		"orders": [{"tick": 400, "type": BattleAI.ORDER_MOVE, "unit": 0, "x": 200 * M, "y": 120 * M, "facing": Scenarios.FACE_UP,
+			"width": 0, "run": 0}]}
 
 
 # --------------------------------------------------------------- native siege ---

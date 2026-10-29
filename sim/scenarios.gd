@@ -486,6 +486,22 @@ static func _make(id: String) -> Dictionary:
 				pf.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
 			return {"width_m": 600, "height_m": 400, "ai_sides": [0, 1], "units": pf,
 				"terrain": {"kind": Terrain.K_FLAT}, "ai_plays": [-1, 2]}
+		"ambush_field":
+			# The native ambush's measure (docs/AI.md 44.5): a Spanish column
+			# (side 0: 4 musket companies, a pike block, lancers) marching up
+			# a lane between two woods (x 90-210 and 390-510 m, y 210-390 m)
+			# at a native war party (side 1: 4 warrior bands, 2 bow bands)
+			# on open ground beyond them, 600 x 600 m, both AI.
+			var af: Array = []
+			for r in [["lancers", 60, 300, 450], ["musketeers", 100, 300, 470], ["musketeers", 100, 300, 490],
+					["w_pikemen", 120, 300, 515], ["musketeers", 100, 300, 545], ["musketeers", 100, 300, 565]]:
+				af.append(unit(0, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_UP))
+			for r in [["native_warriors", 100, 240, 110], ["native_warriors", 100, 300, 110], ["native_warriors", 100, 360, 110],
+					["native_warriors", 100, 420, 110], ["native_bowmen", 80, 270, 128], ["native_bowmen", 80, 330, 128]]:
+				af.append(unit(1, UT.index_of(str(r[0])), int(r[1]), int(r[2]), int(r[3]), FACE_DOWN))
+			return {"width_m": 600, "height_m": 600, "ai_sides": [0, 1], "units": af,
+				"terrain": {"kind": Terrain.K_FLAT, "woods": [[150, 300, 60, 90, 2], [150, 300, 40, 70, 3],
+					[450, 300, 60, 90, 2], [450, 300, 40, 70, 3]]}}
 		"asym_woods", "asym_field", "asym_woods2", "asym_field2":
 			# The asymmetry probe (roles step 2, docs/design/battle_sim.md
 			# "Roles, step 2"): a Spanish army (side 0) and a native war party

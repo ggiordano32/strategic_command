@@ -371,17 +371,24 @@ const S_DEF_ZONE := 291        # 1: West street posts at the start stand out of 
 const R_TORCH_GATE := 292      # 1: a melee batter unit (the torch raiders) attacking a town batters the attacked gate (Use now) while the storm has no ram to work it; 0 its fire pots only (the grenadiers' rule)
 # The play library (docs/AI.md 44, 2026-10-27): scripted historical plays
 # (sim/plays.gd) a side runs by its scenario's ai_plays bits. Ids 300-309
-# the framework and the tercio, 310-319 the countermarch; 293-299 unused
-# (KNOB_GAPS: 0, no row).
+# the framework and the tercio, 310-319 the countermarch, 320-329 the ambush;
+# 293-299, 304-310, 312-319 unused (KNOB_GAPS: 0, no row).
 const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits allow (Plays.army_think); 0 none (Easy)
 const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
 const TERCIO_FILES := 302      # ... a block stands max(this, isqrt(men)) files wide
 const TERCIO_HORSE_R := 303    # ... riders this near a sleeve moving toward it (or with an attack order on it, twice this) send it behind the block
 const CM_AUTO := 311           # 1: the side's West gun foot lines fire by ranks on Auto (the countermarch, UT.AB_ROLL; BattleSim _cm_rolls; ai_plays bit 1); 0 volleys
-const N_KNOBS := 312
+# The native ambush (docs/AI.md 44.5, 2026-10-29; ai_plays bit 2): ids 320-329.
+const AMBUSH := 320            # 1: the ambush from cover with a feigned retreat (Plays: hidden foot in the woods, a bait that falls back, the spring); 0 never
+const AMBUSH_BAIT := 321       # ... units standing out as the bait
+const AMBUSH_PULL_R := 322     # ... an enemy unit this near the bait (centroids) sends it back to the hidden line at the walk
+const AMBUSH_SPRING_R := 323   # ... an enemy unit this near a hidden unit (box to box) springs the ambush
+const AMBUSH_FIGHT_T := 324    # ... a sprung unit that has fought this long and is not winning melts back into the woods
+const AMBUSH_FLANK := 325      # 1: half the hidden units take a second wood on the enemy's flank when there is one (Skilled); 0 one wood
+const N_KNOBS := 326
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[293, 300], [304, 311]]
+const KNOB_GAPS: Array = [[293, 300], [304, 311], [312, 320]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -664,6 +671,13 @@ const KNOBS: Array = [
 	[TERCIO_HORSE_R, 80 * M, 80 * M, 80 * M],
 	# The countermarch (docs/AI.md 44.2): Easy volleys as before (a deliberate mistake).
 	[CM_AUTO, 0, 1, 1],
+	# The native ambush (docs/AI.md 44.5): Easy never lies in wait (a deliberate mistake).
+	[AMBUSH, 0, 1, 1],
+	[AMBUSH_BAIT, 1, 1, 1],
+	[AMBUSH_PULL_R, 120 * M, 120 * M, 120 * M],
+	[AMBUSH_SPRING_R, 40 * M, 40 * M, 40 * M],
+	[AMBUSH_FIGHT_T, 200, 200, 200],
+	[AMBUSH_FLANK, 0, 0, 1],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -772,13 +786,17 @@ const C_CH_PARLEY := C_CAV_STAY + 12   # diplomats' parleys ordered
 const C_CH_SABOTAGE := C_CAV_STAY + 13  # assassins sent to sabotage a battery
 const C_PLAY_TERCIO := C_CAV_STAY + 14  # the tercio formed (docs/AI.md 44.1; once a battle per side)
 const C_CM := C_CAV_STAY + 15  # the countermarch: the side's lines fired by ranks (once a battle a side; docs/AI.md 44.2)
-const N_COUNTERS := C_CAV_STAY + 16
+const C_PLAY_AMBUSH := C_CAV_STAY + 16  # the ambush laid (docs/AI.md 44.5; once a battle per side)
+const C_AMB_SPRING := C_CAV_STAY + 17  # ... sprung (the whole hidden line at once, or one hidden unit after a melt)
+const C_AMB_MELT := C_CAV_STAY + 18  # ... a sprung unit not winning melted back into the woods
+const N_COUNTERS := C_CAV_STAY + 19
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
-	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio", "countermarch"]
+	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio", "countermarch",
+	"play_ambush", "amb_spring", "amb_melt"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.
