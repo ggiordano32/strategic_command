@@ -231,16 +231,19 @@ static func build_info(st: Dictionary, f: int, r: int, c: int) -> Dictionary:
 	var nxt := cur + 1
 	if nxt > int(ch["levels"]):
 		return {"why": "fully built", "max": 1}
+	if nxt > CData.chain_cap(f, c):  # (no unit, ammunition or character of f's needs this level)
+		return {"why": "nothing of yours needs it", "max": 1}
+	var unl := CData.chain_unlocks(f, c, nxt)  # (what this level opens for f: unit rows, characters, "ammo:<kind>")
 	if nxt > int(rs["level"]) + 1:
-		return {"why": "needs a %s" % CData.LEVEL_NAMES[nxt - 1].to_lower(), "level": nxt}
+		return {"why": "needs a %s" % CData.LEVEL_NAMES[nxt - 1].to_lower(), "level": nxt, "unlocks": unl}
 	if not CState.siege_at(st, r).is_empty():
-		return {"why": "besieged", "level": nxt}
+		return {"why": "besieged", "level": nxt, "unlocks": unl}
 	if not (rs["build"] as Array).is_empty():
-		return {"why": "already building", "level": nxt}
+		return {"why": "already building", "level": nxt, "unlocks": unl}
 	if cur == 0 and (rs["slots"] as Array).size() >= CState.slot_count(r, int(rs["level"])):
-		return {"why": "no free slot", "level": nxt}
+		return {"why": "no free slot", "level": nxt, "unlocks": unl}
 	var cost := int(ch["cost"][nxt - 1])
-	var info := {"level": nxt, "cost": cost, "turns": int(ch["turns"][nxt - 1])}
+	var info := {"level": nxt, "cost": cost, "turns": int(ch["turns"][nxt - 1]), "unlocks": unl}
 	if cost > int(st["factions"][f]["treasury"]):
 		info["why"] = "not enough money"
 	return info

@@ -22,7 +22,7 @@ const NAMES: Array[String] = [
 	"move", "siege", "assault", "sally", "raid", "inside", "field", "stance_default", "forced_march", "fortify",
 	"merge", "exchange", "recruit", "raise", "disband", "split", "gift", "withdraw", "view_map",
 	"war", "peace", "trade", "trade_end", "alliance", "accept", "decline", "cancel", "close", "buy",
-	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "build", "upgrade", "shipyard", "ship",
+	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "lodge", "hunting", "canoe_yard", "trading_post", "build", "upgrade", "shipyard", "ship",
 	"fire", "hold_fire", "skirmish", "stance_line", "stance_cover", "stance_hold", "bound", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
 	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release", "crown", "dagger", "scroll",
@@ -574,6 +574,34 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			for k in 8:
 				var a := TAU * k / 8.0
 				_l(cos(a) * 0.55, sin(a) * 0.55, cos(a) * 0.86, sin(a) * 0.86, 1.4)
+		"lodge":  # a longhouse: gable roof with a ridge pole, a low door, the ground
+			_pl([-0.88, -0.05, 0.0, -0.8, 0.88, -0.05], false, 1.2)
+			_pl([-0.7, -0.05, -0.7, 0.8, 0.7, 0.8, 0.7, -0.05])
+			_arc(0.0, 0.8, 0.28, PI, TAU)
+			_l(-0.28, 0.8, 0.28, 0.8)
+			_l(0.0, -0.8, 0.0, -0.98, 1.2)
+		"hunting":  # a bow drawn back on an arrow, feathers at the nock
+			_arc(-0.4, 0.0, 0.9, -1.12, 1.12)
+			_pl([-0.01, -0.81, -0.62, 0.0, -0.01, 0.81], false, 0.6)
+			_arrow(-0.62, 0.0, 0.92, 0.0, 0.42)
+			_l(-0.62, 0.0, -0.88, -0.24, 0.8)
+			_l(-0.62, 0.0, -0.88, 0.24, 0.8)
+		"canoe_yard":  # a dugout canoe on two blocks, a paddle across it
+			_pl([-0.92, -0.1, -0.55, 0.28, 0.55, 0.28, 0.92, -0.1], false, 1.2)
+			_l(-0.92, -0.1, 0.92, -0.1, 0.9)
+			_l(-0.35, 0.28, -0.35, 0.78, 1.2)
+			_l(0.35, 0.28, 0.35, 0.78, 1.2)
+			_l(-0.8, 0.82, 0.8, 0.82, 0.8)
+			_l(0.15, -0.85, 0.45, -0.1, 0.9)
+		"trading_post":  # a stockade gate with a hanging scale
+			for x in [-0.78, 0.78]:
+				_pl([x - 0.13, 0.82, x - 0.13, -0.45, x, -0.72, x + 0.13, -0.45, x + 0.13, 0.82], false, 0.8)
+			_l(-0.8, -0.45, 0.8, -0.45, 0.9)
+			_l(0.0, -0.45, 0.0, -0.05, 0.8)
+			_l(-0.5, -0.05, 0.5, -0.05, 0.9)
+			_arc(-0.5, 0.1, 0.22, 0.0, PI, 0.9)
+			_arc(0.5, 0.1, 0.22, 0.0, PI, 0.9)
+			_l(-0.8, 0.82, 0.8, 0.82, 0.8)
 		"build":  # hammer
 			_l(-0.72, 0.78, 0.22, -0.18, 1.1)
 			_l(-0.05, -0.65, 0.68, 0.08, 2.0)

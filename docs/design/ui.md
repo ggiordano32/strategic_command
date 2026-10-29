@@ -1155,3 +1155,13 @@ ones the StyleBoxFlat had.
   trim), the game / battle menu columns. `theme_test` reads the top bar's `border_width_bottom` from the RuleBox mirror.
 - Measured: `bar_room_probe` room numbers identical before and after; `hud_fit_test` as before (the 2 stress More-popover
   FAILs at 780x360 / 844x390 are the same at the base commit).
+
+## Building icons for the natives (2026-10-29)
+
+`game/ui_icons.gd` has four new building glyphs in the existing stroke style, shown through
+`CData.chain_icon(c, f)` (west.gd `CHAIN_NAMES`): `lodge` (a longhouse: gable roof with its ridge pole, a low
+door; the War lodge), `hunting` (a bow drawn back on a nocked, feathered arrow; the Hunting ground), `canoe_yard`
+(a dugout canoe on two blocks with a paddle across it; the Canoe yard) and `trading_post` (a stockade gate with
+a hanging scale; the Trading post). The Palisade is the existing `palisade` glyph (stakes on a bank) and the
+Milpa / Gardens the `farm` ear. They sit after `walls` in `UiIcons.NAMES`; no `_w` twins (the natives' only).
+The build popup rows read "Unlocks: ..." / "Effect: ..." under each chain (docs/design/campaign_rules.md).

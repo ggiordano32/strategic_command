@@ -74,6 +74,7 @@ const CStorm := preload("res://campaign/cstorm.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
+const UiIcons := preload("res://game/ui_icons.gd")
 const CDip := preload("res://campaign/cdip.gd")
 
 var fails := 0
@@ -151,6 +152,7 @@ func _init() -> void:
 	_ai_skilled()
 	_chars()
 	_west_raid_defence()
+	_chain_levels()
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
@@ -4284,6 +4286,61 @@ func _cell_at_d(c: int, d: int, avoid: Array) -> int:
 ## (battle_humans has the owner: never auto-resolved). A raid (the raiding
 ## stance on the camp cell) starts no battle: the player's army inside the
 ## city can attack the raiders that same turn.
+## Building levels a faction can use (CData.chain_levels, CRules.build_info) and the natives' names.
+func _chain_levels() -> void:
+	CData.use_pack("rome")
+	var full_rome := true
+	for f in CData.FACTIONS.size():
+		for c in CData.CHAINS.size():
+			full_rome = full_rome and CData.chain_cap(f, c) == int(CData.CHAINS[c]["levels"])
+	_check(full_rome, "Rome: every faction can build every level of every chain")
+	_check(CData.chain_name(CData.BARRACKS, 0) == "Barracks" and CData.chain_icon(CData.RANGE, 0) == "range", "Rome: the chains' own names and icons")
+	CData.use_pack("west")
+	var ns := _f("new_spain")
+	var mi := _f("miskito")
+	var iz := _f("itza")
+	var full_ns := true
+	for c in CData.CHAINS.size():
+		full_ns = full_ns and CData.chain_cap(ns, c) == int(CData.CHAINS[c]["levels"]) and CData.chain_cap(_f("england"), c) == int(CData.CHAINS[c]["levels"])
+	_check(full_ns, "West: Spain's and England's caps are the full chains")
+	_check(CData.chain_cap(mi, CData.STABLES) == 0 and CData.chain_cap(iz, CData.STABLES) == 0, "the natives have no use for Stables")
+	_check(CData.chain_cap(iz, CData.RANGE) == 2 and CData.chain_cap(mi, CData.RANGE) == 2, "the natives' Range cap is 2 (the special arrows)")
+	_check(CData.chain_cap(iz, CData.BARRACKS) == 2 and CData.chain_cap(mi, CData.BARRACKS) == 1, "Barracks: the Itza 2 (holcan), the Miskito 1")
+	_check(CData.chain_cap(mi, CData.WORKSHOP) == 1 and CData.chain_cap(mi, CData.FARM) == 3 and CData.chain_cap(mi, CData.WALLS) == 3 \
+		and CData.chain_cap(mi, CData.MARKET) == 3, "the natives' Workshop is 1 (the wagon); farm, market and walls are for everyone")
+	var st := CState.new_campaign("t", 77, [mi], {}, [], "west")
+	var bf := CData.region_index("bluefields")
+	var cg := CData.region_index("cabo_gracias")
+	st["factions"][mi]["treasury"] = 20000
+	var bi := CRules.build_info(st, mi, bf, CData.STABLES)
+	_check(str(bi.get("why", "")) == "nothing of yours needs it", "the Miskito cannot build Stables: " + str(bi.get("why", "")))
+	_check(CRules.apply_order(st, mi, {"t": "build", "r": bf, "chain": CData.STABLES}) == "nothing of yours needs it", "... and the order is refused")
+	var br := CRules.build_info(st, mi, cg, CData.RANGE)
+	_check(not br.has("why") or ["not enough money", "needs a town"].has(str(br["why"])), "the Miskito's Range 2 is offered at Cabo Gracias (a village: it needs a town): " + str(br.get("why", "")))
+	_check(int(br.get("level", 0)) == 2 and (br.get("unlocks", []) as Array).has("ammo:poison_arrows"), "the Miskito's Range 2 unlocks the poison arrows: " + str(br.get("unlocks", [])))
+	for sl in st["regions"][cg]["slots"]:
+		if int(sl[0]) == CData.RANGE:
+			sl[1] = 2
+	_check(str(CRules.build_info(st, mi, cg, CData.RANGE).get("why", "")) == "nothing of yours needs it", "the Miskito's Range stops at 2")
+	_check((CData.chain_unlocks(mi, CData.BARRACKS, 1) as Array).has("canoe_raiders") and (CData.chain_unlocks(mi, CData.RANGE, 1) as Array).has("musketeers"),
+		"level 1 unlocks: Barracks the canoe raiders, Range the musketeers")
+	# Names and icons.
+	_check(CData.chain_name(CData.BARRACKS, mi) == "War lodge" and CData.chain_name(CData.RANGE, iz) == "Hunting ground" \
+		and CData.chain_name(CData.WORKSHOP, mi) == "Canoe yard" and CData.chain_name(CData.MARKET, iz) == "Trading post" \
+		and CData.chain_name(CData.WALLS, mi) == "Palisade", "the natives' building names")
+	_check(CData.chain_name(CData.FARM, iz) == "Milpa" and CData.chain_name(CData.FARM, mi) == "Gardens" and CData.chain_name(CData.FARM, ns) == "Farms", "Milpa, Gardens, Farms")
+	_check(CData.chain_name(CData.BARRACKS, ns) == "Barracks" and CData.chain_icon(CData.BARRACKS, ns) == "barracks" and CData.chain_name(CData.BARRACKS, -1) == "Barracks",
+		"the Europeans' and the independents' names are the chains' own")
+	_check(CData.chain_icon(CData.BARRACKS, mi) == "lodge" and CData.chain_icon(CData.RANGE, iz) == "hunting" and CData.chain_icon(CData.WORKSHOP, mi) == "canoe_yard" \
+		and CData.chain_icon(CData.MARKET, mi) == "trading_post" and CData.chain_icon(CData.WALLS, iz) == "palisade", "the natives' building icons")
+	var ok_icons := true
+	for nm in ["lodge", "hunting", "canoe_yard", "trading_post", "palisade", "farm"]:
+		ok_icons = ok_icons and UiIcons.has(nm)
+	_check(ok_icons, "every building icon exists")
+	_check(CData.local_text("needs Barracks 2", mi) == "needs War lodge 2" and CData.local_text("needs Barracks 2", ns) == "needs Barracks 2", "the 'needs' texts read the faction's names")
+	CData.use_pack("rome")
+
+
 func _west_raid_defence() -> void:
 	CData.use_pack("west")
 	var ns := CData.faction_index("new_spain")

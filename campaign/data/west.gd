@@ -300,6 +300,24 @@ const UNIT_NAMES := {
 	"brethren": {"general": ["Captain's Crew", "Captain"], "musketeers": ["Ship's Musketeers", "Musketeers"]},
 }
 
+## Per-culture building names and icons (view only; CData.chain_name / chain_short / chain_icon): culture
+## -> chain key -> [name, short, icon key]. The natives (CELTIC here) raise lodges and canoes, not
+## barracks and workshops; the Europeans and the Brethren keep the chains' own words. The farm is the
+## faction's own (CHAIN_NAMES_F over it): the Itza's milpa, the Miskito's gardens. Rows not listed keep
+## the chain's name and icon (the Walls' icon "palisade" is the existing stakes glyph).
+const CHAIN_NAMES := {
+	CELTIC: {"barracks": ["War lodge", "Lodge", "lodge"], "range": ["Hunting ground", "Hunting", "hunting"],
+		"workshop": ["Canoe yard", "Canoes", "canoe_yard"], "market": ["Trading post", "Post", "trading_post"],
+		"walls": ["Palisade", "Palisade", "palisade"]},
+}
+## Building levels limited to what a faction's own units, ammunition and characters need (CData.chain_levels):
+## the natives, who keep no horse and no Range 3. The Europeans and the Brethren can build every level.
+const CHAIN_CAP_FACTIONS: Array = ["itza", "miskito"]
+const CHAIN_NAMES_F := {
+	"itza": {"farm": ["Milpa", "Milpa", "farm"]},
+	"miskito": {"farm": ["Gardens", "Gardens", "farm"]},
+}
+
 ## The campaign AI (CData.AI_BUILDUP_LINES / AI_SPECIALISTS; docs/AI.md 34):
 ## the mortars need a Workshop 3 and England's grenadiers a Barracks 3, past
 ## the AI's usual build-up; the canoe raiders, boarding grenadiers and

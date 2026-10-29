@@ -371,6 +371,8 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 				goals.append([int(nd[0]), mini(int(nd[1]), kn[CP.BU_LINE_MAX]), 1])
 	for g in goals:
 		var c: int = g[0]
+		if CData.chain_cap(f, c) < 1:
+			continue  # (a chain this faction has no use for)
 		var site := -1
 		for r in regions:
 			if _centre(st, r) and CState.building(st, r, c) > 0:
@@ -381,7 +383,7 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 				if _centre(st, r) and _free_slots(st, r) > 0:
 					site = r
 					break
-		if site < 0 or CState.building(st, site, c) >= int(g[1]):
+		if site < 0 or CState.building(st, site, c) >= mini(int(g[1]), CData.chain_cap(f, c)):
 			continue
 		if CState.building(st, site, CData.FARM) < 1 \
 				or (CState.building(st, site, CData.MARKET) < 1 and _free_slots(st, site) > 1):

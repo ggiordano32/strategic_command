@@ -1113,3 +1113,67 @@ campaign sim on 72 seeds (the natives' eliminations and the towns they
 take). Open after: the harbour assault (canoe raiders landing at the quay
 inside a port's walls during an assault: a town-map scenario change) and
 the lake of Tayasal (its land assault a boat landing, as in 1697).
+
+### Buildings a faction can use, and the natives' buildings (as built, 2026-10-29)
+
+**The rule.** `CData.chain_levels(f)` (cached per faction, cleared by `use_pack_script`) is the highest level of
+each chain faction f can build. A level L of chain c is offered when a roster row of f needs `[c, L' >= L]`
+(`CData.needs_all(key)`: every `UNIT_NEEDS` entry of the row, else its line's chain at its tier or `ART_LEVEL`,
+the same numbers as `CRules.needs`), when a character f may raise needs it (`CHAR_NEEDS` with `CHAR_FACTIONS`:
+the natives' shaman, Barracks 1) or an `AMMO_AVAIL` row for f does; the Farm, Market, Walls and the Shipyard are
+offered at every level to everyone (the Shipyard still only at a port) and level 1 of a chain is reachable
+wherever a higher level is. `build_info` refuses a level above the cap with `{"why": "nothing of yours needs
+it", "max": 1}` (after "fully built", before the slot / money checks) and carries `"unlocks"` for the next
+level (`CData.chain_unlocks(f, c, level)`): the unit rows and characters of f whose requirement on the chain is
+exactly that level, then `"ammo:<kind>"` for each ammunition row. Iterated in `LINE_ORDER` and roster order, no
+Dictionary iteration in rules code; no state change. **Which factions:** the cap applies to the factions a pack
+lists in `CHAIN_CAP_FACTIONS` (west.gd: `itza`, `miskito`). Applied to everyone the derived caps are not full for
+Rome (Rome's Stables 2 of 3 and Range 2 of 3 for factions without elephants / the tier-3 range) nor for the West's
+Europeans (Barracks 3 only for England's grenadiers, Range and Stables 2): the owner wanted the natives cut, not
+the others, so every other faction, the Brethren and all of Rome keep every level (Rome's pins do not move). The
+campaign AI reads the same list: a build-up goal (`_buildup`) for a chain the faction has no use for is skipped,
+and a level above the cap is clamped to it, so a capped goal never holds the later goals (Workshop, heroes);
+the `want` lists already skip what `build_info` refuses.
+
+| Faction | Barracks | Range | Stables | Workshop | Farm, Market, Walls, Shipyard |
+|---|---|---|---|---|---|
+| Itza | 2 (Holcan) | 2 (fire arrows) | 0 | 1 (the wagon) | 3 |
+| Miskito | 1 (a Barracks 2 comes with the torch raiders) | 2 (poison arrows) | 0 | 1 (the wagon) | 3 |
+| every other faction, Rome | full | full | full | full | full |
+
+The caps stop new building only: a building a faction starts with or takes stays (a captured Barracks 2 shows
+as "(full)" in the panel).
+
+**Names and icons.** `CHAIN_NAMES` in west.gd (culture -> chain key -> [name, short, icon]; the natives'
+culture is `CELTIC`) and `CHAIN_NAMES_F` (faction key over it: the Itza's Milpa, the Miskito's Gardens);
+`CData.chain_name(c, f)`, `chain_short`, `chain_icon` fall back to the chain's own (so Rome, the Europeans, the
+Brethren and independents are unchanged). War lodge / Lodge (icon `lodge`), Hunting ground / Hunting (`hunting`),
+Canoe yard / Canoes (`canoe_yard`), Trading post / Post (`trading_post`), Palisade (`palisade`, the existing
+stakes glyph), Milpa / Gardens (`farm`). Read by the build popup, the settlement panel's building list and
+tooltips, the city card's chips (short name while building), the "built" event, the unit book's "needs" line and
+the ammunition's "who, building level" line (`unit_entry.gd`), the recruit rows' "needs ..." reasons
+(`CData.local_text(why, f)`; the rules keep the chains' own words in `recruit_check`) and the roster page's
+"Tier n (Building n)" lines. How to play names "barracks (the natives' war lodge)" once.
+
+**The build popup says what a level unlocks.** Under each row: "Unlocks: Musketeers, poisoned arrows" (the
+faction's `unit_name`s and the ammunition's names) from `info["unlocks"]`; a level that unlocks nothing says its
+effect ("Effect: faster replenishment" for the four military chains, else the first clause of the chain's text:
+income, growth, the walls); a row at the cap reads "(full)" and "Nothing of yours needs a higher level". The
+button's tooltip is the chain's text plus that line. A chain with no level for the faction and none built is
+not listed (the Miskito see no Stables).
+
+**Measured** (West campaign sim, 72 seeds x 60 turns, base 28f5253 against after):
+
+| | format 6 before | format 6 after | format 10 before | format 10 after |
+|---|---|---|---|---|
+| eliminations (per seed) | 51 (0.71) | 53 (0.74) | 59 (0.82) | 59 (0.82) |
+| battles (per seed) | 4035 (56.0) | 4040 (56.1) | 3413 (47.4) | 3413 (47.4) |
+| by faction: Brethren / Miskito / Itza / Dutch / English / French | 16 / 19 / 5 / 6 / 3 / 2 | 17 / 19 / 6 / 6 / 3 / 2 | 24 / 18 / 12 / 1 / 1 / 3 | same |
+| natives alive with Stables / Range 3 | 0 / 0 (Itza 1 seed of 72 at f10) | 0 / 0 | same | same |
+| Miskito alive with Barracks 2 (seeds) | 10 | 4 | 12 | 3 |
+| Miskito / Itza Workshop 1+ (seeds alive) | 38 of 53 / 48 of 67 | 38 of 53 / 47 of 66 | 40 of 54 / 46 of 60 | same |
+
+The AI never built Stables or a Range 3 for the natives (their mixes have no horse, the Range build-up goal is
+2); the cap is for the player, and the AI's change is the Miskito's Barracks 2 (the ordinary want list upgraded it, now refused). Format 6 pins: unchanged. Format 10: seed 2 moves (`e5625ecc` -> `a89c63d6`); the other
+five are as before. Rome `== sim:` and `== sim10:` equal the pins. Another agent's terrain pass moves the West
+pins again; re-pin on the merged tree.

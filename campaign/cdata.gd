@@ -109,6 +109,16 @@ static var AI_SPECIALISTS: Array = []
 static var AI_LIVE_MIX := 0
 ## View-only display names (west.gd UNIT_NAMES): faction key -> unit key -> [name, short].
 static var UNIT_NAMES: Dictionary = {}
+## View-only building names (west.gd CHAIN_NAMES by culture, CHAIN_NAMES_F by faction key over it):
+## chain key -> [name, short, icon key]. See chain_name / chain_short / chain_icon.
+static var CHAIN_NAMES: Dictionary = {}
+static var CHAIN_NAMES_F: Dictionary = {}
+## The factions (keys) whose building levels are limited to what their own units, ammunition and
+## characters need (chain_levels; the West's natives). Every other faction, and every faction of a pack
+## without the table (Rome), can build every level of every chain.
+static var CHAIN_CAP_FACTIONS: Array = []
+static var _levels_cache: Dictionary = {}  # faction index -> chain_levels(f), built on first use per pack
+static var _unlock_cache: Dictionary = {}  # "f:chain:level" -> chain_unlocks
 ## Starting treaties (state format 10; campaign/cdip.gd start_treaties; none:
 ## Rome): [faction key, faction key, "alliance" | "marque"].
 static var START_TREATIES: Array = []
@@ -413,6 +423,11 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	AI_SPECIALISTS = c.get("AI_SPECIALISTS", [])
 	AI_LIVE_MIX = int(c.get("AI_LIVE_MIX", 0))
 	UNIT_NAMES = c.get("UNIT_NAMES", {})
+	CHAIN_NAMES = c.get("CHAIN_NAMES", {})
+	CHAIN_NAMES_F = c.get("CHAIN_NAMES_F", {})
+	CHAIN_CAP_FACTIONS = c.get("CHAIN_CAP_FACTIONS", [])
+	_levels_cache = {}
+	_unlock_cache = {}
 	START_TREATIES = c.get("START_TREATIES", [])
 	TREATY_LINES = c.get("TREATY_LINES", {})
 	PLAYS = c.get("PLAYS", {})
@@ -615,6 +630,145 @@ static func unit_short(key: String, f: int) -> String:
 			return e[1]
 	var row: Dictionary = UT.TYPES[UT.index_of(key)]
 	return str(row.get("short", row["name"]))
+
+
+## The display entry [name, short, icon] of chain c for faction f: its culture's
+## row in CHAIN_NAMES, over it the faction's own in CHAIN_NAMES_F, else the chain's
+## own (f < 0 or no entry). View only.
+static func _chain_entry(c: int, f: int) -> Array:
+	var key := str(CHAINS[c]["key"])
+	if f >= 0 and f < FACTIONS.size():
+		var e = CHAIN_NAMES_F.get(str(FACTIONS[f]["key"]), {}).get(key)
+		if e == null:
+			e = CHAIN_NAMES.get(faction_culture(f), {}).get(key)
+		if e != null:
+			return e
+	return [str(CHAINS[c]["name"]), str(CHAINS[c]["name"]), key]
+
+
+static func chain_name(c: int, f: int) -> String:
+	return str(_chain_entry(c, f)[0])
+
+
+static func chain_short(c: int, f: int) -> String:
+	return str(_chain_entry(c, f)[1])
+
+
+static func chain_icon(c: int, f: int) -> String:
+	return str(_chain_entry(c, f)[2])
+
+
+## A rules message ("needs Barracks 2", "needs Range 1 and ...") with the chains' default names
+## replaced by faction f's (the rules text stays in the chains' own words; the panels translate).
+static func local_text(txt: String, f: int) -> String:
+	if f < 0 or (CHAIN_NAMES.is_empty() and CHAIN_NAMES_F.is_empty()) or not txt.contains("needs "):
+		return txt
+	for c in CHAINS.size():
+		var nm := chain_name(c, f)
+		if nm != str(CHAINS[c]["name"]):
+			txt = txt.replace("needs %s " % str(CHAINS[c]["name"]), "needs %s " % nm)
+	return txt
+
+
+# ------------------------------------------- chain levels a faction can use ---
+
+## Every [chain, level] requirement of unit row `key` (all its UNIT_NEEDS entries, else its line's chain at its tier).
+static func needs_all(key: String) -> Array:
+	if UNIT_NEEDS.has(key):
+		return UNIT_NEEDS[key]
+	var ty := UT.index_of(key)
+	if ty < 0:
+		return []
+	var line := UT.line_of(ty)
+	if not LINE_CHAIN.has(line):
+		return []
+	return [[int(LINE_CHAIN[line]), int(ART_LEVEL.get(line, UT.tier_of(ty)))]]
+
+
+## The unit rows and characters of faction f, in index order (LINE_ORDER, then tiers; then the kinds
+## it may raise) as unit keys, with their requirements: [[key, [[chain, level], ...]], ...].
+static func _requirements(f: int) -> Array:
+	var out: Array = []
+	var ro := roster(f)
+	for line in LINE_ORDER:
+		if not ro.has(line):
+			continue
+		for key in ro[line]:
+			if str(key) != "":
+				out.append([str(key), needs_all(str(key))])
+	# (characters, campaign/cchars.gd allowed: the West raises only the kinds listed for it, Rome the others)
+	var west := pack == "west"
+	for kind in CHAR_NEEDS.keys():
+		var ok := false
+		if f >= 0:
+			if CHAR_FACTIONS.has(kind):
+				ok = west and (CHAR_FACTIONS[kind] as Array).has(str(FACTIONS[f]["key"]))
+			else:
+				ok = not west
+		if ok:
+			out.append([str(kind), [CHAR_NEEDS[kind]]])
+	return out
+
+
+## The highest level of each chain faction f can use (an Array by chain index; 0: the chain is not offered):
+## (only for the factions in CHAIN_CAP_FACTIONS; the others can build every level).
+## A level is offered when some roster row of f (or a character it may raise) needs it or a higher one of
+## the chain (CRules.needs / UNIT_NEEDS / ART_LEVEL), or an AMMO_AVAIL row for f does; the farm, market,
+## walls and the Shipyard (a port only) for everyone. Level 1 is reachable wherever a higher one is.
+static func chain_levels(f: int) -> Array:
+	if _levels_cache.has(f):
+		return _levels_cache[f]
+	var cap: Array = []
+	for c in CHAINS.size():
+		cap.append(0)
+	for c in [FARM, MARKET, WALLS]:
+		cap[c] = int(CHAINS[c]["levels"])
+	if SHIPS != null:
+		cap[SHIPYARD] = int(CHAINS[SHIPYARD]["levels"])
+	if f < 0 or not CHAIN_CAP_FACTIONS.has(str(FACTIONS[f]["key"])):
+		for c in CHAINS.size():
+			cap[c] = int(CHAINS[c]["levels"])
+	else:
+		for rq in _requirements(f):
+			for nd in rq[1]:
+				cap[int(nd[0])] = maxi(int(cap[int(nd[0])]), int(nd[1]))
+		var fk := str(FACTIONS[f]["key"])
+		for row in AMMO_AVAIL:
+			if (row[1] as Array).has(fk):
+				cap[int(row[2])] = maxi(int(cap[int(row[2])]), int(row[3]))
+	for c in CHAINS.size():
+		cap[c] = mini(int(cap[c]), int(CHAINS[c]["levels"]))
+	_levels_cache[f] = cap
+	return cap
+
+
+## The highest level of chain c faction f can use.
+static func chain_cap(f: int, c: int) -> int:
+	return int(chain_levels(f)[c])
+
+
+## What level `lvl` of chain c unlocks for faction f: unit row / character keys in roster order, then
+## "ammo:<kind>" for each special ammunition; those whose requirement on the chain is exactly `lvl`.
+static func chain_unlocks(f: int, c: int, lvl: int) -> Array:
+	var out: Array = []
+	if f < 0:
+		return out
+	var ck := "%d:%d:%d" % [f, c, lvl]
+	if _unlock_cache.has(ck):
+		return _unlock_cache[ck]
+	for rq in _requirements(f):
+		var top := 0
+		for nd in rq[1]:
+			if int(nd[0]) == c:
+				top = maxi(top, int(nd[1]))
+		if top == lvl and not out.has(rq[0]):
+			out.append(rq[0])
+	var fk := str(FACTIONS[f]["key"])
+	for row in AMMO_AVAIL:
+		if (row[1] as Array).has(fk) and int(row[2]) == c and int(row[3]) == lvl:
+			out.append("ammo:" + str(row[0]))
+	_unlock_cache[ck] = out
+	return out
 
 
 static func faction_name(f: int) -> String:

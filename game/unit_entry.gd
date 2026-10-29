@@ -169,13 +169,15 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_facti
 		"grenadier": "Barracks", "dragoon": "Stables", "mortar": "Workshop",
 		"marine": "Barracks", "naval_gun": "Workshop", "militia": "Barracks", "maroon": "Barracks"}
 	var bld: String = lines.get(UT.line_of(ty), "")
+	if p_faction >= 0 and CData.LINE_CHAIN.has(UT.line_of(ty)):
+		bld = CData.chain_name(int(CData.LINE_CHAIN[UT.line_of(ty)]), p_faction)  # (a native's War lodge)
 	var need := tier if UT.cls(ty) != UT.CLS_ART else int(CData.ART_LEVEL.get(UT.line_of(ty), 2 if UT.base_of(ty) == UT.STONE else 1))
 	var need_txt := "%s %d" % [bld, need]
 	var tkey := UT.key_of(ty)
 	if CData.UNIT_NEEDS.has(tkey):
 		var nl: Array[String] = []
 		for nd in CData.UNIT_NEEDS[tkey]:
-			nl.append("%s %d" % [str(CData.CHAINS[int(nd[0])]["name"]), int(nd[1])])
+			nl.append("%s %d" % [CData.chain_name(int(nd[0]), p_faction), int(nd[1])])
 		need_txt = " and ".join(nl)
 	_tier.text = "Tier %d (%s line).  Campaign: %d to recruit, %d upkeep per turn; needs %s." % [
 		tier, str(UT.TYPES[UT.base_of(ty)]["name"]).to_lower(), UT.price_of(ty),
@@ -326,7 +328,7 @@ static func ammo_line(ty: int) -> String:
 			var fs: Array[String] = []
 			for fk in row[1]:
 				fs.append(CData.faction_name(CData.faction_index(str(fk))))
-			who.append("%s, %s %d" % [", ".join(fs), str(CData.CHAINS[int(row[2])]["name"]), int(row[3])])
+			who.append("%s, %s %d" % [", ".join(fs), CData.chain_name(int(row[2]), CData.faction_index(str(row[1][0]))), int(row[3])])
 		parts.append("%s (%d%% of the load, %d%% damage, %d%% range%s): %s%s" % [UT.ammo_text(k, "name"),
 			UT.ammo_stat(k, "share"), UT.ammo_stat(k, "dmg"), UT.ammo_stat(k, "range"),
 			", sets things alight" if UT.ammo_stat(k, "fire") > 0 else (", poisons" if UT.ammo_stat(k, "poison") > 0 else ""), UT.ammo_text(k, "desc"),

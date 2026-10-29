@@ -707,11 +707,11 @@ func _build_region(r: int) -> void:
 			var building: bool = not bld.is_empty() and int(bld[0]) == ci
 			if cur == 0 and not building:
 				continue
-			var lab := "%s %d" % [str(ch["name"]), cur]
+			var lab := "%s %d" % [CData.chain_name(ci, f), cur]
 			var tip := "%s: %s" % [lab, str(ch["desc"])]
 			if building:
 				tip += "\nBuilding level %d: %d turn%s left." % [int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"]
-			var chip := _action(str(ch["key"]), ("%s >%d" % [str(ch["name"]), int(bld[1])]) if building else lab, tip,
+			var chip := _action(CData.chain_icon(ci, f), ("%s >%d" % [CData.chain_short(ci, f), int(bld[1])]) if building else lab, tip,
 				func(): s.show_toast(tip), "", "bld_" + str(ch["key"]), building)
 			chip.custom_minimum_size = Vector2(ACT_W_PHONE if phone else 52.0, chip.custom_minimum_size.y if phone else ACT_H)
 			chips.append(chip)

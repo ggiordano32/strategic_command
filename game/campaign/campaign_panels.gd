@@ -849,8 +849,9 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 		if c == CData.SHIPYARD and cur == 0 and CFleet.dock(r) < 0:
 			continue  # (not a port)
 		var h := Kit.hbox(6)
-		var name := "%s %d" % [ch["name"], cur] if cur > 0 else str(ch["name"])
-		var l := Kit.icon_label(name, str(ch["key"]), Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
+		var cname := CData.chain_name(c, f)
+		var name := "%s %d" % [cname, cur] if cur > 0 else cname
+		var l := Kit.icon_label(name, CData.chain_icon(c, f), Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
 		l.custom_minimum_size.x = 104 + UiIcons.px_for(Kit.FONT) + Kit.ICON_GAP
 		l.tooltip_text = str(ch["desc"])
 		h.add_child(l)
@@ -866,15 +867,17 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 				if cur == 0 and str(info["why"]) == "no free slot":
 					continue
 				var why := str(info["why"])
-				if why == "fully built" and cur == 0:
+				if (why == "fully built" or why == "nothing of yours needs it") and cur == 0:
 					continue
+				if why == "nothing of yours needs it":
+					why = "fully built"  # (the highest level this faction has a use for)
 				h.add_child(Kit.label(why, Kit.FONT_SMALL, Kit.COL_DIM, true))
 			else:
 				var t := Kit.label("%d (%d turn%s)" % [int(info["cost"]), int(info["turns"]), "" if int(info["turns"]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOLD, true)
 				h.add_child(t)
 				var bb := Kit.icon_button("Build %d" % int(info["level"]) if cur == 0 else "Upgrade", "build" if cur == 0 else "upgrade", func(): s.add_order({"t": "build", "r": r, "chain": c}), 84)
 				bb.name = "build_%s" % ch["key"]
-				bb.tooltip_text = str(ch["desc"])
+				bb.tooltip_text = _chain_tip(c, f, int(info["level"]), info)
 				h.add_child(bb)
 		box.add_child(h)
 
@@ -898,7 +901,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		box.add_child(h)
 	var make_rec := func(o: Dictionary) -> Control:
 		var ty := UT.index_of(str(o["t"]))
-		var why := str(o["why"])
+		var why := CData.local_text(str(o["why"]), f)
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if o["ok"] else why
@@ -1169,10 +1172,10 @@ func _trains(box: VBoxContainer, r: int) -> void:
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(UT.price_of(ty)))
 		row.name_f = f
 		row.name = "trains_" + best
-		var sub := "Tier %d (%s %d)" % [UT.tier_of(ty), CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
+		var sub := "Tier %d (%s %d)" % [UT.tier_of(ty), CData.chain_name(int(nd2[0]), f), int(nd2[1])]
 		if next != "":
 			var nn := CRules.needs(next)
-			sub += "; tier %d needs %s %d" % [UT.tier_of(UT.index_of(next)), CData.CHAINS[int(nn[0])]["name"], int(nn[1])]
+			sub += "; tier %d needs %s %d" % [UT.tier_of(UT.index_of(next)), CData.chain_name(int(nn[0]), f), int(nn[1])]
 		row.sub_text = sub
 		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", f))
 		box.add_child(row)
@@ -1243,7 +1246,7 @@ func show_raise(r: int, tab: String = "") -> void:
 		if o["lower"]:
 			row.modulate = Color(1, 1, 1, 0.82)
 		row.selected = cnt > 0
-		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else str(o["why"])
+		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else CData.local_text(str(o["why"]), f)
 		row.sub_bad = not ok
 		if ok and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
@@ -1725,7 +1728,7 @@ func _char_recruit_row(r: int, army: int, kind: String) -> Control:
 		var nd := CChars.needs(kind)
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(CChars.price_of(kind)))
 		row.faction = f
-		row.sub_text = ("%s %d" % [CData.CHAINS[int(nd[0])]["name"], int(nd[1])]) if why == "" else why
+		row.sub_text = ("%s %d" % [CData.chain_name(int(nd[0]), f), int(nd[1])]) if why == "" else CData.local_text(why, f)
 		row.name = "recruit_char_row_" + kind
 		var order := {"t": "recruit_char", "kind": kind, "r": r}
 		if army >= 0:
@@ -1786,7 +1789,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		var ok: bool = o["ok"] and why_a == ""
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), str(o["price"]))
 		row.faction = f
-		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (why_a if o["ok"] else str(o["why"]))
+		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (CData.local_text(why_a, f) if o["ok"] else CData.local_text(str(o["why"]), f))
 		row.sub_bad = not ok
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
@@ -3415,7 +3418,7 @@ func event_text(e: Dictionary, f: int) -> String:
 		"built":
 			if int(e["f"]) != f:
 				return ""
-			return "%s: %s %d completed." % [city.call(e["r"]), CData.CHAINS[int(e["chain"])]["name"], int(e["level"])]
+			return "%s: %s %d completed." % [city.call(e["r"]), CData.chain_name(int(e["chain"]), f), int(e["level"])]
 		"recruited":
 			if int(e["f"]) != f:
 				return ""
@@ -4530,6 +4533,30 @@ func refresh_popup() -> void:
 		show_army_recruit(int(_popup["id"]))
 
 
+## What the next level of chain c does for faction f, for the build panel: "Unlocks: Musketeers, poisoned
+## arrows" (the faction's unit names and the ammunition's), else the chain's effect (the first clause of
+## its text: income, growth, the walls, faster replenishment).
+func _unlock_line(c: int, f: int, lvl: int, info: Dictionary) -> String:
+	var names: Array[String] = []
+	for k in info.get("unlocks", CData.chain_unlocks(f, c, lvl)):
+		var key := str(k)
+		if key.begins_with("ammo:"):
+			var ai := UT.ammo_index(key.substr(5))
+			names.append(UT.ammo_text(ai, "name").to_lower() if ai >= 0 else key.substr(5))
+		elif UT.index_of(key) >= 0:
+			names.append(CData.unit_name(key, f))
+	if names.is_empty():
+		if c == CData.BARRACKS or c == CData.RANGE or c == CData.STABLES or c == CData.WORKSHOP:
+			return "Effect: faster replenishment"
+		return "Effect: " + str(CData.CHAINS[c]["desc"]).get_slice(";", 0)
+	return "Unlocks: " + ", ".join(names)
+
+
+## The tooltip of chain c's build button: its text and what level lvl unlocks.
+func _chain_tip(c: int, f: int, lvl: int, info: Dictionary) -> String:
+	return "%s\n%s" % [str(CData.CHAINS[c]["desc"]), _unlock_line(c, f, lvl, info)]
+
+
 ## The Build popup: the queue on top (Cancel), then a row per building chain.
 func show_build(r: int) -> void:
 	var ps: Dictionary = s.ps
@@ -4545,10 +4572,9 @@ func show_build(r: int) -> void:
 	v.add_child(Kit.label("Buildings %d of %d slots, treasury %s. Tap a row to queue it; one building at a time." % [
 		(rs["slots"] as Array).size(), CState.slot_count(r, int(rs["level"])), Kit.money(int(ps["factions"][f]["treasury"]))], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	if not bld.is_empty():
-		var ch: Dictionary = CData.CHAINS[int(bld[0])]
 		var h := Kit.hbox(6)
-		var ql := Kit.icon_label("Building: %s %d, %d turn%s left" % [str(ch["name"]), int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"],
-			str(ch["key"]), Kit.FONT, Kit.COL_GOOD, true)
+		var ql := Kit.icon_label("Building: %s %d, %d turn%s left" % [CData.chain_name(int(bld[0]), f), int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"],
+			CData.chain_icon(int(bld[0]), f), Kit.FONT, Kit.COL_GOOD, true)
 		ql.name = "build_queue"
 		h.add_child(ql)
 		if planned == int(bld[0]):
@@ -4567,7 +4593,11 @@ func show_build(r: int) -> void:
 			continue
 		var building: bool = not bld.is_empty() and int(bld[0]) == c
 		var nxt := cur + 1
-		var head := "%s  %d -> %d" % [str(ch["name"]), cur, nxt] if cur < int(ch["levels"]) else "%s  %d (full)" % [str(ch["name"]), cur]
+		var cname := CData.chain_name(c, f)
+		var capped := why == "nothing of yours needs it"  # (the highest level this faction has a use for)
+		if capped and cur == 0:
+			continue
+		var head := "%s  %d -> %d" % [cname, cur, nxt] if cur < int(ch["levels"]) and not capped else "%s  %d (full)" % [cname, cur]
 		if building:
 			why = "being built"
 		var col := VBoxContainer.new()
@@ -4576,16 +4606,18 @@ func show_build(r: int) -> void:
 		if why == "" or why == "being built":
 			if info.has("cost"):
 				txt += "    %d gold, %d turn%s" % [int(info["cost"]), int(info["turns"]), "" if int(info["turns"]) == 1 else "s"]
-		var b := Kit.icon_button(txt, str(ch["key"]), func(): s.add_order({"t": "build", "r": r, "chain": c}), 0)
+		var b := Kit.icon_button(txt, CData.chain_icon(c, f), func(): s.add_order({"t": "build", "r": r, "chain": c}), 0)
 		b.name = "build_%s" % ch["key"]
 		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		b.disabled = why != ""
-		b.tooltip_text = str(ch["desc"])
+		b.tooltip_text = _chain_tip(c, f, nxt, info)
 		col.add_child(b)
-		var desc := str(ch["desc"]).get_slice(";", 0)  # the first clause; the whole text is the tooltip
-		if why != "" and not building:
+		var desc := _unlock_line(c, f, nxt, info) if cur < int(ch["levels"]) and not capped else \
+			("Nothing of yours needs a higher level" if capped else str(ch["desc"]).get_slice(";", 0))
+		if why != "" and not building and not capped:
 			desc = "%s  -  %s" % [why, desc]
-		var dl := Kit.label(desc, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and not building and cur < int(ch["levels"]) else Kit.COL_DIM, true)
+		var dl := Kit.label(desc, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and not building and not capped and cur < int(ch["levels"]) else Kit.COL_DIM, true)
+		dl.name = "build_unlocks_%s" % ch["key"]
 		col.add_child(dl)
 		v.add_child(col)
 	var title := "Build at %s" % CData.REGIONS[r]["city"]

@@ -14,7 +14,7 @@ const T := {
 	"map_3": "Drag to pan, scroll or pinch to zoom. Tap a town or an army to select it and see what it can do.",
 	# 2. Towns and buildings
 	"towns_1": "A town earns gold every turn. The bigger it grows, the more it earns and the more it can hold.",
-	"towns_2": "Open a town and press Build to add a building: farms, barracks, a range for muskets, stables for horse. Each building has levels, and a higher level lets the town train better soldiers.",
+	"towns_2": "Open a town and press Build to add a building: farms, barracks (the natives' war lodge), a range for muskets, stables for horse. Each building has levels, and a higher level lets the town train better soldiers.",
 	"towns_3": "A town builds one thing at a time and it takes a few turns. Buildings need a free slot, and a bigger town has more slots.",
 	# 3. Armies and recruiting
 	"armies_1": "An army is a stack of companies. Soldiers cost gold to raise and a little every turn to keep: that is their upkeep.",
