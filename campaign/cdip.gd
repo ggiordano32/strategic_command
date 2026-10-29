@@ -441,6 +441,8 @@ static func _call_allies(st: Dictionary, a: int, c: int) -> void:
 	for b in allies(st, a):
 		if b == c or CState.at_war(st, b, c) or allied(st, b, c) or CState.same_team(st, b, c):
 			continue
+		if _ai().call("tutorial_shield", st, c):
+			continue	# the guided first campaign: no ally joins a war on the tutorial's faction
 		if CState.is_human(st, b):
 			_post_call(st, a, b, c)
 		else:
@@ -479,7 +481,8 @@ static func _answered(st: Dictionary, a: int, b: int, c: int, accept: bool, why:
 	_drop_called(st, a, b, c)
 	if accept:
 		_rules().event(st, {"k": "call_answered", "from": a, "to": b, "vs": c, "accept": 1, "why": ""})
-		if CState.alive(st, c) and not CState.at_war(st, b, c) and not CState.friendly(st, b, c):
+		if CState.alive(st, c) and not CState.at_war(st, b, c) and not CState.friendly(st, b, c) \
+				and not _ai().call("tutorial_shield", st, c):
 			_rules().call("declare_war", st, b, c, "called")
 		return
 	_rules().event(st, {"k": "call_answered", "from": a, "to": b, "vs": c, "accept": 0, "why": why})
@@ -681,7 +684,7 @@ static func end_turn(st: Dictionary) -> void:
 		var g := i / n
 		var f := i % n
 		if cnt[i] > 0 and not CState.is_human(st, g) and regard(st, g, f) < WAR_LINE and not CState.at_war(st, g, f) \
-				and not CState.friendly(st, g, f):
+				and not CState.friendly(st, g, f) and not _ai().call("tutorial_shield", st, f):
 			_rules().call("declare_war", st, g, f, "trespass")
 	# Passage lapses.
 	for i in n * n:

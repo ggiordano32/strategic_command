@@ -73,3 +73,24 @@ static func show(key: String) -> bool:
 	shown_log.append(key)
 	presenter.call(text, key)
 	return true
+
+
+# ----------------------------------------------------- the first-launch offer ---
+
+## The first launch of the game on a device (2026-10-29): the main menu offers the tutorial once. The marker
+## `user://first_launch_done` (the tests folder in a test run) is set by either answer and is not touched by "Show the tips
+## again" (`reset()` only forgets the tips).
+static func first_launch_path() -> String:
+	return path().get_base_dir().path_join("first_launch_done")
+
+
+## No marker, no tips file and no saved campaign: this device has not played yet.
+static func first_launch_due() -> bool:
+	return not FileAccess.file_exists(first_launch_path()) and not FileAccess.file_exists(path()) and Saves.list().is_empty()
+
+
+static func first_launch_done() -> void:
+	var fa := FileAccess.open(first_launch_path(), FileAccess.WRITE)
+	if fa != null:
+		fa.store_string("1")
+		fa.close()

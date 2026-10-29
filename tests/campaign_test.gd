@@ -143,6 +143,7 @@ func _init() -> void:
 	_teams()
 	_diplomacy()
 	_dip_calls()
+	_dip_shield()
 	_dip_passage()
 	_dip_west()
 	_dip_ai_alliances()
@@ -6630,6 +6631,53 @@ func _diplomacy() -> void:
 	d1 = _turn(d1, [])
 	d2 = _turn(d2, [])
 	_check(CState.state_hash(d1) == CState.state_hash(d2), "resolving the same state and orders twice: equal hashes (diplomacy)")
+
+
+## The guided campaign's shield (settings tutorial 1, turn < tutorial_turns) holds on the two other roads to a war on the
+## human: the trespass war and a call to arms (an ally of the faction the human attacked joining against the human).
+func _dip_shield() -> void:
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var mace := _f("macedon")
+	var gaul := _f("gauls")
+	var iber := _f("iberians")
+	var n := CState.nf()
+	var base := _new6([rome])
+	for g in n:
+		for h in n:
+			if g != h and CState.dip(base, g, h) == CState.WAR:
+				CState.set_dip(base, g, h, CState.PEACE)
+	CState.set_dip(base, gaul, iber, CState.ALLIED)
+	base["turn"] = 5
+	for a in CState.armies_of(base, iber):
+		for u in a["units"]:
+			u["n"] = int(u["n"]) * 20
+	# A call: Rome declares war on Gaul; Gaul's ally Iberia is called against Rome (it joins when strong).
+	var open := CState.copy(base)
+	CRules.declare_war(open, rome, gaul)
+	_check(CState.at_war(open, iber, rome), "shield control: without the setting a strong ally answers the call against the human")
+	var sh := CState.copy(base)
+	sh["settings"]["tutorial"] = 1
+	CRules.declare_war(sh, rome, gaul)
+	_check(CAI.tutorial_shield(sh, rome) and not CState.at_war(sh, iber, rome) and _ev(sh, "call_answered", {"from": gaul, "to": iber}).is_empty(),
+		"shield: no ally is called to war on the tutorial's human")
+	var late := CState.copy(sh)
+	late["turn"] = 10
+	_check(not CAI.tutorial_shield(late, rome), "shield: it ends at tutorial_turns")
+	# Trespass: Rome's army stands in Macedon's land and Macedon's regard is past the line.
+	var tp := CState.copy(base)
+	var mr: int = CState.regions_of(tp, mace)[0]
+	for a in CState.armies_of(tp, rome):
+		CState.place(a, CState.field_cell(mr))
+	CRules.check_sieges(tp)
+	tp["regard"][mace * n + rome] = -45
+	var tp_open := CState.copy(tp)
+	CDip.end_turn(tp_open)
+	_check(CState.at_war(tp_open, mace, rome), "shield control: without the setting the trespass war is declared")
+	tp["settings"]["tutorial"] = 1
+	CDip.end_turn(tp)
+	_check(not CState.at_war(tp, mace, rome) and _ev(tp, "war", {"a": mace, "b": rome}).is_empty(), "shield: no trespass war on the tutorial's human")
+	_check(CDip.regard(tp, mace, rome) < -40, "... the regard still pays for the trespass (%d)" % CDip.regard(tp, mace, rome))
 
 
 ## Calls to arms: created for every ally the turn a war starts; an AI ally

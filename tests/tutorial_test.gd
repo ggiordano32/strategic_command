@@ -44,6 +44,7 @@ var eng := -1
 var pr := -1
 var sv := -1
 var _real_tips := false
+var _real_pack := "rome"   # (the setup screens save the setting pick in the real user settings: put it back)
 
 
 func _initialize() -> void:
@@ -51,6 +52,7 @@ func _initialize() -> void:
 	Saves.subdir = "tutorial_test/"
 	Tips.in_tests = true
 	_real_tips = FileAccess.file_exists("user://tips.cfg")
+	_real_pack = PackView.load_pref()
 	_run.call_deferred()
 
 
@@ -70,13 +72,18 @@ func _frames(n: int) -> void:
 func _run() -> void:
 	_texts()
 	_tips()
+	_first_launch()
 	_rules()
+	_hot_seat_rules()
 	await _run_lessons()
 	await _run_skip_leave()
+	await _run_hot_seat()
+	_online_stub()
 	await _howto_menus()
 	if cs != null and is_instance_valid(cs):
 		cs.queue_free()
 	await _frames(2)
+	PackView.save_pref(_real_pack)
 	_check(_errs.n == 0, "no script errors logged (%d) %s" % [_errs.n, _errs.first])
 	print("%s tutorial_test: %d failure(s)" % ["RESULT: PASS" if failures == 0 else "RESULT: FAIL", failures])
 	quit(0 if failures == 0 else 1)
@@ -147,6 +154,33 @@ func _tips() -> void:
 	Tips.presenter = Callable()
 
 
+# ---------------------------------------------------- the first-launch offer ---
+
+func _first_launch() -> void:
+	var mark := Tips.first_launch_path()
+	_check(mark.begins_with("user://campaigns/tutorial_test/") and mark.ends_with("first_launch_done"), "tests keep the first-launch marker in the tests folder (%s)" % mark)
+	for sl in Saves.list():
+		Saves.delete(str(sl["slot"]))
+	Tips.reset()
+	if FileAccess.file_exists(mark):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(mark))
+	_check(Tips.first_launch_due(), "first launch: no marker, no tips file, no saves")
+	Tips.mark("army_selected")
+	_check(not Tips.first_launch_due(), "... a tips file means the device has played")
+	Tips.reset()
+	_check(Tips.first_launch_due(), "... and with it gone the offer is due again")
+	Tips.first_launch_done()
+	_check(FileAccess.file_exists(mark) and not Tips.first_launch_due(), "the marker is set by either answer and ends the offer")
+	Tips.mark("army_selected")
+	Tips.reset()
+	_check(FileAccess.file_exists(mark) and not Tips.first_launch_due(), "Show the tips again only forgets the tips: the marker stays")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(mark))
+	Saves.save("tutorial_test_first", {"state": Tutorial.make_state("F", Tutorial.SEED, 0), "session": {"subs": [], "plans": {}, "seen": {}}})
+	_check(not Tips.first_launch_due(), "a saved campaign means the device has played")
+	Saves.delete("tutorial_test_first")
+	_check(Tips.first_launch_due(), "... (cleaned up)")
+
+
 # ------------------------------------------------------------------ rules ---
 
 func _rules() -> void:
@@ -183,6 +217,32 @@ func _rules() -> void:
 			st = CTurn.apply_battle(st, int(b["id"]), out)
 	_check(_wars_on(st, eng) == wars0, "nine turns on, no new war on England (%s wars on it)" % str(_wars_on(st, eng)))
 	_check(int(st["turn"]) >= 9 and CAI.tutorial_shield(st, eng) == (int(st["turn"]) < 10), "the shield ends with tutorial_turns")
+
+
+## Two humans on one device: England at Port Royal and France on Hispaniola, each with a Spanish target and the shield.
+func _hot_seat_rules() -> void:
+	var st := Tutorial.make_state("Two", Tutorial.SEED, 0, 2)
+	var fra := CData.faction_index("france")
+	var spa := CData.faction_index("new_spain")
+	var cib := CData.region_index("santiago_caballeros")
+	_check(st["humans"] == [eng, fra] and CData.pack == "west", "hot seat: England and France are the humans")
+	_check(CState.owner(st, cib) == spa and CState.at_war(st, fra, spa) and CState.at_war(st, eng, spa), "hot seat: Cibao is Spanish and both humans are at war with Spain")
+	_check(CAI.tutorial_shield(st, eng) and CAI.tutorial_shield(st, fra), "hot seat: the shield covers both humans")
+	var fa := CState.armies_of(st, fra)
+	_check(fa.size() == 1 and CState.unit_count(fa[0]) == 5, "hot seat: one French army of five (a pike, two musketeers, a horse, the general)")
+	var pp := CRules.plan_path(st, fa[0], CGrid.camp(cib), -1, CData.MODE_SIEGE, {}, 12, -1)
+	_check(not pp.has("why"), "hot seat: the camp outside Cibao is reachable overland from Saint-Domingue")
+	_check(Tutorial.profile(st, fra)["target"] == "santiago_caballeros" and Tutorial.profile(st, CData.faction_index("dutch")).is_empty(), "hot seat: a seat's profile, none for another nation")
+	var wars := [_wars_on(st, eng), _wars_on(st, fra)]
+	var battles := 0
+	for t in 9:
+		st = CTurn.resolve_turn(st, [CTurn.submission(st, eng, []), CTurn.submission(st, fra, [])])
+		while not CTurn.pending_for(st).is_empty():
+			battles += 1
+			var b: Dictionary = CTurn.pending_for(st)[0]
+			st = CTurn.apply_battle(st, int(b["id"]), {"winner": 1, "mode": "auto", "units": [], "garrison_pct": 100})
+	_check(battles == 0 and _wars_on(st, eng) == wars[0] and _wars_on(st, fra) == wars[1], "hot seat: nine passive turns, no battle and no new war on either human (%d battles)" % battles)
+	PackView.use_pack("west")
 
 
 func _wars_on(st: Dictionary, f: int) -> Array:
@@ -476,6 +536,114 @@ func _run_skip_leave() -> void:
 	_check(int(cs.st["turn"]) == 6 or not CTurn.pending_for(cs.st).is_empty() or int(cs.st["turn"]) > 5, "leave path: the turn resolves")
 
 
+# -------------------------------------------------------------- hot seat ---
+
+## Dismiss the hand-over cover for the seat that is up and open its turn.
+func _start_turn() -> void:
+	for k in 90:
+		await process_frame
+		if cs.cover.visible:
+			break
+	cs.cover.visible = false
+	cs._set_planner(cs.f, true)
+	await _frames(3)
+	await _close_dialogs()
+	cs._refresh()   # (the summary's own Close button refreshes the screen)
+	await _frames(2)
+
+
+func _wait_turn(t0: int) -> void:
+	for k in 200:
+		await process_frame
+		if int(cs.st["turn"]) > t0 and cs.dialog_kind != "resolving":
+			break
+	await _frames(3)
+
+
+func _run_hot_seat() -> void:
+	var fra := CData.faction_index("france")
+	var lg := CData.region_index("leogane")
+	await _new_screen(Tutorial.make_state("Hot seat", Tutorial.SEED, 0, 2), "tutorial_test_hot")
+	var tu = cs.tutorial
+	await _start_turn()
+	_check(cs.f == eng and tu.on() and tu.lesson_n() == 1 and tu.card.visible and _card_text() == Howto.lesson(1)["text"], "hot seat: England's turn shows England's lesson 1")
+	_check(tu.holds_end() and cs.end_button.disabled, "hot seat: England's End turn is held")
+	cs.select_region(pr)
+	await _frames(2)
+	_check(tu.met(1) and not tu.holds_end(), "hot seat: England opens Port Royal and the gate opens")
+	cs.end_turn(true)
+	await _frames(6)
+	_check(int(cs.st["turn"]) == 0 and cs.cover.visible, "hot seat: the hand-over to the second player")
+	cs._set_planner(fra, false)   # (the cover stays down in the test: look at France's lesson state first)
+	cs.cover.visible = false
+	cs.close_dialog()
+	cs._refresh()
+	await _frames(3)
+	_check(tu.on() and tu.lesson_n() == 1 and not tu.met(1) and tu.holds_end(), "hot seat: France has its own lesson 1, not met by England's panel")
+	var ft := _card_text()
+	_check(ft.contains("Saint-Domingue") and not ft.contains("Port Royal") and tu.card.visible, "hot seat: France's card names its own town (%s)" % ft.left(40))
+	cs.select_region(lg)
+	await _frames(2)
+	_check(tu.met(1) and not tu.holds_end(), "hot seat: France opens Saint-Domingue and its gate opens")
+	cs.end_turn(true)
+	await _wait_turn(0)
+	await _start_turn()
+	_check(int(cs.st["turn"]) == 1 and cs.f == eng and tu.lesson_n() == 2 and _card_text() == Howto.lesson(2)["text"], "hot seat: turn 1, England is on lesson 2")
+	_check(tu.holds_end(), "hot seat: England's lesson 2 holds End turn")
+	cs._set_planner(fra, false)
+	await _frames(3)
+	_check(tu.lesson_n() == 2 and tu.holds_end() and tu.card.visible and _card_text().contains("Saint-Domingue"), "hot seat: France is on lesson 2 as well, gated on its own plan")
+	var fa: Dictionary = CState.armies_of(cs.ps, fra)[0]
+	cs.add_order({"t": "recruit", "r": lg, "unit": "musketeers", "army": int(fa["id"])})
+	cs.add_order({"t": "recruit", "r": lg, "unit": "musketeers", "army": int(fa["id"])})
+	await _frames(2)
+	_check(tu.met(2) and not tu.holds_end(), "hot seat: two musketeer recruits at Saint-Domingue open France's gate")
+	cs._set_planner(eng, false)
+	await _frames(3)
+	_check(tu.holds_end() and not tu.met(2), "hot seat: ... and England's gate is still shut")
+	_check(int(cs.data["session"]["tutorial"]["n"]) == 2 and int(cs.data["session"]["tutorial%d" % fra]["n"]) == 2, "hot seat: each seat's state is in the session (tutorial, tutorial<seat>)")
+
+
+# --------------------------------------------------------- online (one human) ---
+
+class StubOnline extends RefCounted:
+	var session := {"turn": -1, "orders": []}
+	var touched := 0
+
+	func _touch_session() -> void:
+		touched += 1
+
+
+class StubScreen extends RefCounted:
+	var st := {}
+	var online = null
+	var f := -1
+	var data := {"session": {}}
+
+
+## A one-human online campaign with the tutorial: the lessons run on the host's client and are kept in the online session;
+## a second human ends them for both.
+func _online_stub() -> void:
+	var st := Tutorial.make_state("Online", Tutorial.SEED, 0, 1, {"turn_timeout_h": 0})
+	_check(int(st["settings"]["tutorial"]) == 1 and st["humans"] == [eng], "online: the tutorial state has settings.tutorial 1 and one human")
+	var sc := StubScreen.new()
+	sc.st = st
+	sc.f = eng
+	sc.online = StubOnline.new()
+	var tu := Tutorial.new(sc)
+	_check(tu.on(), "online: the tutorial runs for the one human")
+	var vd: Dictionary = tu._vd()
+	_check(sc.online.session.has("tutorial") and sc.online.session["tutorial"] == vd, "online: the lesson state is in the online session")
+	tu._persist()
+	_check(sc.online.touched == 1, "online: the lesson state is sent with the session")
+	var two: Dictionary = st.duplicate(true)
+	two["humans"] = [eng, CData.faction_index("france")]
+	sc.st = two
+	_check(not tu.on() and Tutorial.is_tutorial(two), "online: a second human ends the tutorial (the flag stays)")
+	sc.st = st
+	_check(tu.on(), "online: ... the cards come back only for a one-human campaign")
+
+
 # ------------------------------------------------------------ How to play ---
 
 func _howto_menus() -> void:
@@ -501,6 +669,26 @@ func _howto_menus() -> void:
 	m._back_btn.pressed.emit()
 	await _frames(2)
 	_check(m.page == "home", "Back returns to the title screen")
+	# The first-launch offer (forced: a scripted run never shows it by itself)
+	var mark := Tips.first_launch_path()
+	m._first_launch_offer()
+	await _frames(2)
+	_check(m.find_child("first_launch_card", true, false) == null, "a scripted run shows no first-launch offer by itself")
+	m._first_launch_offer(true)
+	await _frames(3)
+	var fc: Control = m.find_child("first_launch_card", true, false)
+	_check(fc != null and fc.is_visible_in_tree() and fc.find_child("tutor_yes", true, false) != null and fc.find_child("tutor_no", true, false) != null, "the offer is a card with Start the tutorial and Not now")
+	_check((fc.find_child("tutor_text", true, false) as Label).text == Howto.text("ui_first") and (fc.find_child("tutor_yes", true, false) as Button).text == "Start the tutorial", "... in the words asked for")
+	(fc.find_child("tutor_no", true, false) as Button).pressed.emit()
+	await _frames(3)
+	_check(FileAccess.file_exists(mark) and m.find_child("first_launch_card", true, false) == null and m.page == "home", "Not now sets the marker and closes the card")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(mark))
+	m._first_launch_offer(true)
+	await _frames(3)
+	fc = m.find_child("first_launch_card", true, false)
+	(fc.find_child("tutor_yes", true, false) as Button).pressed.emit()
+	await _frames(4)
+	_check(FileAccess.file_exists(mark) and m._new_campaign != null and m._new_campaign.tutorial_only, "Start the tutorial sets the marker and opens the tutorial's setup")
 	m.queue_free()
 	await _frames(2)
 	# the in-game menus

@@ -75,6 +75,11 @@ var story_only := false
 ## "Your first command" (the Campaign page's second card, 2026-10-29): the guided first campaign (game/campaign/tutorial.gd).
 ## Like `story_only` (which it also sets) but only a Name and a Difficulty row; the seed is fixed.
 var tutorial_only := false
+## The guided campaign's players (1, or 2 taking turns on this device) and, on the Host screen, the Tutorial toggle (one
+## human, West only: the host's campaign is the tutorial state, the cards run on the host's client).
+var tutorial_players := 1
+var online_tutorial := false
+var _tut_row: Control
 var _online_box: Control
 var _hook_edit: LineEdit
 var _user_edit: LineEdit
@@ -500,6 +505,12 @@ func _build_settings() -> Control:
 ## The guided first campaign's one setting: how well the AI nations run their empires (the tutorial battle is always easy).
 func _build_tutorial_settings(body: Control) -> void:
 	settings["ai_campaign_skill"] = 0
+	var pg := Kit.segmented([["One", 1], ["Two on this device", 2]], 1, Callable(), "tut_players")
+	pg.changed.connect(func(val):
+		tutorial_players = int(val)
+		_update())
+	Kit.tip(pg, "Players", "Two players take turns on this device, England and then France, and each gets the ten lessons on their own turn; the other nations are the AI.")
+	_srow(body, "tut_players", "Players", "One, or two taking turns on this device (England and France).", pg)
 	_setting_seg(body, "ai_campaign_skill", "Difficulty", "How well the other nations play. The lessons stay easy either way.", SKILL_LABELS,
 		"Difficulty", "Easy makes a new player's mistakes; Skilled concentrates its armies, picks its wars and fights one front at a time. The first ten turns are peaceful whatever you pick.")
 
@@ -573,6 +584,12 @@ func _build_online() -> Control:
 	_invite_edit.name = "invite"
 	Kit.tip(_invite_edit, "Invite key", "Some servers only let invited players create campaigns: ask the server's owner for a key. Joining needs none.")
 	_invite_row = _srow(v, "invite", "Invite key", "Only if the server asks for one.", Kit.field_box(_invite_edit))
+	var tg := Kit.segmented([["Off", 0], ["On", 1]], 0, Callable(), "online_tutorial")
+	tg.changed.connect(func(val):
+		online_tutorial = int(val) != 0
+		_update())
+	Kit.tip(tg, "Tutorial", "Start the guided first campaign (England on Jamaica, ten lessons) as your own online campaign. It ends for good if a second human ever joins.")
+	_tut_row = _srow(v, "online_tutorial", "Tutorial", "One human, West only: the guided first campaign, online.", tg)
 	if net != null and not bool(net.info.get("invite_required", true)):
 		_invite_row.visible = false
 	return panel
@@ -675,8 +692,11 @@ func _update() -> void:
 		_name_labels[f].text = CData.faction_name(f) + (" (you)" if picks.find(f) == 0 else "")
 		_style_row(f, is_h)
 	var teams_txt := _team_text()
+	if _tut_row != null:
+		_tut_row.visible = online and CData.pack == "west" and picks.size() == 1
 	if tutorial_only:
-		_info.text = "Your first command: Port Royal on Jamaica, ten lessons with a guide, one step a turn."
+		_info.text = "Your first command: Port Royal on Jamaica, ten lessons with a guide, one step a turn." if tutorial_players == 1 else \
+			"Your first command for two: England at Port Royal, then France at Leogane, each with the ten lessons on their own turn."
 		_start_button.disabled = _creating
 		Kit.tip(_start_button, "Start", "Begin the guided first campaign as the English governor of Port Royal.")
 	elif story_only:
@@ -758,7 +778,7 @@ func _start_tutorial() -> void:
 	var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 	await lp.step("Sailing to Jamaica")
 	PackView.use_pack("west")
-	var st := Tutorial.make_state(nm, Tutorial.SEED, int(settings.get("ai_campaign_skill", 0)))
+	var st := Tutorial.make_state(nm, Tutorial.SEED, int(settings.get("ai_campaign_skill", 0)), tutorial_players)
 	var slot := Saves.slot_for(nm, Tutorial.SEED)
 	if not Saves.load_slot(slot).is_empty():
 		slot += "_%d" % (Time.get_ticks_msec() % 100000)   # (the seed is fixed: a second run keeps the first save)
@@ -828,6 +848,11 @@ func _start_online(story: bool = false) -> void:
 			nm = "The Brethren's Due"
 		st = CStory.new_story(nm, sd, stt, "brethren", true)
 		seat_f = CStory.player(st)
+	elif online_tutorial and picks.size() == 1 and CData.pack == "west":
+		PackView.use_pack("west")
+		st = Tutorial.make_state(nm, Tutorial.SEED, int(settings.get("ai_campaign_skill", 0)), 1, {"turn_timeout_h": int(settings.get("turn_timeout_h", 0))})
+		seat_f = int(st["humans"][0])
+		_creating = true
 	else:
 		st = build_state(nm, sd)
 		_creating = true

@@ -8,7 +8,11 @@ extends RefCounted
 ## Where the player is (the lesson, the pages opened) lives in the local save's session ("tutorial"), not in the
 ## hashed state. The rules' only part is the setting `tutorial` 1 that the campaign AI reads (cai.gd tutorial_shield).
 ## Leave: the rules have no settings order, so `tutorial` stays set in the state (the AI keeps its peace until
-## `tutorial_turns`, 10 turns) and the cards stop. Offline campaigns only.
+## `tutorial_turns`, 10 turns) and the cards stop.
+## Seats (2026-10-29, the follow-ups): each human seat has its own lesson state (`PROFILES`: England at Port Royal against
+## Sevilla la Nueva, France at Leogane (the region Saint-Domingue) against Cibao on Hispaniola), kept
+## in the save's session (hot seat) or in the online seat's session blob (a one-human online campaign); the cards, the
+## pointer and the gate follow the seat whose turn it is. Online the tutorial runs only while the campaign has one human.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -29,6 +33,17 @@ const TURNS := 10          # settings.tutorial_turns: the AI declares no war on 
 const START_TREASURY := 3000
 const DONE_STAGE := 11     # the lessons are over (the closing card)
 const BATTLE_LESSON := 6
+## The seats a guided campaign can have, in the order they are added (one human: England; a second on the same device: France).
+## `home` the town the lessons start from, `target` the Spanish town they take, `partner` the nation proposed a trade,
+## `cede` a far region of the seat handed to Spain (a Spanish raid on it would interrupt the lessons), `sail` the town whose coast the voyage aims at, `sail_name` how the lesson text says it, `names` the text replaced for
+## this seat (the words are written for England).
+const PROFILES := [
+	{"faction": "england", "home": "port_royal", "target": "sevilla_jamaica", "partner": "dutch", "sail": "port_de_paix", "sail_name": "Tortuga coast",
+		"cede": ["belize"], "names": {}},
+	{"faction": "france", "home": "leogane", "target": "santiago_caballeros", "partner": "dutch", "sail": "port_royal", "sail_name": "Jamaica coast",
+		"cede": ["new_orleans"],
+		"names": {"Port Royal": "Saint-Domingue", "Sevilla la Nueva": "Cibao", "just west of you": "close by", "Sevilla": "Cibao", "Tortuga coast": "Jamaica coast"}},
+]
 
 var s  # the campaign screen
 var card: TutorCard
@@ -36,6 +51,8 @@ var pointer: TutorPointer
 var _shown_n := -1
 var _shown_met := false
 var _gate_on := false     # the End turn button is held by a lesson
+var _shown_f := -2        # the seat the card was built for
+var _as := -2             # a seat to read instead of the screen's (the battle script of a seat that is not the planner)
 
 
 func _init(screen) -> void:
@@ -48,32 +65,54 @@ func _init(screen) -> void:
 ## Jamaica) Spanish with its garrison, Belize too (so no Spanish raid on it interrupts the lessons), England's second army folded into the one at Port Royal (a pike, two musketeers, a
 ## horse and the general: two recruits later make four musketeers), more gold, the AIs on Easy for the battle and the
 ## chosen skill for the campaign, deployment waiting for the player. `ai_skill`: 0 Easy, 1 Average, 2 Skilled.
-static func make_state(nm: String, sd: int, ai_skill: int = 0) -> Dictionary:
+## `players` 1 or 2: the second human (hot seat, one device) is France on Hispaniola with its own lessons. `extra`: settings
+## to add (the Host screen's turn timeout for an online tutorial).
+static func make_state(nm: String, sd: int, ai_skill: int = 0, players: int = 1, extra: Dictionary = {}) -> Dictionary:
 	CData.use_pack("west")
-	var eng := CData.faction_index("england")
+	var humans: Array = []
+	for i in clampi(players, 1, PROFILES.size()):
+		humans.append(CData.faction_index(str(PROFILES[i]["faction"])))
 	var stt := {"tutorial": 1, "tutorial_turns": TURNS, "ai_battle_skill": 0, "ai_campaign_skill": ai_skill, "deploy_time": -1}
-	var st := CState.new_campaign(nm, sd, [eng], stt, [], "west")
+	for k in extra:
+		stt[k] = extra[k]
+	var st := CState.new_campaign(nm, sd, humans, stt, [], "west")
 	var spa := CData.faction_index("new_spain")
-	var sv := CData.region_index("sevilla_jamaica")
-	st["regions"][sv]["owner"] = spa
-	st["regions"][CData.region_index("belize")]["owner"] = spa   # (England's far logging camp: a Spanish raid on it would interrupt the lessons)
 	var armies: Array = st["armies"]
-	for i in range(armies.size() - 1, -1, -1):
-		if int(armies[i]["f"]) == eng and int(armies[i]["r"]) == sv:
-			armies.remove_at(i)
-	var pr := CData.region_index("port_royal")
-	for a in armies:
-		if int(a["f"]) == eng and int(a["r"]) == pr:
-			var keep: Array = []
-			var want := {"w_pikemen": 1, "musketeers": 2, "pistoleers": 1, "general": 1}
-			for u in a["units"]:
-				var k := str(u["t"])
-				if int(want.get(k, 0)) > 0:
-					want[k] = int(want[k]) - 1
-					keep.append(u)
-			a["units"] = keep
-	st["factions"][eng]["treasury"] = START_TREASURY
+	for i in humans.size():
+		var P: Dictionary = PROFILES[i]
+		var hf: int = humans[i]
+		var sv := CData.region_index(str(P["target"]))
+		st["regions"][sv]["owner"] = spa
+		for c in P["cede"]:
+			st["regions"][CData.region_index(str(c))]["owner"] = spa
+		if CState.dip(st, hf, spa) != CState.WAR:
+			CState.set_dip(st, hf, spa, CState.WAR)
+		var home := CData.region_index(str(P["home"]))
+		for j in range(armies.size() - 1, -1, -1):
+			if int(armies[j]["f"]) == hf and (int(armies[j]["r"]) == sv or (i > 0 and int(armies[j]["r"]) != home)):
+				armies.remove_at(j)
+		for a in armies:
+			if int(a["f"]) == hf and int(a["r"]) == home:
+				var keep: Array = []
+				var want := {"w_pikemen": 1, "musketeers": 2, "pistoleers": 1, "general": 1}
+				for u in a["units"]:
+					var k := str(u["t"])
+					if int(want.get(k, 0)) > 0:
+						want[k] = int(want[k]) - 1
+						keep.append(u)
+				a["units"] = keep
+		st["factions"][hf]["treasury"] = START_TREASURY
 	return st
+
+
+## The seat's profile (see PROFILES), or {} for a faction with no lessons.
+static func profile(st: Dictionary, f: int) -> Dictionary:
+	if f < 0 or not st.has("humans"):
+		return {}
+	for P in PROFILES:
+		if CData.faction_index(str(P["faction"])) == f:
+			return P
+	return {}
 
 
 static func is_tutorial(st: Dictionary) -> bool:
@@ -93,20 +132,55 @@ func setup() -> void:
 	s.ui.add_child(pointer)
 
 
-## The tutorial is running for this screen (a tutorial campaign, offline, not left or finished).
+## The seat the lessons are read for: the planner (the first human between turns).
+func seat() -> int:
+	if _as != -2:
+		return _as
+	if s.f >= 0:
+		return s.f
+	return int(s.st["humans"][0]) if not s.st.is_empty() and not (s.st["humans"] as Array).is_empty() else -1
+
+
+## The tutorial is running for this seat of this screen (a tutorial campaign, a seat with a profile, not left or finished;
+## online only while the campaign has one human: a second human joining ends it for both, the flag stays).
 func on() -> bool:
-	if s.st.is_empty() or s.online != null or not is_tutorial(s.st):
+	if s.st.is_empty() or not is_tutorial(s.st) or profile(s.st, seat()).is_empty():
+		return false
+	if s.online != null and (s.st["humans"] as Array).size() != 1:
 		return false
 	var vd := _vd()
 	return int(vd["off"]) == 0 and int(vd["left"]) == 0
 
 
-## The view data (the save's session); created with its defaults.
+## The view data of the seat: the save's session (key `tutorial` for the first human, `tutorial<seat>` for the others) or
+## the online seat's session blob; created with its defaults.
 func _vd() -> Dictionary:
-	var ses: Dictionary = s.data["session"]
-	if not ses.has("tutorial"):
-		ses["tutorial"] = {"n": 1, "turn": int(s.st.get("turn", 0)), "done": 0, "region": 0, "realm": 0, "goals": 0, "left": 0, "off": 0}
-	return ses["tutorial"]
+	var f := seat()
+	var key := "tutorial" if f == int(s.st["humans"][0]) else "tutorial%d" % f
+	var ses: Dictionary = s.online.session if s.online != null else s.data["session"]
+	if not ses.has(key) or not (ses[key] is Dictionary):
+		ses[key] = {"n": 1, "turn": int(s.st.get("turn", 0)), "done": 0, "region": 0, "realm": 0, "goals": 0, "left": 0, "off": 0}
+	return ses[key]
+
+
+## Keep the lesson state: the save (a hot seat), the online session.
+func _persist() -> void:
+	if s.online != null:
+		s.online._touch_session()
+	else:
+		s.save_plan()
+
+
+## The lesson's words for this seat (the text is written for England).
+func tx(key: String) -> String:
+	return localize(Howto.text(key))
+
+
+func localize(t: String) -> String:
+	var names: Dictionary = profile(s.st, seat()).get("names", {})
+	for k in names:
+		t = t.replace(str(k), str(names[k]))
+	return t
 
 
 func lesson_n() -> int:
@@ -133,17 +207,21 @@ func note(kind: String, arg: int = -1) -> void:
 				vd["goals"] = 1
 				changed = true
 	if changed:
-		s.save_plan()
+		_persist()
 		s._refresh_top()
 		refresh()
 
 
 func _pr() -> int:
-	return CData.region_index("port_royal")
+	return CData.region_index(str(profile(s.st, seat()).get("home", "port_royal")))
+
+
+func _sail_town() -> String:
+	return str(profile(s.st, seat()).get("sail", "port_de_paix"))
 
 
 func _sv() -> int:
-	return CData.region_index("sevilla_jamaica")
+	return CData.region_index(str(profile(s.st, seat()).get("target", "sevilla_jamaica")))
 
 
 func _army() -> Dictionary:
@@ -162,8 +240,8 @@ func _fleet() -> Dictionary:
 
 
 ## The sea cell off the Tortuga coast the voyage of lesson 9 aims at (the first sea cell beside Port de Paix's harbour).
-static func sail_cell() -> int:
-	var h := CFleet.harbour(CData.region_index("port_de_paix"))
+static func sail_cell(town: String = "port_de_paix") -> int:
+	var h := CFleet.harbour(CData.region_index(town))
 	for c in CFleet._ring1(h):
 		if CFleet.is_sea(c):
 			return c
@@ -221,7 +299,7 @@ func met(n: int) -> bool:
 		7:
 			return int(vd["realm"]) != 0
 		8:
-			var dutch := CData.faction_index("dutch")
+			var dutch := CData.faction_index(str(profile(s.st, seat()).get("partner", "dutch")))
 			for o in s.orders:
 				if str(o.get("t", "")) == "propose" and int(o.get("to", -1)) == dutch and str(o.get("what", "")) == "trade":
 					return true
@@ -233,7 +311,7 @@ func met(n: int) -> bool:
 			var fid := int(fl["id"])
 			var boarded: bool = CFleet.carried_units(fl) > 0
 			var sail := false
-			var h := CFleet.harbour(CData.region_index("port_de_paix"))
+			var h := CFleet.harbour(CData.region_index(_sail_town()))
 			for o in s.orders:
 				var t := str(o.get("t", ""))
 				if (t == "embark" and int(o.get("fleet", -1)) == fid) or (t == "move" and int(o.get("fleet", -1)) == fid):
@@ -261,7 +339,7 @@ func gate_end_button() -> void:
 	var h := holds_end()
 	if h:
 		s.end_button.disabled = true
-		Kit.tip(s.end_button, Howto.text("ui_gate"), Howto.text("ui_objective") + Howto.text("lesson_%d_obj" % lesson_n()) + ".")
+		Kit.tip(s.end_button, Howto.text("ui_gate"), Howto.text("ui_objective") + tx("lesson_%d_obj" % lesson_n()) + ".")
 	elif _gate_on:
 		s.end_button.disabled = not CTurn.pending_for(s.st).is_empty() or s.f < 0 or str(s.st["phase"]) == "over"
 		Kit.tip(s.end_button, "", "")
@@ -272,7 +350,7 @@ func gate_end_button() -> void:
 func guard_end() -> bool:
 	if not holds_end():
 		return false
-	s.show_toast("%s: %s." % [Howto.text("ui_gate"), Howto.text("lesson_%d_obj" % lesson_n())])
+	s.show_toast("%s: %s." % [Howto.text("ui_gate"), tx("lesson_%d_obj" % lesson_n())])
 	return true
 
 
@@ -288,9 +366,18 @@ func on_end() -> void:
 
 ## The battle tutorial's script for the pending battle `b`, or null (the tutorial is off, another lesson, another battle).
 func battle_script(b: Dictionary):
-	if not on() or lesson_n() != BATTLE_LESSON or int(b.get("r", -1)) != _sv():
+	if s.st.is_empty() or not is_tutorial(s.st):
 		return null
-	return TutorialBattle.new()
+	var hs: Array = CRules.battle_humans(s.st, b)
+	var script = null
+	for h in hs:
+		_as = int(h)
+		if on() and lesson_n() == BATTLE_LESSON and int(b.get("r", -1)) == _sv():
+			script = TutorialBattle.new()
+		_as = -2
+		if script != null:
+			break
+	return script
 
 
 # ---------------------------------------------------------------- the card ---
@@ -308,7 +395,10 @@ func refresh() -> void:
 	var vd := _vd()
 	var turn := int(s.st["turn"])
 	var n := lesson_n()
-	if n == BATTLE_LESSON and CState.owner(s.st, _sv()) == s.st["humans"][0]:
+	if _shown_f != seat():
+		_shown_f = seat()
+		_shown_n = -1
+	if n == BATTLE_LESSON and CState.owner(s.st, _sv()) == seat():
 		_advance(n + 1)
 	elif int(vd["turn"]) != turn:
 		var ready_ := int(vd["done"]) != 0 and n != BATTLE_LESSON
@@ -334,14 +424,14 @@ func refresh() -> void:
 			card.add_button("over", Howto.text("ui_done"))
 		else:
 			var L := Howto.lesson(n)
-			card.setup(Howto.text("ui_lesson_of") % n + ": " + str(L["title"]), str(L["text"]), Howto.text("ui_objective") + str(L["obj"]), w - 24.0)
+			card.setup(Howto.text("ui_lesson_of") % n + ": " + localize(str(L["title"])), localize(str(L["text"])), Howto.text("ui_objective") + localize(str(L["obj"])), w - 24.0)
 			card.add_button("skip", Howto.text("ui_skip"))
 			card.add_button("leave", Howto.text("ui_leave"))
 		card.position = Vector2(8.0, s.TOP_H + 6.0)
 	if n <= Howto.LESSONS:
 		if m != _shown_met:
 			_shown_met = m
-			card.set_met(m, Howto.text("ui_objective") + Howto.text("lesson_%d_obj" % n) if not m else "Done. " + Howto.text("lesson_%d_obj" % n) + ". Now end the turn.")
+			card.set_met(m, Howto.text("ui_objective") + tx("lesson_%d_obj" % n) if not m else "Done. " + tx("lesson_%d_obj" % n) + ". Now end the turn.")
 		if card.buttons.has("skip"):
 			(card.buttons["skip"] as Button).visible = not m
 	card.position = Vector2(8.0, s.TOP_H + 6.0)
@@ -355,7 +445,7 @@ func _advance(n: int) -> void:
 	vd["done"] = 0
 	vd["turn"] = int(s.st["turn"])
 	_shown_n = -1
-	s.save_plan()
+	_persist()
 
 
 func _on_button(key: String) -> void:
@@ -367,7 +457,7 @@ func _on_button(key: String) -> void:
 		"over":
 			_vd()["off"] = 1
 			Tips.suppress = false
-			s.save_plan()
+			_persist()
 			refresh()
 
 
@@ -375,7 +465,7 @@ func leave() -> void:
 	_vd()["left"] = 1
 	Tips.suppress = false
 	_shown_n = -1
-	s.save_plan()
+	_persist()
 	refresh()
 	s.show_toast(Howto.text("ui_left_note"))
 
@@ -424,7 +514,7 @@ func skip() -> void:
 		7:
 			vd["realm"] = 1
 		8:
-			var why8: String = s.add_order({"t": "propose", "to": CData.faction_index("dutch"), "what": "trade"})
+			var why8: String = s.add_order({"t": "propose", "to": CData.faction_index(str(profile(s.st, seat()).get("partner", "dutch"))), "what": "trade"})
 			if why8 != "":
 				s.show_toast("Could not propose: %s." % why8)
 				return
@@ -432,11 +522,11 @@ func skip() -> void:
 			var fl := _fleet()
 			if not a.is_empty() and not fl.is_empty():
 				s.set_board(int(a["id"]), int(fl["id"]))
-				s.set_fmove(int(fl["id"]), sail_cell())
+				s.set_fmove(int(fl["id"]), sail_cell(_sail_town()))
 		10:
 			vd["goals"] = 1
 	_shown_met = false
-	s.save_plan()
+	_persist()
 	s._refresh_top()
 	refresh()
 
@@ -550,7 +640,7 @@ func _target() -> Variant:
 					return _fleet_pt()
 				return _army_pt()
 			if s.sel_fleet == fid:
-				return _map_pt(sail_cell())
+				return _map_pt(sail_cell(_sail_town()))
 			return _fleet_pt()
 		10:
 			return _top_button("Goals")

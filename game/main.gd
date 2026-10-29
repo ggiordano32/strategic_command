@@ -34,6 +34,9 @@ const Emblem := preload("res://game/menu/emblem.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const OptionsRows := preload("res://game/menu/options_rows.gd")
 const HowtoPage := preload("res://game/campaign/howto_page.gd")
+const Tips := preload("res://game/campaign/tips.gd")
+const TutorCard := preload("res://game/campaign/tutor_card.gd")
+const Howto := preload("res://game/campaign/howto.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -160,6 +163,7 @@ func _ready() -> void:
 	get_tree().root.size_changed.connect(_layout_grand)
 	show_page("home")
 	_activate_bg.call_deferred()
+	_first_launch_offer.call_deferred()
 	book = UnitBook.new()
 	add_child(book)
 	controls = Controls.new()
@@ -827,6 +831,31 @@ func _slide_in(nodes: Array) -> void:
 		tw.tween_property(b, "position:x", 0.0, 0.25).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		tw.parallel().tween_property(b, "modulate:a", 1.0, 0.25)
 		i += 1
+
+
+## The first launch on a device (no saves, no tips file, no `user://first_launch_done`): a small card over the home page
+## offers the tutorial once; either answer sets the marker. Not in a scripted run (arguments, the tests folder).
+func _first_launch_offer(force: bool = false) -> void:
+	if not force and (not OS.get_cmdline_user_args().is_empty() or Saves._test_run() or not Tips.first_launch_due()):
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = 90
+	add_child(layer)
+	var card := TutorCard.new()
+	card.name = "first_launch_card"
+	var w := minf(360.0, get_viewport_rect().size.x - 32.0)
+	card.setup(Howto.text("ui_first_title"), Howto.text("ui_first"), "", w - 24.0)
+	var close := func():
+		Tips.first_launch_done()
+		layer.queue_free()
+	card.add_button("yes", Howto.text("ui_first_yes"))
+	card.add_button("no", Howto.text("ui_first_no"))
+	card.pressed.connect(func(key: String):
+		close.call()
+		if key == "yes":
+			_new_campaign_page(false, "west", true, true))
+	layer.add_child(card)
+	card.position = Vector2((get_viewport_rect().size.x - w) * 0.5, get_viewport_rect().size.y - 150.0)
 
 
 func _story_card() -> Button:

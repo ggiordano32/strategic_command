@@ -34,19 +34,24 @@ def main():
                     break
             except Exception:
                 time.sleep(0.1)
-        for pack in ["rome", "west"]:
+        # (the last run is the Host screen's Tutorial toggle: the West tutorial state, settings.tutorial 1)
+        for pack, tut in [("rome", False), ("west", False), ("west", True)]:
+            tag = pack + ("_tutorial" if tut else "")
             p = subprocess.run(["godot", "--headless", "--path", REPO, "--script", "res://tests/online_solo_client.gd", "--",
-                                "--server=" + base, "--dir=" + tmp, "--pack=" + pack, "--turns=%d" % args.turns],
+                                "--server=" + base, "--dir=" + tmp, "--pack=" + pack, "--turns=%d" % args.turns] + (["--tutorial"] if tut else []),
                                capture_output=True, text=True, timeout=600)
-            res = json.load(open(os.path.join(tmp, "solo_%s.json" % pack))) if os.path.exists(os.path.join(tmp, "solo_%s.json" % pack)) else {}
-            print(pack, "->", json.dumps(res))
-            check(p.returncode == 0 and res.get("ok") is True, "%s: client ok %s" % (pack, res.get("errors")))
+            res = json.load(open(os.path.join(tmp, "solo_%s.json" % tag))) if os.path.exists(os.path.join(tmp, "solo_%s.json" % tag)) else {}
+            pack_l = tag
+            print(tag, "->", json.dumps(res))
+            check(p.returncode == 0 and res.get("ok") is True, "%s: client ok %s" % (pack_l, res.get("errors")))
             check(res.get("join_code", "x") == "", "%s: a one-human campaign has no join code" % pack)
-            check(res.get("state_pack") == pack, "%s: the state's pack is %s" % (pack, res.get("state_pack")))
+            check(res.get("state_pack") == pack, "%s: the state's pack is %s" % (pack_l, res.get("state_pack")))
             ts = res.get("turns", [])
             check(len(ts) == args.turns and all(t["resolved"] and t["next_turn"] == t["turn"] + 1 for t in ts),
-                  "%s: %d submitted turns each resolved and opened the next" % (pack, len(ts)))
+                  "%s: %d submitted turns each resolved and opened the next" % (pack_l, len(ts)))
             check(res.get("hash") == res.get("local_hash"), "%s: client state matches the server's hash" % pack)
+            if tut:
+                check(res.get("tutorial_setting") == 1 and res.get("humans") == 1, "%s: the state's settings carry tutorial 1 and one human" % pack_l)
     finally:
         srv.terminate()
         srv.wait(timeout=10)

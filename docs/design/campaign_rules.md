@@ -1006,7 +1006,7 @@ tip toast never covers a toast another test waits for. While the tutorial runs `
 - *Entry.* The Campaign page's first card `card_tutorial` ("Your first command"); `NewCampaign.tutorial_only` (with
   `story_only`) is a setup with a Name row and one Difficulty row (the campaign AI's skill, default Easy; the seed row is hidden,
   the seed is `Tutorial.SEED` 1670); Start makes the state with `Tutorial.make_state` and saves it under a new slot (a second run
-  keeps the first save). The plan's "offered once on the first launch" is not built.
+  keeps the first save). The first-launch offer is built (follow-ups below).
 - *The state* (`Tutorial.make_state`, made once, before the campaign exists): `new_campaign` for England on the West with
   `settings` `tutorial` 1, `tutorial_turns` 10, `ai_battle_skill` 0 (Easy: the tutorial battle is always easy), the chosen
   `ai_campaign_skill`, `deploy_time` -1 (deployment waits for the player). The West start has Sevilla la Nueva (the region
@@ -1016,8 +1016,7 @@ tip toast never covers a toast another test waits for. While the tutorial runs `
   gold. England and Spain are at war from the West start, and Port Royal's army stands on the ring of Sevilla (two cells away).
 - *The rules line.* `cai.gd` `tutorial_shield(st, g)`: `settings.tutorial` is set, `g` is human and `turn < tutorial_turns`.
   The three places the campaign AI declares a war on its own (the opportunistic war, the pirates', the "unwise war" mistake) skip
-  such a `g`. Not shielded: a war declared for trespass or a call to arms (`cdip.gd`), a Spanish attack under the war that
-  already exists. A 9-turn passive run of the tutorial state gives England no new war and no battle (the test runs it).
+  such a `g`. Not shielded: a Spanish attack under the war that already exists (the trespass war and the call to arms are shielded too: follow-ups below). A 9-turn passive run of the tutorial state gives England no new war and no battle (the test runs it).
 - *The lessons* (`game/campaign/tutorial.gd`, a view object of the campaign screen; the card is `tutor_card.gd`, the pointer
   `tutor_pointer.gd`). Where the player is lives in the save's session, key `tutorial` (`n` the lesson 1..10, 11 the closing card,
   `turn` the turn it was last looked at, `done` its objective held when the turn was sent, `region`, `realm`, `goals` the pages
@@ -1065,9 +1064,33 @@ lesson 5 lays siege by tapping the town, which the move to the town's cell does.
 frigates and two sloops; only the whole fleet carries the army's seven units). "Leave the tutorial" cannot clear the setting (no
 rules order for it). Tips also wait during the test runs (above).
 
-**Open.** A playtest with someone who has never played such a game (the measure the plan names); the first-launch offer; the
-battle tutorial's pointer on the long-press explanation of the other chips; a tutorial for hot-seat or online (the cards are
-offline only); the AI's peace after turn 10 (a Spanish attack under the existing war is possible earlier, with Easy the odds are low).
+**Open.** A playtest with someone who has never played such a game (the measure the plan names); the
+battle tutorial's pointer on the long-press explanation of the other chips; the AI's peace after turn 10 (a Spanish attack under the existing war is possible earlier, with Easy the odds are low).
+
+**Follow-ups (as built, 2026-10-29): the first-launch offer, hot seat, online, the whole shield.** View and menu only, apart from
+two guards in `cdip.gd`; no `CState.VERSION` bump, no pin moved.
+- *The first-launch offer.* `Tips.first_launch_due()`: no `user://first_launch_done` marker, no `user://tips.cfg`, no saved
+  campaign. `main.gd` `_first_launch_offer()` (deferred from `_ready`) then shows a card in the lesson cards' frame over the home
+  page, "New here? Your first command walks you through a campaign in ten turns." with "Start the tutorial" (opens the tutorial's
+  setup, as the Campaign page's card does) and "Not now"; either sets the marker (`Tips.first_launch_done()`). "Show the tips
+  again" only forgets the tips, the marker stays. Never in a scripted run (any command-line argument, the tests folder).
+  The Campaign page's card is unchanged.
+- *Hot seat.* The tutorial setup has a Players row (One / Two on this device). Two humans are England (Port Royal against Sevilla
+  la Nueva) and France (Leogane, the region Saint-Domingue, against Cibao, `santiago_caballeros`, which the state hands to Spain at
+  war with France, with New Orleans ceded as Belize is). `Tutorial.PROFILES` holds a seat's home, target, trade partner, sail
+  town and the words replaced in the lesson text; the lessons, objectives, pointer and skip all read the seat whose turn it is
+  (`seat()`), and each human has its own lesson state in the session (`tutorial` for the first, `tutorial<seat>` for the other).
+  The battle script goes to whichever human of the battle is on lesson 6 at its own target. A nine-turn passive run gives
+  neither human a war or a battle (tested).
+- *Online.* The Host screen has a Tutorial toggle (one human picked, West): the state is `Tutorial.make_state` (England, the
+  fixed seed, the Host screen's turn timeout), `settings.tutorial` 1. The cards and the End turn gate run on the host's client;
+  the lesson state is kept in the online seat's session blob (`online.session["tutorial"]`, sent with the plan). The tutorial runs
+  only while the campaign has exactly one human: a second human ends the cards for both (the setting stays, as with Leave).
+- *The shield, whole.* `CAI.tutorial_shield(st, g)` is also read by `CDip.end_turn` (the trespass war is not declared on a
+  shielded human; the regard still pays for the trespass) and by `CDip._call_allies` / `_answered` (no ally is called to, or joins,
+  a war on a shielded human). Tested in `campaign_test` (`_dip_shield`).
+- *Open still.* A playtest; the two-player lessons share the tutorial battle but France's board has not been played through by a
+  person; a second human cannot join a one-human online campaign today, so that ending is a guard, not a flow.
 
 ### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
 
