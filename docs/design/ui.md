@@ -389,11 +389,31 @@ and five **pips** (attack, defence, armour, missile, speed, four segments,
 scaled against the best of the unit's class; speed and missile against all
 rows). The rule table is in the file's head comment; the unit book page and
 the battle card tooltip show the same. Recruit lists and the raise picker sit
-under collapsible class headers with the best tier of each line and a
-"+n tiers" chip for the lower ones; an army card opens with a composition
+under collapsible class headers, every unlocked row listed flat under its
+own role (best tier first; see the 2026-10-29 note below); an army card opens with a composition
 strip (class glyphs with unit counts) that folds the unit rows (armies of up
 to six units start open). Fold state is per session, never in the campaign
 state.
+
+### Recruit slots and flat tiers (as built, 2026-10-29)
+
+Owner: "What determines how many units can be built from a location each turn?" and "The position of the
+'1 tier' button is on top of the first unit ... super confusing". View only, `campaign_panels.gd`.
+- **Slot chits.** The recruit headers (settlement Recruits, the raise dialog's "Recruit slots", the army card's
+  Slots) show one rounded chit per recruit the settlement raises a turn (`CRules.recruits_per_turn`: level 1 / 2 / 3
+  plus a haven's infamy recruits), numbered, filled in the faction colour when queued, an outline when free
+  (`_slot_header`, row named `recruit_slots`, chits `slot_chit_n`). The tip says "A village raises 1 a turn, a town 2,
+  a city 3; a pirate haven more with infamy (West only); one general a turn. Recruits arrive at the end of the
+  turn." The settlement panel's level line reads "Town: 2 recruits a turn" and the growth line adds ", +1 recruit a
+  turn" when the next level raises more.
+- **Queue.** `_queue_list` lists the queued recruits by name with an x (`queue_cancel_n`; the cancel is removing the
+  recruit order, as the army card's arriving rows do). New-army recruits stay on the "Raising a new army" line
+  (one x cancels all).
+- **No tier folding.** `_grouped` lists every unlocked row flat under its role group; the "+n tiers" chip and `_fold`
+  of lines are gone (Canoe Raiders and Miskito Warriors share a roster line, not a role, and the chip hid one under the
+  other). A lower tier is a touch dimmer and carries an upgrade arrow by its price (`UnitRow.upgrade_tip`), the tip
+  naming the better row ("Upgrades to Canoe Raiders at War lodge 1"). Locked rows keep the one "needs ..." fold.
+  "Trains here" already shows one row per line and is unchanged.
 
 ### Per-faction unit names (as built, 2026-10-26)
 

@@ -3504,12 +3504,24 @@ func _r_setup() -> void:
 	cs.select_army(g0)
 
 
+## Filled chits of a recruit_slots row (a filled chit's number is drawn bright).
+func _chits_filled(sl: Node) -> int:
+	var n := 0
+	for c in sl.get_children():
+		if str(c.name).begins_with("slot_chit_"):
+			var sb := (c as Control).get_theme_stylebox("panel") as StyleBoxFlat
+			if sb != null and sb.bg_color.a > 0.5:
+				n += 1
+	return n
+
+
 func _r_card() -> void:
 	_bar_press("act_recruit", "Recruit (into the army)")
 	var sec = cs.dialog_box.find_child("recruit_section", true, false)
 	var sl = cs.dialog_box.find_child("recruit_slots", true, false)
-	_check(sec != null and sl != null and (sl as Label).text.begins_with("0 of 3 recruits here this turn"),
-		"the army's Recruit popup has the recruit list (%s)" % ((sl as Label).text if sl else "none"))
+	# (the slot count is now a row of chits, "recruit_slots": 3 empty ones at a city, no filled)
+	_check(sec != null and sl != null and sl.get_child_count() == 4 and _chits_filled(sl) == 0,
+		"the army's Recruit popup has the recruit list and 3 empty slot chits (%d)" % (sl.get_child_count() - 1 if sl else -1))
 	_check(cs.side_box.find_child("recruit_section", true, false) == null, "the army panel has no recruit list")
 	var plus: Button = null
 	for b in cs.dialog_box.find_children("recruit_*", "Button", true, false):
@@ -3532,7 +3544,7 @@ func _r_check() -> void:
 	_check(cs.cmd_bar.find_child("arriving_card_0", true, false) != null, "and as a dimmed card on the bar")
 	_bar_done()
 	var sl = cs.dialog_box.find_child("recruit_slots", true, false)
-	_check(sl != null and (sl as Label).text.begins_with("1 of 3"), "the slot counter: %s" % ((sl as Label).text if sl else ""))
+	_check(sl != null and sl.get_child_count() == 4 and _chits_filled(sl) == 1, "the slot chits: one of three filled")
 	_check(int(cs.ps["factions"][rome]["treasury"]) < int(cs.st["factions"][rome]["treasury"]), "the price comes off the previewed treasury")
 	# Plan a march for it: a toast asks first.
 	cs.close_dialog()

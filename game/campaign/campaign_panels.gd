@@ -83,6 +83,11 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		"Key city" if CData.KEY_CITIES.has(str(rd["key"])) else ("Capital" if CData.is_capital(r) else "Wealth %d" % int(rd["wealth"])),
 		Terrain.KIND_NAMES[int(rd["terrain"])].to_lower()]
 	box.add_child(Kit.label(info, Kit.FONT_SMALL, Kit.COL_DIM, true))
+	if mine and CState.grid_on(ps):
+		var nrec := CRules.recruits_per_turn(ps, r)
+		var rl0 := Kit.label("%s: %d recruit%s a turn" % [CData.LEVEL_NAMES[lvl], nrec, "" if nrec == 1 else "s"], Kit.FONT_SMALL, Kit.COL_DIM, true)
+		rl0.name = "recruits_line"
+		box.add_child(rl0)
 	if o != f and f >= 0:
 		var rel := ""
 		var col := Color.WHITE
@@ -125,6 +130,10 @@ func region_panel(box: VBoxContainer, r: int) -> void:
 		_attack_section(box, r)
 	var gp := CRules.growth_per_turn(ps, r)
 	var grow := "Growth %d/%d to %s (+%d a turn)" % [int(rs["growth"]), int(CData.GROWTH_TO[lvl + 1]), CData.LEVEL_NAMES[lvl + 1].to_lower(), gp] if lvl < CData.CITY else "Full-grown city"
+	if mine and lvl < CData.CITY:
+		var more := int(CData.RECRUITS_PER_TURN[lvl + 1]) - int(CData.RECRUITS_PER_TURN[lvl])
+		if more > 0:
+			grow += ", +%d recruit%s a turn" % [more, "" if more == 1 else "s"]
 	box.add_child(Kit.label("Income %d a turn.  %s." % [CRules.region_income(ps, r), grow], Kit.FONT_SMALL, Color.WHITE, true))
 	var b := CState.battle_at(ps, r)
 	if not b.is_empty():
@@ -882,13 +891,86 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 		box.add_child(h)
 
 
+## Recruit slots: one chit per recruit this settlement raises a turn, filled
+## (the faction colour) for a queued recruit, an outline for a free slot, the
+## slot's number inside. title: the section's text; the header's tip says what
+## sets the number. Returns the header (a flow, so a phone wraps it).
+func _slot_header(r: int, title: String, icon: String = "recruit") -> HFlowContainer:
+	var ps: Dictionary = s.ps
+	var rs: Dictionary = ps["regions"][r]
+	var cap := CRules.recruits_per_turn(ps, r)
+	var used := (rs["queue"] as Array).size()
+	var fl := Kit.flow(6)
+	fl.name = "recruit_slots"
+	var head := Kit.section(title, icon)
+	head.mouse_filter = Control.MOUSE_FILTER_STOP
+	head.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var tip_txt := "A village raises 1 a turn, a town 2, a city 3; %sone general a turn. Recruits arrive at the end of the turn." % (
+		"a pirate haven more with infamy; " if CData.pack == "west" else "")
+	var ttl := "%s: %d recruit%s a turn" % [CData.LEVEL_NAMES[int(rs["level"])], cap, "" if cap == 1 else "s"]
+	Kit.tip(head, ttl, tip_txt)
+	fl.add_child(head)
+	var fc := _fc(s.f)
+	for k in cap:
+		var chit := PanelContainer.new()
+		chit.name = "slot_chit_%d" % k
+		chit.custom_minimum_size = Vector2(26, 26)
+		chit.mouse_filter = Control.MOUSE_FILTER_STOP
+		var sb := StyleBoxFlat.new()
+		sb.set_corner_radius_all(8)
+		sb.content_margin_left = 0
+		sb.content_margin_right = 0
+		sb.content_margin_top = 0
+		sb.content_margin_bottom = 0
+		var filled := k < used
+		if filled:
+			sb.bg_color = fc.darkened(0.15)
+			sb.border_color = fc.lightened(0.45)
+		else:
+			sb.bg_color = Color(1, 1, 1, 0.04)
+			sb.border_color = Color(1, 1, 1, 0.45)
+		sb.set_border_width_all(2)
+		chit.add_theme_stylebox_override("panel", sb)
+		var nl := Kit.label(str(k + 1), Kit.FONT_SMALL, Color.WHITE if filled else Kit.COL_DIM)
+		nl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		nl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chit.add_child(nl)
+		Kit.tip(chit, "Slot %d of %d" % [k + 1, cap], ("Taken by a queued recruit. " if filled else "Free. ") + tip_txt)
+		fl.add_child(chit)
+	return fl
+
+
+## The queued recruits of region r listed by name, each with an x that takes
+## it back (the rules' cancel is removing the order). skip_new: leave out the
+## new-army recruits (the "Raising a new army" line lists those).
+func _queue_list(box: VBoxContainer, r: int, skip_new: bool = false) -> void:
+	var k := 0
+	for o in s.orders:
+		if str(o["t"]) != "recruit" or int(o.get("r", -1)) != r:
+			continue
+		if skip_new and int(o.get("new", 0)) != 0:
+			continue
+		var qo: Dictionary = o
+		var h := Kit.hbox(4)
+		var l := Kit.label("%s%s" % [CData.unit_name(str(o["unit"]), s.f), " (new army)" if int(o.get("new", 0)) != 0 else (" (into an army)" if o.has("army") else "")],
+			Kit.FONT, Color.WHITE, true)
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		h.add_child(l)
+		var xb := Kit.icon_button("", "close", func(): s.remove_orders(func(x): return is_same(x, qo)), 44)
+		xb.name = "queue_cancel_%d" % k
+		Kit.tip(xb, "Take back", "Remove this recruit from the turn; its slot is free again.")
+		h.add_child(xb)
+		box.add_child(h)
+		k += 1
+
+
 func _recruit(box: VBoxContainer, r: int) -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
 	var rs: Dictionary = ps["regions"][r]
 	var q: Array = rs["queue"]
-	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
-	box.add_child(Kit.section("Recruit (%d of %d this turn; ready next turn)" % [q.size(), cap], "recruit"))
+	box.add_child(_slot_header(r, "Recruit"))
 	for k in q.size():
 		var ty := UT.index_of(str(q[k]))
 		var row := Kit.UnitRow.new(ty, -1, _fc(f), "planned")
@@ -928,10 +1010,11 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 
 
 ## The recruit options as collapsible class groups (Foot, Spears, Missile,
-## Horse, Beasts, Engines, Support), each line's best tier first with a
-## "+n tiers" chip that shows the lower tiers (kept, just folded). make(o)
-## builds one option's row (an HBox); a lower tier carrying o["force"] stays
-## open. Open / closed state lives in _fold for the session.
+## Horse, Beasts, Engines, Support), every unlocked row listed flat under the
+## role its unit plays, a line's best tier first; a lower tier gets an upgrade
+## arrow whose tip names the better row. make(o) builds one option's row (an
+## HBox whose first child is the UnitRow). Open / closed state lives in _fold
+## for the session.
 func _grouped(box: VBoxContainer, opts_all: Array, make: Callable, tag: String) -> void:
 	# Only what the buildings here allow now (a row held back by money or the
 	# turn's slots stays, disabled); the locked rows ("needs Range 1") sit
@@ -988,22 +1071,20 @@ func _grouped_open(box: VBoxContainer, opts: Array, make: Callable, tag: String)
 	var groups: Array = []
 	for g in Traits.GROUP_LABEL.size():
 		groups.append([])
-	var lines: Dictionary = {}
+	var best_of := {}   # line -> the row above (the next better tier)
 	for o in opts:
 		var line := str(o["line"])
-		if o["lower"] and lines.has(line):
-			(lines[line] as Array).append(o)
-			continue
-		var l: Array = [o]
-		lines[line] = l
-		(groups[Traits.group_of(UT.index_of(str(o["t"])))] as Array).append(l)
+		var e: Dictionary = o
+		if best_of.has(line):
+			e = o.duplicate()
+			e["up"] = str(best_of[line])
+		best_of[line] = str(o["t"])
+		(groups[Traits.group_of(UT.index_of(str(o["t"])))] as Array).append(e)
 	for g in groups.size():
-		var glines: Array = groups[g]
-		if glines.is_empty():
+		var grows: Array = groups[g]
+		if grows.is_empty():
 			continue
-		var n := 0
-		for l in glines:
-			n += (l as Array).size()
+		var n := grows.size()
 		var gkey := "%s_g%d" % [tag, g]
 		var open: bool = bool(_fold.get(gkey, true))
 		var head := Kit.icon_button("%s (%d)" % [Traits.GROUP_LABEL[g], n], Traits.GROUP_ICONS[g], Callable(), 0)
@@ -1020,32 +1101,13 @@ func _grouped_open(box: VBoxContainer, opts: Array, make: Callable, tag: String)
 			head.text += "  +"
 		box.add_child(head)
 		box.add_child(body)
-		for l in glines:
-			var rows: Array = l
-			var h: Control = make.call(rows[0])
+		for o in grows:
+			var h: Control = make.call(o)
+			if o.has("up") and h.get_child_count() > 0 and h.get_child(0) is Kit.UnitRow:
+				var up := str(o["up"])
+				var nd := CRules.needs(up)
+				(h.get_child(0) as Kit.UnitRow).upgrade_tip = "Upgrades to %s at %s %d" % [CData.unit_name(up, s.f), CData.chain_name(int(nd[0]), s.f), int(nd[1])]
 			body.add_child(h)
-			if rows.size() == 1:
-				continue
-			var lkey := "%s_l%s" % [tag, str(rows[0]["line"])]
-			var forced := false
-			for k in range(1, rows.size()):
-				forced = forced or bool(rows[k].get("force", false))
-			var lopen: bool = bool(_fold.get(lkey, forced))
-			var lower := Kit.vbox(4)
-			lower.visible = lopen
-			var chip := Kit.button(("%d tier%s" % [rows.size() - 1, "" if rows.size() == 2 else "s"]) if lopen else "+%d tier%s" % [rows.size() - 1, "" if rows.size() == 2 else "s"], Callable(), 64, Kit.FONT_SMALL)
-			chip.name = "tiers_%s_%s" % [tag, str(rows[0]["line"])]
-			chip.custom_minimum_size.y = 44
-			chip.pressed.connect(func():
-				lower.visible = not lower.visible
-				_fold[lkey] = lower.visible
-				var m := rows.size() - 1
-				chip.text = ("%d tier%s" % [m, "" if m == 1 else "s"]) if lower.visible else "+%d tier%s" % [m, "" if m == 1 else "s"])
-			(h as Container).add_child(chip)
-			(h as Container).move_child(chip, 1)
-			body.add_child(lower)
-			for k in range(1, rows.size()):
-				lower.add_child(make.call(rows[k]))
 
 
 ## The recruit list's rows: every tier the buildings unlock, per line, best
@@ -1070,12 +1132,8 @@ static func best_options(ps: Dictionary, f: int, r: int) -> Array:
 func _raise_section(box: VBoxContainer, r: int) -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
-	var rs: Dictionary = ps["regions"][r]
-	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
-	var used := (rs["queue"] as Array).size()
-	var sec := Kit.section("Recruits (%d of %d here this turn)" % [used, cap], "recruit")
-	sec.name = "recruit_slots"
-	box.add_child(sec)
+	box.add_child(_slot_header(r, "Recruits"))
+	_queue_list(box, r, true)
 	var raising := _raise_orders(r)
 	if not raising.is_empty():
 		var names: Array[String] = []
@@ -1090,19 +1148,6 @@ func _raise_section(box: VBoxContainer, r: int) -> void:
 		x.name = "raise_cancel"
 		h.add_child(x)
 		box.add_child(h)
-	# Old-form recruits planned before this panel changed (a saved plan):
-	# shown with X so they can still be taken back.
-	for o in s.orders:
-		if str(o["t"]) == "recruit" and int(o.get("r", -1)) == r and not o.has("army") and int(o.get("new", 0)) == 0:
-			var oty := UT.index_of(str(o["unit"]))
-			var orow := Kit.UnitRow.new(oty, -1, _fc(f), "planned")
-			orow.name_f = f
-			orow.sub_text = "arrives at the end of the turn"
-			var oh := Kit.hbox(4)
-			oh.add_child(orow)
-			var ox := Kit.icon_button("", "close", func(): s.remove_orders(func(x): return is_same(x, o)), 44)
-			oh.add_child(ox)
-			box.add_child(oh)
 	var why := raise_why(ps, f, r)
 	var b := Kit.icon_button("Raise new army" if raising.is_empty() else "Add to the new army", "raise", func(): show_raise(r), 0)
 	b.name = "raise_army"
@@ -1199,7 +1244,7 @@ func show_raise(r: int, tab: String = "") -> void:
 		_raise["tab"] = tab
 	var picks: Dictionary = _raise["picks"]
 	var rs: Dictionary = ps["regions"][r]
-	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
+	var cap := CRules.recruits_per_turn(ps, r)
 	var free := cap - (rs["queue"] as Array).size()
 	var money := int(ps["factions"][f]["treasury"])
 	var n := 0
@@ -1232,8 +1277,9 @@ func show_raise(r: int, tab: String = "") -> void:
 		rx.name = "raise_cancel"
 		rh.add_child(rx)
 		v.add_child(rh)
-	v.add_child(Kit.label("Choose the units of a new army: up to %d this turn (%d of %d recruit slots used at %s). It forms inside the walls at the end of the turn." % [
-		free, cap - free, cap, CData.REGIONS[r]["city"]], Kit.FONT_SMALL, Kit.COL_DIM, true))
+	v.add_child(_slot_header(r, "Recruit slots"))
+	v.add_child(Kit.label("Choose the units of a new army: up to %d more this turn at %s. It forms inside the walls at the end of the turn." % [
+		free, CData.REGIONS[r]["city"]], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	var make_rz := func(o: Dictionary) -> Control:
 		var key := str(o["t"])
 		var ty := UT.index_of(key)
@@ -1768,15 +1814,13 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 	var r := CRules.recruit_region(ps, a)
 	if r < 0 or int(a["busy"]) != 0:
 		return
-	var rs: Dictionary = ps["regions"][r]
-	var cap := int(CData.RECRUITS_PER_TURN[int(rs["level"])])
-	var used := (rs["queue"] as Array).size()
 	var sec := Kit.section("Recruit at %s" % CData.REGIONS[r]["city"], "recruit")
 	sec.name = "recruit_section"
 	box.add_child(sec)
-	var sl := Kit.label("%d of %d recruits here this turn; they join this army at the end of the turn, and it cannot march this turn." % [used, cap],
+	box.add_child(_slot_header(r, "Slots", ""))
+	var sl := Kit.label("Recruits join this army at the end of the turn, and it cannot march this turn.",
 		Kit.FONT_SMALL, Kit.COL_DIM, true)
-	sl.name = "recruit_slots"
+	sl.name = "recruit_note"
 	box.add_child(sl)
 	if not s.plan6(id).is_empty():
 		var ml := Kit.label("This army is marching this turn: cancel its move to recruit into it.", Kit.FONT, Kit.COL_GOLD, true)

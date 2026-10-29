@@ -1024,6 +1024,12 @@ class UnitRow extends PressRow:
 	## The faction whose display name the card shows (CData.unit_name); -1 the
 	## row's own name. Apart from `faction` so the fire trait is unchanged.
 	var name_f := -1
+	## Set on a lower tier of a line whose better tier is listed too: an upgrade
+	## arrow by the price, this text its tip ("Upgrades to X at Range 2").
+	var upgrade_tip := "":
+		set(v):
+			upgrade_tip = v
+			queue_redraw()
 
 	## The name the card shows: the faction's own (CData.unit_name).
 	func display_name() -> String:
@@ -1067,6 +1073,11 @@ class UnitRow extends PressRow:
 		if right_text != "":
 			rw = font.get_string_size(right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 8
 			draw_string(font, Vector2(sz.x - rw, 18.0 if detail else sz.y * 0.5 + 5.0), right_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.88, 0.55))
+		if upgrade_tip != "" and detail:
+			var urc := Rect2(sz.x - rw - 18, 3, 16, 16)
+			IconRaster.draw_icon(self, "upgrade", urc, Color(0.6, 0.9, 0.6))
+			_hits.append([urc, upgrade_tip])
+			rw += 20
 		var nm := display_name()
 		var nw := minf(font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, sz.x - x0 - rw - 4)
 		draw_string(font, Vector2(x0, 16), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw - 4, 14, Color.WHITE)
