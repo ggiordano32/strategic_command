@@ -69,6 +69,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		dec.base = GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))["base"]
 		dec.pal_i = int(sim.ter_info.get("palette", 0))
 		dec.low = Quality.is_low()
+		dec.board = BattleLook.is_diorama() and not ("--no-splat" in OS.get_cmdline_user_args())
 		add_child(dec)
 		_decals = dec
 	if sim.map_info.has("land"):
@@ -95,6 +96,7 @@ var _measuring := false
 var _measure_from := 0
 var _measure_frames := 0
 var quality_low := false
+var board_on := false   # the diorama look's terrain board (flock, felt, sand strips, resin)
 
 
 ## Graphics Low or High on the ground (the shader flag, the settlement
@@ -102,6 +104,9 @@ var quality_low := false
 func apply_quality() -> void:
 	quality_low = Quality.is_low()
 	material_ref.set_shader_parameter("low", quality_low)
+	# The terrain board (tabletop pass 2): flock on High and Low, tufts and the resin gloss on High only.
+	material_ref.set_shader_parameter("tufts_on", board_on and not quality_low)
+	material_ref.set_shader_parameter("resin_on", board_on and not quality_low)
 	if _decals != null and _decals.low != quality_low:
 		_decals.low = quality_low
 		_decals.queue_redraw()
@@ -283,6 +288,8 @@ func _build() -> void:
 func _splat(m: ShaderMaterial, pal_i: int) -> void:
 	var diorama := BattleLook.is_diorama() and not ("--no-splat" in OS.get_cmdline_user_args())
 	m.set_shader_parameter("splat_on", diorama)
+	board_on = diorama
+	m.set_shader_parameter("board", diorama)
 	if not diorama:
 		return
 	var dry := pal_i == MapGen.PAL_ARID or pal_i == MapGen.PAL_DRY
@@ -525,6 +532,7 @@ class _Decals extends Node2D:
 	var base := Color(0.3, 0.4, 0.2)
 	var pal_i := 0
 	var low := false
+	var board := false
 
 	func _draw() -> void:
-		CityDraw.draw_surround(self, plan, k, Vector2.ZERO, base, pal_i, low)
+		CityDraw.draw_surround(self, plan, k, Vector2.ZERO, base, pal_i, low, board)

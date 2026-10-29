@@ -88,6 +88,12 @@ uniform vec3 crown_a = vec3(0.15, 0.30, 0.13);
 uniform vec3 crown_b = vec3(0.19, 0.35, 0.15);
 uniform vec3 earth_col = vec3(0.40, 0.36, 0.22);
 uniform float crown_cell = 5.5;       // metres: one crown per cell (jittered), radius ~45 % of it
+// The terrain board (tabletop pass 2, 2026-10-29; diorama look only, game/terrain_layer.gd sets `board`): flock and static-grass
+// tufts on open ground, felt under the woods, sand-strip streets, resin water. View only.
+uniform bool board = false;
+uniform bool tufts_on = false;        // static-grass tufts (High only)
+uniform bool resin_on = false;        // glossy resin water edge and sheen (High only)
+uniform vec3 felt_col = vec3(0.15, 0.27, 0.11);
 // Graphics Low (game/quality.gd): no noise patches / grain / rock mottling, still water, plain ford.
 uniform bool low = false;
 
@@ -125,6 +131,69 @@ float vnoise(vec2 p) {
 	float c = hash12(i + vec2(0.0, 1.0));
 	float d = hash12(i + vec2(1.0, 1.0));
 	return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Flock: short specks of coloured fibre on the board, a colour multiplier. The cell is snapped to an octave of
+// the pixel size (about 1.6 px), so a grain never drops under a pixel; it fades away when far out.
+vec3 flock_mul(vec2 wm, float mpp) {
+	float amp = 1.0 - smoothstep(1.3, 2.6, mpp);
+	if (amp < 0.01) {
+		return vec3(1.0);
+	}
+	float cell = 0.16 * exp2(ceil(log2(max(mpp / 0.1, 1.0))));
+	vec3 acc = vec3(1.0);
+	for (int l = 0; l < 2; l++) {
+		// two grids of different size and turn, so the specks do not read as a lattice
+		vec2 w = l == 0 ? wm : vec2(wm.x * 0.8 - wm.y * 0.6, wm.x * 0.6 + wm.y * 0.8) + 13.7;
+		float cl = l == 0 ? cell : cell * 1.43;
+		vec2 q = w / cl;
+		vec2 id = floor(q);
+		vec2 f = fract(q) - 0.5;
+		float h = hash12(id + vec2(7.7 + float(l) * 20.0, 1.9));
+		float h2 = hash12(id + vec2(31.1, 12.3 + float(l) * 9.0));
+		float h3 = hash12(id + vec2(3.9, 44.4));
+		float rad = 0.2 + 0.2 * hash12(id + vec2(70.1, 3.3));
+		float d = length(f - (vec2(h2, h3) - 0.5) * 0.5);
+		float spk = (1.0 - smoothstep(rad - 0.07, rad + 0.05, d)) * step(0.45, h);
+		vec3 m = h2 < 0.45 ? vec3(0.68, 0.9, 0.62) : (h2 < 0.86 ? vec3(0.98, 1.28, 0.7) : vec3(1.4, 1.2, 0.66));
+		acc = mix(acc, acc * m, spk * 0.95 * amp);
+	}
+	return acc;
+}
+
+// Static-grass tufts: a few thin vertical blades (a stroke each, lighter towards the tip and on the lit left
+// side) in sparse jittered 0.9 m cells. x = coverage, y = brightness. Only close up (fades 0.3..0.5 m a pixel).
+vec2 tuft_at(vec2 wm, float mpp) {
+	float amp = 1.0 - smoothstep(0.3, 0.5, mpp);
+	if (amp < 0.01) {
+		return vec2(0.0);
+	}
+	float cs = 0.9;
+	vec2 id = floor(wm / cs);
+	vec2 p = (wm / cs - id) * cs;
+	float h = hash12(id + vec2(61.3, 9.1));
+	if (h > 0.24) {
+		return vec2(0.0);
+	}
+	float bx = (0.28 + 0.44 * hash12(id + vec2(2.2, 71.7))) * cs;
+	float by = (0.5 + 0.3 * hash12(id + vec2(8.8, 5.5))) * cs;
+	float hw = max(0.02, mpp * 0.5);
+	float cov = 0.0;
+	float br = 1.0;
+	for (int i = 0; i < 3; i++) {
+		float fi = float(i) - 1.0;
+		float len = (0.2 + 0.12 * hash12(id + vec2(float(i) * 3.3, 19.9))) ;
+		float lean = fi * 0.07 + (hash12(id + vec2(float(i), 55.5)) - 0.5) * 0.05;
+		float ty = (by - p.y) / len;
+		float cx = bx + fi * 0.045 + lean * clamp(ty, 0.0, 1.0);
+		float w = hw * (1.0 - 0.55 * clamp(ty, 0.0, 1.0));
+		float c = (1.0 - smoothstep(w * 0.6, w * 1.2, abs(p.x - cx))) * step(0.0, ty) * step(ty, 1.0);
+		if (c > cov) {
+			cov = c;
+			br = 0.95 + 0.4 * clamp(ty, 0.0, 1.0) + (fi < 0.0 ? 0.18 : 0.0) + (p.x < cx ? 0.12 : 0.0);
+		}
+	}
+	return vec2(cov * amp, br);
 }
 
 // Nearest crown at p (metres) for a wood of density vr (0..1): x = how far inside the crown (metres, 0 at
@@ -197,26 +266,49 @@ void fragment() {
 	highp float hm_w = 0.0;
 	float sea = 0.0;
 	float ditch = 0.0;
+	float wr = 0.0;   // the raw water mask (0.5 = the shore line), for the resin edge
 	if (sea_on) {
 		vec2 sv = texture(seamap, world / veg_size_px).rg;
+		wr = sv.r;
 		sea = smoothstep(0.35, 0.65, sv.r);
 		ditch = smoothstep(0.3, 0.7, sv.g);
 	}
 	float ford = 0.0;
 	float wet = 0.0;
+	float pave_m = 0.0;     // streets, plaza and paved settlement ground (no flock)
+	float felt_m = 0.0;     // under the woods
+	float rock_o = 0.0;
 	if (sea_on) {
 		wet = texture(seamap, world / veg_size_px).b;
 	}
 	if (riv_on) {
 		vec3 rw = texture(rivmap, world / riv_size_px).rgb;
+		wr = max(wr, rw.r);
 		sea = max(sea, smoothstep(0.35, 0.65, rw.r));
 		ford = smoothstep(0.3, 0.7, rw.g);
 		wet = max(wet, rw.b);
 	}
+	float wfw = fwidth(wr);   // (derivatives taken here, in uniform flow, for the resin edge below)
+	vec2 wgr = vec2(dFdx(wr), dFdy(wr));
 	if (veg_on) {
 		vec4 v = texture(vegmap, world / veg_size_px);
 		// Forest floor: darker and a little greener under the trees.
 		col = mix(col, wood_col, v.r * 0.55);
+		if (board) {
+			// Model trees on felt: a darker green sheet cut to the wood's outline (a hand-cut wobble), with fibre
+			// grain, a thin lighter rim and a dark line outside it.
+			float thr = 0.075 + (vnoise(wm / 2.3 + vec2(4.4, 1.1)) - 0.5) * 0.035;
+			float dpx = (v.r - thr) / max(fwidth(v.r), 1e-4);
+			felt_m = smoothstep(-0.7, 0.7, dpx);
+			if (felt_m > 0.0 || dpx > -3.0) {
+				float fib = hash12(floor(wm / max(0.12, mpp * 1.2)) + vec2(9.1, 2.7));
+				vec3 fc = felt_col * (0.9 + 0.2 * fib) * (0.85 + 0.3 * n2) * (1.0 + 0.5 * clamp(v.r - 0.2, 0.0, 0.3));
+				col = mix(col, fc, felt_m * 0.9);
+				float rim = (1.0 - smoothstep(0.8, 2.2, dpx)) * felt_m;
+				col = mix(col, fc * 1.9 + vec3(0.03), rim * 0.55);
+				col *= 1.0 - 0.28 * (1.0 - felt_m) * (1.0 - smoothstep(0.0, 3.0, -dpx)) * step(-3.0, dpx);
+			}
+		}
 		float vgate = smoothstep(0.04, 0.14, v.r);
 		vec2 sh_off = vec2(1.5, 1.7);  // metres, the shadow falls to the lower right
 		float vr_s = low ? 0.0 : texture(vegmap, (world - sh_off * ppm) / veg_size_px).r;
@@ -245,6 +337,16 @@ void fragment() {
 			vec3 dt = texture(tile_dirt, wm / 24.0).rgb * 2.0;
 			pv = dt * pave_col * 0.95 * worn;
 			pl = dt * pave_col * 1.0 * (0.92 + 0.16 * n3);
+		}
+		if (board) {
+			// Streets and plazas as strips of sand: lighter and warmer, with a faint raised edge from the paved mask.
+			vec3 sandy = vec3(0.80, 0.69, 0.48) * (0.93 + 0.12 * n3);
+			pv = mix(pv, sandy * 0.9, 0.35);
+			pl = mix(pl, sandy, 0.45);
+			float sa = clamp(v.a, 0.0, 1.0);
+			float ed = abs(sa - 0.5) / max(fwidth(sa), 1e-4);
+			col = mix(col, col * (1.0 + 0.22 * (0.5 - 0.5 * clamp(dot(normalize(vec2(dFdx(sa), dFdy(sa)) + 1e-6), vec2(-0.7, -0.7)), -1.0, 1.0))), (1.0 - smoothstep(0.6, 2.2, ed)) * step(0.05, sa) * 0.8);
+			pave_m = clamp(v.g * 0.7 + sa, 0.0, 1.0);
 		}
 		col = mix(col, pv, v.g * (splat ? 0.7 : 0.45));
 		col = mix(col, pl, clamp(v.a, 0.0, 1.0) * (splat ? 0.75 : 0.55));
@@ -283,7 +385,11 @@ void fragment() {
 		vec3 tint = e < 0.0 ? mix(base_col, low_col, -e) : mix(base_col, high_col, e);
 		col = col + (tint - base_col);
 		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
-		col *= 1.0 + shade_k * (shade > 0.0 ? shade * 0.7 : shade * (terrace > 0.0 ? 0.62 : 1.0)) * (1.0 - sea);
+		// Foam steps: the step tops are flat, so the hill shade fades there and the risers carry the light.
+		highp float fw0 = fwidth(lv0);
+		float tf0 = 1.0 - smoothstep(0.1, 0.2, fw0);
+		float tshade = shade * (1.0 - 0.6 * terrace * tf0);
+		col *= 1.0 + shade_k * (tshade > 0.0 ? tshade * 0.7 : tshade * (terrace > 0.0 ? 0.62 : 1.0)) * (1.0 - sea);
 		// Slopes darken a little; steep ground and, on hill maps, ground
 		// above the tree line turns to bare rock (less in the woods).
 		float wood = veg_on ? texture(vegmap, world / veg_size_px).r : 0.0;
@@ -297,6 +403,7 @@ void fragment() {
 		float above = smoothstep(tree_line, tree_line + 0.12, hf + (n2 - 0.5) * 0.18);
 		float rock = max(smoothstep(0.2, 0.5, grade + (n2 - 0.5) * 0.12), above * 0.7);
 		rock *= (1.0 - wood * 0.7) * (1.0 - sea) * (1.0 - ford);
+		rock_o = rock;
 		vec3 rc = rock_col * (0.88 + 0.24 * n3);
 		if (splat && rock > 0.02) {
 			rc = texture(tile_rock, wm / 24.0).rgb * (rock_col / vec3(0.5)) * 0.95;
@@ -309,12 +416,25 @@ void fragment() {
 		highp float dist = abs(fract(lv) - 0.5);
 		float k = floor(lv);
 		if (terrace > 0.0) {
-			// Layered-foam steps: each band a touch lighter than the one below, and a lit or shaded
-			// riser (by the NW hill shade) just above each step edge; fades out where bands crowd.
+			// Layered-foam steps (tabletop pass 2): flat step tops, a crisp bevelled riser above each step edge, lit
+			// on the upper-left faces and shaded on the lower-right ones (the NW hill shade), a pale lip along its
+			// top edge and a thin dark shadow line at its foot; fades out where bands crowd.
 			float tf = 1.0 - smoothstep(0.1, 0.2, fw);
 			float u = fract(lv + 0.5);
-			float riser = (1.0 - smoothstep(0.0, 0.16 + fw * 1.5, u)) * smoothstep(0.02, 0.2, grade);
-			col *= 1.0 + terrace * tf * (0.045 * (u - 0.5) + riser * clamp(shade * 0.9, -0.2, 0.16) * 0.9);
+			float gate = max(smoothstep(0.02, 0.2, grade), 0.45) * tf * (1.0 - sea);
+			highp float fwc = max(fw, 1e-4);
+			float rpx = u / fwc;
+			float rwpx = clamp(0.2 / fwc, 2.0, 8.0);
+			float riser = (1.0 - smoothstep(rwpx - 0.8, rwpx + 0.8, rpx)) * gate;
+			float lip = riser * smoothstep(rwpx - 2.4, rwpx - 1.2, rpx);
+			float foot = (1.0 - smoothstep(0.7, 2.3, (1.0 - u) / fwc)) * gate * (1.0 - riser);
+			// which way the face looks: lit where the ground falls away to the upper left (height rises to the lower right)
+			highp vec2 gdir = vec2((b.x - a.x) + (d.x - c.x), (c.x - a.x) + (d.x - b.x));
+			float rl = clamp(dot(gdir / (length(gdir) + 1e-3), vec2(0.7071)) * 1.5, -1.0, 1.0);
+			col *= 1.0 + terrace * riser * (rl > 0.0 ? 0.26 * rl : 0.42 * rl);
+			col = mix(col, vec3(0.86, 0.83, 0.68), terrace * riser * 0.07 * (0.5 + 0.5 * (rl * 0.5 + 0.5)));
+			col *= 1.0 + terrace * lip * 0.15;
+			col *= 1.0 - terrace * foot * 0.3;
 		}
 		bool major = abs(mod(k, major_every) - floor(major_every * 0.5)) < 0.5;
 		// Fade where lines would be packed tighter than ~6 px (minor) or
@@ -325,6 +445,20 @@ void fragment() {
 		} else {
 			float fade = 1.0 - smoothstep(0.1, 0.17, fw);
 			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
+		}
+	}
+	if (board) {
+		// Flock on open ground (not on streets, plazas, the felt under woods, water, bare rock or wet sand) and
+		// static-grass tufts close up; fields take the flock too, so a field decal's flock square shows it.
+		float open_m = (1.0 - pave_m) * (1.0 - sea) * (1.0 - ford) * (1.0 - rock_o * 0.85) * (1.0 - wet * 0.7) * (1.0 - felt_m * 0.8);
+		if (open_m > 0.02) {
+			col *= mix(vec3(1.0), flock_mul(wm, mpp), open_m);
+			if (tufts_on) {
+				vec2 tt = tuft_at(wm, mpp);
+				if (tt.x > 0.0) {
+					col = mix(col, col * vec3(0.94, 1.3, 0.78) * tt.y, tt.x * open_m * 0.85);
+				}
+			}
 		}
 	}
 	// Wet sand along the banks and the shore: darker, sandy, ragged edge.
@@ -354,8 +488,28 @@ void fragment() {
 			water += vec3(0.5, 0.58, 0.6) * glint * 0.2;
 			foam *= 0.75 + 0.25 * sin(t * 1.3 + wm.x * 0.5 + wm.y * 0.35);
 		}
+		float wdpx = (wr - 0.5) / max(wfw, 1e-4);   // pixels inside the shore line
+		if (board) {
+			// Poured resin over a painted bed: the bed shows sandy-teal in the shallows at the rim.
+			vec3 bed = mix(sea_col * 1.3 + vec3(0.10, 0.09, 0.02), sand_col * 0.9, 0.3);
+			water = mix(water, bed, (1.0 - smoothstep(0.55, 0.98, wr)) * 0.65);
+			foam *= 0.25;
+		}
 		col = mix(col, water, sea);
 		col = mix(col, vec3(0.88, 0.92, 0.9), foam * 0.45);
+		if (board) {
+			// The cut edge where the resin meets the board: a crisp dark meniscus line.
+			col *= 1.0 - 0.42 * (1.0 - smoothstep(0.5, 1.5, abs(wdpx)));
+			if (resin_on) {
+				// Glossy specular band just inside the edge (brighter on the banks facing the lamp, upper left) and
+				// a broad stretched sheen over the surface.
+				vec2 wn = normalize(wgr + 1e-6);
+				float band = smoothstep(1.4, 2.8, wdpx) * (1.0 - smoothstep(5.0, 12.0, wdpx));
+				col += vec3(0.8, 0.9, 0.95) * band * (0.22 + 0.4 * clamp(dot(wn, vec2(0.7071, 0.7071)), 0.0, 1.0)) * sea;
+				float sh = vnoise(vec2(dot(wm, vec2(0.8, 0.6)) / 46.0, dot(wm, vec2(-0.6, 0.8)) / 6.5) + vec2(3.3, 8.8));
+				col += vec3(0.9, 0.95, 1.0) * smoothstep(0.58, 0.78, sh) * 0.16 * sea;
+			}
+		}
 	}
 	if (riv_on && ford > 0.0) {
 		// The ford: pale shallows over a pale gravel bed, ripples running

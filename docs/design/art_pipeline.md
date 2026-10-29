@@ -635,3 +635,78 @@ Pass 1 of the tabletop plan above. View only: nothing under `sim/` changed, no h
   (the CPU-fed base shader runs on the desktop's `--soldiers=cpu`, not on the device); the standards and tokens are screen-scale
   marks and will want their lift and anchor reworked with pass 3's oblique camera; the standard's pennant for the Rome pack has
   no crest (as on the overworld); the tray's fill is faint on dark ground.
+
+### Pass 2, the terrain board (as built, 2026-10-29)
+
+Pass 2 of the tabletop plan above. View only: nothing under `sim/` or `campaign/` changed, no hash moved; the shaders read the sim's
+height and vegetation textures (built once per battle) and write nothing. Diorama look only (a `board` uniform set with the splat in
+`terrain_layer.gd _splat`); the painterly look is exactly as before. Code: `game/terrain.gdshader` (foam steps, flock, tufts, felt,
+sand streets, resin water), `game/terrain_layer.gd` (the flags, `apply_quality`), `game/city_draw.gd` (`draw_surround(..., board)`: sand
+tracks, flock-square fields), `game/battle_dof.gd` (the lamp, vignette and tilt-shift joined to the existing edge blur), `game/board_layer.gd`
+(the table's tone and grain). No new file, no new asset.
+
+- **Foam terraces.** In the terrain block: the step tops are flat (the hill shade is cut to 40 % where bands are resolved, `tshade`; the
+  old in-band gradient is gone), and each band edge gets a **riser** on its upper side, `clamp(0.2 / fwidth, 2, 8)` px wide (crisp, a
+  fixed screen width), a **lip** (a thin pale line along its top edge) and a **foot** shadow line (about 2 px, 30 % dark) just below the
+  edge. A riser is lit or shaded by the way the face looks, from the height gradient of the four nodes (`dot(grad, (0.71, 0.71))`: the
+  ground falling away to the upper left is lit, +26 %; to the lower right shaded, -42 %; a hair of foam cream, 7 %), not by the smoothed
+  hill shade, so even a gentle hill steps (a floor of 45 % on the old grade gate). Fades out where bands crowd (`fwidth(lv) > 0.1 .. 0.2`),
+  so a far-out hill is the continuous hill shade as before. On Graphics Low too (the Low flag leaves `terrace` alone).
+- **Flock.** `flock_mul()`: two grids of round specks (0.16 m a cell, snapped to an octave of the pixel size so a speck is never under
+  about 1.6 px, the second grid 1.43 x larger and rotated so there is no lattice), a colour multiplier in two greens and a straw tone,
+  `0.95` strength, fading out between 1.3 and 2.6 m a pixel (far out). Mask `open_m`: off on streets, plazas and paved ground, water, the
+  ford, bare rock (85 %), wet sand (70 %) and the felt (80 %); on in fields. **Static grass** (`tuft_at()`, High only): one in four 0.9 m
+  cells holds a tuft of three thin vertical blades (leaning a little, lighter to the tip and on the left), multiplied green over the
+  ground; fades out between 0.3 and 0.5 m a pixel, so it shows from about zoom 0.25 of the default fit up (**not at the default fit**,
+  where a pixel is 0.8 m: there the flock grain is the texture).
+- **Felt under the woods.** The vegetation density's own 0.075 contour (wobbled by noise, 0.035) is the sheet's cut edge, crisp to a
+  pixel; inside, a flat dark green (`felt_col`, with fibre grain, a little deeper with density) over the forest floor, a thin lighter rim
+  at the cut and a dark shadow line just outside it. The crown discs and the kit trees are unchanged on top. The sheet follows the sim's
+  `veg_d` (the cover), so what is felt is what is wood.
+- **Roads as sand.** Tracks (`city_draw.gd`): a 3.7 m strip of sand (the ground mixed 14 % in), a light line shifted a little to the
+  upper left and a dark one to the lower right under a slightly narrower body (the faint raised edge), a pale centre line; Low keeps its
+  flat tint. Streets and plazas (shader): lighter and warmer sand (the pave tone 35 % / 45 % toward `(0.80, 0.69, 0.48)`), a lit / shaded
+  line along the mask's edge for a raised edge.
+- **Rivers and the sea as poured resin.** `wr` (the raw water mask) gives the pixel distance to the shore line: a crisp dark meniscus
+  line there, the painted bed (sandy teal, `bed`) showing through the water's rim (by `wr`, so it scales with the mask's ramp), the
+  animated foam band cut to a quarter, and on High a glossy band 1.4 to 12 px inside the edge, brighter on the banks that face the lamp,
+  and a broad stretched sheen across the surface. The derivatives are taken outside the water branch (uniform flow).
+- **Fields as flock squares.** The decal is translucent (62 %), so the ground's flock grain and plough tile show through; a soft contact
+  shadow to the lower right, a thin dark card edge (0.2 m) and a pale line inside it on the upper left; the soft bands of the painterly
+  ground are replaced; rows and hedges are as before.
+- **The lamp** (`battle_dof.gd`, one pass; the existing edge blur stays and the whole is still High only and diorama only): a key tint
+  from the upper left (`+6 %` red, `+3.5 %` green, `-3 %` blue at the corner, mirrored to a cooler lower right), a vignette (the overworld
+  frame's shape, `0.2`), and the **tilt-shift** of the frame on the top and bottom thirds (blur radius growing to the edges; the screen
+  texture is blurred with 16 taps where the blur is on, none elsewhere). It sits under the HUD (the same layer as before). **Decision
+  beyond the plan:** one shader with the DoF, not a second full-screen pass (each pass copies the screen), and the old pass's alpha blend
+  is now an opaque result. The board layer's table is `Kit.WOOD_BAND` x (4.0, 4.4, 5.2), the same brown as before (the band was derived from
+  it), now read from the overworld's constant, with a finer grain (strokes 1.3 to 3.9 m apart, was 2.2 to 6.2).
+- **Quality Low:** terraces and flock only (no tufts, resin gloss, lamp, tilt-shift or edge blur); the felt, sand and card edges stay (they
+  cost nothing). **Painterly:** unchanged.
+- Web: nothing beyond the existing set (no `textureQueryLod`, no bit ops; the loops have constant bounds, `exp2` / `log2` / `dFdx` are
+  core GLSL ES 3.0).
+- **Cost** (desktop RTX 3070, 1280 x 720, vsync off, `--quality=high`, 8 s after tick 600 with the sim running, mean frame ms, 2 runs each, before = f3dee69):
+
+  | scenario, zoom, look | before | after | delta |
+  |---|---|---|---|
+  | bench_4000_hills, default fit, diorama | 6.55 | 6.58 | +0.03 |
+  | bench_4000_hills, default fit, painterly | 6.50 | 6.45 | -0.05 |
+  | bench_4000_hills, zoom 2.0, diorama | 6.33 | 6.33 | +0.00 |
+  | bench_4000_hills, zoom 2.0, painterly | 6.31 | 6.21 | -0.10 |
+  | test_woods, default fit, diorama | 1.23 | 1.26 | +0.03 |
+  | test_woods, zoom 2.0, diorama | 1.15 | 1.16 | +0.01 |
+  | west_town, default fit, diorama | 3.75 | 3.80 | +0.05 |
+  | west_town, zoom 2.0, diorama | 3.42 | 3.48 | +0.06 |
+  | (painterly: test_woods, west_town) | within +-0.02 | | |
+
+  All within noise (the limit was 1 ms). The frames are bound by the CPU side here, so a weak GPU (the Tab S7, a phone) is the
+  open question: the ground shader gained about 3 hashes a pixel for flock (more with tufts) and the lamp pass about 2 taps more
+  than the old blur where it blurs (16 instead of 8), none elsewhere.
+- **Checked:** scripts clean (warnings as errors), `battle_screen_test` PASS, windowed `input_test` PASS, `determinism_test --only=flow`
+  PASS, `git diff --stat sim/ campaign/` empty. Shots (1280 x 720): hills at the default fit and zoomed on a terrace edge, woods,
+  the West town with its sea, painterly hills, Low.
+- **Open.** The owner's eye on the strength of the flock, the riser contrast and the lamp at the phone's size (the tilt-shift softens the
+  top and bottom thirds, where the HUD bars sit over it only partly); tufts are not visible at the default fit by design; the felt reads
+  as a darker floor rather than a sheet at the default fit (the crowns cover it), its cut edge shows from about zoom 0.3; rivers were checked
+  on the sea only (no battle map with a river crossing was shot); the bed tint scales with the water mask's ramp (4 m texels on the sea,
+  2 m on a river); the Tab S7 for the extra shader work; pass 3 (the oblique camera) will want the tufts redrawn as upright blades.

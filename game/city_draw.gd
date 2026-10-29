@@ -858,7 +858,7 @@ static func _blob(v: PackedVector2Array, c: PackedColorArray, ctr: Vector2, r: f
 
 ## Draw plan_surround's tracks and fields (and the ground under the orchard
 ## rows) at scale k px a metre, offset o; `base` is the ground colour.
-static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2, base: Color, _pal_i: int, low := false) -> void:
+static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2, base: Color, _pal_i: int, low := false, board := false) -> void:
 	var earth := base.lerp(Color(0.50, 0.40, 0.27), 0.62)
 	for trk in plan.get("tracks", []):
 		var pts := PackedVector2Array()
@@ -866,6 +866,23 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 			pts.append(o + q * k)
 		if low:  # Graphics Low: a flat tint
 			ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.75), 4.0 * k, false)
+			continue
+		if board:
+			# The terrain board (tabletop pass 2): a strip of sand with a faint raised edge (a light line a touch
+			# to the upper left, a dark one to the lower right, the body between) and a soft grain of pale dashes.
+			var sand := Color(0.80, 0.70, 0.50).lerp(base, 0.14)
+			var sh := Vector2(0.16, 0.2) * k
+			var wd := 3.7 * k
+			ci.draw_polyline(pts, Color(0, 0, 0, 0.1), wd + 1.8 * k, true)
+			var pb := PackedVector2Array()
+			var pl := PackedVector2Array()
+			for q in pts:
+				pb.append(q + sh)
+				pl.append(q - sh)
+			ci.draw_polyline(pb, sand.darkened(0.38) * Color(1, 1, 1, 0.8), wd, true)
+			ci.draw_polyline(pl, sand.lightened(0.3) * Color(1, 1, 1, 0.85), wd, true)
+			ci.draw_polyline(pts, sand, wd - 0.55 * k, true)
+			ci.draw_polyline(pts, sand.lightened(0.1) * Color(1, 1, 1, 0.55), 1.2 * k, true)
 			continue
 		# (painterly ground, 2026-10-27: two wider, fainter bands blend the track into the grass)
 		ci.draw_polyline(pts, Color(earth.r, earth.g, earth.b, 0.1), 8.4 * k, true)
@@ -898,11 +915,22 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 		var sd := int(absf(float(fa[0])) * 7.0 + absf(float(fa[1])) * 13.0)
 		var tone := 0.94 + 0.12 * _h01(sd, 3, 5, 7)
 		col = Color(col.r * tone, col.g * tone, col.b * tone)
-		# Soft edge (painterly ground): two faint bands out from the headland blend the field into the grass.
-		ci.draw_rect(r.grow(k * 2.2), Color(col.r * 0.8, col.g * 0.85, col.b * 0.7, 0.08))
-		ci.draw_rect(r.grow(k * 1.2), Color(col.r * 0.75, col.g * 0.82, col.b * 0.65, 0.14))
-		ci.draw_rect(r.grow(k * 0.5), Color(col.r * 0.7, col.g * 0.78, col.b * 0.6, 0.35))  # headland
-		ci.draw_rect(r, Color(col.r, col.g, col.b, 0.9))
+		if board:
+			# A flock square cut from card: a soft contact shadow to the lower right, a thin dark card edge with a
+			# pale line inside it on the upper left; the fill is translucent so the ground shader's flock grain shows.
+			ci.draw_rect(Rect2(r.position + Vector2(0.35, 0.45) * k, r.size), Color(0, 0, 0, 0.16))
+			ci.draw_rect(r, Color(col.r, col.g, col.b, 0.62))
+			var ew := maxf(k * 0.2, 1.0)
+			ci.draw_rect(r.grow(ew * 0.5), Color(0.13, 0.1, 0.06, 0.85), false, ew)
+			var in_r := r.grow(-ew * 0.6)
+			ci.draw_polyline(PackedVector2Array([in_r.position + Vector2(0, in_r.size.y), in_r.position, in_r.position + Vector2(in_r.size.x, 0)]),
+				Color(1, 0.96, 0.8, 0.28), maxf(k * 0.12, 1.0))
+		else:
+			# Soft edge (painterly ground): two faint bands out from the headland blend the field into the grass.
+			ci.draw_rect(r.grow(k * 2.2), Color(col.r * 0.8, col.g * 0.85, col.b * 0.7, 0.08))
+			ci.draw_rect(r.grow(k * 1.2), Color(col.r * 0.75, col.g * 0.82, col.b * 0.65, 0.14))
+			ci.draw_rect(r.grow(k * 0.5), Color(col.r * 0.7, col.g * 0.78, col.b * 0.6, 0.35))  # headland
+			ci.draw_rect(r, Color(col.r, col.g, col.b, 0.9))
 		# Rows along the long axis: ridge and furrow (plough), crop rows, stubble dashes, fallow weeds.
 		# Everything of a field is batched (a few multiline calls and one mesh): hundreds of single
 		# draw calls here cost several ms a frame on the bench.

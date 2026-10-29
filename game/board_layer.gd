@@ -7,7 +7,10 @@ const MARGIN := 900.0      # metres of table beyond the field
 const BEVEL := 6.0         # metres, the board edge's width
 const LIGHT_EDGE := Color(0.80, 0.70, 0.52)
 const DARK_EDGE := Color(0.34, 0.25, 0.16)
-const TABLE := Color(0.31, 0.215, 0.14)
+const Kit := preload("res://game/campaign/ui_kit.gd")
+## The table's wood is the overworld frame's wood band (Kit.WOOD_BAND: "the board's brown at a quarter to a third")
+## brought back up by the same factors, so the two tables are one wood.
+static var TABLE: Color = Color(Kit.WOOD_BAND.r * 4.0, Kit.WOOD_BAND.g * 4.4, Kit.WOOD_BAND.b * 5.2)
 
 var fw := 0.0
 var fh := 0.0
@@ -45,7 +48,7 @@ func _draw() -> void:
 			var gh := float(((pi * 31 + gi) * 7919) % 97) / 97.0
 			var x0 := -pm + gh * 300.0 * k
 			_hline(x0, x0 + (160.0 + gh * 400.0) * k, gy, Color(0, 0, 0, 0.06 + 0.07 * gh))
-			gy += (2.2 + gh * 4.0) * k
+			gy += (1.3 + gh * 2.6) * k   # (finer grain since tabletop pass 2: the overworld band's wood)
 			gi += 1
 		py += ph
 		pi += 1
