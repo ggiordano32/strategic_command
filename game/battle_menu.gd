@@ -13,6 +13,7 @@ const UiScale := preload("res://game/ui_scale.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const OptionsRows := preload("res://game/menu/options_rows.gd")
 const HowtoPage := preload("res://game/campaign/howto_page.gd")
+const ChipLegend := preload("res://game/chip_legend.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 
 const COL_W := 440.0
@@ -21,7 +22,7 @@ signal closed
 var battle   # the battle node (battle.gd): _open_controls(), _leave_now(), _count()
 var title_text := "Battle"
 var pack := "rome"
-var page := "main"      # main | options | confirm
+var page := "main"      # main | options | howto | chips | confirm
 var column: PanelContainer
 var body: VBoxContainer
 var _fade: Tween = null
@@ -137,6 +138,8 @@ func _build() -> void:
 			_build_options()
 		"howto":
 			_build_howto()
+		"chips":
+			_build_chips()
 		"confirm":
 			_build_confirm()
 		_:
@@ -184,6 +187,9 @@ func _build_main() -> void:
 	_entry("How to play", "menu_howto", func():
 		page = "howto"
 		_build())
+	_entry("Chips", "menu_chips", func():
+		page = "chips"
+		_build())
 	_entry("Controls", "menu_controls", func():
 		close()   # (the battle's pause is put back first; the controls page pauses on its own)
 		battle._open_controls())
@@ -226,6 +232,27 @@ func _build_howto() -> void:
 	var brow := Kit.hbox(8)
 	brow.add_child(bb)
 	body.add_child(brow)
+
+
+func _build_chips() -> void:
+	# (a long page: Back sits beside the title, not at the foot)
+	var top := Kit.hbox(8)
+	var t := Kit.title("Chips", 24)
+	t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(t)
+	var bb := Kit.button("Back", func(): back(), 100)
+	bb.name = "menu_chips_back"
+	Kit.nav_style(bb)
+	top.add_child(bb)
+	body.add_child(top)
+	body.add_child(Kit.rule())
+	body.add_child(Kit.label("The buttons along the bottom of the battle, by group. Hold a chip on the bar to read the same words.",
+		Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var inner := Kit.vbox(8)
+	inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	inner.name = "chips_legend"
+	body.add_child(inner)
+	ChipLegend.fill(inner, battle.hud.legend_entries())
 
 
 func _build_options() -> void:

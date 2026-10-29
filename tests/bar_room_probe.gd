@@ -63,14 +63,17 @@ func _report(b, vp: Vector2, g: String) -> String:
 		if (c as Control).visible:
 			fixed.append(c)
 	var bar := []
+	var up := []
 	var more := []
 	for c in h._chip_order:
 		if not (c as Control).visible:
 			continue
 		if c.get_parent() == h.more_box:
 			more.append(c.name)
+		elif c.get_parent() == h.chips_up:
+			up.append(c.name)
 		else:
 			bar.append(c.name)
-	return "vp=%s sel=%s n=%d avail=%.0f capsule=%.0f fixed_w=%.0f(full) more_btn=%s | bar=%s | under_more=%s" % [
+	return "vp=%s sel=%s n=%d avail=%.0f capsule=%.0f fixed_w=%.0f(full) more_btn=%s rows=%d bottom=%.0f | up=%s | bar=%s | under_more=%s" % [
 		str(vp), g, b.selection.size(), avail, h.group_box.get_combined_minimum_size().x, h._row_w(fixed, false),
-		str(h.more_button.visible), ",".join(bar), ",".join(more)]
+		str(h.more_button.visible), 2 if h.two_rows else 1, h.bottom_height(), ",".join(up), ",".join(bar), ",".join(more)]

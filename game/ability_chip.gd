@@ -59,6 +59,11 @@ func setup(p_key: String, p_name: String, icon_name: String, title: String, body
 	text = full_text()
 
 
+## The chip's height: 42, or 36 in the double stack.
+func set_h(h: float) -> void:
+	custom_minimum_size.y = h
+
+
 func full_text() -> String:
 	if armed:
 		return "Use now: tap a target"

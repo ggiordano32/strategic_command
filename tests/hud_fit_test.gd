@@ -141,7 +141,7 @@ func _fit(label: String, expect_run := true) -> void:
 		var ch: AbilityChip = c
 		if not ch.visible:
 			continue
-		var in_bar: bool = ch.get_parent() == h.chips_box
+		var in_bar: bool = ch.get_parent() == h.chips_box or ch.get_parent() == h.chips_up
 		var in_more: bool = ch.get_parent() == h.more_box
 		if in_bar:
 			onbar += 1
@@ -163,7 +163,7 @@ func _fit(label: String, expect_run := true) -> void:
 		var br: Rect2 = h._bottom.get_global_rect()
 		var right_ok: bool = wr.end.x <= br.end.x + 0.5 and wr.end.x >= br.end.x - GAP - 2.0
 		for c in h._chip_order:
-			if (c as Control).is_visible_in_tree() and (c as Control).get_global_rect().end.x > wr.position.x + 0.5:
+			if (c as Control).is_visible_in_tree() and c.get_parent() != h.chips_up and (c as Control).get_global_rect().end.x > wr.position.x + 0.5:
 				right_ok = false
 		if h.more_button.is_visible_in_tree() and h.more_button.get_global_rect().end.x > wr.position.x + 0.5:
 			right_ok = false
@@ -173,6 +173,7 @@ func _fit(label: String, expect_run := true) -> void:
 	if under == 0 and h.more_button.visible:
 		bad.append("More with nothing under it")
 	_clusters_check(label)
+	_two_rows_check(label)
 	if not bad.is_empty():
 		_dump()
 	_check(fixed_ok, "%s %s: Halt, Withdraw (and Run) on the bar" % [_size_name, label])
@@ -199,10 +200,22 @@ func _clusters_check(label: String) -> void:
 	var vp: Vector2 = root.get_visible_rect().size
 	var present := {}
 	var bar_chips: Array = []
-	for c in h.chips_box.get_children():   # (in the bar's left-to-right order)
-		if c is AbilityChip and (c as Control).visible:
-			present[h.cluster_of(c)] = true
-			bar_chips.append(c)
+	var rows_of := {}   # cluster -> {row index: true}
+	var n_div := 0
+	var boxes: Array = [h.chips_box, h.chips_up]
+	for bi in 2:   # (the upper row first: it is read first)
+		var prev := ""
+		for c in (boxes[bi] as Control).get_children():   # (in the bar's left-to-right order)
+			if c is AbilityChip and (c as Control).visible:
+				var cl: String = h.cluster_of(c)
+				present[cl] = true
+				if not rows_of.has(cl):
+					rows_of[cl] = {}
+				rows_of[cl][bi] = true
+				bar_chips.append(c)
+				if prev != "" and cl != prev:
+					n_div += 1
+				prev = cl
 	var caps: Dictionary = h.cluster_caption_rects()
 	var bad: Array[String] = []
 	var want: Array = present.keys()
@@ -211,7 +224,12 @@ func _clusters_check(label: String) -> void:
 	have.sort()
 	if want != have:
 		bad.append("captions %s for clusters %s" % [str(have), str(want)])
+	for cl in rows_of:
+		if (rows_of[cl] as Dictionary).size() > 1:
+			bad.append("cluster %s split across the rows" % cl)
 	var box: Rect2 = h.chips_box.get_global_rect()
+	if h.chips_up.visible:
+		box = box.merge(h.chips_up.get_global_rect())
 	var bar: Rect2 = h._bottom.get_global_rect()
 	for k in caps:
 		var r: Rect2 = caps[k]
@@ -221,24 +239,67 @@ func _clusters_check(label: String) -> void:
 			if r.intersects((c as Control).get_global_rect().grow(-0.5)):
 				bad.append("caption %s over chip %s" % [k, c.key])
 	var divs: Array = h.divider_rects()
-	var n_div: int = maxi(present.size() - 1, 0)
 	if divs.size() != n_div:
-		bad.append("%d dividers for %d clusters" % [divs.size(), present.size()])
+		bad.append("%d dividers for %d cluster joins" % [divs.size(), n_div])
 	for r in divs:
 		if not box.grow(0.5).encloses(r) or not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(r):
 			bad.append("divider outside %s" % str(r))
 		for c in bar_chips:
 			if (r as Rect2).intersects((c as Control).get_global_rect().grow(-0.5)):
 				bad.append("divider over chip %s" % c.key)
-	# The clusters follow one another on the bar, left to right, in the fixed order.
-	var last := -1
-	for c in bar_chips:
-		var ci: int = h.CLUSTERS.find(h.cluster_of(c))
-		if ci < last:
-			bad.append("chip %s out of cluster order" % c.key)
-		last = maxi(last, ci)
+	# The clusters follow one another in each row, left to right, in the fixed order.
+	for bi in 2:
+		var last := -1
+		for c in (boxes[bi] as Control).get_children():
+			if c is AbilityChip and (c as Control).visible:
+				var ci: int = h.CLUSTERS.find(h.cluster_of(c))
+				if ci < last:
+					bad.append("chip %s out of cluster order" % c.key)
+				last = maxi(last, ci)
 	_check(bad.is_empty(), "%s %s: %d captions and %d dividers for %d clusters, inside the bar and clear of the chips (%s)" % [
 		_size_name, label, caps.size(), divs.size(), present.size(), ", ".join(bad)])
+
+
+## The double stack: while it is on, the upper row sits above the lower row, inside the viewport, clear of the cards, the
+## capsule and the lower row; chips are 36 px high, the rows' captions fit between; bottom_height() covers the bar's
+## top; off, the upper row is hidden and the chips are 42 high.
+func _two_rows_check(label: String) -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var bad: Array[String] = []
+	var up_n := 0
+	for c in h.chips_up.get_children():
+		if c is AbilityChip and (c as Control).visible:
+			up_n += 1
+	if h.two_rows != (up_n > 0):
+		bad.append("two_rows %s with %d chips up" % [str(h.two_rows), up_n])
+	if h.two_rows:
+		var up: Rect2 = h.chips_up.get_global_rect()
+		if not h.chips_up.is_visible_in_tree():
+			bad.append("upper row hidden")
+		if not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(up):
+			bad.append("upper row outside the viewport %s" % str(up))
+		if up.end.y > h.chips_box.get_global_rect().position.y + 0.5:
+			bad.append("upper row over the lower row %s %s" % [str(up), str(h.chips_box.get_global_rect())])
+		if h.cards_bar.visible and up.intersects(h.cards_bar.get_global_rect().grow(-0.5)):
+			bad.append("upper row over the cards")
+		if h.group_box.is_visible_in_tree() and up.intersects(h.group_box.get_global_rect().grow(-0.5)):
+			bad.append("upper row over the capsule")
+		if h.actions_box.get_global_rect().position.y < up.end.y - 0.5:
+			bad.append("actions over the upper row")
+		for c in h._chip_order:
+			if (c as Control).is_visible_in_tree() and c.get_parent() in [h.chips_box, h.chips_up] and absf((c as Control).size.y - 36.0) > 0.5:
+				bad.append("chip %s %.0f high" % [c.key, (c as Control).size.y])
+		if h._bottom.get_global_rect().position.y < vp.y - h.bottom_height() - 1.0:
+			bad.append("bottom_height %.0f smaller than the bar %s" % [h.bottom_height(), str(h._bottom.get_global_rect())])
+	else:
+		if h.chips_up.visible:
+			bad.append("upper row shown with one row")
+		for c in h._chip_order:
+			if (c as Control).visible and c.get_parent() == h.chips_box and absf((c as Control).size.y - 42.0) > 0.5:
+				bad.append("chip %s %.0f high" % [c.key, (c as Control).size.y])
+	_check(bad.is_empty(), "%s %s: double stack %s (%d chips up), bar %.0f px (%s)" % [
+		_size_name, label, "on" if h.two_rows else "off", up_n, h.bottom_height(), ", ".join(bad)])
 
 
 ## The More popover's headings: one per cluster that has a chip under More, inside the viewport and the popover.
@@ -451,7 +512,10 @@ func _explain_stress() -> void:
 			and h.explain_box.has_node("ex_book") and n_rows == (rows if rows > 1 else 0) and not h.opt_panel.visible
 		_check(ok, tag + " (%s, %d state rows)" % [str(h.explain_panel.get_global_rect()), n_rows])
 		if ch.get_parent() != h.more_box:
-			_check(h.explain_panel.get_global_rect().end.y <= ch.get_global_rect().position.y + 0.5, tag + ": above the chip")
+			var er: Rect2 = h.explain_panel.get_global_rect()
+			var cr: Rect2 = ch.get_global_rect()
+			_check(er.end.y <= cr.position.y + 0.5 or (h.two_rows and not er.intersects(cr.grow(-0.5))),
+				tag + ": above the chip (beside it, clear of it, when the double stack leaves no room above)")
 		n += 1
 		h._close_explain()
 	h._set_more_open(false)
@@ -547,6 +611,19 @@ func _run() -> void:
 		await _fit("line + skirmish + guns")
 		await _stress()
 		await _fit("stress: every chip")
+		_check(h.two_rows == (sz[0] < 2000) and h.chips_up.visible == h.two_rows,
+			"%s: the stress bar is double stacked exactly where one row overflows (two_rows %s)" % [_size_name, str(h.two_rows)])
+		if h.two_rows:
+			# The armed ability never goes under More, and the second row is paid for in bottom_height().
+			var arm: AbilityChip = h.ab_chips[UT.AB_PISTOL]
+			arm.set_state("Use now", true)
+			h._fit_actions()
+			await _frames(2)
+			_check(arm.get_parent() != h.more_box, "%s: an armed ability stays on the bar with two rows" % _size_name)
+			arm.set_state("Mixed", false)
+			h._fit_actions()
+			await _frames(2)
+			_check(h.bottom_height() >= 117.0 + 36.0, "%s: bottom_height() %.0f includes the second row" % [_size_name, h.bottom_height()])
 		await _options_stress()
 		await _explain_stress()
 		b.process_mode = Node.PROCESS_MODE_INHERIT

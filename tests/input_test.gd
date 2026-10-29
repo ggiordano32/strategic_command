@@ -20,6 +20,7 @@ extends SceneTree
 ## unit book and the controls page.
 ## Exits 0 on success, 1 on failure.
 
+const AbilityChip := preload("res://game/ability_chip.gd")
 const Battle := preload("res://game/battle.gd")
 const Hud := preload("res://game/hud.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -142,6 +143,14 @@ func _initialize() -> void:
 		_step_chip_long_press,
 		_step_chip_long_press_check,
 		_step_chip_long_press_outside,
+		_step_chips_page_open,
+		_step_chips_page,
+		_step_chips_page_check,
+		_step_chips_page_back,
+		_step_upper_row_tap,
+		_step_upper_row_press,
+		_step_upper_row_check,
+		_step_upper_row_done,
 		_step_missile_buttons,
 		_step_opt_row,
 		_step_missile_skirm,
@@ -1072,6 +1081,87 @@ func _step_chip_long_press_outside() -> void:
 	ev.position = Vector2(2, 2)
 	h._input(ev)
 	_check(not h.explain_panel.visible, "a press outside closes the explanation")
+
+
+## The battle menu's Chips page (docs/design/ui.md "The double stack and the Chips page"): the Menu opens, its Chips
+## entry shows every chip by cluster with its states and tip, Back returns to the entries, Resume closes.
+func _step_chips_page_open() -> void:
+	battle._open_menu()
+
+
+func _step_chips_page() -> void:
+	for b in battle.menu.find_children("menu_chips", "Button", true, false):
+		_tap_control(b)
+		return
+	_check(false, "the battle menu has a Chips entry")
+
+
+func _step_chips_page_check() -> void:
+	var m = battle.menu
+	_check(m.page == "chips", "the Chips entry opens the Chips page")
+	var h = battle.hud
+	var missing: Array[String] = []
+	for e in h.legend_entries():
+		if m.find_child("legend_" + str(e["key"]), true, false) == null:
+			missing.append(str(e["key"]))
+	_check(missing.is_empty(), "the Chips page has a row for every chip and fixed button (missing %s)" % ", ".join(missing))
+	for cl in h.CLUSTERS:
+		_check(m.find_child("legend_head_" + cl, true, false) != null, "the Chips page has the %s heading" % cl)
+	var fire_row: Node = m.find_child("legend_fire", true, false)
+	var txt := ""
+	if fire_row != null:
+		for l in fire_row.find_children("*", "Label", true, false):
+			txt += (l as Label).text + "\n"
+	_check(txt.contains("At will") and txt.contains(h.fire_button.tip_body), "the Fire row lists its states and the chip's own tip")
+
+
+func _step_chips_page_back() -> void:
+	var m = battle.menu
+	for b in m.find_children("menu_chips_back", "Button", true, false):
+		_tap_control(b)
+		break
+	steps.push_front(func():
+		_check(m.page == "main", "Back leaves the Chips page for the entries")
+		m.close())
+
+
+## A tap on a chip of the upper row of the double stack: every chip made applicable (the worst bar) so the bar needs two
+## rows, then the first multi-state chip upstairs is tapped and its options open.
+func _step_upper_row_tap() -> void:
+	var h = battle.hud
+	for c in h._chip_order:
+		(c as AbilityChip).visible = true
+	h._fit_actions()
+	_upper_chip = null
+	for c in h.chips_up.get_children():
+		if c is AbilityChip and (c as Control).visible and h._is_multi(c) and c.ab < 0:
+			_upper_chip = c
+			break
+	_check(h.two_rows and _upper_chip != null, "the stress bar is double stacked (a multi-state chip on the upper row)")
+
+
+func _step_upper_row_press() -> void:
+	if _upper_chip != null:
+		_tap_control(_upper_chip)
+
+
+var _upper_chip: AbilityChip = null
+
+
+func _step_upper_row_check() -> void:
+	var h = battle.hud
+	if _upper_chip == null:
+		return
+	_check(h.opt_panel.visible and h._opt_chip == _upper_chip, "a tap on an upper-row chip (%s) opens its options" % _upper_chip.key)
+	_check(_upper_chip.get_parent() == h.chips_up and h.chips_up.get_global_rect().end.y <= h.chips_box.get_global_rect().position.y + 0.5,
+		"the chip sits on the row above the bar's own row")
+	_tap_control(_upper_chip)   # (the chip again closes the options)
+
+
+func _step_upper_row_done() -> void:
+	var h = battle.hud
+	_check(not h.opt_panel.visible, "the chip again closes the options of the upper-row chip")
+	battle._selection_changed()   # (the bar goes back to the selection's own chips)
 
 
 func _step_missile_buttons() -> void:

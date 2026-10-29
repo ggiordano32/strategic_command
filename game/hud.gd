@@ -95,6 +95,8 @@ const CLUSTER_OF := {"bounds": "Move", "deploy": "Move", "waypoints": "Move", "r
 	"countermarch": "Shoot",
 	"stance": "Fight", "occupy": "Fight", "grenades": "Fight", "pistols": "Fight",
 	"drop": "Kit", "gift": "Kit", "char_sabotage": "Kit", "char_attempt": "Kit", "char_parley": "Kit"}
+const CHIP2_H := 36.0     # a chip's height while the bar is double stacked (the double stack, docs/design/ui.md)
+const UP_FIRST := ["Move", "Kit", "Fight", "Shoot"]   # the order the clusters move to the upper row
 const CHIP_LONG_SEC := 0.45   # a held chip explains itself
 const CHIP_LONG_SLOP := 8.0   # px it may move meanwhile
 const EXPLAIN_W := 270.0
@@ -107,6 +109,9 @@ var more_scroll: ScrollContainer
 var more_box: MoreBox       # (one column; more columns when the list is taller than the room above the bar)
 var opt_panel: PanelContainer     # the options popover of a multi-state chip (docs/design/ui.md "Chip options")
 var opt_box: VBoxContainer
+var chips_up: HBoxContainer       # the upper row of the double stack (above the bar's row; clusters whole, right-aligned)
+var cap_up: Control               # the captions under the upper row
+var two_rows := false             # the double stack is on (chips 36 px high, two rows)
 var cap_layer: Control            # draws the clusters' captions under the bar's chips (a top-level child of chips_box)
 var explain_panel: PanelContainer # the long-press explanation of a chip
 var explain_box: VBoxContainer
@@ -554,12 +559,25 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	chips_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	chips_box.custom_minimum_size.y = BTN_H + CAP_H   # (the caption row under the chips)
 	actions.add_child(chips_box)
+	chips_up = HBoxContainer.new()
+	chips_up.name = "chips_up"
+	chips_up.add_theme_constant_override("separation", int(GAP))
+	chips_up.alignment = BoxContainer.ALIGNMENT_END
+	chips_up.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chips_up.custom_minimum_size.y = CHIP2_H + CAP_H
+	chips_up.visible = false
+	bottom.add_child(chips_up)
+	bottom.move_child(chips_up, 0)
+	_ui_controls.append(chips_up)
 	for c in _chip_order:
 		c.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		chips_box.add_child(c)
 	cap_layer = ClusterCaptions.new()
 	chips_box.add_child(cap_layer)
 	chips_box.sort_children.connect(_place_clusters)
+	cap_up = ClusterCaptions.new()
+	chips_up.add_child(cap_up)
+	chips_up.sort_children.connect(_place_clusters)
 	for b in [halt_button, run_button, withdraw_button, group_box]:
 		(b as Control).size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	group_box.custom_minimum_size.y = BTN_H
@@ -933,7 +951,13 @@ func top_height() -> float:
 
 
 func bottom_height() -> float:
-	return MARGIN * 3 + BTN_H + (CAP_H if chips_box != null and chips_box.visible else 0.0) + GAP + card_rows * (CARD_H + CARD_GAP) + 6.0
+	var row_h := BTN_H
+	if chips_box != null and chips_box.visible:
+		row_h = maxf(BTN_H, chips_box.custom_minimum_size.y)
+	var up_h := 0.0
+	if chips_up != null and chips_up.visible:
+		up_h = chips_up.custom_minimum_size.y + GAP   # (the double stack's upper row)
+	return MARGIN * 3 + row_h + up_h + GAP + card_rows * (CARD_H + CARD_GAP) + 6.0
 
 
 ## Readout: short line always, details when expanded.
@@ -1300,6 +1324,8 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 			f.selected = on
 			f.queue_redraw()
 	actions_box.visible = not units.is_empty() and not engine_only
+	if chips_up != null and not actions_box.visible:
+		chips_up.visible = false
 	engine_note.visible = not units.is_empty() and engine_only
 	run_button.visible = run >= 0
 	fire_button.visible = fire >= 0
@@ -1450,6 +1476,7 @@ func _fit_now() -> void:
 		else:
 			rest.append(ch)
 	var mode_compact := false
+	var in_up: Array = []
 	var fixed_w := _row_w(fixed, false)
 	var all_w := fixed_w + _row_w(rest, false) + (GAP if not fixed.is_empty() and not rest.is_empty() else 0.0) \
 		+ _divider_w(rest)
@@ -1477,6 +1504,15 @@ func _fit_now() -> void:
 				stop = true
 				in_more.append(ch)
 		in_more.append_array(forced)
+		# The double stack: when the clusters still do not fit one row, a second row above; only what does not fit
+		# two rows goes under More.
+		if in_more.size() > forced.size():
+			var two := _two_rows(rest, forced, fixed_w, avail)
+			if (two[2] as Array).size() < in_more.size():
+				in_bar = two[0]
+				in_up = two[1]
+				in_more = two[2]
+	two_rows = not in_up.is_empty()
 	in_bar = _cluster_sorted(in_bar)
 	in_more = _cluster_sorted(in_more)
 	_strip_more_extras()
@@ -1486,24 +1522,23 @@ func _fit_now() -> void:
 	for c in _chip_order:
 		(c as AbilityChip).set_mode(mode_compact)
 	# Put the chips where they go, in order.
+	var chip_h := CHIP2_H if two_rows else AbilityChip.H
 	for c in _chip_order:
 		var ch := c as Control
 		if in_bar.has(ch) or not (vis.has(ch)):
 			_home(ch, chips_box)
-	var nd := 0
-	var prev := ""
-	for ch in in_bar:
-		var cl := cluster_of(ch)
-		if prev != "" and cl != prev:
-			var d := _divider(nd)
-			d.visible = true
-			chips_box.move_child(d, chips_box.get_child_count() - 1)
-			nd += 1
-		prev = cl
-		chips_box.move_child(ch, chips_box.get_child_count() - 1)
+		elif in_up.has(ch):
+			_home(ch, chips_up)
+		(ch as AbilityChip).set_h(chip_h if (in_bar.has(ch) or in_up.has(ch)) else AbilityChip.H)
+	chips_box.custom_minimum_size.y = chip_h + CAP_H
+	chips_up.custom_minimum_size.y = CHIP2_H + CAP_H
+	var nd := _put_row(chips_box, in_bar, 0, chip_h)
+	nd = _put_row(chips_up, in_up, nd, chip_h)
 	for i in range(nd, _dividers.size()):
 		(_dividers[i] as Control).visible = false
 	chips_box.move_child(cap_layer, chips_box.get_child_count() - 1)
+	chips_up.move_child(cap_up, chips_up.get_child_count() - 1)
+	chips_up.visible = not in_up.is_empty() and actions_box.visible
 	for ch in in_more:
 		_home(ch, more_box)
 		(ch as AbilityChip).set_mode(false)
@@ -1517,6 +1552,98 @@ func _fit_now() -> void:
 	_place_explain()
 	_place_confirm()
 	_place_clusters()
+
+
+## Lay `items` (in cluster order) into `box` with a divider between neighbouring clusters; returns the next divider index.
+func _put_row(box: Container, items: Array, nd: int, chip_h: float) -> int:
+	var prev := ""
+	for ch in items:
+		var cl := cluster_of(ch)
+		if prev != "" and cl != prev:
+			var d := _divider(nd)
+			_home(d, box)
+			d.custom_minimum_size.y = chip_h + CAP_H
+			d.visible = true
+			box.move_child(d, box.get_child_count() - 1)
+			nd += 1
+		prev = cl
+		box.move_child(ch, box.get_child_count() - 1)
+	return nd
+
+
+## The double stack (docs/design/ui.md "The double stack and the Chips page"): `rest` split over two rows, clusters
+## whole. The lower row keeps Halt / Run / More / Withdraw (`fixed_w` with the compact texts) and the clusters that
+## fit beside them; the others go to the upper row, which has the whole bar width. Every split of the present clusters
+## is tried (at most 16): the one with the fewest chips left for More wins, then the cheapest clusters upstairs
+## (UP_FIRST: Move, Kit, Fight, Shoot). Chips that fit neither row (an armed ability always stays) go under More with
+## `forced`. Returns [lower, upper, more].
+func _two_rows(rest: Array, forced: Array, fixed_w: float, avail: float) -> Array:
+	var present: Array = []
+	for cl in CLUSTERS:
+		for ch in rest:
+			if cluster_of(ch) == cl:
+				present.append(cl)
+				break
+	var best: Array = []
+	var best_key := INF
+	for mask in 1 << present.size():
+		var low_cl: Array = []
+		var cost := 0.0
+		for k in present.size():
+			if (mask >> k) & 1:
+				cost += float(1 << UP_FIRST.find(present[k]))
+			else:
+				low_cl.append(present[k])
+		var res := _split_rows(rest, forced, fixed_w, avail, low_cl)
+		if res.is_empty():
+			continue
+		var key: float = float((res[2] as Array).size()) * 1000.0 + cost
+		if key < best_key:
+			best_key = key
+			best = res
+	return best
+
+
+## One split for _two_rows: [lower, upper, more], or [] when the lower row's clusters do not fit beside the fixed buttons.
+func _split_rows(rest: Array, forced: Array, fixed_w: float, avail: float, low_cl: Array) -> Array:
+	var low: Array = []
+	var up_all: Array = []
+	for ch in rest:
+		if low_cl.has(cluster_of(ch)):
+			low.append(ch)
+		else:
+			up_all.append(ch)
+	up_all = _cluster_sorted(up_all)
+	var avail_up := _bar_width() - 4.0
+	var up: Array = []
+	var more: Array = []
+	var used := 0.0
+	var seen := {}
+	var stop := false
+	for ch in up_all:
+		var cl := cluster_of(ch)
+		var w := (ch as AbilityChip).width_for(true) + GAP + (DIV_W + GAP if not seen.is_empty() and not seen.has(cl) else 0.0)
+		if (ch as AbilityChip).pinned or (not stop and used + w <= avail_up):
+			up.append(ch)
+			seen[cl] = true
+			used += w
+		else:
+			stop = true
+			more.append(ch)
+	var more_w := (more_button.width_for(false) + GAP) if (not more.is_empty() or not forced.is_empty()) else 0.0
+	if fixed_w + more_w + _clusters_w(rest, low_cl) > avail and not low.is_empty():
+		return []
+	more.append_array(forced)
+	return [low, up, more]
+
+
+## Width of the chips of these clusters in a row (compact texts, gaps, dividers).
+func _clusters_w(items: Array, clusters: Array) -> float:
+	var w := 0.0
+	for ch in items:
+		if clusters.has(cluster_of(ch)):
+			w += (ch as AbilityChip).width_for(true) + GAP
+	return w + (DIV_W + GAP) * maxi(clusters.size() - 1, 0)
 
 
 ## The cluster of a chip (CLUSTER_OF by its key; Fight when it is not listed).
@@ -1558,23 +1685,26 @@ func _divider(i: int) -> Control:
 func _place_clusters() -> void:
 	if cap_layer == null or chips_box == null:
 		return
-	var caps: Array = []
-	for cl in CLUSTERS:
-		var x0 := INF
-		var x1 := -INF
-		for c in _chip_order:
-			var ch := c as AbilityChip
-			if ch.get_parent() == chips_box and ch.visible and cluster_of(ch) == cl:
-				x0 = minf(x0, ch.position.x)
-				x1 = maxf(x1, ch.position.x + ch.size.x)
-		if x0 < INF:
-			caps.append([cl, Rect2(x0, BTN_H, x1 - x0, CAP_H)])
-	var cap_node := cap_layer as ClusterCaptions
-	cap_node.global_position = chips_box.global_position
-	cap_node.size = chips_box.size
-	cap_node.caps = caps
-	cap_node.visible = not caps.is_empty()
-	cap_node.queue_redraw()
+	var chip_h := CHIP2_H if two_rows else AbilityChip.H
+	for pair in [[chips_box, cap_layer], [chips_up, cap_up]]:
+		var box: Control = pair[0]
+		var caps: Array = []
+		for cl in CLUSTERS:
+			var x0 := INF
+			var x1 := -INF
+			for c in _chip_order:
+				var ch := c as AbilityChip
+				if ch.get_parent() == box and ch.visible and cluster_of(ch) == cl:
+					x0 = minf(x0, ch.position.x)
+					x1 = maxf(x1, ch.position.x + ch.size.x)
+			if x0 < INF:
+				caps.append([cl, Rect2(x0, chip_h, x1 - x0, CAP_H)])
+		var cap_node := pair[1] as ClusterCaptions
+		cap_node.global_position = box.global_position
+		cap_node.size = box.size
+		cap_node.caps = caps
+		cap_node.visible = not caps.is_empty()
+		cap_node.queue_redraw()
 
 
 ## The caption rectangles in viewport space: cluster word -> Rect2 (for the tests).
@@ -1582,9 +1712,10 @@ func cluster_caption_rects() -> Dictionary:
 	var out := {}
 	if cap_layer == null:
 		return out
-	var o := chips_box.get_global_rect().position
-	for c in (cap_layer as ClusterCaptions).caps:
-		out[str(c[0])] = Rect2(o + (c[1] as Rect2).position, (c[1] as Rect2).size)
+	for pair in [[chips_box, cap_layer], [chips_up, cap_up]]:
+		var o: Vector2 = (pair[0] as Control).get_global_rect().position
+		for c in (pair[1] as ClusterCaptions).caps:
+			out[str(c[0])] = Rect2(o + (c[1] as Rect2).position, (c[1] as Rect2).size)
 	return out
 
 
@@ -1907,6 +2038,32 @@ func _multi(c: AbilityChip, act: Callable) -> void:
 	c.pressed.connect(func(): _open_options(c))
 
 
+## The legend of the Chips page (battle menu): the fixed three, then every chip by cluster, each as
+## {cluster, key, name, icon (Texture2D or null), title, tip, states (Array of words)}; all read from the chips' own tips.
+func legend_entries() -> Array:
+	var out: Array = []
+	for b in [halt_button, run_button, withdraw_button]:
+		var t: Array = Kit.tip_of(b)
+		var states: Array = []
+		if b == run_button:
+			t = [run_button.tip_title, run_button.tip_body]
+			states = ["On", "Off"]
+		out.append({"cluster": "Always on the bar", "key": "run" if b == run_button else ("halt" if b == halt_button else "withdraw"),
+			"name": "Run" if b == run_button else str((b as Button).text),
+			"icon": (b as Button).icon, "title": str(t[0]) if t.size() > 0 else "", "tip": str(t[1]) if t.size() > 1 else "", "states": states})
+	for cl in CLUSTERS:
+		for c in _cluster_sorted(_chip_order):
+			var ch := c as AbilityChip
+			if cluster_of(ch) != cl:
+				continue
+			var states: Array = []
+			for r in _chip_rows(ch):
+				states.append(str(r[0]))
+			out.append({"cluster": cl, "key": ch.key, "name": ch.label_name, "icon": ch.icon, "title": ch.tip_title,
+				"tip": ch.tip_body, "states": states})
+	return out
+
+
 ## The rows of a chip: [word, icon, state value] in display order ([] for a single-action chip).
 func _chip_rows(c: AbilityChip) -> Array:
 	if c.ab >= 0:
@@ -2051,6 +2208,13 @@ func _popover_pos(chip: Control, sz: Vector2) -> Vector2:
 	else:
 		pos = Vector2(clampf(r.get_center().x - sz.x * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)),
 			maxf(r.position.y - sz.y - GAP, MARGIN))
+		if r.position.y - sz.y - GAP < MARGIN:
+			# No room above (a chip of the upper row on a short screen): beside the chip, clear of it.
+			var y2 := clampf(r.get_center().y - sz.y * 0.5, MARGIN, maxf(vp.y - sz.y - MARGIN, MARGIN))
+			if r.position.x - GAP - sz.x >= MARGIN:
+				pos = Vector2(r.position.x - GAP - sz.x, y2)
+			elif r.end.x + GAP + sz.x <= vp.x - MARGIN:
+				pos = Vector2(r.end.x + GAP, y2)
 	return pos
 
 
