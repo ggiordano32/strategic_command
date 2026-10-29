@@ -1177,3 +1177,52 @@ The AI never built Stables or a Range 3 for the natives (their mixes have no hor
 2); the cap is for the player, and the AI's change is the Miskito's Barracks 2 (the ordinary want list upgraded it, now refused). Format 6 pins: unchanged. Format 10: seed 2 moves (`e5625ecc` -> `a89c63d6`); the other
 five are as before. Rome `== sim:` and `== sim10:` equal the pins. Another agent's terrain pass moves the West
 pins again; re-pin on the merged tree.
+
+### Native siege (as built, 2026-10-29)
+
+The plan's "The Itza: escalade and fire" and "The Miskito: the back door" (the sim rules: docs/design/siege_and_towns.md
+"Native siege: scaling poles and the melee batter (as built)"; the row: docs/design/battle_sim.md "Native siege: the torch
+raiders (as built)"; the AI: docs/AI.md 45). No state format change.
+
+**Scaling poles.** `CBattle.siege_equipment` adds `"poles": POLE_SETS` (2) to an assault on walls (level 1+) by a faction of
+`CData.POLE_FACTIONS` (west.gd: `itza`, `miskito`) that holds a building of `CData.POLE_NEEDS` (`[BARRACKS, 2]`, the War
+lodge 2) in any region (`CBattle.poles_of`), on arrival too (no siege needed), beside the ladders, the ram, the mantlets
+and the towers a siege builds as for anyone. Where the plan was silent or could not apply: ladders cost nothing in the
+campaign (they come with siege turns; the plan took them for a Workshop item), so the poles' "60 % of the ladders' cost"
+has nothing to scale; they are what a native army cuts on the march, hence "on arrival". "Two per party" is two poles to
+a set (a ladder set has five), the party's climb at 70 % of a ladder party's rate. The natives keep the ladders and the
+ram a siege builds (they had them before; poles are taken up after them). The formula's kit (`kit_of`) counts poles as
+ladders: WALLS_PCT_WEST's kit 0 and kit 1 columns are equal, so the auto-resolve does not move. The siege panel's line
+adds "Scaling poles: 2 sets (from the war lodge)"; the battle screen lists them; the unit book's Settlements page has a
+paragraph; the custom battle has a Poles toggle (the West).
+
+**Torch raiders.** The Miskito's `siege` line is `["torch_raiders", "", ""]` (the wagon gone: they forage), the row
+needs `[BARRACKS, 2]` (`UNIT_NEEDS`), so `CData.chain_levels` gives the Miskito Barracks 2 (was 1) and no Workshop (was
+1: the wagon was the only row that needed it; a Canoe yard a region already has stays). The Itza keep the wagon and
+cannot raise torch raiders (not in their roster). `UNIT_NAMES`: "Torch Raiders" / "Torches". Mix: `siege` 5 (light 44 ->
+39). The campaign AI's wagon rule takes only a wagon from a siege line (the Miskito's would have been the torch raiders).
+
+**Measured.** West campaign sim, 72 seeds x 60 turns (seeds 1000 + 77 n), d963579 against this build (the natives'
+captures from the turn events: "captured" with the native the new owner):
+
+| | format 6 before | format 6 after | format 10 before | format 10 after |
+|---|---|---|---|---|
+| eliminations (per seed) | 53 (0.74) | 49 (0.68) | 59 (0.82) | 63 (0.88) |
+| battles (per seed) | 4040 (56.1) | 4120 (57.2) | 3413 (47.4) | 3548 (49.3) |
+| by faction: Brethren / Miskito / Itza / Dutch / English / French | 17 / 19 / 6 / 6 / 3 / 2 | 17 / 18 / 5 / 2 / 4 / 3 | 24 / 18 / 12 / 1 / 1 / 3 | 27 / 21 / 12 / 1 / 2 / 0 |
+| towns taken by the Itza / the Miskito | 606 / 250 | 593 / 232 | 371 / 178 | 360 / 179 |
+| towns the Itza / the Miskito lost | 256 / 202 | 232 / 190 | 183 / 133 | 181 / 142 |
+| native assaults (won): Itza / Miskito | 78 (59) / 44 (28) | 81 (60) / 30 (19) | 88 (64) / 22 (17) | 88 (59) / 27 (19) |
+| Miskito alive with a War lodge 2 / a Canoe yard (seeds) | 4 / 38 of 53 | 7 / 4 of 54 | 3 / 40 of 54 | 8 / 6 of 51 |
+| torch raider units at the end (seeds with any) | 0 | 13 (5) | 0 | 13 (5) |
+
+Within the seeds' noise everywhere: the campaign never fights the sim (the auto-resolve reads the rows' strength and the
+kit, which the poles do not move), and the Miskito AI rarely builds the War lodge 2 that unlocks the torch raiders (7 of
+54 seeds); the Workshop it no longer builds is the clear change.
+
+Battles (tools/balance `native_walls_itza` / `native_walls_miskito`: the 16 Spanish towns of west_walls x walls 0-2 x 16
+seeds, `tests/town_balance.gd --att=itza|miskito`, the West set defending): **unfinished.** Itza before (d963579, storming
+bare): 668 of 768 battles, attacker won walls 0 / 1 / 2 89 % (202 / 228) / 82 % (183 / 224) / 37 % (80 / 216). After: 24
+battles (Havana walls 0-1), identical to before on those seeds. The Miskito plan was not run. On these plan towns walls 1-2
+have no outer wall (the fort is left be in these sets), so the poles cannot bite; the torch raiders' pots (held houses) can.
+To finish: `measure.py` both plans on this tree and on d963579 (the probe file copied there).

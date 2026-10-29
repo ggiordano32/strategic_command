@@ -2057,8 +2057,49 @@
         {"n": "rattle_gourd", "shape": "sphere", "bone": "forearm.L", "mat": "accent", "pos": [0.4, 0.28, 1.1], "r": 0.1},
         {"n": "rattle_hold", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.38, 0.28, 1.1], "b": [0.6, 0.3, 1.1], "t": 0.04}
       ]
+    },
+    "torch_raiders": {
+      "name": "Torch Raiders",
+      "look": "Miskito raider: bare painted torso, a headband with three feathers, loincloth, a trade axe in the right hand, a burning torch in the left, two clay fire pots at the belt; the default melee pose (the axe)",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "skip": [
+        "torso",
+        "cloak",
+        "cloak_back",
+        "skirt"
+      ],
+      "render_box": [
+        -1.5,
+        2.0,
+        -1.5,
+        1.5
+      ],
+      "parts": [
+        {"n": "chest", "shape": "box", "bone": "spine", "mat": "skin", "pos": [0, 0, 1.26], "size": [0.28, 0.48, 0.4], "bevel": 0.06},
+        {"n": "shoulders", "shape": "box", "bone": "spine", "mat": "skin", "pos": [-0.04, 0, 1.43], "size": [0.22, 0.6, 0.1], "bevel": 0.04},
+        {"n": "feather3", "shape": "limb", "bone": "head", "mat": "secondary", "a": [-0.103, 0.095, 1.74], "b": [-0.357, 0.33, 1.84], "t": [0.05, 0.075]},
+        {"n": "feather4", "shape": "limb", "bone": "head", "mat": "accent", "a": [-0.14, 0.007, 1.74], "b": [-0.485, 0.024, 1.84], "t": [0.05, 0.075]},
+        {"n": "feather5", "shape": "limb", "bone": "head", "mat": "secondary", "a": [-0.112, -0.085, 1.74], "b": [-0.387, -0.294, 1.84], "t": [0.05, 0.075]},
+        {"n": "hair", "shape": "sphere", "bone": "head", "mat": "hair", "pos": [-0.02, 0, 1.69], "r": 0.17, "scale": [1.0, 1.0, 0.9]},
+        {"n": "headband", "shape": "box", "bone": "head", "mat": "primary", "pos": [0.0, 0, 1.74], "size": [0.34, 0.34, 0.05], "bevel": 0.02},
+        {"n": "paint_a", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.0, 0.24, 1.47], "b": [0.12, 0.0, 1.46], "t": [0.04, 0.08]},
+        {"n": "paint_b", "shape": "limb", "bone": "spine", "mat": "secondary", "a": [0.12, 0.0, 1.46], "b": [0.0, -0.24, 1.47], "t": [0.04, 0.08]},
+        {"n": "baldric", "shape": "limb", "bone": "spine", "mat": "primary", "a": [0.0, 0.22, 1.5], "b": [0.02, -0.22, 1.0], "t": [0.05, 0.1], "pattern": 1},
+        {"n": "loincloth", "shape": "box", "bone": "hips", "mat": "primary", "pos": [0.06, 0, 0.88], "size": [0.22, 0.34, 0.3], "bevel": 0.04, "pattern": 1},
+        {"n": "loin_back", "shape": "box", "bone": "hips", "mat": "primary", "pos": [-0.1, 0, 0.84], "size": [0.1, 0.3, 0.34], "bevel": 0.03, "pattern": 1},
+        {"n": "armband.L", "shape": "box", "bone": "upper_arm.L", "mat": "accent", "pos": [0.04, 0.29, 1.28], "size": [0.1, 0.14, 0.1], "bevel": 0.02, "mirror": 1},
+        {"n": "axe_haft", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [0.3, -0.29, 1.02], "b": [0.86, -0.3, 1.24], "t": [0.05, 0.05]},
+        {"n": "axe_head", "shape": "box", "bone": "forearm.R", "mat": "metal", "pos": [0.8, -0.3, 1.3], "size": [0.1, 0.05, 0.2], "bevel": 0.02},
+        {"n": "axe_lash", "shape": "box", "bone": "forearm.R", "mat": "rope", "pos": [0.8, -0.3, 1.22], "size": [0.07, 0.07, 0.05]},
+        {"n": "torch_stick", "shape": "limb", "bone": "forearm.L", "mat": "wood", "a": [0.36, 0.3, 0.98], "b": [0.5, 0.32, 1.5], "t": [0.05, 0.05]},
+        {"n": "torch_wrap", "shape": "box", "bone": "forearm.L", "mat": "char", "pos": [0.5, 0.32, 1.5], "size": [0.09, 0.09, 0.1], "bevel": 0.02},
+        {"n": "torch_flame", "shape": "cone", "bone": "forearm.L", "mat": "ember", "a": [0.5, 0.32, 1.54], "b": [0.52, 0.32, 1.78], "r": 0.08},
+        {"n": "pot.L", "shape": "sphere", "bone": "hips", "mat": "stone", "pos": [0.02, 0.27, 0.95], "r": 0.08},
+        {"n": "pot.R", "shape": "sphere", "bone": "hips", "mat": "stone", "pos": [0.02, -0.27, 0.95], "r": 0.08}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman", "torch_raiders"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
 }

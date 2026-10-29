@@ -4,8 +4,8 @@
 // anchor y, step, frames). The texture path reads it from a uniform array
 // (soldier_layer.gd fills frame_tab from sprite_atlas.gd TABLE), the
 // CPU-fed path from these constants: the same numbers.
-const vec2 ATLAS_SIZE = vec2(1024.0, 2540.0);
-const int ATLAS_ENTRIES = 528;
+const vec2 ATLAS_SIZE = vec2(1024.0, 2564.0);
+const int ATLAS_ENTRIES = 540;
 const int ACTIONS = 6;
 
 float action_fps(int a) {
@@ -64,15 +64,15 @@ vec4 frame_entry(int k) {
 	if (k < 48) {
 		if (k == 36) { return vec4(892.0, 1780.0, 85.0, 31.0); }
 		if (k == 37) { return vec4(29.0, 19.0, 92.0, 1.0); }
-		if (k == 38) { return vec4(196.0, 1340.0, 89.0, 36.0); }
+		if (k == 38) { return vec4(352.0, 1340.0, 89.0, 36.0); }
 		if (k == 39) { return vec4(31.0, 19.0, 96.0, 6.0); }
 		if (k == 40) { return vec4(260.0, 708.0, 96.0, 50.0); }
 		if (k == 41) { return vec4(34.0, 22.0, 100.0, 4.0); }
 		if (k == 42) { return vec4(352.0, 4.0, 98.0, 79.0); }
 		if (k == 43) { return vec4(55.0, 35.0, 104.0, 3.0); }
-		if (k == 44) { return vec4(196.0, 1340.0, 89.0, 36.0); }
+		if (k == 44) { return vec4(352.0, 1340.0, 89.0, 36.0); }
 		if (k == 45) { return vec4(31.0, 19.0, 96.0, 6.0); }
-		if (k == 46) { return vec4(196.0, 1340.0, 89.0, 36.0); }
+		if (k == 46) { return vec4(352.0, 1340.0, 89.0, 36.0); }
 		return vec4(31.0, 19.0, 96.0, 6.0);
 	}
 	if (k < 60) {
@@ -104,17 +104,17 @@ vec4 frame_entry(int k) {
 		return vec4(15.0, 18.0, 52.0, 6.0);
 	}
 	if (k < 84) {
-		if (k == 72) { return vec4(292.0, 2488.0, 21.0, 20.0); }
+		if (k == 72) { return vec4(556.0, 2488.0, 21.0, 20.0); }
 		if (k == 73) { return vec4(8.0, 10.0, 28.0, 1.0); }
-		if (k == 74) { return vec4(320.0, 2488.0, 35.0, 20.0); }
+		if (k == 74) { return vec4(584.0, 2488.0, 35.0, 20.0); }
 		if (k == 75) { return vec4(15.0, 10.0, 40.0, 6.0); }
 		if (k == 76) { return vec4(420.0, 1164.0, 45.0, 39.0); }
 		if (k == 77) { return vec4(13.0, 13.0, 52.0, 4.0); }
 		if (k == 78) { return vec4(568.0, 1464.0, 61.0, 35.0); }
 		if (k == 79) { return vec4(43.0, 19.0, 68.0, 3.0); }
-		if (k == 80) { return vec4(320.0, 2488.0, 35.0, 20.0); }
+		if (k == 80) { return vec4(584.0, 2488.0, 35.0, 20.0); }
 		if (k == 81) { return vec4(15.0, 10.0, 40.0, 6.0); }
-		if (k == 82) { return vec4(320.0, 2488.0, 35.0, 20.0); }
+		if (k == 82) { return vec4(584.0, 2488.0, 35.0, 20.0); }
 		return vec4(15.0, 10.0, 40.0, 6.0);
 	}
 	if (k < 96) {
@@ -174,17 +174,17 @@ vec4 frame_entry(int k) {
 		return vec4(31.0, 21.0, 76.0, 6.0);
 	}
 	if (k < 144) {
-		if (k == 132) { return vec4(560.0, 2488.0, 17.0, 20.0); }
+		if (k == 132) { return vec4(824.0, 2488.0, 17.0, 20.0); }
 		if (k == 133) { return vec4(8.0, 10.0, 24.0, 1.0); }
-		if (k == 134) { return vec4(584.0, 2488.0, 30.0, 20.0); }
+		if (k == 134) { return vec4(4.0, 2516.0, 30.0, 20.0); }
 		if (k == 135) { return vec4(15.0, 10.0, 36.0, 6.0); }
-		if (k == 136) { return vec4(800.0, 2488.0, 25.0, 20.0); }
+		if (k == 136) { return vec4(220.0, 2516.0, 25.0, 20.0); }
 		if (k == 137) { return vec4(10.0, 10.0, 32.0, 4.0); }
 		if (k == 138) { return vec4(4.0, 1504.0, 42.0, 35.0); }
 		if (k == 139) { return vec4(37.0, 19.0, 48.0, 3.0); }
-		if (k == 140) { return vec4(584.0, 2488.0, 30.0, 20.0); }
+		if (k == 140) { return vec4(4.0, 2516.0, 30.0, 20.0); }
 		if (k == 141) { return vec4(15.0, 10.0, 36.0, 6.0); }
-		if (k == 142) { return vec4(584.0, 2488.0, 30.0, 20.0); }
+		if (k == 142) { return vec4(4.0, 2516.0, 30.0, 20.0); }
 		return vec4(15.0, 10.0, 36.0, 6.0);
 	}
 	if (k < 156) {
@@ -356,17 +356,17 @@ vec4 frame_entry(int k) {
 		return vec4(15.0, 21.0, 36.0, 6.0);
 	}
 	if (k < 300) {
-		if (k == 288) { return vec4(928.0, 2488.0, 20.0, 20.0); }
+		if (k == 288) { return vec4(348.0, 2516.0, 20.0, 20.0); }
 		if (k == 289) { return vec4(11.0, 10.0, 24.0, 1.0); }
-		if (k == 290) { return vec4(4.0, 2516.0, 30.0, 20.0); }
+		if (k == 290) { return vec4(372.0, 2516.0, 30.0, 20.0); }
 		if (k == 291) { return vec4(15.0, 10.0, 36.0, 6.0); }
-		if (k == 292) { return vec4(220.0, 2516.0, 25.0, 20.0); }
+		if (k == 292) { return vec4(588.0, 2516.0, 25.0, 20.0); }
 		if (k == 293) { return vec4(10.0, 10.0, 32.0, 4.0); }
 		if (k == 294) { return vec4(376.0, 1504.0, 42.0, 35.0); }
 		if (k == 295) { return vec4(37.0, 19.0, 48.0, 3.0); }
-		if (k == 296) { return vec4(4.0, 2516.0, 30.0, 20.0); }
+		if (k == 296) { return vec4(372.0, 2516.0, 30.0, 20.0); }
 		if (k == 297) { return vec4(15.0, 10.0, 36.0, 6.0); }
-		if (k == 298) { return vec4(4.0, 2516.0, 30.0, 20.0); }
+		if (k == 298) { return vec4(372.0, 2516.0, 30.0, 20.0); }
 		return vec4(15.0, 10.0, 36.0, 6.0);
 	}
 	if (k < 312) {
@@ -552,31 +552,31 @@ vec4 frame_entry(int k) {
 		return vec4(15.0, 11.0, 48.0, 6.0);
 	}
 	if (k < 468) {
-		if (k == 456) { return vec4(348.0, 2516.0, 41.0, 20.0); }
+		if (k == 456) { return vec4(716.0, 2516.0, 41.0, 20.0); }
 		if (k == 457) { return vec4(11.0, 10.0, 48.0, 1.0); }
-		if (k == 458) { return vec4(396.0, 2516.0, 47.0, 20.0); }
+		if (k == 458) { return vec4(4.0, 2540.0, 47.0, 20.0); }
 		if (k == 459) { return vec4(15.0, 10.0, 52.0, 6.0); }
 		if (k == 460) { return vec4(308.0, 2160.0, 45.0, 27.0); }
 		if (k == 461) { return vec4(22.0, 14.0, 52.0, 4.0); }
 		if (k == 462) { return vec4(4.0, 1544.0, 62.0, 35.0); }
 		if (k == 463) { return vec4(43.0, 19.0, 68.0, 3.0); }
-		if (k == 464) { return vec4(396.0, 2516.0, 47.0, 20.0); }
+		if (k == 464) { return vec4(4.0, 2540.0, 47.0, 20.0); }
 		if (k == 465) { return vec4(15.0, 10.0, 52.0, 6.0); }
-		if (k == 466) { return vec4(396.0, 2516.0, 47.0, 20.0); }
+		if (k == 466) { return vec4(4.0, 2540.0, 47.0, 20.0); }
 		return vec4(15.0, 10.0, 52.0, 6.0);
 	}
 	if (k < 480) {
-		if (k == 468) { return vec4(708.0, 2516.0, 24.0, 20.0); }
+		if (k == 468) { return vec4(316.0, 2540.0, 24.0, 20.0); }
 		if (k == 469) { return vec4(11.0, 10.0, 28.0, 1.0); }
-		if (k == 470) { return vec4(736.0, 2516.0, 35.0, 20.0); }
+		if (k == 470) { return vec4(344.0, 2540.0, 35.0, 20.0); }
 		if (k == 471) { return vec4(15.0, 10.0, 40.0, 6.0); }
 		if (k == 472) { return vec4(196.0, 1252.0, 45.0, 39.0); }
 		if (k == 473) { return vec4(13.0, 13.0, 52.0, 4.0); }
 		if (k == 474) { return vec4(208.0, 1544.0, 61.0, 35.0); }
 		if (k == 475) { return vec4(43.0, 19.0, 68.0, 3.0); }
-		if (k == 476) { return vec4(736.0, 2516.0, 35.0, 20.0); }
+		if (k == 476) { return vec4(344.0, 2540.0, 35.0, 20.0); }
 		if (k == 477) { return vec4(15.0, 10.0, 40.0, 6.0); }
-		if (k == 478) { return vec4(736.0, 2516.0, 35.0, 20.0); }
+		if (k == 478) { return vec4(344.0, 2540.0, 35.0, 20.0); }
 		return vec4(15.0, 10.0, 40.0, 6.0);
 	}
 	if (k < 492) {
@@ -635,10 +635,24 @@ vec4 frame_entry(int k) {
 		if (k == 526) { return vec4(296.0, 1888.0, 33.0, 31.0); }
 		return vec4(15.0, 14.0, 40.0, 6.0);
 	}
+	if (k < 540) {
+		if (k == 528) { return vec4(584.0, 2540.0, 34.0, 20.0); }
+		if (k == 529) { return vec4(12.0, 10.0, 40.0, 1.0); }
+		if (k == 530) { return vec4(292.0, 2488.0, 37.0, 21.0); }
+		if (k == 531) { return vec4(15.0, 11.0, 44.0, 6.0); }
+		if (k == 532) { return vec4(788.0, 1996.0, 48.0, 29.0); }
+		if (k == 533) { return vec4(15.0, 14.0, 52.0, 4.0); }
+		if (k == 534) { return vec4(196.0, 1340.0, 48.0, 37.0); }
+		if (k == 535) { return vec4(37.0, 20.0, 52.0, 3.0); }
+		if (k == 536) { return vec4(292.0, 2488.0, 37.0, 21.0); }
+		if (k == 537) { return vec4(15.0, 11.0, 44.0, 6.0); }
+		if (k == 538) { return vec4(292.0, 2488.0, 37.0, 21.0); }
+		return vec4(15.0, 11.0, 44.0, 6.0);
+	}
 	return vec4(0.0);
 }
 #else
-uniform vec4 frame_tab[528];
+uniform vec4 frame_tab[540];
 
 vec4 frame_entry(int k) {
 	return frame_tab[k];

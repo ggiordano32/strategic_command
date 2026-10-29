@@ -1245,7 +1245,9 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			if _v(u, "pick") >= 0 and _v(u, "pick") < sim.n_eq:
 				var pk: int = sim.q_kind[_v(u, "pick")]
 				var ptxt := "PICK UP THE RAM" if pk == BattleSim.EQ_RAM else "PICK UP LADDERS"
-				if pk == BattleSim.EQ_WAGON:
+				if pk == BattleSim.EQ_POLES:
+					ptxt = "PICK UP POLES"
+				elif pk == BattleSim.EQ_WAGON:
 					ptxt = "TAKE THE WAGON"
 				elif BattleSim.EQ_SCREEN[pk] != 0:
 					ptxt = "PICK UP THE MANTLET"
@@ -2297,9 +2299,17 @@ func _draw_siege_gear(lw: float) -> void:
 			var dir: float = sim.ws_dir[sim.q_seg[q]] * TAU / 1024.0
 			var inw := -Vector2(cos(dir), sin(dir)) * px_per_m * 3.5
 			var side2 := Vector2(-sin(dir), cos(dir)) * px_per_m * 0.45
-			for k in BattleSim.LADDER_SET:
+			var poles: bool = sim.q_kind[q] == BattleSim.EQ_POLES
+			for k in BattleSim.EQ_LANES[sim.q_kind[q]]:
 				var f: Vector2i = sim.set_ladder_foot(q, k)
 				var fp := to_px(f.x, f.y)
+				if poles:
+					# A notched scaling pole: one trunk, the notches as short ticks.
+					draw_line(fp, fp + inw, wood, lw * 1.4)
+					for r in 5:
+						var nq := fp + inw * (0.15 + 0.18 * r)
+						draw_line(nq, nq + side2 * 0.9, wood, lw * 0.7)
+					continue
 				for rail in [-1.0, 1.0]:
 					draw_line(fp + side2 * rail, fp + side2 * rail + inw, wood, lw)
 				for r in 5:
@@ -2309,6 +2319,12 @@ func _draw_siege_gear(lw: float) -> void:
 		# A bundle of five ladders (on the ground or on the carriers' shoulders).
 		if st == BattleSim.Q_CARRIED:
 			c -= fwd * 1.5
+		if sim.q_kind[q] == BattleSim.EQ_POLES:
+			# Two scaling poles, longer than the ladders, a few notches.
+			for k in 2:
+				var o := side * (float(k) - 0.5) * 0.6
+				draw_line(c - fwd * 3.6 + o, c + fwd * 3.6 + o, wood, lw * 1.4)
+			continue
 		for k in 3:
 			var o := side * (float(k) - 1.0) * 0.7
 			draw_line(c - fwd * 3.0 + o, c + fwd * 3.0 + o, wood, lw * 1.3)

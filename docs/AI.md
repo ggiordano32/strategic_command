@@ -3396,3 +3396,42 @@ id; an int8 multi-layer perceptron evaluated in integer maths in the sim,
 trained from self-play on the balance harness, with the rules of this
 section as the fallback when it picks nothing. Deterministic and small; its
 cost is explainability, which the plays' names in the telemetry keep.
+
+## 45. Native siege: poles and torch raiders (2026-10-29)
+
+The AI side of docs/design/campaign_rules.md "Native siege (as built)" and docs/design/siege_and_towns.md "Native
+siege: scaling poles and the melee batter (as built)". Code: `sim/siege_ai.gd` (`_ladderish`, `_torch_gate`,
+`_foot_key`, the exclusions in `_batter_bld` and `_assign_mantlets`), `sim/ai_profile.gd` (`R_TORCH_GATE`),
+`campaign/cai.gd` (the wagon rule), `campaign/data/west.gd` (the Miskito's mix).
+
+1. **Poles are ladders.** Every rule that reads ladders reads `EQ_LADDERS` or `EQ_POLES` (`_ladderish`): the ladder
+   parties of `_assign_equip` (`S_LADDER_UNITS` sets in all, planted ones counted, `S_LADDER_FOLLOW` followers),
+   `_escalade`, the fort's shut-the-gate and sally-back rules (ladders near the gate). The scenario lists the poles
+   after the ladders, so a storm with both takes the ladders first (they climb faster).
+2. **The storming party.** `_foot_key` (the ladder parties' heaviest-first key) gave every West row the same key 3,
+   so the ladders went to infantry by unit index (the Itza's warriors before their Holcan). The West's `heavy` line
+   (rodeleros, cutlass men, the Holcan) is now key 0 (Rome's heavy); the Spanish attack lists, whose only infantry
+   are rodeleros and cutlass men, choose as before. `_solidity` (the field line's order) is not what picks the
+   party and is unchanged.
+3. **Torch raiders as the ram** (`_torch_gate`, from `_att_missile` before the grenadiers' rule; `R_TORCH_GATE`
+   Easy 0 / Average 1 / Skilled 1). Attacking a town, in the approach with the attacked gate (`ai_gate`) shut, or in
+   the assault with the citadel's gate or a stormed West fort's gate (`ai_fort` 2) shut, and no ram of the side
+   able to work a gate (`_ram_avail`): the batter ability's Use now at that gate (the men go to its face and
+   strike it, `_update_mbat`); else back to Auto. Not engaged; ordered only when the wanted state differs
+   (stateless). With a ram on the field the ram's unit breaks the gate and the torch raiders are grenadiers.
+4. **Torch raiders as grenadiers.** Otherwise the AI.md 39 rule (`_gren_siege`, `R_GREN_SIEGE`) runs for their pots:
+   Hold in the approach outside the town, Use now at a shut gate in reach or at an enemy unit holding a building
+   within range, Auto in the town (where Auto throws only at held buildings and shut gates). While battering they
+   stay on Auto and throw their pots at the gate they stand at (fire). They are never given the ram, a ladder set or
+   a mantlet, nor the siege guns' building batter (`_batter_bld` skips a melee batter).
+5. **Campaign.** Poles come with the assault (CBattle.siege_equipment, a War lodge 2: docs/design/campaign_rules.md),
+   so the AI takes them as it takes ladders (4.6): nothing to buy, the assault decision's kit (`kit_of`) counts them as
+   ladders (WALLS_PCT_WEST's kit 0 and 1 columns are equal). The Miskito's mix has `siege` 5 (from `light` 44 -> 39):
+   the torch raiders, raised through the mix (`MIX_LIVE`: only once a recruiting centre has a War lodge 2, which the
+   build-up's want list then builds: the Barracks cap is 2 with the row). The wagon rule (`WAGON_MIN`, AI.md 23) takes
+   only a wagon row from the siege line (the Miskito's is the torch raiders: no wagon). Not in `AI_SPECIALISTS`: the
+   line has no main unit below them.
+
+Knob: `R_TORCH_GATE` (292, from the play library's unused 292-299; `KNOB_GAPS` now 293-299). Tests:
+`tests/roles_sim_test.gd --only=native` (the AI at Average batters a walls-2 oppidum's gate with them and it falls;
+Easy gives no ability order), `tests/determinism_test.gd --only=native`.

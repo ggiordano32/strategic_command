@@ -354,6 +354,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=native" in OS.get_cmdline_user_args():
+		_check_native()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=fire" in OS.get_cmdline_user_args():
 		_check_fire()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -440,6 +445,7 @@ func _init() -> void:
 	_check_destr_ai()
 	_check_preset_breach()
 	_check_fire()
+	_check_native()
 	_check_town()
 	_check_sea()
 	if "--only=equipment" in OS.get_cmdline_user_args():
@@ -8700,3 +8706,262 @@ func _check_plays() -> void:
 		if r3.state_hash() != r4.state_hash() or not Plays.has_mem(r3):
 			_fail("plays: play_field restored from a snapshot does not run on exactly")
 	print("PASS plays: tercio formed (2 blocks, 4 sleeves), not without its trigger, bit or a gun; repeat and snapshot exact")
+
+
+# --------------------------------------------------------------- native siege ---
+
+## Native siege (2026-10-29; docs/design/siege_and_towns.md "Native siege (as built)"; "--only=native", also in the
+## full run). West rows on set pieces, no AI. (1) Scaling poles: the ladder set piece (_flow_ladder_sc, walls 1, no
+## defender on the wall) with a set of poles in place of the ladders and 90 native warriors: picked up, planted,
+## every man up over the two poles, each pole's man every climb_per ticks (LADDER_TICKS x 2 x 100 / (5 x 70)),
+## slower than the ladders' run of the same piece but under twice its time. (2) Torch raiders at a walls-1 gate
+## (their grenades held): the batter's Use now sends them to its face, the gate breaks to their blows (m_obj a
+## blow) and nothing else. (3) At a walls-1 stretch: breached by their blows (2 / 3 of m_obj); at a walls-2 stretch
+## nothing (stone). (4) Fire pots: the fire scenario's held timber house (_fire_sc) with a torch raider company 35 m
+## out from its door in place of the archers, Use now at the company inside: they close and throw, the house is
+## alight within 30 s of the order. Each: identical on repeat (every tick) and across snapshot / restore.
+func _check_native() -> void:
+	var bad: Array[String] = []
+	var txt: Array[String] = []
+	# (1) Poles.
+	var pr := _native_poles(false)
+	var lr := _flow_ladder_run(1, false, false)
+	var pr2 := _native_poles(true)
+	var want_per: int = BattleSim.LADDER_TICKS[1] * BattleSim.POLE_SET * 100 / (BattleSim.LADDER_SET * BattleSim.POLE_CLIMB_PCT)
+	if pr["hashes"] != pr2["hashes"]:
+		bad.append("poles: not identical on repeat")
+	if int(pr["snap_bad"]) != 0:
+		bad.append("poles: diverged after snapshot / restore")
+	if int(pr["planted"]) != 1 or int(pr["climb"]) < 0 or int(pr["up"]) < int(pr["alive"]):
+		bad.append("poles: planted %d, climb %d ticks, %d of %d up" % [int(pr["planted"]), int(pr["climb"]), int(pr["up"]), int(pr["alive"])])
+	elif int(pr["per"]) != want_per:
+		bad.append("poles: climb_per %d, want %d" % [int(pr["per"]), want_per])
+	elif int(lr["climb"]) <= 0 or int(pr["climb"]) <= int(lr["climb"]) or int(pr["climb"]) >= 2 * int(lr["climb"]):
+		bad.append("poles: climbed in %d ticks, the ladders in %d (want slower, under twice)" % [int(pr["climb"]), int(lr["climb"])])
+	else:
+		txt.append("poles planted and %d men up in %.1f s (ladders %.1f s; a man a pole every %d ticks), hash %08x" % [
+			int(pr["up"]), int(pr["climb"]) / 10.0, int(lr["climb"]) / 10.0, int(pr["per"]), int(pr["hashes"][-1])])
+	# (2) and (3) The batter's melee form.
+	for kind in ["gate", "pal", "stone"]:
+		var r1 := _native_batter(kind, false)
+		var r2 := _native_batter(kind, true)
+		if r1["hashes"] != r2["hashes"]:
+			bad.append("batter %s: not identical on repeat" % kind)
+		if int(r1["snap_bad"]) != 0:
+			bad.append("batter %s: diverged after snapshot / restore" % kind)
+		var obj := UT.stat(UT.index_of("torch_raiders"), "m_obj")
+		if kind == "gate":
+			var need := (MapGen.GATE_HP[1] * BattleSim.GATE_HP_PCT[1] / 100 + obj - 1) / obj
+			if int(r1["broken_t"]) < 0 or int(r1["blows"]) != need:
+				bad.append("batter gate: broken at %d, %d blows (want %d)" % [int(r1["broken_t"]), int(r1["blows"]), need])
+			else:
+				txt.append("the gate broke to %d blows at %.1f s" % [int(r1["blows"]), int(r1["broken_t"]) / 10.0])
+		elif kind == "pal":
+			var dmg := obj * BattleSim.MBAT_PAL_PCT / 100
+			var need2 := (BattleSim.WS_HP[1] + dmg - 1) / dmg
+			if int(r1["broken_t"]) < 0 or int(r1["blows"]) != need2:
+				bad.append("batter palisade: breached at %d, %d blows (want %d)" % [int(r1["broken_t"]), int(r1["blows"]), need2])
+			else:
+				txt.append("the palisade stretch breached by %d blows at %.1f s" % [int(r1["blows"]), int(r1["broken_t"]) / 10.0])
+		else:
+			if int(r1["broken_t"]) >= 0 or int(r1["blows"]) != 0 or int(r1["hp_lost"]) != 0 or int(r1["at_face"]) == 0:
+				bad.append("batter stone: breached %d, %d blows, %d hp lost, at its face %d" % [int(r1["broken_t"]), int(r1["blows"]),
+					int(r1["hp_lost"]), int(r1["at_face"])])
+			else:
+				txt.append("a walls-2 stretch untouched")
+		if r1.has("hashes") and (r1["hashes"] as PackedInt64Array).size() > 0:
+			txt[txt.size() - 1] += " (hash %08x)" % int(r1["hashes"][-1])
+	# (4) Fire pots.
+	var f1 := _native_pots(7, false)
+	var f2 := _native_pots(7, true)
+	if f1["hashes"] != f2["hashes"]:
+		bad.append("pots: not identical on repeat")
+	if int(f1["snap_bad"]) != 0:
+		bad.append("pots: diverged after snapshot / restore")
+	if int(f1["lit_t"]) < 0 or int(f1["lit_t"]) > 300 + 300:
+		bad.append("pots: the held house lit at %d (ordered at 300)" % int(f1["lit_t"]))
+	else:
+		txt.append("fire pots lit the held house %.1f s after the order (hash %08x)" % [(int(f1["lit_t"]) - 300) / 10.0, int(f1["hashes"][-1])])
+	if bad.is_empty():
+		print("PASS native siege: %s; identical on repeat and across snapshot / restore" % "; ".join(txt))
+	else:
+		for b in bad:
+			_fail(b)
+
+
+## The ladder set piece with a set of poles and native warriors (1).
+func _native_poles(snap_twin: bool) -> Dictionary:
+	var ls := _flow_ladder_sc(1, false)
+	var sc: Dictionary = ls["sc"]
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["type"] = UT.index_of("native_warriors")
+			ud["count"] = 90
+	sc["equip"][0][0] = BattleSim.EQ_POLES
+	var sim := BattleSim.new()
+	sim.setup(sc, 77)
+	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0, "player": 51})
+	sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": 0, "run": 0, "player": 50})
+	var hashes := PackedInt64Array()
+	var ordered := false
+	var t_start := -1
+	var t_all := -1
+	var snap_bad := 0
+	var tw: BattleSim = null
+	for t in 3000:
+		if not ordered and sim.u_carry[0] == 0:
+			ordered = true
+			sim.queue_order(BattleSim.make_move_order(sim.tick, 0, int(ls["wx"]), int(ls["wy"]), 768, 20 * M, 0))
+		sim.step()
+		hashes.append(sim.state_hash())
+		if tw != null:
+			tw.step()
+			if tw.state_hash() != sim.state_hash():
+				snap_bad += 1
+		if snap_twin and t == 600:
+			tw = _snap_copy(sim, sc, 77)
+		if t_start < 0 and sim.u_stair[0] == BattleSim.ST_LADDER:
+			t_start = sim.tick
+		if t_start >= 0 and t_all < 0:
+			var up := 0
+			var base: int = sim.u_slot_base[0]
+			for sl in sim.u_alive[0]:
+				var i: int = sim.slot_soldier[base + sl]
+				if sim._on_walk(sim.pos_x[i], sim.pos_y[i]):
+					up += 1
+			if sim.u_alive[0] > 0 and up == sim.u_alive[0]:
+				t_all = sim.tick
+				break
+	return {"hashes": hashes, "planted": sim.stat_planted, "climb": t_all - t_start if t_all >= 0 and t_start >= 0 else -1,
+		"up": sim.stat_ladder_up, "alive": sim.u_alive[0], "per": BattleSim.climb_per(sim, 0), "snap_bad": snap_bad}
+
+
+## A ring town (walls 1, or 2 for "stone"), no AI, 10 javelinmen at the plaza holding their fire: a 60-man torch
+## raider company 14 m out from the gate nearest it ("gate") or from the middle of the stretch nearest it ("pal",
+## "stone"), its grenades held, then the batter's Use now at it. Runs 1,500 ticks or until it falls.
+func _native_batter(kind: String, snap_twin: bool) -> Dictionary:
+	var walls := 2 if kind == "stone" else 1
+	var city := {"seed": 4242, "level": 2, "walls": walls, "bld": [], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var r := Scenarios.settlement(city, terr, [[UT.index_of("torch_raiders"), 60]], [[UT.JAVELIN, 10]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	var probe := BattleSim.new()
+	probe.setup(sc, 78)
+	var tgt := -1
+	var spot := Vector2i.ZERO
+	var face := 0
+	var bd := 1 << 40
+	if kind == "gate":
+		for g in probe.n_gates:
+			if probe.g_cit[g] != 0:
+				continue
+			var gf: Vector3i = probe.gate_front(g, 0)
+			var d := absi(gf.x - probe.u_cx[0]) + absi(gf.y - probe.u_cy[0])
+			if d < bd:
+				bd = d
+				tgt = g
+				var o := (gf.z + 512) & FM.ANGLE_MASK
+				spot = Vector2i(gf.x + FM.cos_a(o) * 14 * M / FM.TRIG_ONE, gf.y + FM.sin_a(o) * 14 * M / FM.TRIG_ONE)
+				face = gf.z
+	else:
+		for sg in probe.ws_x0.size():
+			if (probe.ws_fl[sg] & (MapGen.SEG_CIT | MapGen.SEG_SEA)) != 0 or BattleSim.seg_len(probe, sg) < 12 * M:
+				continue
+			var op: Vector2i = probe.ws_side_pt(sg, false)
+			var d := absi(op.x - probe.u_cx[0]) + absi(op.y - probe.u_cy[0])
+			if d < bd and (probe.nav_at(op.x, op.y) & MapGen.NAV_GROUND) != 0:
+				bd = d
+				tgt = sg
+				spot = Vector2i(op.x + FM.cos_a(probe.ws_dir[sg]) * 11 * M / FM.TRIG_ONE, op.y + FM.sin_a(probe.ws_dir[sg]) * 11 * M / FM.TRIG_ONE)
+				face = (probe.ws_dir[sg] + 512) & FM.ANGLE_MASK
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["x_m"] = spot.x / M
+			ud["y_m"] = spot.y / M
+			ud["facing"] = face
+			ud["files"] = 15
+	var sim := BattleSim.new()
+	sim.setup(sc, 78)
+	sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0, "player": 51})
+	sim.queue_order(BattleSim.make_ability_order(0, 0, UT.AB_GRENADE, UT.AB_HOLD, -1))
+	sim.queue_order(BattleSim.make_ability_order(5, 0, UT.AB_BATTER, UT.AB_NOW, (-2 - tgt) if kind == "gate" else tgt))
+	var hp0: int = sim.ws_hp[tgt] if kind != "gate" else sim.g_hp[tgt]
+	var hashes := PackedInt64Array()
+	var broken_t := -1
+	var snap_bad := 0
+	var tw: BattleSim = null
+	var at_face := 0
+	for t in 1500:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if tw != null:
+			tw.step()
+			if tw.state_hash() != sim.state_hash():
+				snap_bad += 1
+		if snap_twin and t == 300:
+			tw = _snap_copy(sim, sc, 78)
+		if kind != "gate" and sim.u_gtarget[0] == -2 - tgt and sim.u_order[0] == BattleSim.O_NONE:
+			at_face = 1
+		if broken_t < 0 and ((kind == "gate" and sim.g_state[tgt] == BattleSim.GATE_BROKEN) \
+				or (kind != "gate" and sim.ws_state[tgt] != BattleSim.WS_STANDING)):
+			broken_t = sim.tick
+			break
+	var hp1: int = sim.ws_hp[tgt] if kind != "gate" else sim.g_hp[tgt]
+	return {"hashes": hashes, "broken_t": broken_t, "blows": sim.stat_mbat_blows, "snap_bad": snap_bad,
+		"hp_lost": (hp0 - hp1) / 100 if broken_t < 0 else -1, "at_face": at_face}
+
+
+## The fire scenario (_fire_sc) with a torch raider company 35 m out from the held house's door in place of the
+## archers: Use now (fire pots) at the company inside at tick 300.
+func _native_pots(sd: int, snap_twin: bool) -> Dictionary:
+	var f := _fire_sc(sd)
+	var sc: Dictionary = f[0]
+	var d: int = f[1]
+	var arch: int = f[2]
+	var bb: int = f[3]
+	var probe := BattleSim.new()
+	probe.setup(sc, sd)
+	var ax: int = probe.ob_dx[bb] + FM.cos_a(probe.ob_face[bb]) * 35 / FM.TRIG_ONE * M
+	var ay: int = probe.ob_dy[bb] + FM.sin_a(probe.ob_face[bb]) * 35 / FM.TRIG_ONE * M
+	var gp: Vector2i = BattleSim.open_snap(probe, ax, ay, MapGen.NAV_GROUND)
+	var ud: Dictionary = sc["units"][arch]
+	ud["type"] = UT.index_of("torch_raiders")
+	ud["count"] = 60
+	ud.erase("ak")
+	ud["x_m"] = gp.x / M
+	ud["y_m"] = gp.y / M
+	ud["facing"] = FM.atan2_a(probe.ob_dy[bb] - gp.y, probe.ob_dx[bb] - gp.x)
+	sc["orders"] = [{"tick": 0, "type": BattleSim.ORDER_OCCUPY, "unit": d, "building": bb, "run": 1},
+		{"tick": 0, "type": SiegeAI.ORDER_FIRE, "unit": d, "on": 0},
+		{"tick": 0, "type": SiegeAI.ORDER_FIRE, "unit": arch, "on": 0},
+		BattleSim.make_ability_order(300, arch, UT.AB_GRENADE, UT.AB_NOW, d)]
+	var sim := BattleSim.new()
+	sim.setup(sc, sd)
+	var hashes := PackedInt64Array()
+	var lit_t := -1
+	var snap_bad := 0
+	var tw: BattleSim = null
+	for t in 700:
+		sim.step()
+		hashes.append(sim.state_hash())
+		if tw != null:
+			tw.step()
+			if tw.state_hash() != sim.state_hash():
+				snap_bad += 1
+		if snap_twin and t == 320:
+			tw = _snap_copy(sim, sc, sd)
+		if lit_t < 0 and sim.ob_fire[bb] != 0:
+			lit_t = sim.tick
+	return {"hashes": hashes, "lit_t": lit_t, "snap_bad": snap_bad}
+
+
+## A copy of sim restored from its snapshot now (null and a failure if it does not restore to the same hash);
+## the caller steps it beside sim.
+func _snap_copy(sim, sc: Dictionary, p_seed: int) -> BattleSim:
+	var blob: PackedByteArray = sim.snapshot()
+	var a := BattleSim.new()
+	a.setup(sc, p_seed)
+	if not a.restore(blob) or a.state_hash() != sim.state_hash():
+		_fail("native siege: restore refused or hashes differently")
+		return null
+	return a

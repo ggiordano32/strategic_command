@@ -32,6 +32,7 @@ const AI_BALANCED := E.AI_BALANCED
 const AI_AGGRESSIVE := E.AI_AGGRESSIVE
 const RANGE := E.RANGE
 const WORKSHOP := E.WORKSHOP
+const BARRACKS := E.BARRACKS
 
 const KEY := "west"
 const GRID := preload("res://campaign/data/west_grid_data.gd")
@@ -224,7 +225,7 @@ const FACTIONS: Array[Dictionary] = [
 		"regions": ["cabo_gracias", "bluefields", "talamanca"], "treasury": 1200,
 		"armies": [["cabo_gracias", ["native_warriors", "native_warriors", "native_warriors", "native_bowmen", "native_bowmen", "musketeers", "chieftain"]],
 			["bluefields", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
-		"mix": {"light": 44, "sling": 6, "archer": 30, "musket": 10, "maroon": 5, "general": 4},
+		"mix": {"light": 39, "sling": 6, "archer": 30, "musket": 10, "maroon": 5, "siege": 5, "general": 4},
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer", "musket"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 ]
 
@@ -280,7 +281,7 @@ const ROSTERS := {
 	"itza": {"light": ["native_warriors", "", ""], "heavy": ["", "holcan", ""], "archer": ["native_bowmen", "", ""], "javelin": ["atlatl"], "sling": ["w_slingers"], "siege": ["wagon", "", ""],
 		"general": ["chieftain"]},
 	"miskito": {"light": ["native_warriors", "canoe_raiders", ""], "archer": ["native_bowmen", "", ""], "musket": ["musketeers", "", ""],
-		"maroon": ["maroons"], "sling": ["w_slingers"], "siege": ["wagon", "", ""], "general": ["chieftain"]},
+		"maroon": ["maroons"], "sling": ["w_slingers"], "siege": ["torch_raiders", "", ""], "general": ["chieftain"]},
 	"independent": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
 		"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""]},
 }
@@ -296,7 +297,7 @@ const UNIT_NAMES := {
 		"w_slingers": ["Itza Slingers", "Slingers"], "chieftain": ["Batab's Guard", "Batab"], "shaman": ["Ah Kin", "Ah Kin"]},
 	"miskito": {"native_warriors": ["Miskito Warriors", "Warriors"], "native_bowmen": ["Miskito Bowmen", "Bowmen"],
 		"w_slingers": ["Miskito Slingers", "Slingers"], "musketeers": ["Miskito Musketmen", "Musketmen"],
-		"chieftain": ["King's Guard", "King's Guard"], "shaman": ["Sukia", "Sukia"]},
+		"chieftain": ["King's Guard", "King's Guard"], "shaman": ["Sukia", "Sukia"], "torch_raiders": ["Torch Raiders", "Torches"]},
 	"brethren": {"general": ["Captain's Crew", "Captain"], "musketeers": ["Ship's Musketeers", "Musketeers"]},
 }
 
@@ -313,6 +314,11 @@ const CHAIN_NAMES := {
 ## Building levels limited to what a faction's own units, ammunition and characters need (CData.chain_levels):
 ## the natives, who keep no horse and no Range 3. The Europeans and the Brethren can build every level.
 const CHAIN_CAP_FACTIONS: Array = ["itza", "miskito"]
+## Native siege (2026-10-29; docs/design/campaign_rules.md "Native siege (as built)"): the factions whose
+## assaults bring scaling poles (CBattle.siege_equipment "poles": POLE_SETS sets, on arrival too, while the
+## faction holds a building of POLE_NEEDS [chain, level] somewhere: the War lodge 2).
+const POLE_FACTIONS: Array = ["itza", "miskito"]
+const POLE_NEEDS: Array = [BARRACKS, 2]
 const CHAIN_NAMES_F := {
 	"itza": {"farm": ["Milpa", "Milpa", "farm"]},
 	"miskito": {"farm": ["Gardens", "Gardens", "farm"]},

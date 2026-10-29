@@ -182,6 +182,8 @@ static func equipment_line(snap: Dictionary) -> String:
 		parts.append("%d sets of ladders" % int(eq["ladders"]))
 	if int(eq.get("ram", 0)) > 0:
 		parts.append("a ram")
+	if int(eq.get("poles", 0)) > 0:
+		parts.append("%d sets of scaling poles" % int(eq["poles"]))
 	var nt := int(eq.get("towers", 0))
 	if nt > 0:
 		parts.append("a siege tower" if nt == 1 else "%d siege towers" % nt)

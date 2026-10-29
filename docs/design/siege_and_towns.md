@@ -2792,3 +2792,50 @@ against this build; the AI does not aim at houses, the arrows land on houses whe
 buildings burnt a battle (Havana 1.5, Cartagena 2.25, Santo Domingo 2.75; of 4 held), attackers 23 -> 22 of 24
 (Havana 7 -> 7, Cartagena 8 -> 7, Santo Domingo 8 -> 8), decided Havana 8.1 -> 8.3, Cartagena 9.6 -> 9.3, Santo
 Domingo 7.9 -> 7.2 min. (The first build, one roll a hit at 25 %: 2.6 a battle, 24 of 24, 0.8-1.0 min sooner.)
+
+### Native siege: scaling poles and the melee batter (as built, 2026-10-29)
+
+The sim side of docs/design/campaign_rules.md "Native siege, and the natives' buildings (plan)" (the campaign side,
+the measures: "Native siege (as built)" there; the AI: docs/AI.md 45). Code: `sim/battle_sim.gd` (`EQ_POLES`,
+`POLE_SET`, `POLE_WALK_PCT`, `POLE_CLIMB_PCT`, `EQ_CLIMB_PCT`, `climb_per`; `t_mbat`, `mb_on`, `_update_mbat`,
+`mbat_palisade`, `mbat_gate`, `MBAT_PAL_PCT`, `MBAT_RUN_R`, the order rule's batter branches, `_batter_now`'s melee
+form, `_gren_ok`, the fire pot's zero object damage in `_land_stone`, `fire_on` for a standard kind that burns),
+`sim/scenarios.gd` (`"poles"` in `settlement`'s equip), `sim/unit_types.gd` (the `torch_raiders` row, the `batter`
+field, `abilities`), the view (`game/overlay.gd` the poles drawn, the HUD's carry texts, `game/battle.gd` the
+Target pick for torch raiders, the unit book's "The natives' siege" paragraph, the custom battle's Poles toggle).
+
+- **Scaling poles** (`EQ_POLES` 10, a ladder kind: every per-kind array has its column, so the ladders' code runs
+  them: pick up, carry, plant at the foot of a stretch, climb, unbar a gate from inside, the AI's ladder parties).
+  A set is `POLE_SET` 2 notched poles (two lanes, `LADDER_GAP` apart) where a ladder set has five; the carriers walk
+  at `POLE_WALK_PCT` 90 % (ladders 80 %); a man goes up each pole every `climb_per` = LADDER_TICKS x 2 x 100 / (5 x
+  `POLE_CLIMB_PCT` 70) ticks (11 / 17 / 22 at walls 1 / 2 / 3), the party at 70 % of a ladder party's rate. The plan's
+  "planted in half a ladder's time": the sim has no planting delay (a set goes up the moment its carriers reach the
+  foot), so the ladders' cost in time is their carrying pace, and the poles halve its loss (80 -> 90 %). Same hit
+  points as ladders, burn as ladders, any foot of the side may carry them (in the campaign only the natives have
+  them). Scenario `equip` `{"poles": n}` (0-8) places them after the ladders and rams (the ram row's x positions shift
+  only when poles are present: Rome never has them). Measured in `--only=native`: 90 native warriors over a walls-1
+  stretch in 48.5 s against the ladders' 36.9 s on the same piece.
+- **The melee batter** (`AB_BATTER` for a row with `"batter": 1`: the torch raiders; the guns' batter is unchanged).
+  The batter's Use now (target: a gate -2 - g, a wall stretch, or -1 the nearest shut outer gate) sends the unit to the
+  gate's outer face (`gate_front`) or the stretch's outside middle (`ws_side_pt`), at the run from farther than
+  `MBAT_RUN_R` 40 m; an ordinary attack order at a gate does the same (their grenade ability's Use now at a gate
+  carries `"throw"` and throws the pots from where they stand instead). `_update_mbat` (after the gates, unit
+  index order, `mb_on`: a town battle with such a unit) counts its formed or fighting men at the gate's outer face
+  (within its width, `RAM_REACH` out) or within `RAM_REACH` outside the stretch's face, and with `RAM_MEN` 6 or more
+  adds min(men, `RAM_CREW` 20) of work a tick; every `RAM_WORK` 480 a blow: the row's `m_obj` (120) off a gate (the ram
+  160), `MBAT_PAL_PCT` 67 % of it (80) off a palisade stretch (`mbat_palisade`: walls level 1, not the citadel's or a
+  fort's), nothing off stone (walls 2-3, the citadel, the West fort). The gate breaks (`_break_gate`) or the stretch is
+  breached (`_breach`, the destruction's rules) as by the ram and the guns. Hold (or a new order) stops it. A walls-1
+  gate (1,800) falls to 15 blows, about 30 s of a full company at its face; a walls-1 stretch (1,200) to 15. The work
+  counter is the ram's `u_lacc` (a torch raider never carries the ram), hashed with the siege gear or, in a battle
+  without any, while `mb_on`.
+- **Fire pots** (the torch raiders' grenade ability: their standard kind is `fire_pots`, AMMO 7, lobbed, two a man,
+  22.5 m). Auto throws them only at a unit holding a building (`_gren_ok`; grenades also take formed blocks) and at a
+  shut gate in reach (`_gren_gate`), Hold keeps them, Use now at a unit or a gate as grenades. A pot that lands on a
+  timber building sets it alight at once (the burning-buildings rule's lobbed shot, `FIRE_CATCH_LOB`), on a gate with
+  the kind's 70 % (the gate fire's 30 s); it takes no hit points off a gate, tower, ram, wall or house (its object
+  damage is zeroed for a `batter` row: the axes break gates, the pots burn them). A row whose standard kind burns turns
+  `fire_on` on (none in Rome).
+- **Rome and the old battles.** No Rome row has the `batter` field or a burning standard kind, no Rome scenario
+  places poles; `_foot_key`'s change touches West rows only. The flat goldens and Rome hashes are unchanged
+  (determinism_test); `--only=native` is the new set piece.

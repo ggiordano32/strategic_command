@@ -317,6 +317,13 @@ func _map_row() -> Control:
 			rb.name = "custom_ram"
 			rb.tooltip_text = "The attackers bring a battering ram: tap a gate with it selected to batter it"
 			row.add_child(rb)
+			if CS.pack_of(setup) == "west":
+				var pb := _opt("Poles: " + ("yes" if int(mp.get("poles", 0)) != 0 else "no"), func():
+					mp["poles"] = 1 - int(mp.get("poles", 0))
+					_changed(), ed)
+				pb.name = "custom_poles"
+				pb.tooltip_text = "The attackers bring the natives' scaling poles: carried and climbed like ladders, lighter, two to a set"
+				row.add_child(pb)
 			if int(mp["walls"]) >= CS.Scenarios.TOWER_WALLS:
 				var nt := int(mp.get("towers", 0))
 				var tb := _opt("Siege towers: %d" % nt, func():
@@ -568,7 +575,8 @@ func _build_picker() -> void:
 		var f := Kit.flow(6)
 		f.add_child(Kit.label(str(line).capitalize(), Kit.FONT, Kit.COL_DIM))
 		for ty in UT.count():
-			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0) or UT.pack_of(ty) != pack:
+			if UT.line_of(ty) != line or (line == "general" and UT.stat(ty, "cmd_r") <= 0) or UT.pack_of(ty) != pack \
+					or UT.stat(ty, "fixed") != 0:  # (not a tower's or the fort's gun)
 				continue  # (not the plain bodyguard: a campaign army's second general)
 			var key := UT.key_of(ty)
 			var b := Kit.button("%s  %d  %s" % [UT.text(ty, "name"), UT.price_of(ty), _role_short(ty)], func(): _pick(key), 0, 13)

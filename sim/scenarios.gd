@@ -23,6 +23,7 @@ const ORDER_SKIRMISH := 6
 const EQ_LADDERS := 1   # BattleSim's siege equipment kinds (scenario "equip")
 const EQ_RAM := 2
 const EQ_TOWER := 4
+const EQ_POLES := 10    # (native siege: scaling poles, BattleSim.EQ_POLES)
 const TOWER_WALLS := 2  # siege towers only against walls of this level or more (BattleSim.EQ_WALLS)
 const EQ_STAKES := 5    # BattleSim's field works kinds (scenario "field_works")
 const EQ_CALTROPS := 6
@@ -1067,8 +1068,9 @@ static func _lay_row(units: Array, row: Array, back: int, gap: int, placed: Arra
 ## guard), "layout": the generator's layout (metres, final frame)}.
 ## equip: the attackers' siege equipment (docs/DESIGN.md "Siege equipment
 ## and wall towers"): {"ladders": sets of ladders, "ram": rams, "towers":
-## siege towers}, objects on the ground behind the middle of the attackers'
-## line, 12 m apart (the rams in the middle), the siege towers in a row of
+## siege towers, "poles": sets of the natives' scaling poles (native siege, 2026-10-29)}, objects on the
+## ground behind the middle of the attackers' line, 12 m apart (the rams in the middle, the poles after the
+## ladders on the right; a scenario without poles places as before), the siege towers in a row of
 ## their own 14 m further back (at the attackers' edge), in the scenario's
 ## "equip" list (BattleSim EQ_LADDERS / EQ_RAM / EQ_TOWER, x_m, y_m); only
 ## against walls, siege towers only against walls 2-3 (TOWER_WALLS).
@@ -1349,9 +1351,10 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 		var eq_l := clampi(int(equip.get("ladders", 0)), 0, 8)
 		var eq_r := clampi(int(equip.get("ram", 0)), 0, 2)
 		var eq_t := clampi(int(equip.get("towers", 0)), 0, 3)
+		var eq_p := clampi(int(equip.get("poles", 0)), 0, 8)
 		if int(c["walls"]) < TOWER_WALLS:
 			eq_t = 0
-		if eq_l + eq_r + eq_t > 0:
+		if eq_l + eq_r + eq_t + eq_p > 0:
 			# Behind the middle of the attackers' line, in a row 12 m apart.
 			var row: Array = []
 			for k in eq_l / 2 + eq_l % 2:
@@ -1360,6 +1363,8 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 				row.append(EQ_RAM)
 			for k in eq_l / 2:
 				row.append(EQ_LADDERS)
+			for k in eq_p:
+				row.append(EQ_POLES)
 			var back := int(al["depth"]) + 12
 			var ey := clampi(ay + back * sgn, 10, h - 10)
 			var eqs: Array = []
@@ -1375,6 +1380,9 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			for e in eqs:
 				if int(e[0]) == EQ_RAM:
 					out_eq.append(e)
+			for e in eqs:
+				if int(e[0]) == EQ_POLES:
+					out_eq.append(e)  # (then the poles: the AI takes up ladders before them)
 			# Siege towers last, in a row of their own behind (18 m apart).
 			var ty := clampi(ay + (back + 14) * sgn, 10, h - 10)
 			for k in eq_t:

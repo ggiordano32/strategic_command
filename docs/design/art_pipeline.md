@@ -471,6 +471,17 @@ holds the values: diorama amb 0.50, key 0.88, rim 0.22, outline 0.55, sat 1.22, 
 
 
 
+### The torch raiders' set (native siege, 2026-10-29)
+
+- **Set 45 torch_raiders** (appended; 45 of 63 used): the native warriors' body (bare painted torso, paint bands, baldric,
+  loincloth, armbands) with three feathers of the warriors' nine in the headband, a trade axe in the right hand (wooden
+  haft, iron head, a rope lashing), a burning torch in the left (stick, charred wrap, an ember-coloured flame cone) and
+  two clay fire pots at the belt; the default melee pose (the axe). `spec.json` unit `torch_raiders`, `atlas.sets` +1;
+  the row carries `"sprite_set": 45`. The palette is the faction's (the Miskito's purple) as for every set.
+- Sets 1-44 pixel-identical, as before: a full rebuild (Blender 5.2.1, about 2 s a unit) differed in 11 frames by 3-6
+  bytes (EEVEE noise: gastraphetes, cannon, shaman), so the old pixels were put back over every old frame rect after
+  pack.py (a Godot script kept out of the repo); 2,444 rects compared, 0 differ. Atlas 1024x2564, 1.5 MB of PNG.
+
 ### The battlefield ground, painterly (as built, 2026-10-27)
 
 Part 5 of the visual pass (`overworld_view.md`). View only: the ground reads the sim's `veg_d` density (the vegetation texture's

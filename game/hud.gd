@@ -476,9 +476,9 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		_open_confirm(withdraw_button, "Withdraw %d unit%s by your map edge?" % [n, "" if n == 1 else "s"], "Withdraw", "unit"))
 	# The chips, in the bar's fixed order (see _fit_actions: what does not fit goes under More).
 	var ab_tips := {
-		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it."],
+		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it. Torch raiders batter with axes: Use now at a gate or a stretch of palisade, and they go to it and hack until it gives (a stone wall they cannot hurt)."],
 		UT.AB_CARACOLE: ["Caracole", "Horse with firearms. Auto: ride up, fire, wheel back and reload, again. Hold: an attack is a charge. Use now: tap an enemy unit and they caracole at it."],
-		UT.AB_GRENADE: ["Grenades", "Auto: thrown at formed blocks, held houses and shut gates in reach. Hold: never thrown, the unit fights as shock foot. Use now: tap an enemy unit or a shut gate and it is thrown at at once."],
+		UT.AB_GRENADE: ["Grenades", "Auto: thrown at formed blocks, held houses and shut gates in reach (fire pots: held houses and shut gates only, setting them alight). Hold: never thrown, the unit fights as shock foot. Use now: tap an enemy unit or a shut gate and it is thrown at at once."],
 		UT.AB_PISTOL: ["Pistols", "Auto: a point-blank shot in each man's first rounds of a melee, the spent men changing places to reload. Hold: blades only."],
 		UT.AB_ROLL: ["Countermarch", "Musket lines: rolling fire by ranks. Auto: an opening volley, then one rank fires after another, keeping the enemy shaken; the last volley of every loaded man when an enemy comes within 40 m. Hold: volleys only. Use now: rolling fire at any range."]}
 	var ab_icons := {UT.AB_BATTER: "target", UT.AB_CARACOLE: "caracole", UT.AB_GRENADE: "grenade", UT.AB_PISTOL: "pistol",
@@ -2398,6 +2398,8 @@ static func carry_text(sim, u: int) -> String:
 	var k := BattleSim.carrying(sim, u)
 	if k == BattleSim.EQ_LADDERS:
 		return "carrying ladders"
+	if k == BattleSim.EQ_POLES:
+		return "carrying poles"
 	if k == BattleSim.EQ_RAM:
 		return "carrying ram"
 	if k == BattleSim.EQ_WAGON:
@@ -2414,6 +2416,8 @@ static func carry_text(sim, u: int) -> String:
 static func carry_pattern_text(k: int, files: int) -> String:
 	if k == BattleSim.EQ_LADDERS:
 		return "a file a ladder (%d)" % files
+	if k == BattleSim.EQ_POLES:
+		return "a file a pole (%d)" % files
 	if k != 0 and BattleSim.EQ_SCREEN[k] != 0:
 		return "%d files behind the panels" % files
 	return "column of %d" % files
@@ -2429,6 +2433,8 @@ static func carry_note_text(sim, u: int) -> String:
 	var what := "Carrying ladders"
 	if k == BattleSim.EQ_RAM:
 		what = "Carrying a ram"
+	elif k == BattleSim.EQ_POLES:
+		what = "Carrying scaling poles"
 	elif k == BattleSim.EQ_WAGON:
 		what = "With the wagon"
 	elif BattleSim.EQ_SCREEN[k] != 0:

@@ -73,6 +73,10 @@ const MANTLET_TURNS := 3    # the second mantlet step (4) after this many turns 
 const TOWER_TURNS := [2, 3]  # ... a siege tower after this many turns, two after that many (3 / 4 until 2026-10-09: supplies ran out first) ...
 const TOWER_WALLS := 2       # ... against walls of at least this level (BattleSim.EQ_WALLS)
 const MANTLETS := [2, 4]     # ... mantlets after RAM_TURNS, MANTLET_TURNS turns (walls any level)
+## Native siege (2026-10-29): sets of scaling poles a native assault on walls brings (CData.POLE_FACTIONS while
+## the faction holds a CData.POLE_NEEDS building, the War lodge 2): cut on the march, so on arrival too, beside
+## the ladders and the ram a siege builds.
+const POLE_SETS := 2
 ## The walls term of the formula (docs/CAMPAIGN.md "The formula"): the whole
 ## defending side of a settlement battle (garrison and the armies inside)
 ## counts this % by wall level (rows) and the attackers' kit (columns: 0 an
@@ -462,11 +466,14 @@ static func siege_turns(st: Dictionary, r: int) -> int:
 static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	if str(b.get("kind", "")) != "assault":
 		return {}
+	var np := poles_of(st, int(b.get("att_f", -1)), int(b["r"]))
 	var sg := CState.siege_at(st, int(b["r"]))
 	if sg.is_empty():
-		return {}
+		return {"poles": np} if np > 0 else {}
 	var n := maxi(int(b.get("turn", st["turn"])) - int(sg["turn"]), 0)
 	var out := {}
+	if np > 0:
+		out["poles"] = np
 	if n >= LADDER_TURNS:
 		out["ladders"] = int(LADDER_SETS[1 if n >= RAM_TURNS else 0])
 	if n >= RAM_TURNS:
@@ -476,6 +483,21 @@ static func siege_equipment(st: Dictionary, b: Dictionary) -> Dictionary:
 	if nt > 0 and CState.walls(st, int(b["r"])) >= TOWER_WALLS:
 		out["towers"] = nt
 	return out
+
+
+## Sets of scaling poles faction f's assault on region r brings (native siege): POLE_SETS for a faction of
+## CData.POLE_FACTIONS holding a CData.POLE_NEEDS building (the War lodge 2) in any region, against walls; else 0.
+static func poles_of(st: Dictionary, f: int, r: int) -> int:
+	if f < 0 or CData.POLE_FACTIONS.is_empty() or CState.walls(st, r) <= 0:
+		return 0
+	if not CData.POLE_FACTIONS.has(str(CData.FACTIONS[f]["key"])):
+		return 0
+	var c := int(CData.POLE_NEEDS[0])
+	var lv := int(CData.POLE_NEEDS[1])
+	for r2 in CState.regions_of(st, f):
+		if CState.building(st, r2, c) >= lv:
+			return POLE_SETS
+	return 0
 
 
 ## Siege towers an assault after a siege of n turns brings (walls 2-3).
@@ -490,6 +512,15 @@ static func towers_after(n: int) -> int:
 ## One line for the siege panel on what an assault on besieged region r
 ## brings this turn and when more comes ("" for an open town or no siege).
 static func equipment_text(st: Dictionary, r: int) -> String:
+	var t := _equipment_text(st, r)
+	if t != "":
+		var np := poles_of(st, int(CState.siege_at(st, r).get("f", -1)), r)
+		if np > 0:
+			t += " Scaling poles: %d sets (from the war lodge)." % np
+	return t
+
+
+static func _equipment_text(st: Dictionary, r: int) -> String:
 	var n := siege_turns(st, r)
 	if n < 0 or CState.walls(st, r) <= 0:
 		return ""

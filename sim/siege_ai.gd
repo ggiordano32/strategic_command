@@ -137,6 +137,7 @@ const GATE_BROKEN := 2
 const ST_LADDER := 4
 const ST_LADDER_GO := 5
 const EQ_LADDERS := 1
+const EQ_POLES := 10    # (native siege: the scaling poles, taken up as ladders)
 const EQ_RAM := 2
 const EQ_TOWER := 4
 const EQ_MANTLET := 9
@@ -1150,7 +1151,7 @@ static func _fort_gates(sim, side: int) -> void:
 			continue
 		var cq: int = sim.u_carry[o] if sim.sg_on != 0 else -1
 		var d := BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g])
-		if d < FORT_SHUT_R or (cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS) \
+		if d < FORT_SHUT_R or (cq >= 0 and (sim.q_kind[cq] == EQ_RAM or _ladderish(sim.q_kind[cq])) \
 				and (not away or d < FORT_BACK_R)):
 			_shut(sim, side, any, g)  # (attackers near, or bringing a ram or ladders)
 			return
@@ -1219,7 +1220,7 @@ static func _fort_threat(sim, side: int) -> bool:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
 			continue
 		var cq: int = sim.u_carry[o]
-		if cq >= 0 and (sim.q_kind[cq] == EQ_RAM or sim.q_kind[cq] == EQ_LADDERS) \
+		if cq >= 0 and (sim.q_kind[cq] == EQ_RAM or _ladderish(sim.q_kind[cq])) \
 				and BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]) < FORT_BACK_R:
 			return true
 	return false
@@ -1332,7 +1333,7 @@ static func _fort_choice(sim, side: int) -> void:
 	var kit := false
 	for q in sim.n_eq:
 		if sim.q_side[q] == side and sim.q_state[q] != Q_WRECKED \
-				and (sim.q_kind[q] == EQ_RAM or sim.q_kind[q] == EQ_LADDERS):
+				and (sim.q_kind[q] == EQ_RAM or _ladderish(sim.q_kind[q])):
 			kit = true
 	var own := 0
 	for u in sim.n_units:
@@ -2658,6 +2659,8 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != r:
 				BattleAI._attack(sim, u, r, 1)
 		return
+	if _torch_gate(sim, u, phase, kn):
+		return  # (native siege: a melee batter breaks the gate the storm has no ram for; docs/AI.md 45)
 	if _gren_siege(sim, u, phase, kn):
 		return  # (grenades: Use now at a shut gate or a held building, or up to a gate being hacked; docs/AI.md 39)
 	if phase == SP_ASSAULT and sim.u_ammo[u] > 0 and _street_ai(sim, side) and _street_row(sim, u) \
@@ -3272,15 +3275,15 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 	# first (sets already planted count: S_LADDER_UNITS sets in all).
 	var parties := 0
 	for q0 in sim.n_eq:
-		if sim.q_kind[q0] == EQ_LADDERS and sim.q_side[q0] == side and sim.q_state[q0] == Q_PLANTED:
+		if _ladderish(sim.q_kind[q0]) and sim.q_side[q0] == side and sim.q_state[q0] == Q_PLANTED:
 			parties += 1
 	for u in sim.n_units:
 		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_LADDER and sim.u_ai_x[u] > 0:
 			var q0: int = sim.u_ai_x[u] - 1
-			if sim.q_state[q0] != Q_PLANTED and sim.q_kind[q0] == EQ_LADDERS:
+			if sim.q_state[q0] != Q_PLANTED and _ladderish(sim.q_kind[q0]):
 				parties += 1
 	for q in sim.n_eq:
-		if sim.q_kind[q] != EQ_LADDERS or sim.q_side[q] != side:
+		if not _ladderish(sim.q_kind[q]) or sim.q_side[q] != side:
 			continue
 		if sim.q_state[q] == Q_PLANTED:
 			_follow(sim, side, q, kn[AP.S_LADDER_FOLLOW])  # more infantry up the planted set
@@ -3304,6 +3307,11 @@ static func _assign_equip(sim, side: int, phase: int, kn: PackedInt32Array) -> v
 		sim.u_ai_x[best] = q + 1
 		parties += 1
 		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## A ladder kind: ladders or the natives' scaling poles (docs/AI.md 45: poles are taken up as ladders).
+static func _ladderish(k: int) -> bool:
+	return k == EQ_LADDERS or k == EQ_POLES
 
 
 ## Followers for planted piece q (ladders, a siege tower): while fewer than
@@ -3415,13 +3423,16 @@ static func _ladder_time(sim, side: int, g: int, kn: PackedInt32Array) -> bool:
 
 
 static func _foot_key(sim, u: int) -> int:
-	var b := UT.base_of(sim.u_type[u])
+	var ty: int = sim.u_type[u]
+	var b := UT.base_of(ty)
 	if b == UT.HEAVY:
 		return 0
 	if b == UT.LIGHT:
 		return 1
 	if b == UT.SPEAR:
 		return 2
+	if ty >= UT.ROME_N and UT.line_of(ty) == "heavy":
+		return 0  # (native siege, docs/AI.md 45: the West's heavy line, the Holcan, rodeleros, cutlass men, first up the ladders)
 	return 3
 
 
@@ -3464,7 +3475,7 @@ static func _escalade(sim, u: int, g: int, kn: PackedInt32Array) -> void:
 			BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": tg, "run": 1}, 0)
 		return
 	var q: int = sim.u_ai_x[u] - 1
-	if q < 0 or q >= sim.n_eq or (sim.q_kind[q] != EQ_LADDERS and sim.q_kind[q] != EQ_TOWER) \
+	if q < 0 or q >= sim.n_eq or (not _ladderish(sim.q_kind[q]) and sim.q_kind[q] != EQ_TOWER) \
 			or sim.q_state[q] == Q_WRECKED or (sim.q_state[q] == Q_CARRIED and sim.q_unit[q] != u) \
 			or sim.q_side[q] != sim.u_side[u]:
 		_release(sim, u)
@@ -3779,7 +3790,7 @@ static func _assign_mantlets(sim, side: int, g: int) -> void:
 		var bk := 0
 		for u in sim.n_units:
 			var c: int = sim.u_cls[u]
-			if (c != UT.CLS_INF and c != UT.CLS_MISSILE and c != UT.CLS_PIKE) or BattleAI.is_general(sim, u) \
+			if (c != UT.CLS_INF and c != UT.CLS_MISSILE and c != UT.CLS_PIKE) or BattleAI.is_general(sim, u) or sim.t_mbat[sim.u_type[u]] != 0 \
 					or not _equip_free(sim, u, side, q) or sim.pickup_refusal(sim, u, q) != "":
 				continue
 			var pref := 0 if c == UT.CLS_MISSILE or (c == UT.CLS_INF and _foot_key(sim, u) == 1) else 1
@@ -4322,6 +4333,37 @@ static func _gren_siege(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 	return false
 
 
+## Native siege (docs/AI.md 45; R_TORCH_GATE): melee batter unit u (a batter row: the torch raiders) attacking a
+## town is the gate party when the storm has no ram to work the gate: in the approach the attacked gate
+## (ai_gate), in the assault a stormed West fort's gate or the citadel's, while it is shut and no ram of ours
+## can still work a gate (_ram_avail): the batter ability's Use now at it (the men go to its face and strike
+## it, BattleSim._update_mbat); else back to Auto and the grenadiers' rule for its fire pots (_gren_siege:
+## Hold in the approach, Use now at a shut gate or a held house in reach). Stateless; ordered only when the
+## wanted state differs. True while it batters.
+static func _torch_gate(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.R_TORCH_GATE] == 0 or sim.t_mbat[sim.u_type[u]] == 0 or sim.city_on == 0:
+		return false
+	var side: int = sim.u_side[u]
+	if side == sim.city_def:
+		return false
+	var g := -1
+	if phase == SP_APPROACH:
+		g = sim.ai_gate[side]
+	elif phase == SP_ASSAULT and sim.cit_gate >= 0 and (sim.fort_on == 0 or sim.ai_fort[side] == 2):
+		g = sim.cit_gate
+	var st: int = sim.ability_state(u, UT.AB_BATTER)
+	if g < 0 or g >= sim.n_gates or sim.g_state[g] != GATE_CLOSED or _ram_avail(sim, side) >= 0:
+		if st == UT.AB_NOW:
+			BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_AUTO, -1)
+		return false
+	if _engaged(sim, u):
+		return true
+	if st != UT.AB_NOW or sim.u_abt[u] != -2 - g or sim.u_gtarget[u] != g:
+		BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_NOW, -2 - g)
+		BattleAI._count(sim, side, AP.C_SIEGE)
+	return true
+
+
 ## Attacking siege battery u in the assault with no stretch to batter
 ## (R_BATTER_BLD): the building held by an enemy unit (standing) whose middle
 ## lies within R_BATTER_BLD of the storm's route (the side's way in: the
@@ -4332,6 +4374,7 @@ static func _gren_siege(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 static func _batter_bld(sim, u: int, kn: PackedInt32Array) -> bool:
 	var rr: int = kn[AP.R_BATTER_BLD]
 	if rr <= 0 or sim.occ_on == 0 or sim.ob_state.is_empty() or (sim.t_abil[sim.u_type[u]] & (1 << UT.AB_BATTER)) == 0 \
+			or sim.t_mbat[sim.u_type[u]] != 0 \
 			or sim.t_fixed[sim.u_type[u]] != 0 or sim.u_ammo[u] <= 0:
 		return false
 	var side: int = sim.u_side[u]

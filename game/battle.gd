@@ -2236,7 +2236,7 @@ func _ability_set(ab: int, nxt: int) -> void:
 func _ability_arm(ab: int, us: Array[int]) -> void:
 	ability_armed = ab
 	var hint := {UT.AB_GRENADE: "Tap an enemy unit or a shut gate to throw at", UT.AB_CARACOLE: "Tap an enemy unit to caracole at",
-		UT.AB_BATTER: "Tap a wall stretch, a gate or a building to batter"}
+		UT.AB_BATTER: "Tap a wall stretch, a gate or a building to batter (torch raiders: a gate or a palisade stretch)"}
 	_count("ability_arm_" + UT.AB_NAMES[ab].to_lower())
 	var lit: Array[int] = []
 	if ab == UT.AB_BATTER:
@@ -2282,6 +2282,7 @@ func _ability_cancel(counted: bool) -> void:
 func _ability_tap(w: Vector2) -> void:
 	var ab := ability_armed
 	var tgt := -999
+	var tgm := -999  # (the batter's melee form, native siege: a gate -2 - g or a wall stretch)
 	var p := w / PX_PER_M
 	var t := _pick_unit(w)
 	var enemy := t >= 0 and sim.u_side[t] != player_side and sim.u_state[t] < BattleSim.U_DESTROYED
@@ -2296,15 +2297,19 @@ func _ability_tap(w: Vector2) -> void:
 				tgt = t
 		UT.AB_BATTER:
 			var b := _ab_building_at(p)
+			var gw := _gate_at(w) if sim.city_on != 0 else -1
+			var sg := BattleSim.wall_stretch_at(sim, int(p.x * M), int(p.y * M))
 			if b >= 0:
 				tgt = -2 - b
-			elif _gate_at(w) >= 0:
+			elif gw >= 0:
 				tgt = -1   # (the stretch the destruction AI batters by that gate)
-			else:
-				var sg := BattleSim.wall_stretch_at(sim, int(p.x * M), int(p.y * M))
-				if sg >= 0:
-					tgt = sg
-	if tgt == -999:
+			elif sg >= 0:
+				tgt = sg
+			if gw >= 0:
+				tgm = -2 - gw
+			elif sg >= 0 and b < 0:
+				tgm = sg
+	if tgt == -999 and tgm == -999:
 		_count("ability_pick_miss")
 		overlay.flash("Not a target for it (Esc cancels)", w)
 		return
@@ -2312,10 +2317,13 @@ func _ability_tap(w: Vector2) -> void:
 	var why := ""
 	for u in _ability_units(ab):
 		var r := BattleSim.ability_refusal(sim, u, ab, UT.AB_NOW)
+		var tu := tgm if ab == UT.AB_BATTER and sim.t_mbat[sim.u_type[u]] != 0 else tgt
+		if r == "" and tu == -999:
+			r = "torch raiders batter a gate or a palisade stretch"
 		if r != "":
 			why = r
 			continue
-		_queue_ability(u, ab, UT.AB_NOW, tgt)
+		_queue_ability(u, ab, UT.AB_NOW, tu)
 		sent += 1
 	_count("ability_use_" + UT.AB_NAMES[ab].to_lower())
 	ability_armed = -1
@@ -2952,7 +2960,9 @@ func _tap_equip(q: int, w: Vector2) -> void:
 		return
 	_queue({"type": BattleSim.ORDER_PICKUP, "unit": best, "equip": q, "run": orders.value(best, "run")})
 	var what := "the ram" if sim.q_kind[q] == BattleSim.EQ_RAM else "the ladders"
-	if sim.q_kind[q] == BattleSim.EQ_WAGON:
+	if sim.q_kind[q] == BattleSim.EQ_POLES:
+		what = "the scaling poles"
+	elif sim.q_kind[q] == BattleSim.EQ_WAGON:
 		what = "the wagon"
 	elif BattleSim.EQ_SCREEN[sim.q_kind[q]] != 0:
 		what = "the mantlet"

@@ -552,6 +552,8 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			for e in scored:
 				var r: int = e[1]
 				var key := _best_type(st, f, r, "siege") if CState.building(st, r, CData.WORKSHOP) > 0 else ""
+				if key != "" and UT.stat(UT.index_of(key), "wagon") < 0:
+					key = ""  # (native siege: the Miskito's siege line is the torch raiders, raised by the mix)
 				if key == "" or CRules.army_recruit_check(st, f, r, id, key) != "":
 					continue
 				var ty := UT.index_of(key)

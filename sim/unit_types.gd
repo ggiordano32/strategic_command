@@ -260,7 +260,8 @@ const DEFAULTS := {
 	"m_gun": 0, "m_volley_r": 0, "m_obj": 100, "m_spread2": 0, "cover": 0,
 	"amphib": 0,  # campaign: 1 = paddles the coastal sea at foot pace (CRules.amphibious; the general stays 0)
 	"pistols": 0,   # roles step 2: a brace of this many pistols a man, fired point-blank in his first melee rounds (AB_PISTOL)
-	"grenades": 0,  # roles step 2: the grenade ability's data hook for a row whose missile is not the grenade (buccaneers later; no sim rule reads it yet)
+	"grenades": 0,  # roles step 2: the grenade ability's data hook for a row whose missile is not the grenade (the torch raiders' fire pots)
+	"batter": 0,    # native siege (2026-10-29): 1 = the batter ability in its melee form (AB_BATTER: the men strike a gate or a palisade stretch, m_obj a blow)
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
@@ -2263,6 +2264,45 @@ const WEST_LATE: Array[Dictionary] = [
 		"fall_r": 60 * 1024, "fall_loss": 120, "fall_gain": 60,
 		"climb": 13,
 	},
+	# ---- Native siege (2026-10-29; docs/design/campaign_rules.md "Native siege, and the natives' buildings"): the
+	# Miskito's torch raiders, after every earlier row (every earlier index unchanged). Light shock foot: axes to
+	# batter a gate or a palisade stretch (the batter ability's melee form, "batter": m_obj 120 a blow at a gate, 2 / 3
+	# of it at a palisade stretch, nothing at stone) and two fire pots a man (the grenade ability with the fire
+	# pots kind, AMMO 7: a held house or a shut gate within 20 m set alight).
+	{
+		"key": "torch_raiders", "role": "shock", "line": "siege", "pack": "west", "tier": 1, "name": "Torch Raiders", "short": "Torches",
+		"icon": 32, "sprite": 0, "sprite_set": 45,
+		"size": 60, "files0": 15,
+		"what": "Gate breakers with axes and fire pots",
+		"desc": "Miskito raiders with stone and trade-iron axes, a torch and two clay pots of burning pitch each. Sent at a gate or a stretch of palisade they hack at it until it gives (a stone wall they cannot hurt); a pot thrown at a held house or a shut gate sets it alight. Poor in an open fight: no armour, and less skill with the axe than the warriors.",
+		"good_vs": "Wooden gates and palisades, men holding timber houses, a gate with nobody on it.",
+		"weak_vs": "Any formed foot or horse in the open, volleys on the way in, stone walls.",
+		"cls": CLS_MISSILE,  # (as the grenadiers: the sim runs the throw for missile class only; they close to melee once the pots are gone)
+		"attack": 34, "defence": 20,  # native warriors 38 / 24
+		"armour": 0, "shield": 0, "mshield": 0,
+		"damage": 32, "reach": 1126, "mass": 65,
+		"walk": 175, "run": 480,  # native warriors'
+		"hp": 85, "cooldown": 9,
+		"morale": 600,
+		"cover": 1,
+		"woods_pct": 60,
+		"m_kind": 2,        # lobbed (the fire pots kind: fire 70, a timber house it lands on catches at once)
+		"m_range": 25 * 1024,  # x the kind's 90 %: 22 m (the grenadiers' 25; a held house's windows stand high: about 20 m at it)
+		"m_min": 3 * 1024,
+		"m_damage": 100, "m_ap": 0,
+		"m_ammo": 2,        # two pots a man
+		"m_reload": 120,
+		"m_spread": 60, "m_spread0": 1024,
+		"m_speed": 2560,
+		"m_arc": 1, "m_lead": 90, "m_long": 50,
+		"m_fear": 40,
+		"m_obj": 120,       # the batter: 120 a blow at a gate (a ram 160), 80 at a palisade stretch
+		"m_hgain": 100, "m_ak": 7,
+		"grenades": 1,      # the grenade ability (Auto / Hold / Use now) for the pots
+		"batter": 1,        # the batter ability's melee form
+		"cost": 7,          # 420 a unit: a warriors' company (100 x 4)
+		"climb": 11,
+	},
 ]
 
 
@@ -2555,7 +2595,7 @@ static func abilities(ty: int) -> int:
 		m |= 1 << AB_GRENADE
 	if role(ty) == "horse_skirmish" and cls(ty) == CLS_CAV and stat(ty, "m_ammo") > 0 and stat(ty, "m_gun") != 0:
 		m |= 1 << AB_CARACOLE
-	if role(ty) == "guns_siege":
+	if role(ty) == "guns_siege" or stat(ty, "batter") > 0:
 		m |= 1 << AB_BATTER
 	# The countermarch: West gun foot companies that stand in a line (a powder weapon, foot, a man a
 	# weapon, missile class, not a skirmish row: the drill is line drill; no gun, rider or Rome row).

@@ -13,6 +13,10 @@ extends SceneTree
 ## on Cartagena's plan at level 1, west_city = west_town(13, 2, ...) on Havana's plan at level 2. Rome sets
 ## (walls 1-3, Scenarios.fair_siege, the full kit of a three-turn siege): polis on Athens' plan, castrum on
 ## Rome's (Latium's). Prints per wall level the attacker's wins, draws, minutes to decide, the men killed.
+## --att=itza|miskito (West --town only; native siege, 2026-10-29): the attackers are that native army
+## (NATIVE_ATT, about the West set's price) with its siege kit, scaling poles (2 sets) at walls 1+ and no
+## ladders or ram; the defenders the West set as before. On a tree without the torch raiders' row (before
+## the native siege) the Miskito's torch raiders are warriors and the poles are not placed: they storm bare.
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CTown := preload("res://campaign/ctown.gd")
@@ -21,6 +25,17 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
+
+## The native attackers (--att): about the West set's 5,040 (Itza 4,900; Miskito 4,860, before 4,820).
+const NATIVE_ATT := {
+	"itza": [["holcan", 60], ["native_warriors", 100], ["native_bowmen", 80], ["native_warriors", 100], ["atlatl", 60],
+		["native_warriors", 100], ["native_bowmen", 80], ["holcan", 60], ["native_warriors", 100], ["native_bowmen", 80],
+		["w_slingers", 70], ["native_warriors", 100], ["native_bowmen", 80], ["atlatl", 60], ["w_slingers", 70]],
+	"miskito": [["torch_raiders", 60], ["native_warriors", 100], ["native_bowmen", 80], ["native_warriors", 100],
+		["musketeers", 100], ["native_bowmen", 80], ["torch_raiders", 60], ["native_warriors", 100], ["canoe_raiders", 60],
+		["native_bowmen", 80], ["maroons", 60], ["native_warriors", 100], ["native_bowmen", 80]],
+}
+var att_key := ""
 
 
 func _initialize() -> void:
@@ -47,6 +62,8 @@ func _initialize() -> void:
 			seed0 = int(a.get_slice("=", 1))
 		elif a == "--old":
 			old = true
+		elif a.begins_with("--att="):
+			att_key = a.get_slice("=", 1)
 		elif a.begins_with("--json="):
 			json_path = a.substr(7)  # one JSON line a battle (tools/balance), default off
 	var west := set_name.begins_with("west") or town.begins_with("west")
@@ -170,10 +187,20 @@ func _town_scenario(spec: String, walls: int, s: int, old: bool) -> Dictionary:
 	for e in Scenarios.WEST_ATT:
 		att.append([UT.index_of(str(e[0])), int(e[1])])
 	var dfn: Array = att.duplicate(true)
+	if att_key != "":
+		att = []
+		for e in NATIVE_ATT[att_key]:
+			var ty := UT.index_of(str(e[0]))
+			if ty < 0:
+				att.append([UT.index_of("native_warriors"), 100])  # (no torch raiders' row: warriors)
+			else:
+				att.append([ty, int(e[1])])
 	var terr := {"kind": int(rd["terrain"]), "seed": cseed * 7 + 3, "forest": int(rd["forest"]), "ground": int(rd["ground"])}
 	var city := {"seed": cseed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": cul,
 		"coast": 1 if CData.is_port(r) else 0, "founder": cul, "west": 1}
 	if not old:
 		city["tp"] = _tp("west", key, level, walls)
 	var eq := {"ladders": 3, "ram": 1} if walls > 0 else {}
+	if att_key != "":
+		eq = {"poles": 2} if walls > 0 else {}
 	return Scenarios.settlement(city, terr, att, dfn, 1, [0, 1], eq)["scenario"]

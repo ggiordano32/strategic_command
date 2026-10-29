@@ -501,6 +501,11 @@ static func siege_help() -> String:
 			BattleSim.LADDER_TICKS[1] / 10, BattleSim.LADDER_TICKS[2] / 10, BattleSim.LADDER_TICKS[3] / 10,
 			BattleSim.UNBAR_MEN, BattleSim.UNBAR_TICKS / 10, BattleSim.RAM_CREW, BattleSim.RAM_DMG, BattleSim.RAM_HP],
 		"",
+		"The natives' siege. The Itza and the Miskito holding a war lodge of level %d bring %d sets of scaling poles to every assault on walls, on arrival too (ladders and the ram still come with a siege, as for anyone): notched trunks, two to a set, carried, planted and climbed as ladders but lighter (the carriers walk at %d%% of their pace, ladders %d%%) and slower to climb (the party at %d%% of a ladder party's rate). The Miskito's torch raiders batter with axes: tap Target (Use now) and then a gate or a stretch of palisade, and they go to it and hack until it gives (%d hit points a blow at a gate, a ram %d; %d at a palisade stretch; a stone wall they cannot hurt). Their two fire pots a man are thrown like grenades at a held house or a shut gate within 20 m and set it alight." % [
+			int(CData.POLE_NEEDS[1]) if CData.POLE_NEEDS.size() > 1 else 2, CBattleL.POLE_SETS, BattleSim.POLE_WALK_PCT, BattleSim.LADDER_WALK_PCT,
+			BattleSim.POLE_CLIMB_PCT, UT.stat(UT.index_of("torch_raiders"), "m_obj"), BattleSim.RAM_DMG,
+			UT.stat(UT.index_of("torch_raiders"), "m_obj") * BattleSim.MBAT_PAL_PCT / 100],
+		"",
 		"Siege towers. Against walls 2-3, an army that has besieged the city for %d turns brings a rolling siege tower, after %d turns two (custom battles: Siege towers). They start at the attackers' edge. A foot unit pushes one (select it, tap the tower): at most %d.%d m/s with %d men or more, slower with fewer; it never runs, and the tower's roof keeps most arrows off the men behind it. Tap a stretch of wall with them selected: they push it to the wall, plant it (for the battle) and cross onto the walkway over its ramp, %d men abreast, a man a lane every %d.%d seconds whatever the walls' height; any foot unit (not pikes) ordered onto that stretch crosses it too, the enemy's as well. Drop (X) leaves it where it stands and anyone, the defenders too, may push it away; a planted tower stays. It is wooden (%d hit points): fire missiles set it burning, tower bolts and stones batter it, men standing at it on the ground smash it; when a planted tower falls the men still on it come back down." % [
 			int(CBattleL.TOWER_TURNS[0]), int(CBattleL.TOWER_TURNS[1]), BattleSim.EQ_PACE[BattleSim.EQ_TOWER] * 10 / 1024,
 			BattleSim.EQ_PACE[BattleSim.EQ_TOWER] * 100 / 1024 % 10, BattleSim.EQ_MEN[BattleSim.EQ_TOWER],
@@ -522,6 +527,13 @@ static func siege_help() -> String:
 		"",
 		"Deployment. A battle may open with a deployment phase (the campaign's Deployment time setting, or a custom battle's): nothing moves or shoots and the clock stands still while you place your units inside your zone (blue; the enemy's is outlined red). Tap, drag a line or move a group as usual: the men stand there at once. A point outside the zone is kept to its edge on the field; defending a town you place inside the walls (open ground of the town) or straight onto a walkway (foot and missile troops). The AI's line is placed at the start so you can see it. Start battle (or Enter) when ready; with two players the battle starts when both are ready, or when the time runs out.",
 	]
+	if CData.POLE_FACTIONS.is_empty():
+		# (Rome: no native siege paragraph.)
+		for k in lines.size():
+			if lines[k].begins_with("The natives' siege."):
+				lines.remove_at(k)
+				lines.remove_at(k)
+				break
 	return "\n".join(lines)
 
 

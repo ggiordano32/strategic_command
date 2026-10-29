@@ -153,6 +153,7 @@ func _init() -> void:
 	_chars()
 	_west_raid_defence()
 	_chain_levels()
+	_native_siege()
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
@@ -4305,9 +4306,10 @@ func _chain_levels() -> void:
 	_check(full_ns, "West: Spain's and England's caps are the full chains")
 	_check(CData.chain_cap(mi, CData.STABLES) == 0 and CData.chain_cap(iz, CData.STABLES) == 0, "the natives have no use for Stables")
 	_check(CData.chain_cap(iz, CData.RANGE) == 2 and CData.chain_cap(mi, CData.RANGE) == 2, "the natives' Range cap is 2 (the special arrows)")
-	_check(CData.chain_cap(iz, CData.BARRACKS) == 2 and CData.chain_cap(mi, CData.BARRACKS) == 1, "Barracks: the Itza 2 (holcan), the Miskito 1")
-	_check(CData.chain_cap(mi, CData.WORKSHOP) == 1 and CData.chain_cap(mi, CData.FARM) == 3 and CData.chain_cap(mi, CData.WALLS) == 3 \
-		and CData.chain_cap(mi, CData.MARKET) == 3, "the natives' Workshop is 1 (the wagon); farm, market and walls are for everyone")
+	_check(CData.chain_cap(iz, CData.BARRACKS) == 2 and CData.chain_cap(mi, CData.BARRACKS) == 2, "Barracks: the Itza 2 (holcan), the Miskito 2 (the torch raiders, native siege)")
+	_check(CData.chain_cap(iz, CData.WORKSHOP) == 1 and CData.chain_cap(mi, CData.WORKSHOP) == 0 and CData.chain_cap(mi, CData.FARM) == 3 \
+		and CData.chain_cap(mi, CData.WALLS) == 3 and CData.chain_cap(mi, CData.MARKET) == 3,
+		"the Itza's Workshop is 1 (the wagon), the Miskito's none (they forage: the torch raiders took the wagon's place); farm, market and walls are for everyone")
 	var st := CState.new_campaign("t", 77, [mi], {}, [], "west")
 	var bf := CData.region_index("bluefields")
 	var cg := CData.region_index("cabo_gracias")
@@ -4339,6 +4341,55 @@ func _chain_levels() -> void:
 	_check(ok_icons, "every building icon exists")
 	_check(CData.local_text("needs Barracks 2", mi) == "needs War lodge 2" and CData.local_text("needs Barracks 2", ns) == "needs Barracks 2", "the 'needs' texts read the faction's names")
 	CData.use_pack("rome")
+
+
+## Native siege (docs/design/campaign_rules.md "Native siege (as built)"): the Miskito's torch raiders in the siege
+## line (War lodge 2), the Itza cannot raise them, the natives' assaults bring scaling poles with a War lodge 2.
+func _native_siege() -> void:
+	CData.use_pack("west")
+	var mi := _f("miskito")
+	var iz := _f("itza")
+	var ns := _f("new_spain")
+	_check(CState.roster_type(mi, "siege", 1) == "torch_raiders" and CState.roster_type(iz, "siege", 1) == "wagon",
+		"the Miskito's siege line is the torch raiders, the Itza keep the wagon")
+	_check((CData.chain_unlocks(mi, CData.BARRACKS, 2) as Array).has("torch_raiders"), "the Miskito's War lodge 2 unlocks the torch raiders")
+	_check(int((CData.FACTIONS[mi]["mix"] as Dictionary).get("siege", 0)) > 0, "the Miskito's mix raises torch raiders")
+	_check(CData.unit_name("torch_raiders", mi) == "Torch Raiders" and CData.unit_short("torch_raiders", mi) == "Torches", "Torch Raiders / Torches")
+	var st := CState.new_campaign("t", 77, [mi], {}, [], "west")
+	var cg := CData.region_index("cabo_gracias")
+	var tay := CData.region_index("tayasal")
+	st["factions"][mi]["treasury"] = 20000
+	st["factions"][iz]["treasury"] = 20000
+	var why1 := CRules.recruit_check(st, mi, cg, "torch_raiders")
+	_check(why1 == "needs Barracks 2", "torch raiders need a War lodge 2: " + why1)
+	_set_level(st, cg, CData.BARRACKS, 2)
+	_check(CRules.recruit_check(st, mi, cg, "torch_raiders") == "", "... and are raised with one: " + CRules.recruit_check(st, mi, cg, "torch_raiders"))
+	_set_level(st, tay, CData.BARRACKS, 2)
+	_check(CRules.recruit_check(st, iz, tay, "torch_raiders") != "", "the Itza cannot raise torch raiders: " + CRules.recruit_check(st, iz, tay, "torch_raiders"))
+	# Poles: an assault on a walled town brings them (on arrival too) with a War lodge 2 anywhere; none without.
+	var hv := CData.region_index("havana")
+	_set_level(st, hv, CData.WALLS, 1)
+	var st2 := CState.new_campaign("t", 77, [mi], {}, [], "west")
+	_set_level(st2, hv, CData.WALLS, 1)
+	_check(not CBattle.siege_equipment(st2, {"kind": "assault", "r": hv, "att_f": iz}).has("poles"), "no War lodge 2: no poles")
+	var eq := CBattle.siege_equipment(st, {"kind": "assault", "r": hv, "att_f": iz})
+	_check(int(eq.get("poles", 0)) == CBattle.POLE_SETS and not eq.has("ladders"), "the Itza with a War lodge 2 storm on arrival with poles: " + str(eq))
+	_check(int(CBattle.siege_equipment(st, {"kind": "assault", "r": hv, "att_f": mi}).get("poles", 0)) == CBattle.POLE_SETS, "the Miskito too")
+	_check(not CBattle.siege_equipment(st, {"kind": "assault", "r": hv, "att_f": ns}).has("poles"), "the Europeans bring none")
+	_set_level(st, hv, CData.WALLS, 0)
+	_check(CBattle.siege_equipment(st, {"kind": "assault", "r": hv, "att_f": iz}).is_empty(), "nothing against an open town")
+	CData.use_pack("rome")
+	var sr := CState.new_campaign("t", 77, [], {}, [], "rome")
+	_check(CData.POLE_FACTIONS.is_empty() and CBattle.poles_of(sr, 0, 0) == 0, "Rome: no poles")
+
+
+## Region r's building of chain c set to level lv (added if missing).
+func _set_level(st: Dictionary, r: int, c: int, lv: int) -> void:
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == c:
+			sl[1] = lv
+			return
+	st["regions"][r]["slots"].append([c, lv])
 
 
 func _west_raid_defence() -> void:

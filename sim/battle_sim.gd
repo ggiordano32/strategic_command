@@ -548,6 +548,8 @@ const RAM_WORK := 480            # ... man-ticks per blow (20 men: a blow every 
 static var RALLY_TRAPPED := 1   # defenders routing inside the walls (ROUT_INWARD) do not rally while an attacking unit stands in the town's streets (balance T)
 static var ROUT_INWARD := 1     # defenders routing inside the walls run to the inside of the shut gate farthest from the enemy (1), or toward their map edge, out by any way (0)
 static var RAM_DMG := 160        # ... hit points per blow
+const MBAT_RUN_R := 40 * M      # ... it goes to its gate or stretch at the run from farther than this
+const MBAT_PAL_PCT := 67        # native siege: a melee batter's blow at a palisade stretch, % of its row's m_obj (120: 80)
 static var TOWERS_MAX: Array[int] = [0, 0, 3, 4]          # bolt-thrower towers by wall level (tuned 2026-10-09; was 6 / 8) ...
 static var TOWERS_STONE: Array[int] = [0, 0, 0, 1]        # ... and stone-thrower towers (forts leftovers 2026-10-16: walls 3 2 -> 1; their stones on the battery, the ram and the crowd at the gate made walls 3 12 %, 1 or 0: 25 % in the equal-force sieges)
 const TOWER_SPACING := 40        # m between towers given engines (a gate's pair excepted)
@@ -583,53 +585,54 @@ const EQ_CALTROPS := 6           # ... a field of caltrops (hidden from the enem
 const EQ_DITCH := 7              # ... a fortified camp's ditch (built by the scenario, "fortified")
 const EQ_RAMPART := 8            # ... and its rampart: a low wall whose top is a fighting walk
 const EQ_MANTLET := 9            # a mantlet: a wooden missile screen a foot unit carries and sets down
+const EQ_POLES := 10             # native siege (2026-10-29): a set of POLE_SET notched scaling poles (a ladder kind: the ladders' rules)
 # What each kind of piece is, by EQ_* (index 0 unused); the sim reads these
 # fields, never the kind (docs/DESIGN.md "Siege equipment as objects").
 ## Pieces with a roof: % of the arrows landing on the carriers near it stopped (0: none).
-const EQ_ROOF: Array[int] = [0, 0, RAM_ROOF_PCT, RAM_ROOF_PCT, RAM_ROOF_PCT, 0, 0, 0, 0, MANTLET_CARRY_PCT]
+const EQ_ROOF: Array[int] = [0, 0, RAM_ROOF_PCT, RAM_ROOF_PCT, RAM_ROOF_PCT, 0, 0, 0, 0, MANTLET_CARRY_PCT, 0]
 ## Arrows landing on the carriers this near it are stopped by its roof EQ_ROOF % of the time.
-const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M, 0, 0, 0, 0, MANTLET_W]
+const EQ_ROOF_R: Array[int] = [0, 0, RAM_ROOF_R, RAM_ROOF_R, 8 * M, 0, 0, 0, 0, MANTLET_W, 0]
 ## Full hit points (a wagon: its tier's).
-const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000, 400, 300, 0, 900, MANTLET_HP]
+const EQ_HP: Array[int] = [0, LADDER_HP, RAM_HP, 0, 2000, 400, 300, 0, 900, MANTLET_HP, LADDER_HP]
 ## Planted against a stretch, men cross it this many abreast (0: never planted) ...
-const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8, 0, 0, 0, 0, 0]
+const EQ_LANES: Array[int] = [0, LADDER_SET, 0, 0, 8, 0, 0, 0, 0, 0, POLE_SET]
 ## ... the lanes this far apart along the wall ...
-const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768, 0, 0, 0, 0, 0]
+const EQ_LANE_GAP: Array[int] = [0, LADDER_GAP, 0, 0, 768, 0, 0, 0, 0, 0, LADDER_GAP]
 ## ... a man up each lane every this many ticks (0: LADDER_TICKS by wall level) ...
-const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16, 0, 0, 0, 0, 0]
+const EQ_CLIMB: Array[int] = [0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0]
 ## ... and only against walls of at least this level.
-const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2, 0, 0, 0, 0, 0]
+const EQ_WALLS: Array[int] = [0, 1, 0, 0, 2, 0, 0, 0, 0, 0, 1]
 ## Carried: at most this pace (0: none) and this % of the carriers' walk ...
-const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62, 0, 0, 0, 0, 0]
-const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100, 100, 100, 100, 100, 100]
+const EQ_PACE: Array[int] = [0, 0, RAM_WALK, 0, 62, 0, 0, 0, 0, 0, 0]
+const EQ_WALK_PCT: Array[int] = [0, LADDER_WALK_PCT, 100, 100, 100, 100, 100, 100, 100, 100, POLE_WALK_PCT]
 ## ... with fewer men than this (0: any number) proportionally slower (at least a quarter).
-const EQ_MEN: Array[int] = [0, 0, 0, 0, 40, 0, 0, 0, 0, 0]
+const EQ_MEN: Array[int] = [0, 0, 0, 0, 40, 0, 0, 0, 0, 0, 0]
 ## Either side may take it up (else only the side it belongs to).
-const EQ_ANY: Array[int] = [0, 0, 0, 1, 1, 0, 0, 0, 0, 1]
+const EQ_ANY: Array[int] = [0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0]
 ## Bolts and stones landing on it hit it.
-const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0, 1]
+const EQ_SHOT: Array[int] = [0, 0, 1, 1, 1, 0, 0, 0, 0, 1, 0]
 ## Planted, it can still be set alight and hit (planted ladders are out of reach).
-const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+const EQ_EXPOSED: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
 ## Planted, its middle stands this far out from the foot (its depth / 2).
-const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072, 0, 0, 0, 0, 0]
+const EQ_DEPTH2: Array[int] = [0, 0, 0, 0, 3072, 0, 0, 0, 0, 0, 0]
 ## Enemy foot standing at it on the ground smash it.
-const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
+const EQ_SMASH: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0]
 ## A siege engine the defenders' towers and wall archers single out.
-const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0]
+const EQ_FOCUS: Array[int] = [0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0]
 ## Wall archers with a fire kind single out its carriers (docs/AI.md 15).
-const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
+const EQ_FIRE_AT: Array[int] = [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
 ## Fire takes it (a fire missile near it sets it alight).
-const EQ_BURN: Array[int] = [0, 1, 1, 1, 1, 1, 0, 0, 1, 1]
+const EQ_BURN: Array[int] = [0, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1]
 # Screens (docs/DESIGN.md "Mantlets"): standing on the ground (Q_GROUND)
 # facing q_face, the piece shelters its side's (q_side) men in the
 # rectangle behind it, EQ_SCREEN_W along its line by EQ_SCREEN_D deep, from
 # missiles shot from in front of its line.
 ## % of arrows, sling stones and javelins about to strike a sheltered man stopped ...
-const EQ_SCREEN: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_COVER_PCT]
+const EQ_SCREEN: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_COVER_PCT, 0]
 ## ... and of bolts (stones go over it or through it: none).
-const EQ_SCREEN_BOLT: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_BOLT_PCT]
-const EQ_SCREEN_W: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_W]
-const EQ_SCREEN_D: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_D]
+const EQ_SCREEN_BOLT: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_BOLT_PCT, 0]
+const EQ_SCREEN_W: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_W, 0]
+const EQ_SCREEN_D: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_D, 0]
 # Carry patterns (docs/DESIGN.md "Siege equipment usability"): while a unit
 # carries a piece its men stand in the piece's pattern (files_of: this many
 # files, derived from the piece each tick, nothing hashed of its own) and
@@ -638,7 +641,7 @@ const EQ_SCREEN_D: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, MANTLET_D]
 ## column of RAM_FILES at the beam, the siege tower a column of its lanes,
 ## the wagon a column of WAGON_FILES; 0: from the piece (a mantlet: its panel
 ## line's length / the carriers' file spacing, two ranks behind the panels).
-const EQ_CARRY_F: Array[int] = [0, LADDER_SET, RAM_FILES, WAGON_FILES, 8, 0, 0, 0, 0, 0]
+const EQ_CARRY_F: Array[int] = [0, LADDER_SET, RAM_FILES, WAGON_FILES, 8, 0, 0, 0, 0, 0, POLE_SET]
 const RAM_FILES := 4             # the ram's carriers: a column this many men wide (the beam's width in men)
 const WAGON_FILES := 4           # a wagon's crew: a column this many wide alongside it
 const MANTLET_MAX := 40 * M      # a mantlet's panel line is the carrying unit's frontage, at most this long (at least MANTLET_W)
@@ -654,51 +657,51 @@ const MANTLET_AHEAD := 2 * M     # at setup it stands this far before its unit's
 # q_len along the line (q_face: the way its front faces) by EQ_FW_DEPTH
 # across; every man inside one is affected by these fields, never the kind.
 ## A field work (placed in the deployment or built by the scenario).
-const EQ_FW: Array[int] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 0]
+const EQ_FW: Array[int] = [0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0]
 ## Its length along the line when placed (0: the scenario's) and its depth across.
-const EQ_FW_LEN: Array[int] = [0, 0, 0, 0, 0, 20 * M, 10 * M, 0, 0, 0]
-const EQ_FW_DEPTH: Array[int] = [0, 0, 0, 0, 0, 3 * M, 10 * M, 4 * M, 4 * M, 0]
+const EQ_FW_LEN: Array[int] = [0, 0, 0, 0, 0, 20 * M, 10 * M, 0, 0, 0, 0]
+const EQ_FW_DEPTH: Array[int] = [0, 0, 0, 0, 0, 3 * M, 10 * M, 4 * M, 4 * M, 0, 0]
 ## Its own side's men are hindered too (stakes and the ditch are in everyone's
 ## way; the owner knows where its caltrops lie and climbs its own rampart).
-const EQ_OWN: Array[int] = [0, 0, 0, 0, 0, 1, 0, 1, 0, 0]
+const EQ_OWN: Array[int] = [0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0]
 ## Men crossing it move at this % of their pace: foot, and riders / beasts
 ## (stakes: foot pick their way through at half pace, a horse barely at all).
-const EQ_SLOW_FOOT: Array[int] = [100, 100, 100, 100, 100, 50, 60, 45, 100, 100]
-const EQ_SLOW_RIDE: Array[int] = [100, 100, 100, 100, 100, 25, 35, 30, 100, 100]
+const EQ_SLOW_FOOT: Array[int] = [100, 100, 100, 100, 100, 50, 60, 45, 100, 100, 100]
+const EQ_SLOW_RIDE: Array[int] = [100, 100, 100, 100, 100, 25, 35, 30, 100, 100, 100]
 ## Ticks an enemy takes to climb across its depth (0: no climb): the rampart,
 ## 4 m of steep earth bank in 5 s, a short ladder's pace with no ladder.
-const EQ_CROSS_T: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 50, 0]
+const EQ_CROSS_T: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 50, 0, 0]
 ## Charge momentum a rider (horse, camel, elephant) loses each tick inside
 ## it: 100 stops a charge dead (stakes, the ditch, the rampart's bank).
-const EQ_STOP: Array[int] = [0, 0, 0, 0, 0, 100, 25, 100, 100, 0]
+const EQ_STOP: Array[int] = [0, 0, 0, 0, 0, 100, 25, 100, 100, 0, 0]
 ## % of a man's full hit points he loses stepping into it: foot, riders,
 ## beasts (a big body); a charging rider (and his beast) that times
 ## (100 + momentum) / 100: impaled on the stakes at the gallop.
-const EQ_DMG_FOOT: Array[int] = [0, 0, 0, 0, 0, 0, 6, 0, 0, 0]
-const EQ_DMG_RIDE: Array[int] = [0, 0, 0, 0, 0, 5, 12, 3, 0, 0]
-const EQ_DMG_BEAST: Array[int] = [0, 0, 0, 0, 0, 3, 8, 2, 0, 0]
+const EQ_DMG_FOOT: Array[int] = [0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0]
+const EQ_DMG_RIDE: Array[int] = [0, 0, 0, 0, 0, 5, 12, 3, 0, 0, 0]
+const EQ_DMG_BEAST: Array[int] = [0, 0, 0, 0, 0, 3, 8, 2, 0, 0, 0]
 ## A charging rider stepping into it is thrown this % x momentum / 100 of the time.
-const EQ_KNOCK: Array[int] = [0, 0, 0, 0, 0, 40, 0, 50, 0, 0]
+const EQ_KNOCK: Array[int] = [0, 0, 0, 0, 0, 40, 0, 50, 0, 0, 0]
 ## Hit points (its stock) used up by each man stepping into it (caltrops).
-const EQ_USE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+const EQ_USE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
 ## Hit points a tick each enemy foot soldier standing inside it hacks off
 ## (stakes pulled up; at most FW_HACKERS men at once; men crossing do not).
-const EQ_HACK: Array[int] = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+const EQ_HACK: Array[int] = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0]
 ## Hidden from the enemy until one of its men steps into it (q_seen).
-const EQ_HIDE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0]
+const EQ_HIDE: Array[int] = [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
 ## Height of the ground inside it (sim units): the ditch's floor, the
 ## rampart's fighting step (2 m: a wooden palisade on an earth bank, about
 ## half walls 1's 5 m walkway; a section burnt down leaves a gap: it is
 ## wrecked and none of its fields apply). The
 ## height rules (melee from above, a charge uphill, range from height)
 ## read it on any map.
-const EQ_H: Array[int] = [0, 0, 0, 0, 0, 0, 0, -1536, 2048, 0]
+const EQ_H: Array[int] = [0, 0, 0, 0, 0, 0, 0, -1536, 2048, 0, 0]
 ## Its side's men standing on it: % of the missiles from men not on it
 ## stopped (half walls 1's battlements, WALL_COVER) ...
-const EQ_COVER: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 12, 0]
+const EQ_COVER: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 12, 0, 0]
 ## ... and % of their range more at men not on it (half walls 2-3's
 ## WALL_RANGE_PCT; walls 1 gives none, a rampart is a fighting platform).
-const EQ_RANGE: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 8, 0]
+const EQ_RANGE: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0]
 const FW_HACKERS := 12           # men at a piece who hack at it at most ...
 const FW_HACK_STILL := M / 32    # ... standing in it (moved less than this in the tick)
 const Q_GROUND := 0              # lying where it was put down
@@ -710,6 +713,15 @@ const Q_STOWED := 5              # a field work its side has not placed (nothing
 const RAM_CREW := 20             # men of the carrying unit who work the ram at most
 const RAM_WALK := 123            # a unit carrying the ram walks at most this fast (1.2 m/s) (EQ_PACE) ...
 const LADDER_WALK_PCT := 80      # ... one carrying ladders at this % of its walk; neither runs (EQ_WALK_PCT)
+## Scaling poles (EQ_POLES, native siege 2026-10-29): two notched poles a set, light (carried at this % of the walk:
+## the ladders' cost in time halved; the sim has no planting delay, a set goes up at once at the foot), the party
+## climbing at POLE_CLIMB_PCT % of a ladder party's rate (climb_per: each pole's man every LADDER_TICKS x
+## POLE_SET x 100 / (LADDER_SET x POLE_CLIMB_PCT)).
+const POLE_SET := 2
+const POLE_WALK_PCT := 90
+const POLE_CLIMB_PCT := 70
+## % of a ladder party's climbing rate by kind (0: the kind's EQ_CLIMB, else the ladders').
+const EQ_CLIMB_PCT: Array[int] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, POLE_CLIMB_PCT]
 const CARRY_MELEE_PCT := 60      # a carrying unit's melee attack and defence (it defends poorly)
 const PICK_R := 6 * M            # the anchor this close to a piece on the ground picks it up
 const RAM_HP := 2500             # a ram's hit points ...
@@ -1486,6 +1498,7 @@ var cov_on: int = 0                   # ... and a unit with the cover trait (sta
 var t_cover := PackedInt32Array()
 var t_pis := PackedInt32Array()       # roles step 2: pistols a man carries (row "pistols")
 var t_abil := PackedInt32Array()      # ... the abilities (UT.abilities: a bit per UT.AB_*)
+var t_mbat := PackedInt32Array()      # native siege: the batter ability's melee form (row "batter": the torch raiders)
 var t_role := PackedInt32Array()      # ... the role (its index in UT.ROLE_ORDER)
 var vs_tw := PackedByteArray()        # 4 m cells (the veg grid): tree weight along a sight line (static)
 var vs_top := PackedInt32Array()      # ... how far a sight blocker rises above the ground (buildings; negative: rocks, cliffs; static)
@@ -1583,6 +1596,7 @@ var stat_cm_rank: int = 0             # rank volleys fired (rolling fire)
 var stat_cm_full: int = 0             # full volleys of a countermarch unit not on Hold (the opening, the last volley)
 var stat_cm_fright: int = 0           # rank volleys that frightened a unit
 # Poisoned arrows (Caribbean batch 2): hashed from the first poisoning on (a battle without one hashes as before).
+var mb_on: int = 0                    # native siege: a town battle with a melee batterer (t_mbat): _update_mbat runs, u_lacc hashed without siege gear
 var poi_on: int = 0                   # a man was poisoned: u_poisoned, u_poison_t, u_poison_by hashed from then on
 var u_poisoned := PackedInt32Array()  # per unit: poisoned men (at most its alive)
 var u_poison_t := PackedInt32Array()  # ... ticks to the next poison death (0: none poisoned)
@@ -1857,6 +1871,7 @@ var stat_blast_down: int = 0        # ... their down ticks in all
 var stat_blast_held: int = 0        # ... throws blocked (a wall, a building, a walk's edge): only downed
 var stat_unit_burn: int = 0         # units set burning
 var stat_ram_blows: int = 0
+var stat_mbat_blows: int = 0          # native siege: the melee batter's blows (gates and palisade stretches)
 var stat_unbar: int = 0             # gates opened from inside
 var stat_tower_hits: int = 0        # shots that struck a tower
 var stat_towers_down: int = 0       # towers silenced (engine wrecked)
@@ -2433,9 +2448,15 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 				_kennel_setup(u, int(units[u]["pack_of"]))
 	_reserve_setup(units)
 	fire_on = 0
+	mb_on = 0
 	for u in n_units:
 		if u_sk[u] >= 0 and t_k_fire[u_sk[u]] > 0:
 			fire_on = 1
+		var tk := t_m_ak[u_otype[u]]
+		if tk >= 0 and t_k_fire[tk] > 0:
+			fire_on = 1  # (native siege: a row whose standard kind burns, the torch raiders' fire pots; none in Rome)
+		if t_mbat[u_otype[u]] != 0 and city_on != 0:
+			mb_on = 1
 	for g in n_eg:
 		if eg_sk[g] >= 0 and t_k_fire[eg_sk[g]] > 0:
 			fire_on = 1
@@ -2793,7 +2814,9 @@ func _load_types() -> void:
 	t_pis.resize(nt)
 	t_abil.resize(nt)
 	t_role.resize(nt)
+	t_mbat.resize(nt)
 	for t in nt:
+		t_mbat[t] = UT.stat(t, "batter")
 		t_pis[t] = UT.stat(t, "pistols")
 		t_abil[t] = UT.abilities(t)
 		t_role[t] = UT.ROLE_ORDER.find(UT.role(t))
@@ -6406,6 +6429,106 @@ func _update_gates() -> void:
 				_break_gate(g)
 
 
+## The batter's melee form (native siege, 2026-10-29; docs/design/siege_and_towns.md "Native siege (as built)"):
+## an attacking unit of a batter row (t_mbat: the torch raiders), not holding the ability, sent at a shut gate
+## (u_gtarget g) or a wall stretch (-2 - stretch) by the order rule, strikes it with its men standing at its
+## outer face (formed or fighting; a gate within its width and RAM_REACH out, a stretch within RAM_REACH of the
+## outer face along it), as a ram's crew: each tick min(men, RAM_CREW) of work, at least RAM_MEN men, a blow
+## every RAM_WORK of it, of t_m_obj at a gate (120: a ram's 160) and MBAT_PAL_PCT % of it at a palisade stretch
+## (a level-1 wall's, not the citadel's or a fort's; stone nothing). Unit index order. The gate breaks / the
+## stretch is breached as by the ram and the guns (_break_gate, _breach).
+func _update_mbat() -> void:
+	for u in n_units:
+		if t_mbat[u_type[u]] == 0 or u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
+			continue
+		var gt := u_gtarget[u]
+		if gt == -1 or gt <= BLD_TGT or u_carry[u] >= 0 or u_wall[u] > 0 or u_stair[u] != 0:
+			continue
+		if u < u_abs.size() and ((u_abs[u] >> (UT.AB_BATTER * 2)) & 3) == UT.AB_HOLD:
+			continue
+		var g := gt
+		var sg := -1
+		if gt <= -2:
+			g = -1
+			sg = -2 - gt
+			if sg >= ws_state.size() or ws_state[sg] != WS_STANDING:
+				u_gtarget[u] = -1
+				continue
+			if not mbat_palisade(self, sg):
+				continue  # (stone: nothing)
+		elif g >= n_gates or g_state[g] != GATE_CLOSED:
+			continue
+		var men := 0
+		var base := u_slot_base[u]
+		var reach_x := g_hw[g] * M + M if g >= 0 else 0
+		var out_y := wall_t / 2 + RAM_REACH
+		var oc := FM.cos_a(ws_dir[sg]) if sg >= 0 else 0
+		var os := FM.sin_a(ws_dir[sg]) if sg >= 0 else 0
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] != S_FORMED and state[i] != S_FIGHTING:
+				continue
+			if g >= 0:
+				var f := gate_frame(g, pos_x[i], pos_y[i])
+				if absi(f.x) <= reach_x and f.y >= 0 and f.y <= out_y:
+					men += 1
+			else:
+				var pt := seg_pt(self, sg, seg_t(self, sg, pos_x[i], pos_y[i]))
+				var dd := ((pos_x[i] - pt.x) * oc + (pos_y[i] - pt.y) * os) / FM.TRIG_ONE
+				if dd >= 0 and dd <= out_y:
+					men += 1
+		if men < RAM_MEN:
+			continue
+		u_lacc[u] += mini(men, RAM_CREW)
+		if u_lacc[u] < RAM_WORK:
+			continue
+		u_lacc[u] -= RAM_WORK
+		stat_mbat_blows += 1
+		var ty := u_type[u]
+		if g >= 0:
+			g_hp[g] -= t_m_obj[ty] * 100
+			g_hit_t[g] = tick
+			if g_hp[g] <= 0:
+				_break_gate(g)
+				u_gtarget[u] = -1
+				if u_order[u] == O_MOVE:
+					u_order[u] = O_NONE
+		else:
+			var dmg := t_m_obj[ty] * MBAT_PAL_PCT / 100
+			ws_hp[sg] -= dmg * 100
+			ws_hit_t[sg] = tick
+			stat_wall_dmg += dmg
+			if ws_hp[sg] <= 0:
+				_breach(sg, u)
+				u_gtarget[u] = -1
+				if u_order[u] == O_MOVE:
+					u_order[u] = O_NONE
+
+
+## Stretch sg is a palisade the melee batter can break (native siege): a level-1 wall's (the natives' timber
+## palisade, a West or Rome walls-1 ring), not the citadel's or a fort's (stone).
+static func mbat_palisade(sim, sg: int) -> bool:
+	return sim.city_walls == 1 and sg >= 0 and sg < sim.ws_fl.size() and (sim.ws_fl[sg] & MapGen.SEG_CIT) == 0
+
+
+## The shut outer gate (not the citadel's) nearest batter unit u's middle; else any shut gate; -1 none.
+func mbat_gate(u: int) -> int:
+	var best := -1
+	var bd := 0
+	for pass_cit in 2:
+		for g in n_gates:
+			if g_state[g] != GATE_CLOSED or (g_cit[g] != 0) != (pass_cit == 1):
+				continue
+			var f := gate_face(g)
+			var d := FM.approx_len(f.x - u_cx[u], f.y - u_cy[u])
+			if best < 0 or d < bd:
+				best = g
+				bd = d
+		if best >= 0:
+			return best
+	return -1
+
+
 ## The plaza: attackers holding it (a ready unit of CAPTURE_MEN or more with
 ## its centre in it, no ready defender unit within CAPTURE_CLEAR beyond it)
 ## for CAPTURE_TICKS break the defenders. Counted once a second.
@@ -8309,6 +8432,21 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["run"] = 0
 			return
 		var wt := int(o.get("wall", -1))
+		if wt >= 0 and not art and UT.stat(ty, "batter") > 0:
+			# Native siege: a batter row marches to the stretch's outside middle and strikes it
+			# (_update_mbat; gtarget -2 - stretch); a palisade gives, stone does not.
+			if sim.city_on == 0 or wt >= sim.ws_state.size() or sim.u_side[u] == sim.city_def \
+					or sim.ws_state[wt] != WS_STANDING or sim.ws_hp0[wt] <= 0 or carry >= 0 or wallu != 0:
+				return
+			var wo: Vector2i = sim.ws_side_pt(wt, false)
+			d["order"] = O_MOVE
+			d["dx"] = wo.x
+			d["dy"] = wo.y
+			d["dface"] = (sim.ws_dir[wt] + 512) & FM.ANGLE_MASK
+			d["target"] = -1
+			d["gtarget"] = -2 - wt
+			d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+			return
 		if wt >= 0:
 			# At a wall stretch (the destruction AI, 2026-10-23): an attacking
 			# battery shoots it until it is breached (gtarget -2 - stretch).
@@ -8334,7 +8472,10 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				d["run"] = 0
 				return
 			var c := UT.cls(ty)
-			if c == UT.CLS_MISSILE and carry < 0 and wallu == 0:
+			# Native siege: a batter row (the torch raiders) goes to the gate's face and strikes it (_update_mbat),
+			# unless the order is its grenade ability's throw ("throw": the fire pots from where it stands).
+			var mb: bool = UT.stat(ty, "batter") > 0 and int(o.get("throw", 0)) == 0 and carry < 0 and wallu == 0
+			if c == UT.CLS_MISSILE and carry < 0 and wallu == 0 and not mb:
 				# Missile troops shoot at it from where they stand (fire
 				# missiles set it alight; others glance off).
 				d["order"] = O_NONE
@@ -8351,7 +8492,7 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 				gfp = sim.gate_front(gt, sim.city_def)  # over the wall by ladders: its inside, to unbar it
 				if c == UT.CLS_CAV or c == UT.CLS_ART:
 					return
-			elif carry < 0 and (c != UT.CLS_INF and c != UT.CLS_PIKE and UT.stat(ty, "gate_walls") < sim.city_walls \
+			elif carry < 0 and not mb and (c != UT.CLS_INF and c != UT.CLS_PIKE and UT.stat(ty, "gate_walls") < sim.city_walls \
 					or not gate_hackable(sim, gt)):
 				return  # (only foot hack, beasts batter low walls' gates, and only at a gate swords can break)
 			d["order"] = O_MOVE
@@ -8926,6 +9067,8 @@ func step() -> void:
 		_update_equip()
 	if n_gates > 0:
 		_update_gates()
+	if mb_on != 0:
+		_update_mbat()
 	if n_eng > 0:
 		for u in n_units:
 			if u_pick[u] >= PICK_ENG:
@@ -10332,7 +10475,7 @@ func _missile_think(u: int) -> void:
 			var cur := u_ftarget[u]
 			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and not _unseen(cur) \
 					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)) \
-					and (gab != UT.AB_AUTO or _gren_block(cur)):
+					and (gab != UT.AB_AUTO or _gren_ok(u, cur)):
 				u_ftarget[u] = cur if t_m_arc[ty] != 0 or (_clear_line(u, cur) and lof_units(u, cur)) else -1
 				return
 			var best := 0
@@ -10344,7 +10487,7 @@ func _missile_think(u: int) -> void:
 					continue
 				if _unseen(o):
 					continue  # (a hidden man, a unit nobody sees)
-				if gab == UT.AB_AUTO and not _gren_block(o):
+				if gab == UT.AB_AUTO and not _gren_ok(u, o):
 					continue  # (grenades on Auto: a formed block or a held building only)
 				var d := _unit_dist(u, o)
 				if d > rng and (not hgt or d > range_vs(u, o)):
@@ -14656,6 +14799,8 @@ func _land_bolt(p: int) -> void:
 func _land_stone(p: int) -> void:
 	var ak := pr_ak[p]
 	var ob := t_k_obj[ak] if ak >= 0 else 100
+	if t_mbat[pr_ty[p]] != 0:
+		ob = 0  # (native siege: a torch raider's fire pot burns, it does not batter: its axes do, _update_mbat)
 	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE * ob / 100):
 		return
 	var tw_hit := false
@@ -18383,6 +18528,9 @@ func state_hash() -> int:
 		# The countermarch (a battle without a unit that has it hashes as before).
 		for arr in [u_cmc, u_cmr, u_cmt, u_cml, u_cmv, s_cms]:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+	if mb_on != 0 and sg_on == 0:
+		# Native siege: the melee batter's work toward its next blow (with siege gear it is hashed above).
+		ctx.update(u_lacc.to_byte_array())
 	if poi_on != 0:
 		# Poisoned arrows (a battle where nobody was poisoned hashes as before).
 		for arr in [u_poisoned, u_poison_t, u_poison_by]:
@@ -18952,7 +19100,7 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	for q in lst.size():
 		var e: Array = lst[q]
 		var ek := int(e[0])
-		q_kind[q] = ek if ek == EQ_RAM or ek == EQ_TOWER else EQ_LADDERS
+		q_kind[q] = ek if ek == EQ_RAM or ek == EQ_TOWER or ek == EQ_POLES else EQ_LADDERS
 		q_x[q] = clampi(int(e[1]) * M, 0, field_w)
 		q_y[q] = clampi(int(e[2]) * M, 0, field_h)
 		q_state[q] = Q_GROUND
@@ -19333,8 +19481,14 @@ func _screen_near(q: int, x: int, y: int) -> Vector2i:
 ## Ticks between men up each lane of planted piece q: its kind's EQ_CLIMB,
 ## else (ladders) LADDER_TICKS by wall level.
 static func climb_per(sim, q: int) -> int:
-	var c: int = EQ_CLIMB[sim.q_kind[q]]
-	return c if c > 0 else LADDER_TICKS[sim.city_walls]
+	var k: int = sim.q_kind[q]
+	var c: int = EQ_CLIMB[k]
+	if c > 0:
+		return c
+	if EQ_CLIMB_PCT[k] > 0:
+		# (Poles: fewer lanes, each a man every this much, the party at EQ_CLIMB_PCT % of a ladder set's rate.)
+		return maxi(LADDER_TICKS[sim.city_walls] * EQ_LANES[k] * 100 / (LADDER_SET * EQ_CLIMB_PCT[k]), 1)
+	return LADDER_TICKS[sim.city_walls]
 
 
 ## Swords can break gate g (walls 0-1: GATE_HACK_BY_WALLS of a few per cent
@@ -20498,6 +20652,7 @@ func _ability_order(o: Dictionary) -> void:
 			o2["type"] = ORDER_ATTACK
 			o2["target"] = -1
 			o2["gate"] = -2 - tg
+			o2["throw"] = 1  # (a batter row too throws from where it stands)
 			_apply_unit(u, o2)
 	elif ab == UT.AB_CARACOLE:
 		if st == UT.AB_HOLD:
@@ -20510,6 +20665,15 @@ func _ability_order(o: Dictionary) -> void:
 	elif ab == UT.AB_BATTER:
 		if st == UT.AB_NOW:
 			_batter_now(u, tg, o2)
+		elif st == UT.AB_HOLD and t_mbat[u_type[u]] != 0 and u_gtarget[u] != -1:
+			# (The melee form: the men stop striking and stand.)
+			if u_order[u] == O_MOVE:
+				u_dx[u] = u_ax[u]
+				u_dy[u] = u_ay[u]
+			u_order[u] = O_NONE
+			u_gtarget[u] = -1
+			u_dirty[u] = 1
+			u_settled[u] = 0
 		elif st == UT.AB_HOLD and u_order[u] == O_ATTACK and u_gtarget[u] <= -2:
 			u_order[u] = O_NONE  # (men again: the battering stops)
 			u_gtarget[u] = -1
@@ -20525,6 +20689,24 @@ func _batter_now(u: int, tg: int, o2: Dictionary) -> void:
 		return
 	o2["type"] = ORDER_ATTACK
 	o2["target"] = -1
+	if t_mbat[u_type[u]] != 0:
+		# The melee form (native siege): tg a wall stretch (>= 0), a gate (-2 - g), or -1 the shut gate
+		# nearest it; the order rule sends the men to its face (_update_mbat strikes it).
+		var aim := Vector2i(u_cx[u], u_cy[u])
+		if tg >= 0:
+			if tg >= ws_state.size():
+				return
+			o2["wall"] = tg
+			aim = ws_side_pt(tg, false)
+		else:
+			var g := -2 - tg if tg <= -2 else mbat_gate(u)
+			if g < 0 or g >= n_gates:
+				return
+			o2["gate"] = g
+			aim = gate_face(g)
+		o2["run"] = 1 if FM.approx_len(aim.x - u_cx[u], aim.y - u_cy[u]) > MBAT_RUN_R else 0  # (at the run from afar)
+		_apply_unit(u, o2)
+		return
 	if tg <= -2:
 		o2["bld"] = -2 - tg
 	else:
@@ -20802,6 +20984,15 @@ func _gren_block(o: int) -> bool:
 	if occ_on != 0 and u_occ[o] > 0:
 		return true
 	return u_alive[o] >= GREN_BLOCK and u_disorder[o] < DISORDERED and u_cls[o] != UT.CLS_CAV
+
+
+## Grenade unit u on Auto throws at unit o: grenades at a formed block or a held building (_gren_block);
+## fire pots (native siege: a lobbed standard kind that burns, the torch raiders) only at a held building.
+func _gren_ok(u: int, o: int) -> bool:
+	var tk := t_m_ak[u_type[u]]
+	if tk >= 0 and t_k_fire[tk] > 0:
+		return u_state[o] == U_READY and occ_on != 0 and u_occ[o] > 0
+	return _gren_block(o)
 
 
 ## Grenades on Auto, standing with nothing to throw at: the nearest shut

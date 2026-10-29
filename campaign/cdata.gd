@@ -117,6 +117,10 @@ static var CHAIN_NAMES_F: Dictionary = {}
 ## characters need (chain_levels; the West's natives). Every other faction, and every faction of a pack
 ## without the table (Rome), can build every level of every chain.
 static var CHAIN_CAP_FACTIONS: Array = []
+## Native siege (west.gd POLE_FACTIONS / POLE_NEEDS; none: Rome): the factions whose assaults bring scaling
+## poles while they hold a building of POLE_NEEDS [chain, level] (CBattle.siege_equipment).
+static var POLE_FACTIONS: Array = []
+static var POLE_NEEDS: Array = []
 static var _levels_cache: Dictionary = {}  # faction index -> chain_levels(f), built on first use per pack
 static var _unlock_cache: Dictionary = {}  # "f:chain:level" -> chain_unlocks
 ## Starting treaties (state format 10; campaign/cdip.gd start_treaties; none:
@@ -216,7 +220,10 @@ const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLE
 	# line); the atlatl a Range 1 (their line's own).
 	"mounted_arquebusiers": [[STABLES, 1], [RANGE, 1]], "marines": [[BARRACKS, 2], [SHIPYARD, 1]],
 	"naval_gun": [[WORKSHOP, 1], [SHIPYARD, 1]], "colonial_militia": [[BARRACKS, 1]], "maroons": [[BARRACKS, 1]],
-	"atlatl": [[RANGE, 1]], "w_slingers": [[BARRACKS, 1]]}
+	"atlatl": [[RANGE, 1]], "w_slingers": [[BARRACKS, 1]],
+	# Native siege (2026-10-29): the Miskito's torch raiders, in the siege line (a Workshop line) but made at the War
+	# lodge 2 (the Barracks).
+	"torch_raiders": [[BARRACKS, 2]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2, "mortar": 3, "naval_gun": 1}
 ## Buildings standing at the start: capitals and the other regions per level.
@@ -426,6 +433,8 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	CHAIN_NAMES = c.get("CHAIN_NAMES", {})
 	CHAIN_NAMES_F = c.get("CHAIN_NAMES_F", {})
 	CHAIN_CAP_FACTIONS = c.get("CHAIN_CAP_FACTIONS", [])
+	POLE_FACTIONS = c.get("POLE_FACTIONS", [])
+	POLE_NEEDS = c.get("POLE_NEEDS", [])
 	_levels_cache = {}
 	_unlock_cache = {}
 	START_TREATIES = c.get("START_TREATIES", [])

@@ -13,7 +13,8 @@ extends RefCounted
 ##           "coast": 0/1, "def": defending sim side,
 ##           "ladders": 0/1, "ram": 0/1, "towers": 0-MAX_TOWERS (the attackers' siege
 ##           equipment, objects on the ground: LADDER_SETS sets of ladders, a ram,
-##           siege towers; walls only, siege towers walls 2-3),
+##           siege towers; walls only, siege towers walls 2-3), "poles": 0/1 (the West: POLE_SETS
+##           sets of the natives' scaling poles; native siege),
 ##           "works": 0-2 (field maps: both sides' field works as a Workshop of
 ##           that level, Scenarios.works_allowance), "fortified": -1 none / the
 ##           sim side standing in a fortified camp (its own works on top),
@@ -44,6 +45,7 @@ const AIProfile := preload("res://sim/ai_profile.gd")
 const UnitNames := preload("res://game/unit_names.gd")
 
 const LADDER_SETS := 3         # the Ladders toggle: sets of ladders (as a campaign siege of two turns)
+const POLE_SETS := 2           # the Poles toggle (the West): sets of scaling poles (as a native assault, CBattle.POLE_SETS)
 const MAX_TOWERS := 2          # the Siege towers option: 0, 1 or 2 (as a campaign siege of three / four turns)
 const MANTLET_CHOICES := [0, 2, 4]  # a side's Mantlets option (as a campaign siege of two / three turns)
 const MAX_ARMIES := 3          # per side
@@ -72,7 +74,7 @@ const TEMPLATES: Array[String] = ["skirmish", "battle_2000", "test_cav_archers",
 ## shows only the pack's rows, in these lines.
 const PACKS: Array[String] = ["rome", "west"]
 const PACK_NAMES := {"rome": "Rome", "west": "The West"}
-const WEST_LINES: Array[String] = ["musket", "marine", "militia", "pike", "buccaneer", "maroon", "heavy", "grenadier", "light", "archer", "javelin", "sling", "cav", "pistol",
+const WEST_LINES: Array[String] = ["musket", "marine", "militia", "pike", "buccaneer", "maroon", "heavy", "grenadier", "light", "siege", "archer", "javelin", "sling", "cav", "pistol",
 	"dragoon", "light_gun", "field_gun", "naval_gun", "mortar"]
 const WEST_ARMY := [["lancers", 60], ["musketeers", 100], ["w_pikemen", 120], ["musketeers", 100],
 	["rodeleros", 100], ["buccaneers", 60], ["light_gun", 12], ["pistoleers", 60]]
@@ -419,6 +421,8 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 			equip["ladders"] = LADDER_SETS
 		if int(mp.get("ram", 0)) != 0:
 			equip["ram"] = 1
+		if int(mp.get("poles", 0)) != 0 and pack_of(st) == "west":
+			equip["poles"] = POLE_SETS
 		var n_tw := clampi(int(mp.get("towers", 0)), 0, MAX_TOWERS)
 		if n_tw > 0:
 			equip["towers"] = n_tw  # (Scenarios.settlement: walls 2-3 only)
@@ -539,6 +543,7 @@ static func summary(st: Dictionary) -> Dictionary:
 	return {"map": str(mp.get("kind", "field")), "terrain": int(mp.get("terrain", 0)), "deploy": int(st.get("deploy", 0)),
 		"funds": int(st.get("funds", 0)), "sides": sides, "time": int(st.get("time", 900)),
 		"ladders": int(mp.get("ladders", 0)), "ram": int(mp.get("ram", 0)), "towers": int(mp.get("towers", 0)),
+		"poles": int(mp.get("poles", 0)),
 		"works": int(mp.get("works", 0)), "fortified": int(mp.get("fortified", -1)),
 		"river": int(mp.get("river", -1)),
 		"mantlets": [mantlets_of(st, 0), mantlets_of(st, 1)]}

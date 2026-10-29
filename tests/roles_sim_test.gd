@@ -21,7 +21,12 @@ extends SceneTree
 ##             the approach, go up to the gate being hacked and are on Auto once it is down; put by a shut gate
 ##             they Use now at it; a mortar battery in a West town batters (Use now) a held building on the storm's
 ##             route, then Auto; Easy never gives an ability order.
-##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch]
+##   native    the torch raiders (native siege, 2026-10-29): the grenade and batter abilities; their fire pots on Auto
+##             none at a formed block, thrown on Use now; the batter's melee form at a walls-1 gate (Use now: they go
+##             to its face and break it; Hold stops them); the siege AI (Average) in a walls-2 oppidum with no ram
+##             batters the attacked gate with them (Use now) and it falls; Easy gives no ability order; Rome's rows
+##             have neither.
+##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -79,6 +84,8 @@ func _init() -> void:
 		_ai()
 	if only == "" or only == "countermarch":
 		_countermarch()
+	if only == "" or only == "native":
+		_native()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL")
 	quit(0 if fails == 0 else 1)
 
@@ -663,3 +670,114 @@ func _countermarch() -> void:
 	for t in 100:
 		rs.step()
 	_check(rs.cm_on == 0 and rs.u_cmr.is_empty() and rs.s_cms.is_empty(), "countermarch: a Rome battle has none")
+
+
+# ---------------------------------------------------------- native siege ---
+
+func _torch_sc(n_def: int, orders: Array) -> Dictionary:
+	return _sc([_u(0, "torch_raiders", 60, 150, 170, UP), _u(1, "musketeers", n_def, 150, 155, DOWN, {"ammo_pct": 0})], orders)
+
+
+## A walls-`walls` oppidum, the torch raiders 14 m out from the gate nearest them, the defenders `dfn` (10
+## javelinmen at the plaza holding their fire, for the set pieces); AI sides `ai`. Returns [scenario, gate].
+func _torch_gate_sc(walls: int, ai: Array, skill: int, dfn: Array = [[UT.JAVELIN, 10]]) -> Array:
+	var city := {"seed": 21, "level": 1, "walls": walls, "bld": [1, 2], "plan": MapGen.PLAN_OPPIDUM, "founder": MapGen.CUL_CELTIC}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": MapGen.PAL_GREEN}
+	var sc: Dictionary = Scenarios.settlement(city, terr, [[UT.index_of("torch_raiders"), 60]], dfn, 1, ai, {})["scenario"]
+	sc["ai_skill"] = [skill, skill]
+	sc["deploy_zones"] = []
+	var probe := BattleSim.new()
+	probe.setup(sc, 7)
+	var gate := -1
+	var bd := 1 << 40
+	var spot := Vector3i.ZERO
+	for g in probe.n_gates:
+		if probe.g_cit[g] != 0:
+			continue
+		var gf: Vector3i = probe.gate_front(g, 0)
+		var d := absi(gf.x - probe.u_cx[0]) + absi(gf.y - probe.u_cy[0])
+		if d < bd:
+			bd = d
+			gate = g
+			var o := (gf.z + 512) & 1023
+			spot = Vector3i(gf.x + FM_cos(o) * 14, gf.y + FM_sin(o) * 14, gf.z)
+	for ud in sc["units"]:
+		if int(ud["side"]) == 0:
+			ud["x_m"] = spot.x / M
+			ud["y_m"] = spot.y / M
+			ud["facing"] = spot.z
+	return [sc, gate]
+
+
+static func FM_cos(a: int) -> int:
+	return preload("res://sim/fixed_math.gd").cos_a(a) * M / preload("res://sim/fixed_math.gd").TRIG_ONE
+
+
+static func FM_sin(a: int) -> int:
+	return preload("res://sim/fixed_math.gd").sin_a(a) * M / preload("res://sim/fixed_math.gd").TRIG_ONE
+
+
+func _native() -> void:
+	var ab := UT.abilities(UT.index_of("torch_raiders"))
+	_check((ab & (1 << UT.AB_GRENADE)) != 0 and (ab & (1 << UT.AB_BATTER)) != 0, "native: torch raiders have the grenade and batter abilities (%d)" % ab)
+	var rome_bat := false
+	for t in UT.ROME_N:
+		if UT.stat(t, "batter") != 0 or (UT.ammo_index("fire_pots") == UT.stat(t, "m_ak") and UT.stat(t, "grenades") != 0):
+			rome_bat = true
+	_check(not rome_bat, "native: no Rome row has the melee batter or thrown fire pots")
+	# Fire pots: on Auto none at a formed block in the open, on Use now thrown at it.
+	var auto := _gren_run(_torch_sc(100, []), 300)
+	var now := _gren_run(_torch_sc(100, [BattleSim.make_ability_order(0, 0, UT.AB_GRENADE, UT.AB_NOW, 1)]), 300)
+	print("native fire pots in 30 s at a musket block 15 m off: Auto %d, Use now %d" % [auto, now])
+	_check(auto == 0, "native: fire pots on Auto are not thrown at men in the open (%d)" % auto)
+	_check(now > 0, "native: fire pots on Use now are thrown at the unit (%d)" % now)
+	# The batter at a walls-1 gate, no AI: Use now breaks it; Hold at 10 s stops the blows.
+	var gs := _torch_gate_sc(1, [], 1)
+	var sc: Dictionary = gs[0]
+	var g: int = gs[1]
+	sc["orders"] = [{"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0},
+		BattleSim.make_ability_order(0, 0, UT.AB_GRENADE, UT.AB_HOLD, -1), BattleSim.make_ability_order(5, 0, UT.AB_BATTER, UT.AB_NOW, -2 - g)]
+	var sim := BattleSim.new()
+	sim.setup(sc, 7)
+	var broke := -1
+	while sim.tick < 1500 and broke < 0:
+		sim.step()
+		if sim.g_state[g] == BattleSim.GATE_BROKEN:
+			broke = sim.tick
+	print("native batter: walls-1 gate broken at %d by %d blows" % [broke, sim.stat_mbat_blows])
+	_check(broke > 0 and sim.stat_mbat_blows > 0, "native: the torch raiders' Use now breaks a walls-1 gate by their blows")
+	var sc2: Dictionary = gs[0].duplicate(true)
+	sc2["orders"] = [{"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": 1, "on": 0},
+		BattleSim.make_ability_order(0, 0, UT.AB_GRENADE, UT.AB_HOLD, -1), BattleSim.make_ability_order(5, 0, UT.AB_BATTER, UT.AB_NOW, -2 - g),
+		BattleSim.make_ability_order(300, 0, UT.AB_BATTER, UT.AB_HOLD, -1)]
+	var sim2 := BattleSim.new()
+	sim2.setup(sc2, 7)
+	var b300 := -1
+	while sim2.tick < 900:
+		sim2.step()
+		if sim2.tick == 301:
+			b300 = sim2.stat_mbat_blows
+	print("native batter Hold at 30 s: %d blows by then, %d at 90 s, gate %d" % [b300, sim2.stat_mbat_blows, sim2.g_state[g]])
+	_check(b300 > 0 and sim2.stat_mbat_blows == b300 and sim2.g_state[g] == BattleSim.GATE_CLOSED, "native: Hold stops the battering")
+	# The siege AI: a walls-2 oppidum (iron-bound gate, no ram): Average batters the gate with them, Easy gives no order.
+	for skill in [1, 0]:
+		var ga := _torch_gate_sc(2, [0, 1], skill, [[UT.HEAVY, 80], [UT.SPEAR, 80]])
+		var sc3: Dictionary = ga[0]
+		var g3: int = ga[1]
+		var s3 := BattleSim.new()
+		s3.setup(sc3, 7)
+		var now_seen := false
+		var down := -1
+		while s3.tick < 2400 and down < 0:
+			s3.step()
+			if s3.ability_state(0, UT.AB_BATTER) == UT.AB_NOW:
+				now_seen = true
+			if s3.ai_gate[0] >= 0 and s3.g_state[s3.ai_gate[0]] == BattleSim.GATE_BROKEN:
+				down = s3.tick
+		print("native ai (%s): batter Use now %s, %d blows, gate %d down at %d, %d ability orders" % ["Average" if skill == 1 else "Easy",
+			str(now_seen), s3.stat_mbat_blows, g3, down, s3.stat_ab_orders])
+		if skill == 1:
+			_check(now_seen and s3.stat_mbat_blows > 0 and down > 0, "native: the siege AI batters the gate with the torch raiders and it falls")
+		else:
+			_check(s3.stat_ab_orders == 0 and s3.stat_mbat_blows == 0, "native: Easy gives the torch raiders no ability order")
+

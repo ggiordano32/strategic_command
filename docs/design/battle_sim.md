@@ -2750,3 +2750,21 @@ first). Hold: the volleys as before (they also stamp `s_cms`, so a switch back t
 Per-man fire (`_pm_on`: in a building, on a wall, the Cover or Hold-street stance of cover troops) runs before
 `_gun_unit` and is untouched. Stats: `stat_cm_rank`, `stat_cm_full`, `stat_cm_fright`. Tests:
 `tests/roles_sim_test.gd --only=countermarch`.
+
+### Native siege: the torch raiders (as built, 2026-10-29)
+
+docs/design/campaign_rules.md "Native siege, and the natives' buildings (plan)". One row after the shaman, the last
+of `UnitTypes.WEST_LATE` (every earlier index unchanged; `pack_test _native_siege`), sprite set 45 (art_pipeline.md
+"The torch raiders' set"). The sim rules (the melee batter, the fire pots, the scaling poles):
+docs/design/siege_and_towns.md "Native siege: scaling poles and the melee batter (as built)".
+
+| Row (key) | Line, role | Buildings (`UNIT_NEEDS`) | Who | Men, cost | Melee | Missile |
+|---|---|---|---|---|---|---|
+| Torch Raiders (`torch_raiders`; the Miskito's "Torch Raiders" / "Torches") | `siege` (tier 1, in place of the wagon), `shock` | Barracks 2 (the War lodge) | Miskito | 60, 7 (420) | cls missile (the throw runs for missile class, as the grenadiers); attack 34, defence 20 (native warriors 38 / 24), damage 32 (36), armour 0, shield 0, hp 85, morale 600 (620), the warriors' walk 1.75 / run 4.7 m/s, `cover`, `woods_pct` 60; `batter` 1: the batter ability's melee form, `m_obj` 120 a blow at a gate, 80 at a palisade stretch | fire pots (`m_ak` 7, `fire_pots`: lobbed `m_kind` 2, fire 70, 55 % against men), 2 a man, 25 m x the kind's 90 % = 22.5 m, damage 100, reload 12 s, `m_fear` 40, `grenades` 1: the grenade ability (Auto: held houses and shut gates only) |
+
+**Derivations.** The plan: "60 light shock foot with axes and torches, speed as warriors, poor in the open (melee
+below warriors, no armour)": attack, defence and damage a step under the warriors' (-4 / -4 / -4), their pace, no
+armour or shield. Price "about a warriors' company": 7 a man x 60 = 420 (warriors 400). Range: the plan's 20 m left a
+held house out of reach (`range_vs` from below its windows: the set piece stopped at 19 m and never threw); 25 m, the
+grenadiers' row, gives about 20 m at a house. The `batter` field is new (DEFAULTS 0); `abilities` gives `AB_BATTER`
+for it as for `guns_siege`. Campaign: the Miskito's `siege` line (they keep no wagon: they forage), their mix `siege` 5.
