@@ -956,3 +956,65 @@ disagree.
 **Measured** by a playtest with someone who has not played the game, and by
 `tests/tutorial_test.gd` driving the ten turns headless (each gate met by
 the scripted order, the skip and the leave paths, the tips file written).
+
+### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
+
+The owner: "It's crazy hard to assault cities as the miskito. They have no
+siege and no fire units." and "Why can the miskito make stables?" and the
+Workshop's cannon icon on a faction with no cannon. The two natives are
+different armies (the Itza the jungle kingdom: Holcan, atlatl, fire arrows,
+a lake capital; the Miskito the coastal raiders: canoe raiders, maroons,
+English muskets, poison arrows, the English alliance) and the walls flatten
+them into one problem; the fix splits along their identities. Campaign
+rules, sim rows and AI: the West pins move; no state format change.
+
+**Buildings a faction can use (first).** A chain level is offered to a
+faction only when a roster row of that faction needs it (`CRules.needs`,
+`UNIT_NEEDS`, `AMMO_AVAIL`) or the level is marked for everyone (`FARM`,
+`MARKET`, `WALLS`, the port, the `SHIPYARD` at a port, and every chain's
+level 1 where a row needs a higher level of it). The list is derived once
+at data load per faction (`CData.chain_levels(f)`); `build_info` refuses a
+level not in it ("nothing of yours needs it"), the build panel lists only
+the levels in it and says what the next level unlocks for this faction, the
+campaign AI's build order reads the same list. Natives therefore see no
+Stables and no Range 3; the Workshop stays for the wagon and the poles.
+
+**Names and icons per culture.** As the units have per-faction names
+(`UNIT_NAMES`), the chains get per-culture names and icons in `west.gd`
+(`CHAIN_NAMES` by culture; the default the chain's own): natives: Barracks
+"War lodge", Range "Hunting ground", Workshop "Canoe yard", Market "Trading
+post", Walls "Palisade" (the walls' kit pieces are already palisade at
+level 1), Farm "Milpa" (Itza) / "Gardens" (Miskito). The build panel, the
+town plan's kit pieces (`build.py` pieces already pick by culture), the
+build icons (`ui_icons.gd`: a lodge, a bow, a canoe, a post) and the unit
+book's "needs" texts read the culture's names; Rome and the Europeans
+unchanged.
+
+**The Itza: escalade and fire.** *Scaling poles*: a siege equipment row
+(the ladders' rules: `Scenarios` equipment, the escalade `_escalade`,
+`ST_LADDER`) made at the War lodge 2 rather than a Workshop, carried by any
+foot unit of the natives, two per party, climbing at 70 % of a ladder
+party's rate and planted in half the time; cost 60 % of ladders. The Holcan
+(tier 2 heavy) are the AI's storming party by `_solidity`. Fire arrows stay
+at Range 2 (Hunting ground 2).
+
+**The Miskito: the back door.** *Torch raiders*: a new West row in the
+`siege` line in place of the wagon (the Miskito keep no wagon: they forage;
+`"siege": ["torch_raiders", "", ""]`), tier 1, War lodge 2: 60 light shock
+foot with axes and torches, speed as warriors, poor in the open (melee
+below warriors, no armour); abilities: *batter* on a gate or a palisade
+stretch (the siege guns' batter order, `AB_BATTER`, given a melee form: the
+unit at the gate strikes it for `m_obj` 120 a round, a palisade stretch
+`m_obj` 80, stone walls nothing), and *fire pots* (`AB_GRENADE`'s path with
+the fire kind: thrown at a held house or a shut gate within 20 m, lighting
+it at once under the burning-buildings rule; 2 pots a man). The AI's storm
+reads torch raiders as a ram (docs/AI.md 3.11 `_assign_equip`: the gate's
+party) and as grenadiers for the held houses (AI.md 39). English guns come
+through the alliance's call to arms as they do now.
+
+**Measured.** `tests/defend_probe.gd` and `west_walls` with a Miskito and an
+Itza attacker added to the plan (today the plan has none); the West
+campaign sim on 72 seeds (the natives' eliminations and the towns they
+take). Open after: the harbour assault (canoe raiders landing at the quay
+inside a port's walls during an assault: a town-map scenario change) and
+the lake of Tayasal (its land assault a boat landing, as in 1697).
