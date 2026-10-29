@@ -1336,10 +1336,10 @@ func show_toast(text: String, action: Array = []) -> void:
 	_place_toast()
 	_place_toast.call_deferred()  # again once the wrapped label has its height
 	ui.move_child(_toast, -1)
-	var me := _toast
+	var me_id := _toast.get_instance_id()  # (an id, not the node: a lambda capturing a node freed by then logs an error)
 	get_tree().create_timer(6.0).timeout.connect(func():
-		if is_instance_valid(me) and me == _toast:
-			me.queue_free()
+		if is_instance_valid(_toast) and _toast.get_instance_id() == me_id:
+			_toast.queue_free()
 			_toast = null)
 
 

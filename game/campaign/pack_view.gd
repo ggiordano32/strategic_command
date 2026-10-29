@@ -6,6 +6,7 @@ extends RefCounted
 const CData := preload("res://campaign/cdata.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 
+const Saves := preload("res://game/campaign/saves.gd")
 const SETTINGS := "user://settings.cfg"
 ## Setting names, in menu order: [pack key, "Setting" button text].
 const CHOICES: Array = [["rome", "Rome, 280 BC"], ["west", "Caribbean, 1650"]]
@@ -45,8 +46,8 @@ static func subtitle(key: String) -> String:
 ## The last setting chosen on the new-campaign screen (a convenience only).
 static func load_pref() -> String:
 	var k := "rome"
-	if DisplayServer.get_name() == "headless":
-		return k  # tests and tools always start from Rome
+	if DisplayServer.get_name() == "headless" or Saves.dir() != Saves.DIR:
+		return k  # (scripted runs, headless or windowed, always start from Rome)  # tests and tools always start from Rome
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) == OK:
 		k = str(cf.get_value("campaign", "pack", "rome"))
@@ -54,6 +55,8 @@ static func load_pref() -> String:
 
 
 static func save_pref(key: String) -> void:
+	if Saves.dir() != Saves.DIR:
+		return  # a scripted run (tests/, tools/, the testing aids) never writes the player's settings.cfg
 	var cf := ConfigFile.new()
 	cf.load(SETTINGS)
 	cf.set_value("campaign", "pack", key)
