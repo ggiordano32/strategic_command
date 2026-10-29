@@ -6824,6 +6824,13 @@ func _dip_west() -> void:
 			if str(u["t"]) == "musketeers":
 				start_muskets += 1
 	_check(start_muskets >= 1, "the Miskito start army keeps its musketmen")
+	# (2026-10-29) Talamanca, the one Miskito region facing Tierra Firme overland, starts held by an army of its own.
+	var tal := CData.region_index("talamanca")
+	var tal_units := 0
+	for a in CState.armies_of(st, misk):
+		if int(a["r"]) == tal:
+			tal_units += CState.unit_count(a)
+	_check(tal_units >= 3, "the Miskito start with an army in Talamanca (%d units)" % tal_units)
 	var raised := [0, 0]
 	var ss := [CState.copy(g), CState.copy(st)]
 	for k in 2:

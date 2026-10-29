@@ -224,7 +224,8 @@ const FACTIONS: Array[Dictionary] = [
 		"palette": "miskito", "blurb": "Lords of the Mosquito Coast, friends of every English pirate and the dread of every Spanish clerk: harpoon, longboat and a very long memory.",
 		"regions": ["cabo_gracias", "bluefields", "talamanca"], "treasury": 1200,
 		"armies": [["cabo_gracias", ["native_warriors", "native_warriors", "native_warriors", "native_bowmen", "native_bowmen", "musketeers", "chieftain"]],
-			["bluefields", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
+			["bluefields", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]],
+			["talamanca", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
 		"mix": {"light": 39, "sling": 6, "archer": 30, "musket": 10, "maroon": 5, "siege": 5, "general": 4},
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer", "musket"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 ]

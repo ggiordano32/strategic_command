@@ -77,6 +77,8 @@ var char_ev := {}             # heroes and agents (this seed): raised / wounded 
 var elim_all := {}            # faction -> turns it was eliminated, over the seeds
 var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
 var ai_alliances := -1
+var _tr_allies: Array = []   # trace: the traced faction's allies at the end of the last turn
+var _tr_landed := {}         # trace: "f:r" -> turn of the last landing (a fleet's army put ashore) there
 var _trace_key := ""        # --ai-alliances=0|1: the creation setting (format 10; -1 the default)
 var at40 := [0, 0, 0]         # over the seeds: factions with 4+ regions at turn 40, with a Range 2, with a Workshop 1
 const DG_KEYS: Array[String] = ["field_att_won", "field_att_lost", "field_def_won", "field_def_lost", "town_att_won",
@@ -558,6 +560,12 @@ func _buildup(st: Dictionary) -> void:
 ## enemy's strength and bloc strength against it).
 func _trace(st: Dictionary, t: int) -> void:
 	var f := trace
+	if t == 0:
+		_tr_landed = {}
+		_tr_allies = []
+		for g in CState.nf():
+			if g != f and CState.alive(st, g) and CState.dip(st, f, g) == CState.ALLIED:
+				_tr_allies.append(g)
 	var ev: Array = []
 	for e in st["events"]:
 		if int(e["turn"]) != t:
@@ -567,6 +575,9 @@ func _trace(st: Dictionary, t: int) -> void:
 		for key in ["a", "b", "f", "from", "to", "vs", "with"]:
 			if e.has(key) and typeof(e[key]) != TYPE_STRING:
 				who.append(int(e[key]))
+		if k == "landed":
+			_tr_landed["%d:%d" % [int(e["f"]), int(e["r"])]] = t
+			continue
 		if not who.has(f) and not (k == "alliance" or k == "war"):
 			continue
 		match k:
@@ -578,8 +589,12 @@ func _trace(st: Dictionary, t: int) -> void:
 				if who.has(f) or k == "alliance":
 					ev.append("%s %s" % [k, str(d)])
 			"captured":
-				ev.append("captured %s %s<-%s" % [CData.REGIONS[int(e["r"])]["city"], short[int(e["f"])] if int(e["f"]) >= 0 else "-",
-					short[int(e["from"])] if int(e["from"]) >= 0 else "-"])
+				if int(e["f"]) != f and int(e["from"]) != f:
+					continue
+				var lt: int = int(_tr_landed.get("%d:%d" % [int(e["f"]), int(e["r"])], -100))
+				var route := "sea" if t - lt <= 8 else "land"
+				ev.append("captured %s %s<-%s route %s" % [CData.REGIONS[int(e["r"])]["city"], short[int(e["f"])] if int(e["f"]) >= 0 else "-",
+					short[int(e["from"])] if int(e["from"]) >= 0 else "-", route])
 	var ws: Array = []
 	for g in CAI.wars(st, f):
 		ws.append("%s(%d/%d)" % [short[g], CAI.faction_strength(st, g), CAI.bloc_strength(st, f, g)])
@@ -587,6 +602,27 @@ func _trace(st: Dictionary, t: int) -> void:
 	for g in CState.nf():
 		if g != f and CState.alive(st, g) and CState.dip(st, f, g) == CState.ALLIED:
 			al.append(short[g])
+	# Alliance changes of f against last turn's, with the cause read from the events.
+	var al_now: Array = []
+	for g in CState.nf():
+		if g != f and CState.alive(st, g) and CState.dip(st, f, g) == CState.ALLIED:
+			al_now.append(g)
+	for g in _tr_allies:
+		if not al_now.has(g):
+			var why := "?"
+			if not CState.alive(st, g):
+				why = "ally eliminated"
+			elif CState.dip(st, f, g) == CState.WAR:
+				why = "war"
+				for e in st["events"]:
+					if int(e["turn"]) == t and str(e["k"]) == "war" and ((int(e.get("a", -1)) == f and int(e.get("b", -1)) == g) or (int(e.get("a", -1)) == g and int(e.get("b", -1)) == f)):
+						why = "war declared by %s (%s)" % [short[int(e["a"])], str(e.get("why", ""))]
+			else:
+				for e in st["events"]:
+					if int(e["turn"]) == t and str(e["k"]) == "alliance_left" and ((int(e["f"]) == f and int(e["with"]) == g) or (int(e["f"]) == g and int(e["with"]) == f)):
+						why = "left by %s (%s)" % [short[int(e["f"])], str(e["why"])]
+			ev.append("ALLIANCE LOST %s: %s" % [short[g], why])
+	_tr_allies = al_now
 	var na := CState.armies_of(st, f).size()
 	print("  [trace %s t%d] regions %d treasury %d armies %d strength %d repute %d | wars %s | allies %s%s" % [short[f], int(st["turn"]),
 		CState.regions_of(st, f).size(), int(st["factions"][f]["treasury"]) if CState.alive(st, f) else 0, na,

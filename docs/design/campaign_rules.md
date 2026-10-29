@@ -224,6 +224,23 @@ plan left a point open or was changed:
   team-only.
 - Starting treaties: a story campaign is created with settings `treaties`
   0 (not stored): none (the Brethren's story gives its own letters).
+- The Miskito's fall, diagnosed and the start army (2026-10-29, no
+  diplomacy rule changed): 72 West seeds at format 10 (baseline 21
+  eliminations of the Miskito): in all 21 the English alliance still
+  stood at the death; England never attacked and never sat out (the
+  sitting-out rule judges human allies only, `_post_call`; an AI ally
+  answers at once); the killers were Tierra Firme (14, from Veraguas
+  through Talamanca) and New Spain (6) declaring war themselves, France 1;
+  England refused the call as too weak. Answering a call on the pooled
+  strength of ally and caller (tried) made it worse (27 of 72: England
+  dragged into Tierra Firme's war). The lever that paid is the start: the
+  only Miskito region facing Tierra Firme overland, Talamanca, began with
+  no army; it now starts with one of four (2 warriors, a bowman, a chief;
+  `west.gd`, Cabo Gracias and Bluefields unchanged). 72 seeds: Miskito
+  eliminated 21 -> 7 (format 10), 18 -> 12 (format 6); a +1 unit at Cabo
+  Gracias and Bluefields alone did nothing (21, 17). Doubling the new
+  armies (7 / 7) overshot at format 6. No cooling period for a former
+  ally was built: no death followed an ended alliance.
 
 ### Settlement attacks
 

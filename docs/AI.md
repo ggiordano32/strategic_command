@@ -343,6 +343,17 @@ not at war.
   a second war only while every war is winning; stretched (two wars or a
   region lost in 5 turns) the war won least asks peace below
   STRETCH_PEACE_PCT (100) % of the enemy after PEACE_MIN_TURNS.
+- The Miskito's pacing (2026-10-29, no AI rule changed): traced on 72 West
+  seeds at format 10, the Miskito's 21 eliminations were all wars the
+  neighbours declared (Tierra Firme 14, New Spain 6, France 1) with the
+  English alliance standing; `bloc_strength` counts England's strength in
+  the deterrence while `why "call"` refuses it as too weak, and letting
+  the call count the caller's strength too (tried) raised the deaths to 27.
+  Fixed in the data, not the AI: a Miskito army at Talamanca at the start
+  (21 -> 7 at format 10, 18 -> 12 at format 6; campaign_rules.md "Diplomacy
+  ... as built"). `campaign_sim --trace-faction` now prints the route of each
+  capture (sea if the capturer landed there in the last 8 turns) and
+  "ALLIANCE LOST ally: reason".
 
 ### 4.9 Preservation and retreat
 Good: an army is worth more than a region; retreat from a lost battle to
