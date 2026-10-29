@@ -892,3 +892,67 @@ Design agreed by the main session (2026-10-24); the follow-up "repairs cost gold
 - **Tests.** campaign_test `_breached_walls` (the outcome and the record, none from the formula or a format 8 state,
   the next scenario's key, walls_pct, one stretch a turn paid, waiting when poor, none while besieged, the end of turn,
   JSON round trip); determinism_test `_check_preset_breach` (`--only=destr`, the full run). Server `StateVersion` 9.
+
+### The tutorial (plan, 2026-10-29; agreed with the owner)
+
+The owner, 2026-10-28: "Does the single player campaign have a tutorial ...
+I would like to assume they had never played a Rome style game before." It
+has not: the story's prologue teaches sailing, plunder and havens through
+events, the hint line and the Keys page explain controls, the sandbox
+explains nothing. Three parts, built in this order; the first is the one a
+new player meets before anything else.
+
+**1. The guided first campaign** ("Your first command"; a card on the
+Campaign page beside the story, and offered once on the first launch).
+A scripted Caribbean scenario: England at Port Royal, a fixed seed, the
+other factions at peace with the player while the tutorial runs (a campaign
+setting `tutorial` 1 the campaign AI reads: no war on the tutorial's faction
+while it is set; a new settings key, no format change), the Spanish town of
+Sevilla la Nueva as the target. Ten turns, one objective a turn, a pointer
+on the map (the overlay's pulse on the thing to tap), a short card at the
+top of the screen in the story cards' frame saying what and why, and a gate:
+End turn is held until the objective is met, with a "Skip the lesson"
+button that completes it and a "Leave the tutorial" that drops into the
+free sandbox from the same state. The objectives are view-side checks on
+the state (`game/campaign/tutorial.gd`, reading `CState`, never writing it);
+the turn resolves as any turn.
+
+| turn | lesson | objective (the gate) |
+|---|---|---|
+| 1 | The map: regions, your town, the panel, pan and zoom | open Port Royal's panel, then end the turn |
+| 2 | Recruiting: the slots a turn, what the buildings unlock | raise two musketeer companies into the garrison |
+| 3 | Building: the chains, levels, the slot, growth | start a Range 1 |
+| 4 | Moving: the army, movement points, the path, the stop | march the army to the camp outside Sevilla la Nueva |
+| 5 | The siege: declare, the siege panel, starve or storm, the odds | lay siege |
+| 6 | The battle (the battle tutorial, below) | storm and win |
+| 7 | After: occupation, income, upkeep, the Realm page | open Realm, end the turn |
+| 8 | Diplomacy: trust, trade, the gift, the alliance | propose a trade agreement to the Dutch |
+| 9 | The sea: the fleet, boarding at a lit beach, a sea lane | board the sloop and sail to the Tortuga coast |
+| 10 | Goals: the win conditions, the chronicle; then free play | open Goals; the tutorial ends, the campaign continues |
+
+**The battle tutorial** is turn 6's battle with a scripted deployment and
+six steps, each a card and a pointer, each gating the next: place the line
+(drag the group into the zone), move it forward (tap the ground), fire at
+will (the Fire chip, the first chip explained with its long-press
+explanation opened for the player once), charge with the horse (tap an
+enemy), hold a unit (Halt), and withdraw a broken one (Withdraw, the
+confirmation). The AI defender plays Easy with the garrison scripted to
+stand; the player's army is given the win by its make-up, not by a rule.
+
+**2. First-time tips** in every mode (the sandbox, the story, online): a
+short toast with a "Got it" the first time the player selects an army,
+opens a town panel, lays a siege, enters a deployment, meets a chip, boards
+a fleet, gets a diplomatic proposal; one sentence each, the same words the
+tutorial's cards use; remembered per device (`user://tips.cfg`), reset from
+Options ("Show the tips again"). No gate, no pointer.
+
+**3. A "How to play" page** in the main menu and the in-game menu: eight
+short sections (the map and the turn, towns and buildings, armies and
+recruiting, movement and supply, sieges, battles and the chips, the sea,
+diplomacy and goals), the same text the tutorial's cards and the tips draw
+from, kept in one place (`game/campaign/howto.gd`) so the three never
+disagree.
+
+**Measured** by a playtest with someone who has not played the game, and by
+`tests/tutorial_test.gd` driving the ten turns headless (each gate met by
+the scripted order, the skip and the leave paths, the tips file written).
