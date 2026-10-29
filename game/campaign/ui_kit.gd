@@ -533,6 +533,9 @@ static func anim_on() -> bool:
 ## The menu's motion on a button: it grows 3 % (0.1 s) under the pointer or finger and goes back. The signals only
 ## start a tween; nothing runs at build time and a disabled button stays put.
 static func motion(b: BaseButton) -> void:
+	if b.has_meta("motion_on"):
+		return  # a button styled twice (battle_theme over a styled button) is wired once
+	b.set_meta("motion_on", true)
 	b.mouse_entered.connect(_grow.bind(b, HOT_SCALE))
 	b.mouse_exited.connect(_grow.bind(b, 1.0))
 	b.button_down.connect(_grow.bind(b, HOT_SCALE))

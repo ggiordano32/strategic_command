@@ -129,6 +129,10 @@ func _visible_in_page(c: Control) -> bool:
 
 
 func _run() -> void:
+	if DisplayServer.get_name() == "headless":
+		# headless has no real window and starts at 640x640: size the root to the desktop window the checks assume
+		# (the same trick as campaign_input_test's phone steps), so the layout checks measure the intended size
+		root.size = Vector2i(1280, 720)
 	UiScale._dpr_override = 1.0
 	UiScale._touch_override = 0
 	MenuPrefs.bg_override = "art"
@@ -950,6 +954,8 @@ func _phone() -> void:
 	UiScale._touch_override = 1
 	var old := DisplayServer.window_get_size()
 	DisplayServer.window_set_size(Vector2i(844, 390))
+	if DisplayServer.get_name() == "headless":
+		root.size = Vector2i(844, 390)
 	await _frames(6)
 	UiScale.apply(root)
 	await _frames(4)
@@ -1016,6 +1022,8 @@ func _phone() -> void:
 	UiScale._dpr_override = 1.0
 	UiScale._touch_override = 0
 	DisplayServer.window_set_size(old)
+	if DisplayServer.get_name() == "headless":
+		root.size = Vector2i(1280, 720)
 	await _frames(6)
 	UiScale.apply(root)
 	await _frames(3)

@@ -604,6 +604,17 @@ test checks against. The phone-size steps (`_d_select`, `_j_barfit`, `_j_ship`,
 `_dp_run`) now set `content_scale_aspect` to `keep` (the visible rect is exactly the
 phone size, letterboxed) and restore `expand` after; PASS at 2000x923 and 1600x1100.
 
+2026-10-29, test hygiene (view and tests only). (1) `menu_test` headless: the root starts at 640x640, so the
+Host / Join cards stacked and the phone layout measured the wrong size; `_run` and `_phone` now size the root
+(`root.size` 1280x720, then 844x390 for the phone steps, back after) when the display server is headless, the
+checks themselves unchanged: RESULT PASS. (2) The windowed tests (`campaign_input_test`, `battle_screen_test`)
+aborted at exit ("corrupted size vs. prev_size in fastbins") after RESULT: PASS: found with
+`LD_PRELOAD=libasan.so.8` (a double free at quit) and by bisecting `CampaignScreen._ready`: `Kit.hint_cb = func...`
+set a static to a lambda capturing the screen and nothing cleared it. The screen now keeps the lambda in `_hint_cb`
+and clears the static in `_exit_tree`. (3) The six "Signal already connected ... _grow" errors: `Kit.motion` ran twice
+on a button (`Kit.button` wires it, `battle_theme` styles it again); `motion` now marks the button (`motion_on`) and
+wires it once.
+
 **Boarding indicator and the Shipyard queue (as built, 2026-10-26).** The
 overlay's `set_landing` (called as before after a selection or an order; it
 still returns "changed") also fills `board_cells` and `pickup_cells`

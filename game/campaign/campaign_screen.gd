@@ -215,12 +215,16 @@ var _skip_release := false       # testing aid: hold the replay half way through
 const REPLAY_ROUND := 0.13     # seconds per round of steps
 
 
+var _hint_cb := Callable()  # the lambda given to Kit.hint_cb, cleared in _exit_tree
+
+
 func _ready() -> void:
 	if "--all-seeing" in OS.get_cmdline_user_args():
 		FogView.all_seeing = true   # testing aid: no fog of war (fog_view.gd)
 	_tele = get_node_or_null("/root/Telemetry")
 	panels = Panels.new(self)
-	Kit.hint_cb = func(t: String): show_toast(t)
+	_hint_cb = func(t: String): show_toast(t)
+	Kit.hint_cb = _hint_cb
 	world = Node2D.new()
 	add_child(world)
 	map_view = MapView.new()
@@ -640,6 +644,9 @@ func _show_tip(text: String, _key: String) -> void:
 
 
 func _exit_tree() -> void:
+	# a static holding a lambda that captures this screen outlives it: at quit the engine freed it twice (heap abort)
+	if Kit.hint_cb == _hint_cb:
+		Kit.hint_cb = Callable()
 	if Tips.presenter == Callable(self, "_show_tip"):
 		Tips.presenter = Callable()
 	Tips.suppress = false
