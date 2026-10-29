@@ -4328,12 +4328,12 @@ func _chain_levels() -> void:
 		"level 1 unlocks: Barracks the canoe raiders, Range the musketeers")
 	# Names and icons.
 	_check(CData.chain_name(CData.BARRACKS, mi) == "War lodge" and CData.chain_name(CData.RANGE, iz) == "Hunting ground" \
-		and CData.chain_name(CData.WORKSHOP, mi) == "Canoe yard" and CData.chain_name(CData.MARKET, iz) == "Trading post" \
+		and CData.chain_name(CData.SHIPYARD, mi) == "Canoe yard" and CData.chain_name(CData.WORKSHOP, iz) == "Craft house" and CData.chain_name(CData.MARKET, iz) == "Trading post" \
 		and CData.chain_name(CData.WALLS, mi) == "Palisade", "the natives' building names")
 	_check(CData.chain_name(CData.FARM, iz) == "Milpa" and CData.chain_name(CData.FARM, mi) == "Gardens" and CData.chain_name(CData.FARM, ns) == "Farms", "Milpa, Gardens, Farms")
 	_check(CData.chain_name(CData.BARRACKS, ns) == "Barracks" and CData.chain_icon(CData.BARRACKS, ns) == "barracks" and CData.chain_name(CData.BARRACKS, -1) == "Barracks",
 		"the Europeans' and the independents' names are the chains' own")
-	_check(CData.chain_icon(CData.BARRACKS, mi) == "lodge" and CData.chain_icon(CData.RANGE, iz) == "hunting" and CData.chain_icon(CData.WORKSHOP, mi) == "canoe_yard" \
+	_check(CData.chain_icon(CData.BARRACKS, mi) == "lodge" and CData.chain_icon(CData.RANGE, iz) == "hunting" and CData.chain_icon(CData.SHIPYARD, mi) == "canoe_yard" and CData.chain_icon(CData.WORKSHOP, iz) == "workshop" \
 		and CData.chain_icon(CData.MARKET, mi) == "trading_post" and CData.chain_icon(CData.WALLS, iz) == "palisade", "the natives' building icons")
 	var ok_icons := true
 	for nm in ["lodge", "hunting", "canoe_yard", "trading_post", "palisade", "farm"]:

@@ -1226,3 +1226,5 @@ bare): 668 of 768 battles, attacker won walls 0 / 1 / 2 89 % (202 / 228) / 82 % 
 battles (Havana walls 0-1), identical to before on those seeds. The Miskito plan was not run. On these plan towns walls 1-2
 have no outer wall (the fort is left be in these sets), so the poles cannot bite; the torch raiders' pots (held houses) can.
 To finish: `measure.py` both plans on this tree and on d963579 (the probe file copied there).
+
+**Canoe yard moved to the Shipyard (2026-10-29, owner: "If we have nothing to build in the Workshop then it should go away ... it should come with what we need for Canoes").** The natives' Shipyard is the Canoe yard (the war canoes already launch from it); the Workshop, which only the Itza keep for the wagon, is the Craft house. Data only (`CHAIN_NAMES`); no rule or pin moves.
