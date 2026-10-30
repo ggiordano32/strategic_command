@@ -7,6 +7,16 @@
 // `#define CPU_FED`). A dead man's base stays with his toppled figure and
 // fades with it (the state word's heading code, see soldiers.gdshaderinc).
 // View only. `low` (Graphics Low): a plain dark ellipse, no ring.
+// The oblique view (`#define OBLIQUE`, tabletop pass 3): the base lies on the board under the figure's feet (the circle
+// squashed into an ellipse, lifted with the ground and the wall walk), in the soldiers' per-tick order, hidden behind
+// a nearer kit piece as the figures are (soldiers.gdshaderinc).
+#ifdef OBLIQUE
+#include "res://game/board_view.gdshaderinc"
+uniform sampler2D ob_occ : filter_nearest, repeat_disable;
+uniform float ob_occ_on = 0.0;
+uniform vec2 ob_near_r = vec2(0.0, 1.0);
+varying float v_near;
+#endif
 
 uniform float alpha = 1.0;          // interpolation 0 = prev tick, 1 = current
 uniform float px_per_unit = 0.01;   // view pixels per sim unit
@@ -55,24 +65,40 @@ void vertex() {
 	int st = int(sbw - hdw * 16.0);
 	vec2 cur = MODEL_MATRIX[3].xy;
 	vec2 prv = MODEL_MATRIX[0].xy;
+#ifdef OBLIQUE
+	float spx = floor(INSTANCE_CUSTOM.x + 0.5);
+	int spr = clamp(int(mod(spx, 16.0)), 0, 11);
+	float ext = floor(spx / 16.0) * 0.1 * px_per_unit * 1024.0;
+#else
 	int spr = clamp(int(INSTANCE_CUSTOM.x + 0.5), 0, 11);
+#endif
 	int pal = int(floor(floor(INSTANCE_CUSTOM.z + 0.5) / 64.0));
 #else
 	int i = int(INSTANCE_CUSTOM.x + 0.5) + int(INSTANCE_CUSTOM.y + 0.5) * 2048;
+#ifdef OBLIQUE
+	i = fetch_int(9, i);
+#endif
 	int sb = fetch_int(5, i);
 	int hd = sb / 16;
 	int st = sb - hd * 16;
 	vec2 cur = vec2(float(fetch_int(0, i)), float(fetch_int(1, i)));
 	vec2 prv = vec2(float(fetch_int(2, i)), float(fetch_int(3, i)));
-	int flags = fetch_int(7, fetch_int(6, i));
+	int uidx = fetch_int(6, i);
+	int flags = fetch_int(7, uidx);
 	int spr = clamp(bitfield(flags, 16, 16), 0, 11);
 	int pal = bitfield(flags, 262144, 16);
+#ifdef OBLIQUE
+	float ext = float(fetch_int(8, uidx) / 64) * 0.1 * px_per_unit * 1024.0;
+#endif
 #endif
 	// 0 formed, 1 fighting, 2 routing, 3 knocked down, 4 dead (hd: its fade), 5 off the field; 6+ engines
 	if (st == 5 || st >= 6) {
 		VERTEX = vec2(-100000.0);
 		v_b = vec4(0.0);
 		v_c = vec2(0.0);
+#ifdef OBLIQUE
+		v_near = 0.0;
+#endif
 	} else {
 		float r = base_radius(spr);
 		vec2 c = (UV * 2.0 - 1.0) * 1.7;
@@ -80,6 +106,11 @@ void vertex() {
 		v_b = vec4(float(pal), fade * (st == 4 ? 0.9 : 1.0), 1.0, 0.0);
 		v_c = c;
 		vec2 p = mix(prv, cur, alpha) * px_per_unit + c * (r * px_per_unit * 1024.0);
+#ifdef OBLIQUE
+		vec2 g = mix(prv, cur, alpha) * px_per_unit;
+		v_near = ob_near(g, ext);
+		p = ob_board(g) - vec2(0.0, ext * OB_SIN) + c * (r * px_per_unit * 1024.0) * vec2(1.0, OB_COS);
+#endif
 #ifdef CPU_FED
 		VERTEX = p;
 #else
@@ -108,4 +139,13 @@ void fragment() {
 		vec3 rgb = (col * disc + vec3(0.04, 0.03, 0.02) * sh * (1.0 - disc)) / max(a, 0.0001);
 		COLOR = vec4(rgb, a * v_b.y);
 	}
+#ifdef OBLIQUE
+	if (ob_occ_on > 0.5) {
+		vec4 o = texture(ob_occ, SCREEN_UV);
+		float on = (floor(o.r * 255.0 + 0.5) * 256.0 + floor(o.g * 255.0 + 0.5)) / 65535.0 * ob_near_r.y + ob_near_r.x;
+		if (o.a > 0.5 && on > v_near + 2.0) {
+			COLOR.a = 0.0;
+		}
+	}
+#endif
 }

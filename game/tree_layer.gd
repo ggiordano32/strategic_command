@@ -20,6 +20,7 @@ const KIT_SHADER := preload("res://game/trees_kit.gdshader")
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const CData := preload("res://campaign/cdata.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 const KINDS := 8               # atlas cells: 0 broadleaf, 1 pine, 2 olive / scrub, 3 cypress,
 							   # 4 grass tuft, 5 reeds, 6 willow, 7 bush
@@ -200,6 +201,10 @@ func _build() -> void:
 		return
 	var fw: float = sim.field_w / 1024.0 * px_per_m
 	var fh: float = sim.field_h / 1024.0 * px_per_m
+	if BoardView.oblique:
+		# The oblique view: the trees stand up, drawn farther first (the woods, then the orchards and willows).
+		data = _sorted_by_y(data, 0, _n_inner)
+		data = _sorted_by_y(data, _n_inner, data.size() / 16)
 	var shades: Array = pal["trees"]
 	var base: Color = pal["base"]
 	_occ_bytes.resize(vw * vh)
@@ -218,11 +223,15 @@ func _build() -> void:
 		mm.instance_count = buf.size() / 16
 		mm.buffer = buf
 		mm.custom_aabb = AABB(Vector3(-20, -20, -1), Vector3(fw + 40, fh + 40, 2))
+		if BoardView.oblique:
+			var up := BoardView.lift_max + px_per_m * 30.0
+			mm.custom_aabb = AABB(Vector3(-20, -20 - up, -1), Vector3(fw + 40, fh + 40 + up, 2))
 		var mat := ShaderMaterial.new()
 		mat.shader = SHADER
 		if layer == 0 and use_kit:
 			mat.shader = KIT_SHADER
 			_kit_material(mat)
+		BoardView.apply(mat)
 		mat.set_shader_parameter("atlas", _atlas())
 		mat.set_shader_parameter("kinds", float(KINDS))
 		for s in 3:
@@ -437,6 +446,23 @@ func _pick_h(kinds: Array, h: int) -> int:
 ## One instance in the MultiMesh buffer: transform (identity, unused: the
 ## shader places the quad), colour (unused), custom (x, y, radius, packed
 ## kind / shade / rotation step).
+## The instances [a, b) of `data` (16 floats each) in order of their y (farther first); the rest as they were.
+static func _sorted_by_y(data: PackedFloat32Array, a: int, b: int) -> PackedFloat32Array:
+	if b - a < 2:
+		return data
+	var keys := PackedInt64Array()
+	keys.resize(b - a)
+	for i in range(a, b):
+		keys[i - a] = int(data[i * 16 + 13] * 16.0) * 65536 + (i - a)
+	keys.sort()
+	var out := data.slice(0, a * 16)
+	for kk in keys:
+		var i: int = a + kk % 65536
+		out.append_array(data.slice(i * 16, i * 16 + 16))
+	out.append_array(data.slice(b * 16))
+	return out
+
+
 static func _push(data: PackedFloat32Array, x: float, y: float, r: float, kind: int, shade: int, rot: int) -> void:
 	data.append_array([1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0,
 		x, y, r, float(kind + shade * 8 + rot * 32)])

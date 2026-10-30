@@ -777,3 +777,130 @@ Art half only (no `game/` or `sim/` change besides the two generated tables); bu
 - **Preview and test.** `python3 tools/sprites/preview/ob_contact.py OUT.png [--scale 2]` (units in 8 directions on a metre cell with
   the anchor dot, kit pieces at the same world scale with their footprint rectangle). `tests/oblique_sheets_test.gd` (the three manifests
   against the top-down ones, the rects, anchors, table length; PASS, 32631 checks).
+### Pass 3, the oblique view (as built, 2026-10-29)
+
+Pass 3 of the tabletop plan above, the view half (the oblique sheets are the art pass's, built in parallel against the
+contract above). View only: nothing under `sim/` or `campaign/` changed (`git diff --stat sim/ campaign/` empty), no hash, no
+lockstep input; the view reads the sim's positions, facings and heights and writes nothing. A setting, **`[video] battle_view =
+top | oblique`** in user://settings.cfg (`game/board_view.gd` `pref` / `save_pref`; `--battle-view=` for a session, `?battle-view=oblique`
+on the web), a **Battle view** capsule (Top / Oblique) beside Battle look's in the Options rows (`game/menu/options_rows.gd`), read at battle
+start; the default stays **top**, which draws exactly as before. (The capsule shares the Battle look row: a row of its own made
+the Options page scroll at 1024 x 576, menu_test.) Code: `game/board_view.gd` + `board_view.gdshaderinc` (new: the
+transform), `board_lift.gdshader`, `board_ground.gdshaderinc` / `board_ground.gdshader` / `board_ground_mul.gdshader` (new: the ground
+layers), `game/sprite_ob.gd` (new: the figure sheets), `game/kit_ob.gd` (new: the kit sheet), `game/kit_occluder.gd` (new: the kit's
+nearness), `soldiers_ob*.gdshader`, `soldier_bases_ob*.gdshader`, `projectiles_ob*.gdshader` (new: `#define OBLIQUE` wrappers), and
+changes in `battle.gd`, `overlay.gd`, `soldier_layer.gd` + `soldiers.gdshaderinc` / `soldier_bases.gdshaderinc` / `projectiles.gdshaderinc`,
+`battlekit.gd` + `battlekit.gdshader`, `tree_layer.gd` + `trees_kit.gdshader` / `trees.gdshader`, `terrain_layer.gd` + `terrain.gdshader`,
+`tray_layer.gd` + `tray.gdshader`, `city_layer.gd`, `city_streets.gd`, `game/campaign/tutorial_battle.gd` (its pointer).
+
+- **The board transform.** One mapping for the whole battle view, in world pixels before the camera's zoom and pan (the Camera2D
+  works in board pixels): a ground point (x, y) at height h goes to **(x, y x OBLIQUE_COS - lift)**, lift = (h - base) x px_per_m x
+  OBLIQUE_SIN, `OBLIQUE_COS = 0.6427876` and `OBLIQUE_SIN = 0.7660444` fixed constants. **Decision beyond the plan:** the plan's
+  formula reads "cos(40 deg) / sin(40 deg)", but the contract's sheets are rendered with the camera **40 degrees above the horizon**
+  (`elevation_deg`, as `tools/sprites/build.py` `setup_camera_light` means it), which squashes the ground by sin(40) and shows heights
+  by cos(40); so the constants are cos / sin of the **50 degree tilt from the vertical** (= sin / cos of the elevation), and a figure's
+  base, a house's footprint and the board foreshorten alike. **Heights:** one coarse lift grid per battle (`BoardView.begin`: at most 29
+  x 29 nodes, a node every max(20 m, field / 28), each the mean of 5 x 5 samples of the sim's `height_at` round it, the map's commonest
+  height (1 m bins) as 0), bilinear between nodes. Every layer shares it (the shaders read it as a uniform array, `ob_lift[211]`, packed
+  four to a vec4; no vertex texture read), so the figures, trays, overlay and kit meet the ground exactly; the ground's own shading (hill
+  shade, terraces, contours, flock) still comes from the fine 2 m height texture. Hills rise toward the camera by up to 15 m x 0.77 on
+  the test maps (battle_2000 on a hill: 15.6 m; bench_4000_hills 9.8 m; the West town 6.4 m). **The inverse** (`to_world`,
+  `ob_world`): the board point to the ground plane at h = 0, then Newton steps along y (the lift is linear along y inside a cell, so a
+  step inside one cell is exact): 3 for taps, 4 per pixel in the ground shader. Nearness along the view (what draws over what):
+  y x OBLIQUE_SIN + h x OBLIQUE_COS (`near_px`, `ob_near`).
+- **The ground.** `terrain.gdshader`: in the oblique view its rectangle covers the field's board area (`BoardView.board_field`, the
+  lift's range above and below) and every pixel finds the ground under it (`ob_world`), then shades as before in that point's world
+  coordinates (the derivatives, so the screen-width lines and the fades, follow); outside the field it is transparent (the board
+  layer's edge and the table show). **Draw-based layers** (the board edge and table, the decals, the cliffs, the works, the city's
+  own drawing, gates, stairs and banners, the landmark pieces, the rubble, the overlay and its wagons) get `board_lift.gdshader`
+  (`BoardView.lift_node`): every vertex goes to its board point (squashed and lifted, so long straight lines are exact only at their
+  ends); their cull rect is widened (`canvas_item_set_custom_rect`), since the drawing moves on screen. **Textures on the ground** (the
+  streets, the Paths hatch, the kit's baked shadow: Sprite2D quads) use `board_ground.gdshaderinc`: the quad stretched over the area its
+  ground can rise to, each pixel sampling the texture at its own ground point, as the terrain does. The streets lose the dark footing
+  under a house (the house stands up; its ground is the lane's).
+- **The overlay.** The ground marks lie on the board (footprints, the order preview, the selection box, the ghosts, range rings,
+  the deployment zones, waypoint chains). The screen-scale marks stand **upright**: `Overlay._up(anchor)` sets a draw transform
+  carrying a mark (`BoardView.up_xf`: scale (1, 0.999), origin anchor x 0.001) that the lift shader recognises, drawing the following
+  items unsquashed at the anchor's board point: unit markers (floating `marker_dy(r)` = 2.2 r + 1.7 m above the unit's centre, over the
+  figures), standards, tokens, the last-seen ghost marker, free engines and towers, and every label (`_dstr`). The marker is still the
+  tap target: `Battle._marker_unit` measures on the board (`marker_board`).
+- **Input.** `_screen_to_world` = the canvas inverse then `BoardView.to_world`; `_screen_to_board` for zoom and pan (`_zoom_at`,
+  `_clamp_camera` to the board field); `_cam_to(world)` for every "centre on" (`--cam`, `--cam-unit`, cards, the demo aids); the fit
+  frames the armies' box on the board; a box selection is tested on the board; a three-finger or mouse group move's screen drag is
+  divided by OBLIQUE_COS along y. `Battle.world_to_screen` and `marker_screen` serve the tests and the tutorial's pointer.
+- **Upright figures.** `SoldierLayer` in the oblique view uses the `OBLIQUE` shader variants (both data paths): each man an upright
+  quad standing at his feet's board point (plus his wall walk's height for a unit on a wall: `wall_h`, texture block 8 + 64 x dm / the
+  CPU path's sprite column + 16 x dm), his frame by his drawn heading against the camera (8 directions, 0 = S facing it, clockwise;
+  the sheet's mirror honoured), his action as on the top-down sheet (idle, walk, attack, death; the side and back steps play the walk,
+  slower, a back step reversed). **The CPU-fed path needs no texture read in the vertex stage:** the vertex stage only places the set's
+  quad (`ob_cell[set]`: half width, above and below the feet in sheet px, the frame counts per action packed 4 bits each); the fragment
+  stage looks the frame's rect and anchor up in `ob_tab` (RGBA float, nearest) and clips to it. An action without upright frames
+  (the stand-in's death) is the top-down sprite lying on the board: the casualties lie as their last frame. The **bases** are the
+  pass 1 circles squashed into ellipses under the feet; the **missiles** fly a real arc over the board (height up to 0.28 of the range
+  for a stone, 0.18 an arrow, 0.08 a javelin, 0.03 a bolt), turned along their board path.
+- **The sort.** Nearer over farther. **Texture path:** a per-tick order (texture block 9, the instance's man): every man (and engine)
+  sorted by ground y with native calls only: a 64-bit key, y in the high half and the index in the low, built by blitting the y
+  column next to a fixed index column of an RGBA8 image, `to_int64_array().sort()`, the low halves read back (110-200 us a tick for
+  4,000 men; `order_us`, printed by `--frame-stats` in the oblique view). **CPU-fed path:** the buffer reordered a unit at a time with
+  native blits (units by their centre's y; a unit facing the camera has its rows reversed, so its rear rank draws first): about 110 us
+  a tick. The two paths draw the same pixels for a standing line (tests/soldier_facing_test.gd with `--battle-view=oblique`: 0 px of
+  8,202 differ) and differ by 48 to 361 px of 20,000 to 33,000 for marching or stepping men, where the per-man and per-unit orders
+  part (the CPU path's sort is the coarse one; it is the fallback for the tablets).
+- **The sheets and the fallback.** `game/sprite_ob.gd` loads `assets/sprites_ob` by the contract (the top-down sheets' unit keys
+  mapped to the set numbers through `SpriteAtlas.SETS`; per action "frames" by direction S..SE, "anchor" per action or per direction;
+  "mirror"; a warning when `elevation_deg` is not 40). Until it exists: a warning once, and the **stand-in**, tools/sprites/iso's
+  `iso_heavy_swords` sheet (32 degrees, 8 directions, the walk only; d0 faces east, counter-clockwise, so contract direction d is its
+  (6 - d) mod 8) loaded from the file (it is not imported: desktop runs from the project only), for every set but the engines (drawn
+  flat); idle is its first walk frame. Without either, every figure is flat. **The kit sheet:** `game/kit_ob.gd` loads `assets/kit_ob`
+  (atlas.png, manifest.json: per piece "rect", "anchor" at the footprint's centre on the ground, "foot" in metres, "px_per_m"); until
+  then the stand-in. Testing aids: `--sprites-ob-dir=` and `--kit-ob-dir=` point the loaders at another folder (both paths were run on
+  synthetic sheets made from the iso and top-down atlases).
+- **The kit upright.** `BattleKit` in the oblique view draws every piece (houses, towers, gates, rocks, the West town's stakes and
+  bastions) upright at its ground point: the kit sheet's frame with its anchor there (unturned, scaled by the instance's footprint
+  scale), else **the stand-in, the top-down piece stood up with its lower edge at the footprint's centre**. **Decision beyond the
+  plan:** the strip rings' **walls are extruded** in the shader instead of drawn from sheet pieces (a piece rendered once at 40 degrees
+  cannot follow a wall at any angle): per stretch of at most 8 m (none in a gate's opening) a front face (the side the camera sees)
+  and a top, as MultiMesh rows already on the board, shaded as dressed stone in courses with a darker foot and a lit lip (a palisade:
+  pointed stakes), a parapet along the top's front edge. Pieces and wall rows are **one MultiMesh sorted by nearness** (farther
+  first), so a nearer house hides a farther one; the gates' and fallen buildings' rows are rewritten in place (`_ob_slot`). Graphics
+  Low draws the same order from the pre-lit atlas, the walls as flat-shaded quads.
+- **Men behind the kit.** The soldiers draw after the kit, so a man in front of a house covers it; a man behind one must not show:
+  `game/kit_occluder.gd` draws the kit's sorted MultiMeshes again every frame into a screen-sized SubViewport of its own world with the
+  main view's canvas transform (synced at `frame_pre_draw`), each opaque pixel coloured with its nearness (16 bits in R, G; the
+  nearest wins, the MultiMesh being sorted); the figure and base shaders read it at `SCREEN_UV` and drop a fragment where a nearer
+  piece is. A man on a wall walk is nearer than the wall under him (his height counts), so he stands on it. Not on Graphics Low (no
+  MultiMesh there: the men draw over the kit). `--no-occluder` turns it off.
+- **Trees.** The kit trees stand up at their feet (sorted by y once at build, the woods and the orchards each), the crown unturned
+  above a trunk drawn in the shader, no cast shadow of their own (the ground's crown shadows lie under them); each part of a tree fades
+  by the men on the ground it hides (the occupancy sampled behind it), so men in or behind a wood show as under a canopy in the top
+  view. They draw after the men (not in the occluder: 40,000 trees twice would cost too much). Ground cover lies on the board.
+- **Quality and cost** (desktop RTX 3070, 1280 x 720, vsync off, `--quality=high` unless noted, 8 s after tick 600 with the sim running,
+  mean frame ms; each view at its own default fit, which in the oblique view is closer since the board is shorter; HEAD = this tree
+  with `--battle-view=top`, identical to the top view before):
+
+  | scenario, zoom, path | top | oblique | delta |
+  |---|---|---|---|
+  | bench_4000_hills, default fit, GPU (3 runs) | 7.00 | 7.07 | +0.07 |
+  | bench_4000_hills, default fit, CPU path (3 runs) | 7.21 | 7.25 | +0.04 |
+  | bench_4000_hills, zoom 2.0, GPU (2 runs) | 7.22 | 7.16 | -0.06 |
+  | bench_4000_hills, default fit, Graphics Low (2 runs) | 6.55 | 6.56 | +0.01 |
+  | west_town, default fit (2 runs) | 4.23 | 4.25 | +0.02 |
+  | west_town, zoom 2.0 (2 runs) | 3.70 | 3.93 | +0.23 |
+  | test_woods, default fit (2 runs) | 1.34 | 1.36 | +0.02 |
+
+  Under the 1 ms limit everywhere; the sort is 0.1 to 0.2 ms a tick (once in 6 frames at 60 fps); the town's +0.2 ms at zoom 2 is the
+  occluder pass and the extruded walls. These frames are bound by the CPU; the GPU cost a phone would see is the ground's per-pixel
+  inversion (4 Newton steps of 4 uniform reads each), the figures' two table fetches a pixel and the occluder pass.
+- **Checked:** scripts clean (warnings as errors); `battle_screen_test` RESULT PASS (the whole run twice, the second in the oblique
+  view, 148 checks, the battles opening in that view with the order block); windowed `input_test` RESULT PASS in both views (393 checks
+  each; with `-- --battle-view=oblique` every tap, drag, pinch, box, chip and card step; its world-to-screen helpers go through
+  `Battle.world_to_screen` / `marker_screen`, the gate-marker set-up places the unit under its marker by the board, and the Shift + right
+  drag line expects the facing of the line's own ground); `soldier_facing_test` RESULT PASS (top view; the oblique numbers above);
+  `menu_test` RESULT PASS (the new capsule sets its value; the Options page still fits 1024 x 576); `lockstep_test` RESULT PASS; `git diff --stat sim/ campaign/` empty. Shots (1280 x 720, the stand-in sheets): the field battle at the
+  default fit, zoomed in on a line, the West town with its fort.
+- **Open.** The real sheets: `assets/sprites_ob` and `assets/kit_ob` (until then heavy swords for every set, engines and the dead flat,
+  houses as stood-up roofs, trees as stood-up crowns); the stand-in is not in a web export (tools/ is not packed), so the web shows
+  flat figures in the oblique view until the sheets land; the default view (top until the owner flips it); the Tab S7 for the uniform
+  arrays read in the CPU path's vertex stage (the kit trees already do so) and the per-pixel ground inversion; smoke, fire and the
+  effects still lie flat on the board; pass 2's tufts want upright blades; the standards and tokens float with the marker but ignore a
+  wall walk's height; long overlay lines across a hill follow the ground only at their ends; the CPU path's coarser order.

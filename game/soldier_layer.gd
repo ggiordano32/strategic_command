@@ -30,6 +30,19 @@ const SHADER_CPU := preload("res://game/soldiers_cpu.gdshader")
 const BASE_SHADER := preload("res://game/soldier_bases.gdshader")
 const BASE_SHADER_CPU := preload("res://game/soldier_bases_cpu.gdshader")
 const PR_SHADER_CPU := preload("res://game/projectiles_cpu.gdshader")
+## The oblique view (tabletop pass 3, game/board_view.gd): upright figures from game/sprite_ob.gd, the men drawn in a
+## per-tick order (nearer over farther): the texture path through block 9 (the men sorted by ground y with native
+## calls: a 64-bit key y << 32 | index), the CPU-fed path by reordering its buffer a unit at a time (units by their
+## centre's y; a unit facing the camera has its rows reversed, its rear rank drawn first). His wall walk's height lifts
+## a man on a wall (the texture path: block 8 + 64 x dm; the CPU path: the sprite column + 16 x dm).
+const SHADER_OB := preload("res://game/soldiers_ob.gdshader")
+const SHADER_OB_CPU := preload("res://game/soldiers_ob_cpu.gdshader")
+const BASE_SHADER_OB := preload("res://game/soldier_bases_ob.gdshader")
+const BASE_SHADER_OB_CPU := preload("res://game/soldier_bases_ob_cpu.gdshader")
+const PR_SHADER_OB := preload("res://game/projectiles_ob.gdshader")
+const PR_SHADER_OB_CPU := preload("res://game/projectiles_ob_cpu.gdshader")
+const BoardView := preload("res://game/board_view.gd")
+const SpriteOb := preload("res://game/sprite_ob.gd")
 const UT := preload("res://sim/unit_types.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -177,6 +190,7 @@ var _unit_elook := PackedInt32Array()   # engine set + 64 x palette row per unit
 var _pal_rows := PackedInt32Array()
 var _e_state := PackedInt32Array()
 var _pr_flags := PackedInt32Array()
+var _blocks := BLOCKS                     # texture blocks (+1 in the oblique view: the order)
 var _pr_was_active := true
 var _probe_frames := 0
 var _probe_fail := false
@@ -216,6 +230,15 @@ var _ak_fire := {}                        # ammunition rows that set fire
 var _pr_t0_seen := PackedInt32Array()
 var _pr_t1_seen := PackedInt32Array()
 var _pr_free_tail := PackedInt32Array()   # cap x -1 (t1 of free slots)
+# The oblique view.
+var oblique := false
+var _unit_ext := PackedInt32Array()       # per unit: its wall walk's height (dm), 0 on the ground
+var _ord_idx: Image                       # (texture path) 2 x n RGBA8: the instance index (column 0) for the sort keys
+var _ord_img: Image
+var _cbuf2: Image                         # (CPU path) the reordered buffer
+var order_us := 0                         # microseconds the last ordering took (benchmarks)
+var _occ_tex: Texture2D = null            # the kit's nearness (game/kit_occluder.gd), or null
+var _occ_near := Vector2(0.0, 1.0)
 ## Microseconds the last upload() took (both paths; for benchmarks).
 var upload_us := 0
 ## The yaw-rate cap in angle units a tick (tests set it; YAW_CAP).
@@ -239,7 +262,13 @@ var _yaw_users := 0                 # men overridden at the last update
 func setup(p_sim, p_px_per_m: float) -> void:
 	sim = p_sim
 	px_per_m = p_px_per_m
+	oblique = BoardView.oblique
+	if oblique:
+		SpriteOb.ensure()
+		_blocks = BLOCKS + 1
 	_n_inst = sim.n + sim.n_eng
+	_unit_ext.resize(sim.n_units)
+	_unit_ext.fill(0)
 	_pr_cap = sim.pr_t1.size()
 	for k in UT.AMMO.size():
 		if UT.ammo_stat(k, "fire") > 0:
@@ -267,6 +296,10 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	# The shaders place everything, so give the MultiMeshes bounds covering
 	# the whole field to avoid culling.
 	_aabb = AABB(Vector3(-pad, -pad, -1.0), Vector3(fw + 2.0 * pad, fh + 2.0 * pad, 2.0))
+	if oblique:
+		# (On the board: lifted by the hills and the walls, the figures standing up from their feet.)
+		var up := BoardView.lift_max + px_per_m * 40.0
+		_aabb = AABB(Vector3(-pad, -pad - up, -1.0), Vector3(fw + 2.0 * pad, fh + 2.0 * pad + up, 2.0))
 	_atlas = _make_atlas()
 	_base_layer = MultiMeshInstance2D.new()   # the figure bases, under the corpses and the living
 	add_child(_base_layer)
@@ -322,7 +355,41 @@ func _soldier_material(shader: Shader, pass_id: int) -> ShaderMaterial:
 	mat.set_shader_parameter("atlas_mask", load(ATLAS_MASK_PATH) as Texture2D)
 	mat.set_shader_parameter("pal_tex", palette_texture())
 	mat.set_shader_parameter("anim_on", 1.0 if animate else 0.0)
+	_ob_params(mat, true)
 	return mat
+
+
+## The oblique view's uniforms (the board, the sheets, the kit's nearness) on a soldier, base or missile material.
+func _ob_params(mat: ShaderMaterial, figures: bool) -> void:
+	if not oblique:
+		return
+	BoardView.apply(mat)
+	if figures and SpriteOb.source != "":
+		mat.set_shader_parameter("ob_shade", SpriteOb.shade)
+		mat.set_shader_parameter("ob_mask", SpriteOb.mask)
+		mat.set_shader_parameter("ob_tab", SpriteOb.tab)
+		mat.set_shader_parameter("ob_cell", SpriteOb.cells)
+		mat.set_shader_parameter("ob_sheet", SpriteOb.sheet)
+		mat.set_shader_parameter("ob_k", px_per_m / SpriteOb.ppm)
+		mat.set_shader_parameter("ob_maxf", float(SpriteOb.max_frames))
+	elif figures:
+		var none := PackedVector4Array()
+		none.resize(64)
+		mat.set_shader_parameter("ob_cell", none)
+	mat.set_shader_parameter("ob_occ_on", 1.0 if _occ_tex != null else 0.0)
+	if _occ_tex != null:
+		mat.set_shader_parameter("ob_occ", _occ_tex)
+		mat.set_shader_parameter("ob_near_r", _occ_near)
+
+
+## The kit's nearness on the screen (game/kit_occluder.gd: a texture, its encoding's origin and span), or null:
+## the figures and bases behind a nearer kit piece are not drawn.
+func set_occluder(tex: Texture2D, near_r: Vector2) -> void:
+	_occ_tex = tex
+	_occ_near = near_r
+	for m in _gpu_mats + _cpu_mats:
+		if m.shader != PR_SHADER_OB and m.shader != PR_SHADER_OB_CPU:
+			_ob_params(m, m.shader == SHADER_OB or m.shader == SHADER_OB_CPU)
 
 
 ## The faction colour of unit u (its palette's primary: the men's main colour, the standard's pennant).
@@ -337,6 +404,7 @@ func _base_material(shader: Shader) -> ShaderMaterial:
 	mat.set_shader_parameter("px_per_unit", px_per_m / 1024.0)
 	mat.set_shader_parameter("pal_tex", palette_texture())
 	mat.set_shader_parameter("low", 1.0 if base_low else 0.0)
+	_ob_params(mat, false)
 	return mat
 
 
@@ -344,7 +412,7 @@ func _base_material(shader: Shader) -> ShaderMaterial:
 func set_base_low(on: bool) -> void:
 	base_low = on
 	for m in _gpu_mats + _cpu_mats:
-		if m.shader == BASE_SHADER or m.shader == BASE_SHADER_CPU:
+		if m.shader == BASE_SHADER or m.shader == BASE_SHADER_CPU or m.shader == BASE_SHADER_OB or m.shader == BASE_SHADER_OB_CPU:
 			m.set_shader_parameter("low", 1.0 if on else 0.0)
 
 
@@ -443,6 +511,7 @@ func _missile_material(shader: Shader) -> ShaderMaterial:
 		if UT.ammo_stat(k, "fire") > 0:
 			mask += 1 << k
 	mat.set_shader_parameter("fire_mask", float(mask))
+	_ob_params(mat, false)
 	return mat
 
 
@@ -452,22 +521,22 @@ func _build_gpu() -> void:
 	_gpu_built = true
 	_rows = maxi(1, (maxi(_n_inst, sim.n_units) + TEX_W - 1) / TEX_W)
 	var bytes := PackedByteArray()
-	bytes.resize(BLOCKS * _rows * TEX_W * 4)
-	_image = Image.create_from_data(TEX_W, BLOCKS * _rows, false, Image.FORMAT_RGBA8, bytes)
+	bytes.resize(_blocks * _rows * TEX_W * 4)
+	_image = Image.create_from_data(TEX_W, _blocks * _rows, false, Image.FORMAT_RGBA8, bytes)
 	_tex = ImageTexture.create_from_image(_image)
 	_mm = _index_multimesh(_n_inst)
 	var rects: Array = []
 	for r in SPR_RECT:
 		rects.append(r)
 	for pass_id in 2:
-		var mat := _soldier_material(SHADER, pass_id)
+		var mat := _soldier_material(SHADER_OB if oblique else SHADER, pass_id)
 		mat.set_shader_parameter("data_tex", _tex)
 		mat.set_shader_parameter("rows_per_block", _rows)
 		mat.set_shader_parameter("tex_width", TEX_W)
 		mat.set_shader_parameter("spr_rect", rects)
 		mat.set_shader_parameter("frame_tab", SpriteAtlas.TABLE)
 		_gpu_mats.append(mat)
-	_gpu_mats.append(_base_material(BASE_SHADER))
+	_gpu_mats.append(_base_material(BASE_SHADER_OB if oblique else BASE_SHADER))
 	_gpu_mats[2].set_shader_parameter("data_tex", _tex)
 	_gpu_mats[2].set_shader_parameter("rows_per_block", _rows)
 	_gpu_mats[2].set_shader_parameter("tex_width", TEX_W)
@@ -478,7 +547,7 @@ func _build_gpu() -> void:
 	_pr_image = Image.create_from_data(TEX_W, PR_BLOCKS * _pr_rows, false, Image.FORMAT_RGBA8, pbytes)
 	_pr_tex = ImageTexture.create_from_image(_pr_image)
 	_pr_mm = _index_multimesh(_pr_cap)
-	_pr_gpu_mat = _missile_material(PR_SHADER)
+	_pr_gpu_mat = _missile_material(PR_SHADER_OB if oblique else PR_SHADER)
 	_pr_gpu_mat.set_shader_parameter("data_tex", _pr_tex)
 	_pr_gpu_mat.set_shader_parameter("rows_per_block", _pr_rows)
 	_pr_gpu_mat.set_shader_parameter("tex_width", TEX_W)
@@ -505,6 +574,8 @@ func _build_cpu() -> void:
 	_cpu_built = true
 	_mm_cpu = _cpu_multimesh(_n_inst)
 	_cbuf = Image.create(STRIDE, maxi(_n_inst, 1), false, Image.FORMAT_RF)
+	if oblique:
+		_cbuf2 = Image.create(STRIDE, maxi(_n_inst, 1), false, Image.FORMAT_RF)
 	_ccol = Image.create(1, maxi(_n_inst, 1), false, Image.FORMAT_RF)
 	var idx := PackedFloat32Array()
 	idx.resize(_n_inst)
@@ -515,13 +586,13 @@ func _build_cpu() -> void:
 		_cbuf.blit_rect(_ccol, Rect2i(0, 0, 1, _n_inst), Vector2i(C_IDX, 0))
 	_build_runs()
 	for pass_id in 2:
-		_cpu_mats.append(_soldier_material(SHADER_CPU, pass_id))
-	_cpu_mats.append(_base_material(BASE_SHADER_CPU))
+		_cpu_mats.append(_soldier_material(SHADER_OB_CPU if oblique else SHADER_CPU, pass_id))
+	_cpu_mats.append(_base_material(BASE_SHADER_OB_CPU if oblique else BASE_SHADER_CPU))
 	_pr_mm_cpu = _cpu_multimesh(0)
 	_pr_n = 0
 	_pr_free_tail.resize(_pr_cap)
 	_pr_free_tail.fill(-1)
-	_pr_cpu_mat = _missile_material(PR_SHADER_CPU)
+	_pr_cpu_mat = _missile_material(PR_SHADER_OB_CPU if oblique else PR_SHADER_CPU)
 
 
 ## Runs of consecutive instances of one unit (soldiers, then engines): the
@@ -642,7 +713,7 @@ func _probe() -> void:
 		mmi.visibility_layer |= PROBE_LAYER
 	add_child(vp)
 	var k := 2.0 / px_per_m
-	var c := Vector2(sim.u_cx[best], sim.u_cy[best]) / 1024.0 * px_per_m
+	var c := BoardView.to_board(Vector2(sim.u_cx[best], sim.u_cy[best]) / 1024.0 * px_per_m)
 	vp.canvas_transform = Transform2D(0.0, Vector2(k, k), 0.0, Vector2(PROBE_PX, PROBE_PX) * 0.5 - c * k)
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
@@ -683,6 +754,8 @@ func upload() -> void:
 			if shot_src != null and u < shot_src.shot_t.size() and tick - shot_src.shot_t[u] < FLASH_TICKS:
 				shoot |= F_FIRED | F_SHOOT
 		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
+		if oblique:
+			_unit_ext[u] = sim.wall_h * 10 / 1024 if sim.u_wall[u] > 0 else 0
 	# Engines follow the soldiers in every array.
 	var xs: PackedInt32Array = sim.pos_x
 	var ys: PackedInt32Array = sim.pos_y
@@ -998,10 +1071,12 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		# (bits 4-5 of the CPU-path flags, fired / gun, move up past the palette bits to 22 / 23)
 		gflags[u] = (gflags[u] & 15) | ((gflags[u] & (F_FIRED | F_GUN)) << 18)
 		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
-		gelook[u] = _unit_elook[u] & 63
+		gelook[u] = (_unit_elook[u] & 63) + 64 * _unit_ext[u]
 	var block := _rows * TEX_W * 4
-	_image.set_data(TEX_W, BLOCKS * _rows, false, Image.FORMAT_RGBA8, _pack([xs, ys, pxs, pys, fs, sts,
-		sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags, gelook], block))
+	var arrays: Array = [xs, ys, pxs, pys, fs, sts, sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags, gelook]
+	if oblique:
+		arrays.append(_order_gpu(ys))
+	_image.set_data(TEX_W, _blocks * _rows, false, Image.FORMAT_RGBA8, _pack(arrays, block))
 	_tex.update(_image)
 	if missiles:
 		var pblock := _pr_rows * TEX_W * 4
@@ -1022,7 +1097,11 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		_column(_cbuf, _ccol, C_B, sts, _n_inst)
 		for r in range(0, _runs.size(), 3):
 			_cbuf.fill_rect(Rect2i(C_FLAGS, _runs[r], 1, _runs[r + 1]), Color(float(_flags[_runs[r + 2]]), 0.0, 0.0))
-		_mm_cpu.buffer = _cbuf.get_data().to_float32_array()
+		if oblique:
+			_order_cpu()
+			_mm_cpu.buffer = _cbuf2.get_data().to_float32_array()
+		else:
+			_mm_cpu.buffer = _cbuf.get_data().to_float32_array()
 	# Missiles: a slot's data is fixed from firing to landing (the shader
 	# interpolates), so upload only when a missile was fired or landed.
 	if missiles and _pr_cap > 0 and (sim.pr_t0 != _pr_t0_seen or sim.pr_t1 != _pr_t1_seen):
@@ -1054,6 +1133,63 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 			_pr_ccol.set_data(1, m, false, Image.FORMAT_RF, _pr_code.to_byte_array())
 			_pr_cbuf.blit_rect(_pr_ccol, Rect2i(0, 0, 1, m), Vector2i(C_SPRITE, 0))
 		_pr_mm_cpu.buffer = _pr_cbuf.get_data().to_float32_array()
+
+
+## The oblique view, texture path: the instances in draw order, the men sorted by ground y (farther first), with native
+## calls only: per man a 64-bit key, y in the high half and his index in the low (an image two pixels wide: the index
+## column built once, the y column blitted in), sorted, the low halves read back.
+func _order_gpu(ys: PackedInt32Array) -> PackedInt32Array:
+	var t0 := Time.get_ticks_usec()
+	var n := _n_inst
+	if n == 0:
+		return PackedInt32Array()
+	if _ord_img == null or _ord_img.get_height() != n:
+		var idx := PackedInt32Array()
+		idx.resize(n)
+		for i in n:
+			idx[i] = i
+		_ord_idx = Image.create_from_data(1, n, false, Image.FORMAT_RGBA8, idx.to_byte_array())
+		_ord_img = Image.create(2, n, false, Image.FORMAT_RGBA8)
+		_ord_img.blit_rect(_ord_idx, Rect2i(0, 0, 1, n), Vector2i.ZERO)
+	var yb := ys
+	if yb.size() != n:
+		yb = ys.slice(0, n)
+		yb.resize(n)
+	_ord_img.blit_rect(Image.create_from_data(1, n, false, Image.FORMAT_RGBA8, yb.to_byte_array()), Rect2i(0, 0, 1, n), Vector2i(1, 0))
+	var keys := _ord_img.get_data().to_int64_array()
+	keys.sort()
+	var srt := Image.create_from_data(2, n, false, Image.FORMAT_RGBA8, keys.to_byte_array())
+	var out := srt.get_region(Rect2i(0, 0, 1, n)).get_data().to_int32_array()
+	order_us = Time.get_ticks_usec() - t0
+	return out
+
+
+## The oblique view, CPU-fed path: the buffer's rows a unit at a time, the units by their centre's y (farther first);
+## a unit facing the camera (south) has its rows reversed, so its rear rank is drawn first. The sprite column carries
+## each run's wall walk height (sprite + 16 x dm). Native blits only (a few per unit).
+func _order_cpu() -> void:
+	var t0 := Time.get_ticks_usec()
+	var keys := PackedInt64Array()
+	for r in range(0, _runs.size(), 3):
+		var u := _runs[r + 2]
+		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
+		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr + 16 * _unit_ext[u]), 0.0, 0.0))
+		keys.append((int(sim.u_cy[u]) + 4194304) * 8192 + r / 3)
+	keys.sort()
+	var at := 0
+	for kk in keys:
+		var r: int = (kk % 8192) * 3
+		var first := _runs[r]
+		var cnt := _runs[r + 1]
+		var u := _runs[r + 2]
+		if cnt > 1 and first < sim.n and sin(float(sim.u_face[u]) * TAU / 1024.0) > 0.0:
+			var reg := _cbuf.get_region(Rect2i(0, first, STRIDE, cnt))
+			reg.flip_y()
+			_cbuf2.blit_rect(reg, Rect2i(0, 0, STRIDE, cnt), Vector2i(0, at))
+		else:
+			_cbuf2.blit_rect(_cbuf, Rect2i(0, first, STRIDE, cnt), Vector2i(0, at))
+		at += cnt
+	order_us = Time.get_ticks_usec() - t0
 
 
 ## CPU path: the missile MultiMesh covers the slots in use so far, in steps

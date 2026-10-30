@@ -8,6 +8,8 @@ shader_type canvas_item;
 // at the upper left). Canopies fade where soldiers stand under them (the
 // occupancy texture, 4 m cells, rebuilt each sim tick).
 
+// The oblique view (tabletop pass 3): the glyph lies on the board at its place (squashed, lifted).
+#include "res://game/board_view.gdshaderinc"
 uniform sampler2D atlas : filter_linear_mipmap, repeat_disable;
 uniform sampler2D occ : filter_linear, repeat_disable;
 uniform vec2 occ_size_px = vec2(1.0);
@@ -40,6 +42,9 @@ void vertex() {
 	rot = floor(w / 32.0) * 0.7854;
 	VERTEX = cd.xy + VERTEX * cd.z * 1.18;
 	world = VERTEX;
+	if (ob_on > 0.5) {
+		VERTEX = ob_board(cd.xy) + (VERTEX - cd.xy) * vec2(1.0, OB_COS);
+	}
 	tint = sh < 0.5 ? shade0 : (sh < 1.5 ? shade1 : shade2);
 	shadow_k = 0.4;
 	if (kind > 3.5 && kind < 4.5) {

@@ -58,7 +58,8 @@ func _soldiers_only(c: Vector2, ppm: float, size: int) -> Image:
 		mmi.visibility_layer |= PROBE_LAYER
 	b.add_child(vp)
 	var k := ppm / Battle.PX_PER_M
-	vp.canvas_transform = Transform2D(0.0, Vector2(k, k), 0.0, Vector2(size, size) * 0.5 - c * Battle.PX_PER_M * k)
+	# (Centred on c's board point: the same in the top view; the oblique view's when run with --battle-view=oblique.)
+	vp.canvas_transform = Transform2D(0.0, Vector2(k, k), 0.0, Vector2(size, size) * 0.5 - b.BoardView.to_board(c * Battle.PX_PER_M) * k)
 	await RenderingServer.frame_post_draw
 	await RenderingServer.frame_post_draw
 	var img := vp.get_texture().get_image()

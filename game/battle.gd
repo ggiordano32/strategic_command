@@ -20,6 +20,8 @@ const OrderPreview := preload("res://game/order_preview.gd")
 const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const BoardView := preload("res://game/board_view.gd")
+const KitOccluder := preload("res://game/kit_occluder.gd")
 const BoardLayer := preload("res://game/board_layer.gd")
 const BattleDof := preload("res://game/battle_dof.gd")
 const TreeLayer := preload("res://game/tree_layer.gd")
@@ -298,6 +300,8 @@ func _ready() -> void:
 	sim.setup(scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
 	interactive = not sim.is_ai_side(player_side)
+	# The board transform (tabletop pass 3): top view, or the oblique table (game/board_view.gd); every layer reads it.
+	BoardView.begin(sim, PX_PER_M)
 
 	# Ground: height shading, contours and the faint 50 m grid in one shader.
 	var look_dio := BattleLook.is_diorama()
@@ -305,6 +309,7 @@ func _ready() -> void:
 		var board := BoardLayer.new()
 		add_child(board)
 		board.setup(sim, PX_PER_M)
+		BoardView.lift_node(board)
 	terrain = TerrainLayer.new()
 	add_child(terrain)
 	terrain.setup(sim, PX_PER_M)
@@ -319,6 +324,7 @@ func _ready() -> void:
 	works.viewer_side = player_side
 	add_child(works)
 	works.setup(sim, PX_PER_M)
+	BoardView.lift_node(works)
 
 	# Movement trays under the men (tabletop pass 1).
 	trays = TrayLayer.new()
@@ -350,6 +356,15 @@ func _ready() -> void:
 	trees.setup(sim, PX_PER_M)
 	if "--no-trees" in OS.get_cmdline_user_args():
 		trees.visible = false  # testing aid: frame cost without the trees
+	if BoardView.oblique and not ("--no-occluder" in OS.get_cmdline_user_args()):
+		# The oblique view: the men behind a house, a wall or a rock are hidden by it (the kit's nearness).
+		var occ := KitOccluder.new()
+		add_child(occ)
+		var land = terrain._land
+		if occ.setup([city.kit, land.kit if land != null else null], sim.field_h / M * PX_PER_M):
+			soldiers.set_occluder(occ.texture(), occ.near_r)
+		else:
+			occ.queue_free()
 	print("map view: terrain %.1f ms, city %.1f ms, %d trees %.1f ms" % [terrain.build_ms, city.build_ms,
 		trees.count, trees.build_ms])
 
@@ -364,6 +379,7 @@ func _ready() -> void:
 	overlay.token_states = _card_states
 	overlay.px_per_m = PX_PER_M
 	add_child(overlay)
+	BoardView.lift_node(overlay)
 
 	camera = Camera2D.new()
 	add_child(camera)
@@ -517,10 +533,10 @@ func _apply_debug_args() -> void:
 			soldiers.set_alpha(1.0)
 			_view_tick()
 		elif a.begins_with("--cam="):
-			camera.position = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1))) * PX_PER_M
+			_cam_to(Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1))) * PX_PER_M)
 		elif a.begins_with("--cam-unit="):
 			var cu := int(v)
-			camera.position = Vector2(sim.u_cx[cu], sim.u_cy[cu]) / M * PX_PER_M
+			_cam_to(Vector2(sim.u_cx[cu], sim.u_cy[cu]) / M * PX_PER_M)
 		elif a.begins_with("--zoom="):
 			camera.zoom = Vector2.ONE * float(v)
 		elif a == "--pause":
@@ -580,7 +596,7 @@ func _apply_debug_args() -> void:
 				soldiers.upload()
 				_view_tick()
 			_select(wu)
-			camera.position = Vector2(sim.u_cx[wu], sim.u_cy[wu]) / M * PX_PER_M
+			_cam_to(Vector2(sim.u_cx[wu], sim.u_cy[wu]) / M * PX_PER_M)
 			if v == "up":
 				# A tap on the wall's body (the parapet side), off the walkway.
 				var mid := BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
@@ -603,7 +619,7 @@ func _apply_debug_args() -> void:
 				while cb >= 0 and sim.ws_state[sgb] == 0:
 					sim._destr_hit(((cb % sim.ob_w) << 11) + 1024, ((cb / sim.ob_w) << 11) + 1024, 500, -1, 100)
 				var mp := BattleSim.seg_pt(sim, sgb, BattleSim.seg_len(sim, sgb) / 2)
-				camera.position = Vector2(mp) / M * PX_PER_M
+				_cam_to(Vector2(mp) / M * PX_PER_M)
 				var near: Array = []
 				for b in sim.ob_hp.size():
 					var cc: int = sim.ob_cell.find(b + 1)
@@ -969,6 +985,16 @@ func _fit_camera() -> void:
 		hi = hi.max(Vector2(sim.u_maxx[u], sim.u_maxy[u]))
 	lo = lo / M * PX_PER_M
 	hi = hi / M * PX_PER_M
+	if BoardView.oblique:
+		# The armies' box on the board (the corners lifted by the ground under them).
+		var bl := Vector2(1e9, 1e9)
+		var bh := Vector2(-1e9, -1e9)
+		for c in [lo, hi, Vector2(lo.x, hi.y), Vector2(hi.x, lo.y)]:
+			var b := BoardView.to_board(c)
+			bl = bl.min(b)
+			bh = bh.max(b)
+		lo = bl
+		hi = bh
 	var size := (hi - lo).max(Vector2(PX_PER_M * 40.0, PX_PER_M * 40.0))
 	var top := hud.top_height()
 	var bottom := hud.bottom_height()
@@ -976,7 +1002,7 @@ func _fit_camera() -> void:
 	var z := minf(clear.size.x / (size.x * 1.15), clear.size.y / (size.y * 1.25))
 	z = clampf(z, ZOOM_MIN, ZOOM_MAX)
 	camera.zoom = Vector2.ONE * z
-	# camera.position is the world point at the viewport centre.
+	# camera.position is the board (world, in the top view) point at the viewport centre.
 	camera.position = (lo + hi) * 0.5 + (vp * 0.5 - clear.get_center()) / z
 
 
@@ -1078,8 +1104,9 @@ func _frame_stats(delta: float) -> void:
 	_fs_sum += delta
 	_fs_max = maxf(_fs_max, delta)
 	if _fs_t >= _fs_until:
-		print("frame stats: %d frames, mean %.2f ms (%.0f fps), worst %.1f ms; canopy update %d us/tick; trees %d; tick %d" % [
-			_fs_n, _fs_sum / _fs_n * 1000.0, _fs_n / _fs_sum, _fs_max * 1000.0, trees.update_us, trees.count, sim.tick])
+		print("frame stats: %d frames, mean %.2f ms (%.0f fps), worst %.1f ms; canopy update %d us/tick; trees %d; tick %d%s" % [
+			_fs_n, _fs_sum / _fs_n * 1000.0, _fs_n / _fs_sum, _fs_max * 1000.0, trees.update_us, trees.count, sim.tick,
+			("; %s view, men ordered in %d us/tick" % ["oblique", soldiers.order_us]) if BoardView.oblique else ""])
 		get_tree().quit()
 
 
@@ -1810,7 +1837,7 @@ func _on_card(u: int) -> void:
 			_selection_changed()
 			return
 		_select(pick)
-		camera.position = Vector2(sim.u_cx[pick], sim.u_cy[pick]) / M * PX_PER_M
+		_cam_to(Vector2(sim.u_cx[pick], sim.u_cy[pick]) / M * PX_PER_M)
 		return
 	if not interactive or sim.u_state[u] != BattleSim.U_READY:
 		_selection_changed()  # undo the card's toggle
@@ -1832,7 +1859,7 @@ func _on_card(u: int) -> void:
 
 
 func _center_on_unit(u: int) -> void:
-	var p := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
+	var p := BoardView.to_board(Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M)
 	var vr := get_viewport_rect().size / camera.zoom
 	var cam_rect := Rect2(camera.position - vr * 0.5, vr).grow(-vr.x * 0.1)
 	if not cam_rect.has_point(p):
@@ -3443,6 +3470,20 @@ func _marker_unit(w: Vector2, r: int) -> int:
 	var lift := int(2.2 * mr / PX_PER_M * M)
 	var best := -1
 	var best_d := 0
+	if BoardView.oblique:
+		# The oblique view: the markers stand upright over the units; measure on the board.
+		var bw := BoardView.to_board(w)
+		var rb := float(r) / M * PX_PER_M
+		var best_f := 0.0
+		for u in sim.n_units:
+			if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
+				continue
+			var bc := marker_board(u, mr)
+			var dd := bw.distance_squared_to(bc)
+			if dd <= rb * rb and (best < 0 or dd < best_f):
+				best = u
+				best_f = dd
+		return best
 	for u in sim.n_units:
 		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
 			continue
@@ -3489,7 +3530,32 @@ func _pick_unit(w: Vector2, tight := false) -> int:
 # ---------------------------------------------------------------- input ---
 
 func _screen_to_world(p: Vector2) -> Vector2:
+	return BoardView.to_world(get_canvas_transform().affine_inverse() * p)
+
+
+## Screen (viewport) point -> board point (px): the camera's own space (the world in the top view).
+func _screen_to_board(p: Vector2) -> Vector2:
 	return get_canvas_transform().affine_inverse() * p
+
+
+## Board point (px) of unit u's marker centre (marker radius mr, world px).
+func marker_board(u: int, mr: float) -> Vector2:
+	return BoardView.to_board(Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M) - Vector2(0, Overlay.marker_dy(mr))
+
+
+## Screen (viewport) point of unit u's marker centre (tests).
+func marker_screen(u: int) -> Vector2:
+	return get_canvas_transform() * marker_board(u, maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x))
+
+
+## World point (px) -> screen (viewport) point, through the board transform (tests, hints).
+func world_to_screen(w: Vector2) -> Vector2:
+	return get_canvas_transform() * BoardView.to_board(w)
+
+
+## Centre the camera on world point w (px).
+func _cam_to(w: Vector2) -> void:
+	camera.position = BoardView.to_board(w)
 
 
 func _input(event: InputEvent) -> void:
@@ -3952,6 +4018,8 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		overlay.queue_redraw()
 	elif _gm and _gm_mouse:
 		_gm_move = (e.position - _gm_mouse_start) / camera.zoom.x
+		if BoardView.oblique:
+			_gm_move.y /= BoardView.OBLIQUE_COS
 		_gm_update()
 	elif _box:
 		overlay.box_b = _screen_to_world(e.position)
@@ -3988,6 +4056,10 @@ func _box_end(apply: bool) -> void:
 	if not apply:
 		return
 	var rect := Rect2(overlay.box_a, overlay.box_b - overlay.box_a).abs()
+	if BoardView.oblique:
+		# (The box as dragged on the screen: on the board.)
+		var ba := BoardView.to_board(overlay.box_a)
+		rect = Rect2(ba, BoardView.to_board(overlay.box_b) - ba).abs()
 	if not _mouse_add:
 		_select(-1)
 	var any := false
@@ -3996,6 +4068,9 @@ func _box_end(apply: bool) -> void:
 			continue
 		var c := Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M
 		var mk := c - Vector2(0, 2.2 * maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x))
+		if BoardView.oblique:
+			mk = marker_board(u, maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x))
+			c = BoardView.to_board(c)
 		if (rect.has_point(c) or rect.has_point(mk)) and not selection.has(u):
 			if not any and selection.is_empty():
 				_select(u)
@@ -4044,6 +4119,8 @@ func _gm_touch_update() -> void:
 		_count("three_finger_move")
 	if _gm:
 		_gm_move = move / camera.zoom.x
+		if BoardView.oblique:
+			_gm_move.y /= BoardView.OBLIQUE_COS
 		_gm_rot = rot
 		_gm_update()
 
@@ -4161,18 +4238,18 @@ func _update_pinch() -> void:
 
 
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
-	var before := _screen_to_world(screen_pos)
+	var before := _screen_to_board(screen_pos)
 	var z := clampf(camera.zoom.x * factor, ZOOM_MIN, ZOOM_MAX)
 	camera.zoom = Vector2(z, z)
 	camera.force_update_scroll()
-	var after := _screen_to_world(screen_pos)
+	var after := _screen_to_board(screen_pos)
 	camera.position += before - after
 	_clamp_camera()
 
 
 func _clamp_camera() -> void:
-	var field := Vector2(sim.field_w, sim.field_h) / M * PX_PER_M
-	camera.position = camera.position.clamp(Vector2.ZERO, field)
+	var bf := BoardView.board_field()
+	camera.position = camera.position.clamp(bf.position, bf.end)
 
 
 # -------------------------------------------------------------- co-op ---
@@ -4540,7 +4617,7 @@ func _au_delta(key: String, v: int) -> int:
 
 ## Volume and pan of a sim point as heard from the camera centre.
 func _au_mix(sx: int, sy: int) -> Vector2:
-	var p := Vector2(sx, sy) / M * PX_PER_M
+	var p := BoardView.to_board(Vector2(sx, sy) / M * PX_PER_M)
 	var half := get_viewport_rect().size / camera.zoom * 0.5
 	var d := (p - camera.position) / half
 	return Vector2(clampf(1.15 - d.length() * 0.55, 0.0, 1.0), clampf(d.x, -1.0, 1.0))
@@ -4567,7 +4644,8 @@ func _au_nearest(kind: int) -> int:
 			8: ok = sim.u_neng[u] > 0 and sim.t_m_gun[sim.u_type[u]] != 0 and sim.u_ftarget[u] >= 0
 		if not ok:
 			continue
-		var d := Vector2(sim.u_cx[u] - camera.position.x / PX_PER_M * M, sim.u_cy[u] - camera.position.y / PX_PER_M * M).length_squared()
+		var cw := BoardView.to_world(camera.position) / PX_PER_M * M
+		var d := Vector2(sim.u_cx[u] - cw.x, sim.u_cy[u] - cw.y).length_squared()
 		if d < bd:
 			bd = d
 			best = u

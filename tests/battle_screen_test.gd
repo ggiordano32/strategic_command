@@ -21,6 +21,8 @@ extends SceneTree
 ## top-right button "End battle" and the pursuit runs past the old 60 s
 ## end; that button ends it and the screen returns; End battle in the modal
 ## ends it on the next tick and returns.
+## Then the whole run again in the oblique battle view (tabletop pass 3, BoardView.force = "oblique"; the checks
+## marked "[oblique]"): the same assertions, plus the battles open in that view with the upright figures' shaders.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
@@ -36,6 +38,7 @@ const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 var cs: CampaignScreen
 var rome := CData.faction_index("rome")
@@ -47,15 +50,25 @@ var _wait := 0
 var _bid := -1
 var _snap: Dictionary = {}
 var _hero: Dictionary = {}
+var _oblique := false   # the second run: the oblique battle view
 
 
 func _check(c: bool, what: String) -> void:
-	print(("PASS " if c else "FAIL ") + what)
+	print(("PASS " if c else "FAIL ") + ("[oblique] " if _oblique else "") + what)
 	if not c:
 		_ok = false
 
 
 func _initialize() -> void:
+	BoardView.force = "top"
+	_begin()
+
+
+func _begin() -> void:
+	target = CData.region_index("sicilia_or")
+	_bid = -1
+	_snap = {}
+	_hero = {}
 	var st := CState.new_campaign("BattleScreenTest", 11, [rome])
 	cs = CampaignScreen.new()
 	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "battle_screen_test")
@@ -294,6 +307,8 @@ func _process(_d: float) -> bool:
 		7:
 			_check(cs.battle != null and cs.battle.campaign_mode, "Fight opens the battle")
 			if cs.battle != null:
+				_check(BoardView.oblique == _oblique and cs.battle.soldiers.oblique == _oblique,
+					"the battle opens in the %s view" % ("oblique" if _oblique else "top"))
 				cs.battle.hud.menu_pressed.emit()
 				_check(cs.battle.leave_dialog == null, "a Leave tap while the battle opens does nothing")
 				cs.battle.leave_grace = 0.0
@@ -388,6 +403,18 @@ func _process(_d: float) -> bool:
 			_end_close()
 			_facing_cases()
 			_casualty_cases()
+			if not _oblique:
+				# Again, in the oblique battle view.
+				_oblique = true
+				BoardView.force = "oblique"
+				if is_instance_valid(cs):
+					cs.queue_free()
+				_begin()
+				_step = 0
+				_frame = 0
+				_wait = 3
+				return false
+			BoardView.force = ""
 			print("RESULT: ", "PASS" if _ok else "FAIL")
 			quit(0 if _ok else 1)
 	return false
@@ -408,6 +435,8 @@ func _end_open() -> void:
 	_eb_exit = false
 	_eb.exit_requested.connect(func(): _eb_exit = true)
 	root.add_child(_eb)
+	_check(_eb.soldiers.oblique == _oblique and (not _oblique or _eb.soldiers._blocks == SoldierLayer.BLOCKS + 1),
+		"the end-of-battle screen's view: %s" % ("oblique (the per-tick order block)" if _oblique else "top"))
 
 
 func _end_close() -> void:

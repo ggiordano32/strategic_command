@@ -12,6 +12,7 @@ extends Node2D
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const SHADER := preload("res://game/tray.gdshader")
+const BoardView := preload("res://game/board_view.gd")
 const M := 1024.0
 const MARGIN_M := 0.6          # card beyond the outermost bases, metres
 const JUMP_PX := 14.0          # a move this big in a tick is a placement, not a walk: no interpolation
@@ -62,6 +63,7 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_mm.custom_aabb = AABB(Vector3(-1000.0, -1000.0, -1.0), Vector3(px_per_m * sim.field_w / M + 2000.0, px_per_m * sim.field_h / M + 2000.0, 2.0))
 	_mat = ShaderMaterial.new()
 	_mat.shader = SHADER
+	BoardView.apply(_mat)
 	var mmi := MultiMeshInstance2D.new()
 	mmi.multimesh = _mm
 	mmi.material = _mat
@@ -86,7 +88,7 @@ func _process(_d: float) -> void:
 	_lf = sim.u_face.duplicate()
 	var t0 := Time.get_ticks_usec()
 	var ct := get_canvas_transform()
-	var vr := Rect2(ct.affine_inverse() * Vector2.ZERO, get_viewport_rect().size / ct.get_scale()).grow(px_per_m * 100.0)
+	var vr := BoardView.world_rect(Rect2(ct.affine_inverse() * Vector2.ZERO, get_viewport_rect().size / ct.get_scale())).grow(px_per_m * 100.0)
 	var k := px_per_m / M
 	quads.resize(sim.n_units)
 	for u in sim.n_units:

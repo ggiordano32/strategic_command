@@ -19,6 +19,11 @@
 // Fire missiles (arrows, javelins, pots) glow at the head and trail a short
 // flame fading to smoke (view only).
 
+// The oblique view (`#define OBLIQUE`, tabletop pass 3): the missile flies a real arc over the board (its ground track
+// squashed and lifted, its height up to a fifth of the range for the arcing kinds), turned along its board path.
+#ifdef OBLIQUE
+#include "res://game/board_view.gdshaderinc"
+#endif
 uniform float now = 0.0;            // sim tick of the frame being drawn
 uniform float px_per_unit = 0.01;
 uniform float fire_mask = 0.0;      // sum of 2^k over the ammunition rows that set fire
@@ -76,6 +81,19 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out 
 		size = vec2(0.45, 0.3);  // a sling bullet: small, a little drawn out along its flight
 		lift = 0.8;
 	}
+#ifdef OBLIQUE
+	// The arc's height (world px): arrows and stones lobbed, bolts and javelins flatter.
+	float hk = kind == 2 ? 0.03 : (kind == 1 ? 0.08 : (kind == 3 ? 0.28 : 0.18));
+	float span = length(d) * px_per_unit;
+	float h0 = hk * span * 4.0 * f * (1.0 - f);
+	float f1 = min(f + 0.02, 1.0);
+	float f0 = f1 - 0.02;
+	vec2 b0 = ob_board(mix(s, e, f0) * px_per_unit) - vec2(0.0, hk * span * 4.0 * f0 * (1.0 - f0) * OB_SIN);
+	vec2 b1 = ob_board(mix(s, e, f1) * px_per_unit) - vec2(0.0, hk * span * 4.0 * f1 * (1.0 - f1) * OB_SIN);
+	ang = atan(b1.y - b0.y, b1.x - b0.x);
+	p = ob_board(p) - vec2(0.0, h0 * OB_SIN);
+	lift = 0.0;
+#endif
 	size *= 1.0 + lift * sin(3.14159 * f);
 	vec2 v = (uv - vec2(0.5)) * size * m;
 	if (fire && kind < 3) {

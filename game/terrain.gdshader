@@ -22,6 +22,10 @@ shader_type canvas_item;
 // (manual bilinear in highp), so contours are exact and stable when panning
 // and zooming. Contour lines keep a constant screen width via fwidth() and
 // fade out where they would crowd together when zoomed far out.
+// The oblique view (tabletop pass 3, game/board_view.gd): the rectangle covers the field's board area and each pixel
+// finds the ground point under it (ob_world: the board transform inverted, the hills lifted toward the camera); the
+// rest of the shading is the same, in that point's world coordinates. Outside the field: transparent.
+#include "res://game/board_view.gdshaderinc"
 
 uniform sampler2D hmap : filter_nearest, repeat_disable;
 uniform ivec2 hmap_size = ivec2(2, 2);
@@ -97,10 +101,10 @@ uniform vec3 felt_col = vec3(0.15, 0.27, 0.11);
 // Graphics Low (game/quality.gd): no noise patches / grain / rock mottling, still water, plain ford.
 uniform bool low = false;
 
-varying highp vec2 world;
+varying highp vec2 vpos;   // world px (the top view) or board px (the oblique view)
 
 void vertex() {
-	world = VERTEX;
+	vpos = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
 }
 
 highp vec3 node(ivec2 p) {
@@ -223,6 +227,13 @@ vec4 crown_at(vec2 p, float vr) {
 }
 
 void fragment() {
+	highp vec2 world = vpos;
+	float ob_in = 1.0;
+	if (ob_on > 0.5) {
+		world = ob_world(vpos);
+		vec2 ob_e = min(world, ob_field - world);
+		ob_in = step(0.0, min(ob_e.x, ob_e.y));
+	}
 	highp vec2 wm = world / ppm;  // metres
 	float n1 = 0.5;
 	float n2 = 0.5;
@@ -538,5 +549,5 @@ void fragment() {
 		float lm = dot(col, vec3(0.3, 0.59, 0.11));
 		col = clamp(mix(vec3(lm), col, splat_sat), 0.0, 1.0);
 	}
-	COLOR = vec4(col, 1.0);
+	COLOR = vec4(col, ob_in);
 }

@@ -29,6 +29,7 @@ const Overlay := preload("res://game/overlay.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 var battle: Battle
 var frame := 0
@@ -460,7 +461,7 @@ func _process(_delta: float) -> bool:
 ## World position -> window position (what parse_input_event expects; the
 ## viewport then applies the inverse stretch transform).
 func _world_to_screen(w: Vector2) -> Vector2:
-	return _vp_to_window(battle.get_canvas_transform() * w)
+	return _vp_to_window(battle.world_to_screen(w))
 
 
 func _vp_to_window(p: Vector2) -> Vector2:
@@ -474,7 +475,7 @@ func _unit_screen(u: int) -> Vector2:
 
 ## Centre the camera on a world point given in sim units.
 func _focus(x: int, y: int) -> void:
-	battle.camera.position = Vector2(x, y) / 1024.0 * Battle.PX_PER_M
+	battle._cam_to(Vector2(x, y) / 1024.0 * Battle.PX_PER_M)
 	battle.camera.force_update_scroll()
 
 
@@ -580,7 +581,7 @@ func _step_find_units() -> void:
 	var vr := battle.get_viewport_rect()
 	for u in sim.n_units:
 		# is_over_ui takes viewport coordinates (not window coordinates).
-		var p := battle.get_canvas_transform() * (Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M)
+		var p := battle.world_to_screen(Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M)
 		if vr.has_point(p) and not battle.hud.is_over_ui(p):
 			vis += 1
 		else:
@@ -1809,10 +1810,7 @@ func _key(code: Key, mods: Dictionary = {}) -> void:
 
 
 func _marker_screen(u: int) -> Vector2:
-	var sim := battle.sim
-	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-	var w := Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M + Vector2(0, -r * 2.2)
-	return battle.get_canvas_transform() * w
+	return battle.marker_screen(u)
 
 
 func _pending_moves() -> int:
@@ -2559,10 +2557,11 @@ func _step_gd_tap_door_marker() -> void:
 	var touch_r: int = battle._marker_hit_r()
 	var rx := maxi((sim.g_hw[_gd_gate] + 1) * 1024, touch_r)
 	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-	var lift := int(2.2 * mr / Battle.PX_PER_M * 1024)
-	var mk := _gd_point(_gd_gate, rx + 512, 0) / Battle.PX_PER_M * 1024.0  # marker centre, sim units
-	var cx := int(mk.x)
-	var cy := int(mk.y) + lift
+	# The unit's centre under its marker (the marker floats marker_dy above it on the board: the oblique view too).
+	var mkb := BoardView.to_board(_gd_point(_gd_gate, rx + 512, 0)) + Vector2(0, Overlay.marker_dy(mr))
+	var cw := BoardView.to_world(mkb, 6) / Battle.PX_PER_M * 1024.0
+	var cx := int(round(cw.x))
+	var cy := int(round(cw.y))
 	# Test set-up only (paused, view picking): the unit stands on the wall
 	# next to the gate, its marker floating over the doorway.
 	var dx: int = cx - sim.u_cx[_gd_wall]
@@ -2592,7 +2591,7 @@ func _step_gd_tap_marker() -> void:
 	var tap := _gd_point(_gd_gate, rx + 512, 0)
 	_check(battle._gate_doorway(tap) < 0, "the marker's centre is outside the doorway")
 	# A plain tap with a selection is a move; selecting needs a long press.
-	battle._tap(battle.get_canvas_transform() * tap, false, true)
+	battle._tap(battle.world_to_screen(tap), false, true)
 
 
 func _step_gd_check_marker() -> void:
@@ -2604,7 +2603,7 @@ func _step_gd_check_marker() -> void:
 ## overlay's hover point unset (no route preview to the last tap); a mouse
 ## (the touch flag off) still sets it.
 func _hv_pt() -> Vector2:
-	return battle.get_canvas_transform() * _gd_point(_gd_gate, 6 * 1024, -8 * 1024)
+	return battle.world_to_screen(_gd_point(_gd_gate, 6 * 1024, -8 * 1024))
 
 
 func _step_hover_touch() -> void:
@@ -2688,7 +2687,7 @@ func _step_wc_click() -> void:
 	var was: int = battle.UiScale._touch_override
 	battle.UiScale._touch_override = 0
 	_no_double_tap()
-	var p: Vector2 = battle.get_canvas_transform() * _wc_pt
+	var p: Vector2 = battle.world_to_screen(_wc_pt)
 	_mouse(p, true)
 	_mouse(p, false)
 	battle.UiScale._touch_override = was
@@ -2738,7 +2737,7 @@ func _step_wc_door() -> void:
 	var was: int = battle.UiScale._touch_override
 	battle.UiScale._touch_override = 0
 	_no_double_tap()
-	var p: Vector2 = battle.get_canvas_transform() * _gd_point(_gd_gate, 0, 0)
+	var p: Vector2 = battle.world_to_screen(_gd_point(_gd_gate, 0, 0))
 	_mouse(p, true)
 	_mouse(p, false)
 	battle.UiScale._touch_override = was
@@ -3382,7 +3381,7 @@ func _loose_beside_marker(u: int) -> Vector2:
 	# 1.5 marker radii sideways from the marker's centre: inside the loose
 	# hit circle (1.7x mouse, 2.3x touch), outside the tight one (1.0x).
 	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-	return battle.get_canvas_transform() * (Vector2(sim_cx(u), sim_cy(u)) / 1024.0 * Battle.PX_PER_M + Vector2(1.5 * r, -r * 2.2))
+	return battle.marker_screen(u) + Vector2(1.5 * r * battle.camera.zoom.x, 0.0)
 
 
 func _step_cr_long() -> void:
@@ -3421,7 +3420,7 @@ func _step_cr_dbl() -> void:
 	_focus(sim_cx(_cr_a), sim_cy(_cr_a))
 	var w := _footprint_point(_cr_a)
 	_check_footprint_point(_cr_a, w, "double tap")
-	battle._tap(battle.get_canvas_transform() * w, true)
+	battle._tap(battle.world_to_screen(w), true)
 
 
 func _step_cr_check_dbl() -> void:
@@ -3729,6 +3728,7 @@ var _wp_u := -1
 var _wp_spots: Array = []     # window positions of empty ground
 var _wp_q0 := PackedInt32Array()
 var _wp_n0 := 0
+var _wp_face_exp := 768       # the facing a Shift + right drag's line gives (up for a level line)
 
 
 func _wp_count(u: int) -> int:
@@ -3882,6 +3882,11 @@ func _step_wp_check_shift_right() -> void:
 func _step_wp_shift_rdrag() -> void:
 	var a := _rm_empty_spot(0.3)
 	var b := a + Vector2(80, 0)
+	# The facing the line gives: perpendicular to its ground (up for left to right on screen; the oblique view's
+	# ground may slope under it).
+	var inv := root.get_final_transform().affine_inverse()
+	var dw := battle._screen_to_world(inv * b) - battle._screen_to_world(inv * a)
+	_wp_face_exp = int(round(atan2(-dw.x, dw.y) * 1024.0 / TAU)) & 1023
 	_mouse(a, true, {"shift": true}, MOUSE_BUTTON_RIGHT)
 	for k in range(1, 6):
 		_rm_mouse_move_r(a.lerp(b, k / 5.0), (b - a) / 5.0)
@@ -3895,7 +3900,7 @@ func _step_wp_check_shift_rdrag() -> void:
 	if ok:
 		# A line waypoint: the drag's facing (left to right on screen faces up) and its frontage.
 		var k := (_wp_count(_wp_u) - 1) * BattleSim.WP_K
-		ok = absi(((q[k + 2] - 768 + 512) & 1023) - 512) <= 8 and q[k + 3] > 4 * 1024
+		ok = absi(((q[k + 2] - _wp_face_exp + 512) & 1023) - 512) <= 8 and q[k + 3] > 4 * 1024
 	_check(ok, "waypoints: Shift + right drag adds a line stop with the line's facing and frontage (%d -> %d)" % [_wp_n0, _wp_count(_wp_u)])
 	_check(battle.orders.chain(_wp_u).size() == _wp_count(_wp_u) + 1, "waypoints: ... drawn as a stop of the chain")
 	_wp_q0 = battle.orders.wp_of(_wp_u)

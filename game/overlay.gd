@@ -14,6 +14,7 @@ const Quality := preload("res://game/quality.gd")
 const LastSeen := preload("res://game/last_seen.gd")
 const Marks := preload("res://game/tabletop_marks.gd")
 const CData := preload("res://campaign/cdata.gd")
+const BoardView := preload("res://game/board_view.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -175,6 +176,9 @@ var _sm_low_t := -10.0
 var smoke_puffs: int:                     # puffs made (tests, benchmarks)
 	get: return _gs.puffs_made
 var _props: Node2D                     # draws the wagon sprites (behind the overlay's lines)
+var _up_on := false                    # the oblique view: items now drawn upright (see _up)
+## The oblique view: a unit marker floats this much higher (world px a metre: over the upright figures).
+const FIG_LIFT_M := 1.7
 var _props_tex: Texture2D
 var _q_moved := {}                     # wagon -> [x, y, tick it last moved]
 
@@ -195,6 +199,7 @@ func _process(delta: float) -> void:
 			_props.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 			_props.draw.connect(_draw_props)
 			add_child(_props)
+			BoardView.lift_node(_props)
 			if ResourceLoader.exists(ATLAS_SHADE_PATH) and SpriteAtlas.PROPS.has("wagon"):
 				_props_tex = load(ATLAS_SHADE_PATH) as Texture2D
 		_props.queue_redraw()
@@ -403,7 +408,7 @@ func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
 
 ## The visible part of the world (px), with a margin, for culling effects.
 func _view_rect() -> Rect2:
-	var r := get_canvas_transform().affine_inverse() * get_viewport_rect()
+	var r := BoardView.world_rect(get_canvas_transform().affine_inverse() * get_viewport_rect())
 	return r.grow(80.0)
 
 
@@ -548,6 +553,36 @@ func _fv(u: int) -> int:
 	return _v(u, "files")
 
 
+## Tabletop pass 3 (the oblique view, game/board_view.gd): the overlay's node draws through the lift shader, so the
+## ground marks lie on the board; the items after _up(anchor) stand upright at the anchor's board point until _flat().
+## Nothing changes in the top view.
+func _up(anchor: Vector2) -> void:
+	if BoardView.oblique:
+		draw_set_transform_matrix(BoardView.up_xf(anchor))
+		_up_on = true
+
+
+func _flat() -> void:
+	if _up_on:
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+		_up_on = false
+
+
+## A label: upright where it is in the oblique view (or in the current upright group), else as before.
+func _dstr(pos: Vector2, text: String, align: HorizontalAlignment, width: float, fs: int, col: Color) -> void:
+	if not BoardView.oblique or _up_on:
+		draw_string(ThemeDB.fallback_font, pos, text, align, width, fs, col)
+		return
+	draw_set_transform_matrix(BoardView.up_xf(pos))
+	draw_string(ThemeDB.fallback_font, pos, text, align, width, fs, col)
+	draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+## How far above a unit's centre its marker floats (world px; r the marker radius): over the figures in the oblique view.
+static func marker_dy(r: float) -> float:
+	return r * 2.2 + (FIG_LIFT_M * BoardView.px_per_m if BoardView.oblique else 0.0)
+
+
 func to_px(x: int, y: int) -> Vector2:
 	return Vector2(x, y) * (px_per_m / M)
 
@@ -572,7 +607,7 @@ func _draw_deploy_zones(lw: float) -> void:
 			draw_rect(r, Color(col, 0.75 if mine else 0.45), false, lw * (1.5 if mine else 1.0))
 			if mine:
 				var fs := _font_size(14.0)
-				draw_string(ThemeDB.fallback_font, r.position + Vector2(fs * 0.4, -fs * 0.4),
+				_dstr(r.position + Vector2(fs * 0.4, -fs * 0.4),
 					"Deploy inside the walls or on them", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
 		else:
 			draw_rect(r, Color(col, 0.10 if mine else 0.05))
@@ -583,6 +618,7 @@ func _draw_deploy_zones(lw: float) -> void:
 func _draw() -> void:
 	if sim == null:
 		return
+	_up_on = false
 	var lw := maxf(1.5, 2.0 / zoom)
 	var r := maxf(MARKER_MIN_R, MARKER_SCREEN_R / zoom)
 	if _icon.size() != sim.n_units:
@@ -647,7 +683,7 @@ func _draw() -> void:
 	if ghost_hint != "" and not ghosts.is_empty():
 		var at: Vector2 = ghosts[0]["front"]
 		var fs := _font_size(15.0)
-		draw_string(ThemeDB.fallback_font, at + Vector2(0, -fs * 1.2), ghost_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.7, 1, 1))
+		_dstr(at + Vector2(0, -fs * 1.2), ghost_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.7, 1, 1))
 	if box_on:
 		var rect := Rect2(box_a, box_b - box_a).abs()
 		draw_rect(rect, Color(1, 1, 1, 0.12))
@@ -656,8 +692,10 @@ func _draw() -> void:
 		var ffs := _font_size(14.0)
 		var tw := ThemeDB.fallback_font.get_string_size(_flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs).x
 		var at := _flash_at + Vector2(-tw * 0.5, -ffs * 1.6)
+		_up(_flash_at)
 		draw_rect(Rect2(at + Vector2(-ffs * 0.4, -ffs * 1.05), Vector2(tw + ffs * 0.8, ffs * 1.45)), Color(0, 0, 0, 0.6))
-		draw_string(ThemeDB.fallback_font, at, _flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs, Color(1, 0.95, 0.8))
+		_dstr(at, _flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs, Color(1, 0.95, 0.8))
+		_flat()
 
 
 ## Settlement: hit points over each closed gate (a word over an open or a
@@ -684,7 +722,7 @@ func _draw_city_marks(lw: float) -> void:
 			draw_rect(Rect2(c - Vector2(bw * 0.5, bh * 0.5), Vector2(bw * f, bh)), col)
 		elif zoom > 0.35:
 			var txt := "BROKEN" if st == BattleSim.GATE_BROKEN else "OPEN"
-			draw_string(ThemeDB.fallback_font, c + Vector2(-bw * 0.3, bh), txt, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			_dstr(c + Vector2(-bw * 0.3, bh), txt, HORIZONTAL_ALIGNMENT_LEFT, -1,
 				_font_size(12.0), Color(1, 0.85, 0.5) if st == BattleSim.GATE_BROKEN else Color(0.75, 1, 0.75))
 	if sim.cap_t > 0:
 		var pl: Array = lay["plaza"]
@@ -699,7 +737,7 @@ func _draw_city_marks(lw: float) -> void:
 		var where := "Citadel" if not (lay.get("cit", {}) as Dictionary).is_empty() and sim.fort_on == 0 else "Plaza"
 		var txt2 := "%s held %d / %d s" % [where, sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
 		var tw2 := ThemeDB.fallback_font.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_string(ThemeDB.fallback_font, pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
+		_dstr(pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 
 
 ## Slice 2c: the buildings held (their outline in the holder's colour, the
@@ -736,7 +774,7 @@ func _draw_held(lw: float) -> void:
 		var fs := _font_size(15.0)
 		var txt := "Fort held %d / %d s" % [sim.fort_t / 10, BattleSim.FORT_CAP_TICKS / 10]
 		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_string(ThemeDB.fallback_font, fc + Vector2(-tw * 0.5, -fr - fs * 0.5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
+		_dstr(fc + Vector2(-tw * 0.5, -fr - fs * 0.5), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
 
 
 ## The mouse over the field with units selected in a town: the street route of the primary unit to the
@@ -757,7 +795,7 @@ func _draw_hover_route(w: Vector2, lw: float) -> void:
 	var col := COL_NOWAY if no_way else Color(COL_ROUTE, 0.7)
 	_draw_route(rt["pts"], col, lw)
 	if no_way:
-		draw_string(ThemeDB.fallback_font, w + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
+		_dstr(w + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_NOWAY)
 
 
@@ -819,9 +857,9 @@ func _draw_occupy(lw: float) -> void:
 	var box := Rect2(at + Vector2(-fs * 0.5, -fs * 1.1), Vector2(tw + fs, fs * (0.4 + 1.25 * lines)))
 	draw_rect(box, Color(0.12, 0.09, 0.05, 0.9))
 	draw_rect(box, Color(COL_OCC, 0.9), false, lw)
-	draw_string(ThemeDB.fallback_font, at, title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 0.95, 0.8))
+	_dstr(at, title, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 0.95, 0.8))
 	if occ_hint != "":
-		draw_string(ThemeDB.fallback_font, at + Vector2(0, fs * 1.25), occ_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, COL_OCC)
+		_dstr(at + Vector2(0, fs * 1.25), occ_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, COL_OCC)
 
 
 ## Building b's outline in gold over a dark underlay, with the door step marked by a bar and a small chevron.
@@ -930,7 +968,9 @@ func _draw_markers(r: float, lw: float) -> void:
 			continue
 		if (chs or vis) and sim.hidden_from(u, player_side):
 			continue  # (the enemy's hidden assassin, a unit we do not see: not drawn)
-		var c := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
+		var anc := to_px(sim.u_cx[u], sim.u_cy[u])
+		_up(anc)
+		var c := anc + Vector2(0, -marker_dy(r))
 		var col: Color = COL_SIDE[sim.u_side[u]]
 		if sim.u_state[u] == BattleSim.U_ROUTING:
 			col = Color(1.0, 0.9, 0.3)
@@ -1000,6 +1040,7 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_line(c + Vector2(0, down * r), b, COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(-r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
 			draw_line(b, b + Vector2(r * 0.5, -down * r * 0.5), COL_WITHDRAW, lw)
+	_flat()
 
 
 ## Tabletop pass 1: each unit's standard at its tray's rear-left corner (rear-right when it would sit on the unit marker) and
@@ -1045,7 +1086,7 @@ func _draw_standards(r: float) -> void:
 		var corner := q[3]
 		if not vr.has_point(corner):
 			continue
-		var mc := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -r * 2.2)
+		var mc := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -marker_dy(r))
 		if st == BattleSim.U_READY and _box_hits(corner + box_off, box_size, mc, mr):
 			var alt := q[2]
 			if not _box_hits(alt + box_off, box_size, mc, mr):
@@ -1056,10 +1097,12 @@ func _draw_standards(r: float) -> void:
 		if stex == null:
 			stex = Marks.standard_tex(_std_col[u], sel, sim.u_side[u] == player_side, str(u + 1), _std_emb[u])
 			_std_tex[ci] = stex
+		_up(corner)
 		if stex == null:
 			Marks.draw_standard_tex(self, null, corner + o * w, sm * w, _std_col[u])
 		else:
 			draw_texture_rect(stex, Rect2(corner + tex_off, tex_size), false)
+		_flat()
 		if st != BattleSim.U_READY:
 			continue
 		var toks := _tokens(u)
@@ -1078,10 +1121,12 @@ func _draw_standards(r: float) -> void:
 				tt = Marks.token_tex(str(tk[0]), tk[1])
 				tk[2] = tt
 			var tc: Vector2 = q[0] + dirv * (rw * 1.4 + rw * 2.4 * i)
+			_up(tc)
 			if tt == null:
 				draw_circle(tc, rw, tk[1])
 			else:
 				draw_texture_rect(tt, Rect2(tc - half, half * 2.0), false)
+			_flat()
 	standards_us = Time.get_ticks_usec() - t0
 
 
@@ -1165,13 +1210,15 @@ func _draw_last_seen(r: float, lw: float) -> void:
 		var edge := Color(COL_GHOST, lerpf(0.55, 0.2, f))
 		_draw_footprint(u, to_px(g["ax"], g["ay"]), g["face"], g["files"], g["alive"], edge,
 			Color(COL_GHOST, 0.1 * (1.0 - f)), lw)
-		var c := to_px(g["x"], g["y"]) + Vector2(0, -r * 2.2)
+		_up(to_px(g["x"], g["y"]))
+		var c := to_px(g["x"], g["y"]) + Vector2(0, -marker_dy(r))
 		var s := 0.8
 		Icons.draw_marker(self, _icon[u], c, r * s, Color(COL_GHOST, lerpf(0.55, 0.38, f)),
 			Color(1, 1, 1, lerpf(0.6, 0.45, f)))
 		var fs := _font_size(10.0)
-		draw_string(ThemeDB.fallback_font, c + Vector2(-r * 1.4, r * 2.0), "last seen", HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
+		_dstr(c + Vector2(-r * 1.4, r * 2.0), "last seen", HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(COL_GHOST, lerpf(0.7, 0.4, f)))
+		_flat()
 
 
 ## Own units (line of sight, docs/DESIGN.md "Cover and line of sight"): a
@@ -1253,15 +1300,15 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 					ptxt = "PICK UP THE MANTLET"
 				elif BattleSim.EQ_EXPOSED[pk] != 0:
 					ptxt = "PUSH THE SIEGE TOWER"
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), ptxt,
+				_dstr(d + Vector2(r, -r * 1.5), ptxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif _v(u, "pick") >= BattleSim.PICK_ENG:
 				var eg: int = _v(u, "pick") - BattleSim.PICK_ENG
 				var etxt := "TAKE UP THE BOLT THROWERS" if UT.stat(sim.eg_type[eg], "m_kind") == 1 else "TAKE UP THE STONE THROWERS"
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), etxt,
+				_dstr(d + Vector2(r, -r * 1.5), etxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif _v(u, "gtarget") >= 0 and sim.u_cls[u] == UT.CLS_MISSILE:
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), "SHOOT THE GATE ALIGHT",
+				_dstr(d + Vector2(r, -r * 1.5), "SHOOT THE GATE ALIGHT",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.65, 0.3))
 			elif _v(u, "gtarget") >= 0:
 				var gtxt := "BREAK THE GATE"
@@ -1269,10 +1316,10 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 					gtxt = "RAM THE GATE"
 				elif sim.gate_frame(_v(u, "gtarget"), _v(u, "dx"), _v(u, "dy")).y < 0:
 					gtxt = "UNBAR THE GATE"  # ladder men inside the walls
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5), gtxt,
+				_dstr(d + Vector2(r, -r * 1.5), gtxt,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 			elif orders != null and orders.snap_of(u) >= 2:
-				draw_string(ThemeDB.fallback_font, d + Vector2(r, -r * 1.5),
+				_dstr(d + Vector2(r, -r * 1.5),
 					"NO WAY IN: MOVING TO THE GATE" if orders.snap_of(u) == 2 else "NO WAY THERE",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 	elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
@@ -1293,7 +1340,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			_dash_outlined(a, gp, Color(1.0, 0.8, 0.45, 0.9), lw, 8.0 / zoom)
 			draw_dashed_line(gp, tp, Color(tcol, 0.35), lw, 4.0 / zoom)
 			if primary:
-				draw_string(ThemeDB.fallback_font, gp + Vector2(r, -r * 1.5),
+				_dstr(gp + Vector2(r, -r * 1.5),
 					"NO WAY IN: TO THE GATE" if ug.z == 2 else "MOVING INTO RANGE",
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 		elif shooter and sim.vis_on != 0 and sim.hidden_from(t, sim.u_side[u]):
@@ -1302,7 +1349,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			# (No line to it: where it is now is not known.)
 			var arc_w: bool = UT.stat(ty, "m_arc") != 0
 			if primary:
-				draw_string(ThemeDB.fallback_font, a + Vector2(r, r * 2.5), "TARGET OUT OF SIGHT: SHOOTING BLIND" if arc_w \
+				_dstr(a + Vector2(r, r * 2.5), "TARGET OUT OF SIGHT: SHOOTING BLIND" if arc_w \
 					else "TARGET OUT OF SIGHT: HOLDING FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
 		elif not (shooter and _draw_blocked(u, t, lw)):
 			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
@@ -1314,7 +1361,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		var gf: Vector2i = sim.gate_face(_v(u, "gtarget"))
 		draw_dashed_line(a, to_px(gf.x, gf.y), COL_FIRE, lw, 8.0 / zoom)
 		if primary:
-			draw_string(ThemeDB.fallback_font, to_px(gf.x, gf.y) + Vector2(r, r), "SHOOT THE GATE",
+			_dstr(to_px(gf.x, gf.y) + Vector2(r, r), "SHOOT THE GATE",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
 	elif order == BattleSim.O_WITHDRAW:
 		_draw_withdraw(u, a, COL_WITHDRAW, lw)
@@ -1334,7 +1381,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		_draw_range(u, 0.0, TAU, rcol, lw)
 		_draw_fire_line(u, lw)
 	if primary and _v(u, "run") != 0:
-		draw_string(ThemeDB.fallback_font, a + Vector2(r, -r * 3.5), "RUN",
+		_dstr(a + Vector2(r, -r * 3.5), "RUN",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(14.0), Color.WHITE)
 
 
@@ -1446,7 +1493,7 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var s := 9.0 / zoom
 	draw_line(crest + Vector2(-s, -s), crest + Vector2(s, s), COL_BLOCKED, w * 2.0)
 	draw_line(crest + Vector2(-s, s), crest + Vector2(s, -s), COL_BLOCKED, w * 2.0)
-	draw_string(ThemeDB.fallback_font, crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE",
+	_dstr(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
 	return true
 
@@ -1470,7 +1517,7 @@ func _draw_slope_hint(ha: int, hb: int, dx: int, dy: int, at: Vector2, x0: int =
 			parts.append("dense woods" if w >= 3 else "woods")
 	if parts.is_empty():
 		return
-	draw_string(ThemeDB.fallback_font, at, ", ".join(parts), HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), col)
+	_dstr(at, ", ".join(parts), HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), col)
 
 
 ## Densest woods on the line (sim units), sampled every 4 m (0 none).
@@ -1516,7 +1563,7 @@ func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
 	var s := 12.0 / zoom
 	draw_line(to, to + Vector2(-s, -dir * s), col, w * 1.5)
 	draw_line(to, to + Vector2(s, -dir * s), col, w * 1.5)
-	draw_string(ThemeDB.fallback_font, from + Vector2(s, dir * s * 2.0), "WITHDRAW",
+	_dstr(from + Vector2(s, dir * s * 2.0), "WITHDRAW",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), col)
 
 
@@ -1533,7 +1580,7 @@ func _draw_preview(lw: float) -> void:
 		else:
 			draw_arc(e, cap, 0, TAU, 14, col, lw)
 	if preview_clamped:
-		draw_string(ThemeDB.fallback_font, preview_b + Vector2(cap * 1.5, -cap), "ONE RANK",
+		_dstr(preview_b + Vector2(cap * 1.5, -cap), "ONE RANK",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), Color(1, 0.85, 0.35))
 	if not preview_ok or selected_units.is_empty():
 		return
@@ -1566,7 +1613,7 @@ func _draw_preview(lw: float) -> void:
 				no_way = rt["blocked"]
 				_draw_route(rt["pts"], COL_NOWAY if no_way else COL_ROUTE, lw, false)
 				if no_way:
-					draw_string(ThemeDB.fallback_font, centre + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
+					_dstr(centre + Vector2(px_per_m * 1.5, -px_per_m * 2.0), "No way through",
 						HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_NOWAY)
 		var pfiles: int = p["files"]
 		if sim.u_carry[u] >= 0 and BattleSim.carry_files(sim, u, sim.u_carry[u]) > 0:
@@ -1588,7 +1635,7 @@ func _draw_preview(lw: float) -> void:
 					dc = Color(COL_WOODS, 0.8)
 			draw_circle(dp, dot_r, dc)
 		if sim.u_wall[u] > 0:
-			draw_string(ThemeDB.fallback_font, centre + Vector2(0, -px_per_m * 4.0), "holds its stretch of wall",
+			_dstr(centre + Vector2(0, -px_per_m * 4.0), "holds its stretch of wall",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), Color(1, 0.9, 0.6))
 		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
@@ -1623,7 +1670,7 @@ func _draw_chain(u: int, ch: Array, lw: float, primary: bool) -> void:
 		draw_arc(c, dr, 0, TAU, 18, ring, lw)
 		var txt := str(i + 1)
 		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-		draw_string(ThemeDB.fallback_font, c + Vector2(-tw * 0.5, fs * 0.35), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.9))
+		_dstr(c + Vector2(-tw * 0.5, fs * 0.35), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.9))
 
 
 ## Radius (world px) of a waypoint dot at the current zoom (hit tests use it).
@@ -1718,15 +1765,15 @@ func _draw_all_orders() -> void:
 		if ucls == UT.CLS_MISSILE or ucls == UT.CLS_ART:
 			_draw_fire_line(u, w)
 			if _v(u, "fire") == 0 and sim.u_ammo[u] > 0:
-				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 18) / zoom,
+				_dstr(to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 18) / zoom,
 					"HOLD FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(1, 0.85, 0.5, 0.8))
 			if ucls == UT.CLS_ART and (_v(u, "refill") != 0 or sim.u_rprog[u] > 0):
 				var full_ammo: int = sim.u_neng[u] * UT.stat(sim.u_type[u], "m_ammo")
-				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 46) / zoom,
+				_dstr(to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 46) / zoom,
 					"REFILLING %d%%" % (maxi(sim.u_ammo[u], 0) * 100 / maxi(full_ammo, 1)),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(0.55, 0.85, 1.0, 0.9))
 			if ucls == UT.CLS_ART and _v(u, "deploy") == 0:
-				draw_string(ThemeDB.fallback_font, to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 32) / zoom,
+				_dstr(to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(10, 32) / zoom,
 					"PACKED UP", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(11.0), Color(0.85, 0.9, 1.0, 0.8))
 
 
@@ -1873,7 +1920,7 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 			draw_circle(s2p, rr, Color(COL_STAIR, 0.22))
 			draw_arc(s2p, rr, 0, TAU, 20, COL_STAIR, lw * 1.4)
 		if primary:
-			draw_string(ThemeDB.fallback_font, sp + Vector2(rr * 1.2, -rr * 0.3), "STAIR",
+			_dstr(sp + Vector2(rr * 1.2, -rr * 0.3), "STAIR",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_STAIR)
 	if wp.has("foot"):
 		# Ladders against the wall at the foot: two rails and rungs.
@@ -1908,7 +1955,7 @@ func _draw_wall_plan(u: int, wp: Dictionary, lw: float, primary: bool) -> void:
 		var at := to_px(sim.u_cx[u], sim.u_cy[u])
 		if sg >= 0 and slots.size() >= 2:
 			at = to_px(slots[0], slots[1])
-		draw_string(ThemeDB.fallback_font, at + Vector2(0, -px_per_m * 4.0), txt,
+		_dstr(at + Vector2(0, -px_per_m * 4.0), txt,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_WALL)
 
 
@@ -1932,8 +1979,10 @@ func _draw_free_engines(r: float, lw: float) -> void:
 		for k in 16:
 			var a0 := TAU * k / 16.0
 			draw_arc(c, rad, a0, a0 + TAU / 32.0, 3, col, lw)
-		Icons.draw_marker(self, Icons.icon_of(sim.eg_type[g]), c + Vector2(0, -r * 2.2), r * 0.85,
+		_up(c)
+		Icons.draw_marker(self, Icons.icon_of(sim.eg_type[g]), c + Vector2(0, -marker_dy(r)), r * 0.85,
 			Color(0.55, 0.55, 0.52), Color.WHITE)
+		_flat()
 
 
 ## A siege tower (view only): a tall box seen from above (the storeys as
@@ -2062,10 +2111,12 @@ func _draw_free_towers(r: float, lw: float) -> void:
 		for k in 16:
 			var a0 := TAU * k / 16.0
 			draw_arc(c, rad, a0, a0 + TAU / 32.0, 3, col, lw)
-		var mc := c + Vector2(0, -r * 2.2)
+		var mc := c + Vector2(0, -marker_dy(r))
+		_up(c)
 		draw_circle(mc, r * 0.85, Color(0.55, 0.55, 0.52))
 		draw_arc(mc, r * 0.85, 0.0, TAU, 24, Color.WHITE, lw)
 		UIIcons.draw_icon(self, "siege_tower", Rect2(mc - Vector2(r, r) * 0.7, Vector2(r, r) * 1.4), Color.WHITE)
+		_flat()
 
 
 ## Siege gear (view only): the attackers' ladder sets and rams, on the
@@ -2364,5 +2415,5 @@ func _draw_works_pending(lw: float) -> void:
 			draw_line(mid - t * hl, mid + t * hl, Color(0.62, 0.45, 0.24, 0.9), lw * 2.0)
 			draw_line(mid, mid + n * px_per_m * 3.0, Color(1.0, 0.85, 0.45, 0.9), lw)
 			var fs := _font_size(13.0)
-			draw_string(ThemeDB.fallback_font, mid + n * px_per_m * 3.5, "STAKES FACE THIS WAY",
+			_dstr(mid + n * px_per_m * 3.5, "STAKES FACE THIS WAY",
 				HORIZONTAL_ALIGNMENT_CENTER, -1, fs, Color(1.0, 0.9, 0.6))

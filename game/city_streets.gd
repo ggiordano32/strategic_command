@@ -6,6 +6,7 @@ extends Sprite2D
 ## touches the sim.
 
 const MapGen := preload("res://sim/mapgen.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 const CELL := 0.5
 const LANE_GROW := 3.0      # metres: a lane runs this far from the houses' footprints
@@ -96,7 +97,9 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 			var sy := int((org.y + (cy + 0.5) * CELL) * 0.5)
 			if sx >= 0 and sy >= 0 and sx < sim.ob_w and sy < sim.ob_h:
 				var k0: int = sim.obs[sy * sim.ob_w + sx]
-				if k0 == MapGen.C_BUILDING:
+				if k0 == MapGen.C_BUILDING and BoardView.oblique:
+					pass   # (the oblique view: the house stands up; its ground is the lane's, no dark footing)
+				elif k0 == MapGen.C_BUILDING:
 					var nf := float((((cx * 374761393) ^ (cy * 668265263)) * 1274126177 >> 8) & 255) / 255.0
 					var fo := Vector3(0.27, 0.23, 0.19) * (0.9 + 0.2 * nf)
 					var oo := i * 4

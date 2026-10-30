@@ -66,7 +66,32 @@
 // plus a phase from his index, so a block does not step in lockstep. The
 // side is not painted on the man: his unit's marker and the selection tint
 // show it. View only: nothing here feeds back to the sim.
+//
+// The oblique view (tabletop pass 3, `#define OBLIQUE`: soldiers_ob.gdshader, soldiers_ob_cpu.gdshader; game/
+// board_view.gd): each man an upright quad standing at his feet's board point (the ground squashed and lifted, plus his
+// wall walk's height), his frame from the oblique sheets (game/sprite_ob.gd: the set's quad from `ob_cell` here, the
+// frame's rect looked up in `ob_tab` in the fragment stage, so the CPU-fed path needs no texture read in the vertex
+// stage) by his drawn heading against the camera (8 directions, S facing it), mirrored where the sheet says; an
+// action without upright frames (the stand-in's death) is the top-down sprite lying on the board. The texture path
+// draws its instances through a per-tick order (block 9: the men sorted by ground y, nearer over farther); the CPU-fed
+// buffer is reordered by soldier_layer.gd. A fragment behind a nearer kit piece (the kit's nearness, `ob_occ`,
+// a screen texture: game/kit_occluder.gd) is dropped.
 #include "res://game/sprite_frames.gdshaderinc"
+#ifdef OBLIQUE
+#include "res://game/board_view.gdshaderinc"
+uniform sampler2D ob_shade : filter_linear_mipmap, repeat_disable;
+uniform sampler2D ob_mask : filter_linear_mipmap, repeat_disable;
+uniform sampler2D ob_tab : filter_nearest, repeat_disable;
+uniform vec4 ob_cell[64];
+uniform vec2 ob_sheet = vec2(1024.0, 1024.0);
+uniform float ob_k = 0.4166667;      // board px per sheet px
+uniform float ob_maxf = 8.0;         // frames per (action, direction) in the table
+uniform sampler2D ob_occ : filter_nearest, repeat_disable;
+uniform float ob_occ_on = 0.0;
+uniform vec2 ob_near_r = vec2(0.0, 1.0);   // the kit nearness encoding: origin, span (world px)
+varying vec4 v_ob;     // upright: sheet px from the feet (x right, y down), the table column, the set; z < 0: flat
+varying float v_near;  // the man's nearness (world px)
+#endif
 
 const int SPRITES = 12;
 const float CELL_X0 = -1.6;
@@ -322,6 +347,132 @@ void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, in
 	pos = vec2(v.x * cs - v.y * sn, v.x * sn + v.y * cs) + p;
 }
 
+#ifdef OBLIQUE
+// Frames of action a in a set's packed counts (4 bits each).
+float ob_count(float packed, int a) {
+	float d = 1.0;
+	if (a == 1) { d = 16.0; }
+	if (a == 2) { d = 256.0; }
+	if (a == 3) { d = 4096.0; }
+	if (a == 4) { d = 65536.0; }
+	if (a == 5) { d = 1048576.0; }
+	return mod(floor(packed / d), 16.0);
+}
+
+// The oblique view: an upright figure where the set has frames for his action, else the top-down sprite lying on the
+// board (place(), squashed and lifted). ext: height above the ground (a wall walk), world px.
+void place_ob(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, int side, bool sel, bool fire,
+		int set, int pal, bool shoot, bool fired, bool gun, float idx, float ext, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look,
+		out vec4 ob, out float near) {
+	vec2 p = mix(prv, cur, alpha) * px_per_unit;
+	vec2 anchor = ob_board(p) - vec2(0.0, ext * OB_SIN);
+	near = ob_near(p, ext);
+	vec2 vel = cur - prv;
+	float moved = length(vel);
+	// The action and its frame (as atlas_frame; the re-form steps keep the walk, slower, a back step reversed).
+	int act = 0;
+	float pick = 0.0;
+	float fix = -1.0;
+	if (st >= 6) {
+		if (st == 7) {
+			act = 3;
+			pick = -1.0;
+		} else if (st >= 9) {
+			act = 2;
+			fix = float(st - 9);
+		} else if (st == 6 && moved >= 20.0) {
+			act = 1;
+		}
+	} else if (st == 4) {
+		act = 3;
+		pick = -1.0;
+	} else if (st == 3) {
+		act = 3;
+		pick = 1.0;
+	} else if (st == 1 || (shoot && moved < 20.0)) {
+		act = 2;
+	} else if (st == 2 || moved >= 20.0) {
+		act = 1;
+	}
+	float yaw = facing;
+	if (hd > 0 && st == 0) {
+		int hh = hd - 1;
+		int stp = hh / 1024;
+		yaw = float(hh - stp * 1024) - float(stp - 64) * (1.0 - alpha);
+	}
+	float ang = yaw * (6.2831853 / 1024.0);
+	float rate = st == 2 ? 1.6 : 1.0;
+	float rev = 1.0;
+	if (act == 1 && st == 0) {
+		vec2 fwd = vec2(cos(ang), sin(ang));
+		float along = dot(vel, fwd);
+		if (along < -0.5 * moved) {
+			rate = 0.5;
+			rev = -1.0;
+		} else if (along < 0.5 * moved) {
+			rate = 0.7;
+		}
+	}
+	vec4 cell = set > 0 ? ob_cell[set] : vec4(0.0);
+	float n = ob_count(cell.w, act);
+	if (set <= 0 || n < 0.5) {
+		place(cur, prv, facing, hd, st, spr, r, side, sel, fire, set, pal, shoot, fired, gun, idx, uv, pos, col, look);
+		pos = vec2(pos.x, anchor.y + (pos.y - p.y) * OB_COS);
+		ob = vec4(0.0, 0.0, -1.0, 0.0);
+		return;
+	}
+	float fr = 0.0;
+	if (fix >= 0.0) {
+		fr = min(fix, n - 1.0);
+	} else if (pick < 0.0) {
+		fr = n - 1.0;
+	} else if (act == 3) {
+		fr = min(pick, n - 1.0);
+	} else if (anim_on > 0.5) {
+		float phase = fract(idx * 0.6180339);
+		if (act == 2 && gun && n > 3.0) {
+			float cg = floor(now * 0.1 * action_fps(act) * 0.35 + phase * 3.0);
+			float q = mod(cg, 3.0);
+			fr = fired ? 1.0 : (q < 0.5 ? 0.0 : q + 1.0);
+		} else {
+			float cyc = floor(now * 0.1 * action_fps(act) * rate + phase * n);
+			fr = mod(rev < 0.0 ? n - 1.0 - cyc : cyc, n);
+		}
+	}
+	// The direction against the camera (it looks north): 0 S (facing it), clockwise in 45 degree steps.
+	float dir = mod(floor((ang - 1.5707963) / 0.7853982 + 0.5), 8.0);
+	vec2 lp = vec2(mix(-cell.x, cell.x, uv.x), mix(-cell.y, cell.z, uv.y));   // sheet px from the feet
+	pos = anchor + lp * ob_k;
+	ob = vec4(lp, ((float(act) * 8.0 + dir) * ob_maxf + fr) * 2.0, float(set));
+	// The state tints (as the atlas men's).
+	vec3 add = vec3(0.0);
+	float k = 1.0;
+	float a = 1.0;
+	bool dead = st == 4 || st == 7 || st == 8;
+	float deadfade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;
+	if (st == 8) {
+		tint(add, k, vec3(0.24, 0.2, 0.16), 0.25);
+	} else if (dead) {
+		tint(add, k, vec3(0.22, 0.19, 0.16), 0.4);
+		a = 0.9 * deadfade;
+	} else {
+		if (st == 2) {
+			tint(add, k, vec3(1.0, 0.95, 0.5), 0.3);
+		} else if (st == 3) {
+			tint(add, k, vec3(0.1), 0.3);
+		}
+		if (fire) {
+			tint(add, k, vec3(1.0, 0.7, 0.3), 0.15);
+		}
+		if (sel) {
+			tint(add, k, vec3(1.0), 0.35);
+		}
+	}
+	col = vec4(add, a);
+	look = vec4(1.0, float(pal), k, 0.0);
+}
+#endif
+
 void vertex() {
 #ifdef CPU_FED
 	float sbw = floor(MODEL_MATRIX[1].y + 0.5);  // state + 16 x hd
@@ -331,6 +482,9 @@ void vertex() {
 	bool want_dead = layer_pass < 0.5;
 #else
 	int i = slot_index(INSTANCE_CUSTOM);
+#ifdef OBLIQUE
+	i = fetch_int(9, i);       // the instance's man in the per-tick order (nearer over farther)
+#endif
 	int sb = fetch_int(5, i);  // state + 16 x hd
 	int hd = sb / 16;
 	int st = sb - hd * 16;
@@ -343,13 +497,23 @@ void vertex() {
 		VERTEX = vec2(-100000.0);
 		v_color = vec4(0.0);
 		v_look = vec4(0.0);
+#ifdef OBLIQUE
+		v_ob = vec4(0.0, 0.0, -1.0, 0.0);
+		v_near = 0.0;
+#endif
 	} else {
 		vec2 pos;
 		vec4 col;
 		vec4 look;
 		vec2 uv = UV;
 #ifdef CPU_FED
+#ifdef OBLIQUE
+		float spx = floor(INSTANCE_CUSTOM.x + 0.5);   // sprite + 16 x his wall walk's height (dm)
+		int spr = clamp(int(mod(spx, 16.0)), 0, SPRITES - 1);
+		float ext = floor(spx / 16.0) * 0.1 * px_per_unit * 1024.0;
+#else
 		int spr = clamp(int(INSTANCE_CUSTOM.x + 0.5), 0, SPRITES - 1);
+#endif
 		float fl = floor(INSTANCE_CUSTOM.y + 0.5);  // side + 2 selected + 4 under fire + 8 shooting
 		int side = int(mod(fl, 2.0));
 		bool sel = mod(floor(fl / 2.0), 2.0) > 0.5;
@@ -360,8 +524,17 @@ void vertex() {
 		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 64 x palette
 		int set = int(mod(lk, 64.0));
 		int pal = int(floor(lk / 64.0));
+#ifdef OBLIQUE
+		vec4 ob;
+		float near;
+		place_ob(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
+			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, ext, uv, pos, col, look, ob, near);
+		v_ob = ob;
+		v_near = near;
+#else
 		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
 			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, uv, pos, col, look);
+#endif
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
 		VERTEX = pos;
 #else
@@ -370,11 +543,25 @@ void vertex() {
 		int uidx = fetch_int(6, i);
 		int flags = fetch_int(7, uidx);
 		int spr = clamp(st >= 6 ? bitfield(flags, 256, 16) : bitfield(flags, 16, 16), 0, SPRITES - 1);
+#ifdef OBLIQUE
+		vec4 ob;
+		float near;
+		int u8 = fetch_int(8, uidx);   // engine set + 64 x the wall walk's height (dm)
+		place_ob(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
+			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
+			st >= 6 ? bitfield(u8, 1, 64) : bitfield(flags, 4096, 64),
+			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
+			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i),
+			float(u8 / 64) * 0.1 * px_per_unit * 1024.0, uv, pos, col, look, ob, near);
+		v_ob = ob;
+		v_near = near;
+#else
 		place(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
 			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 64) : bitfield(flags, 4096, 64),
 			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
 			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i), uv, pos, col, look);
+#endif
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).
 		VERTEX = pos - MODEL_MATRIX[3].xy;
@@ -385,7 +572,41 @@ void vertex() {
 	}
 }
 
+// The faction recolour of an atlas texel (shade s, mask m) in palette row `row`, times k, plus the tint add.
+vec3 recolour(vec4 s, vec4 m, int row, float k, vec3 add) {
+	vec4 c3 = texelFetch(pal_tex, ivec2(3, row), 0);  // pattern colour, a = pattern_k
+	float pat = clamp((1.0 - m.a) * 2.0, 0.0, 1.0) * c3.a;
+	vec3 team = m.r * mix(texelFetch(pal_tex, ivec2(0, row), 0).rgb, c3.rgb, pat)
+		+ m.g * texelFetch(pal_tex, ivec2(1, row), 0).rgb + m.b * texelFetch(pal_tex, ivec2(2, row), 0).rgb;
+	float rest = max(0.0, 1.0 - m.r - m.g - m.b);
+	return s.rgb * (rest + team) * k + add;
+}
+
 void fragment() {
+#ifdef OBLIQUE
+	// Behind a nearer kit piece (a house, a wall, a tower, a rock): not drawn.
+	float occ_keep = 1.0;
+	if (ob_occ_on > 0.5) {
+		vec4 o = texture(ob_occ, SCREEN_UV);
+		float on = (floor(o.r * 255.0 + 0.5) * 256.0 + floor(o.g * 255.0 + 0.5)) / 65535.0 * ob_near_r.y + ob_near_r.x;
+		occ_keep = (o.a > 0.5 && on > v_near + 2.0) ? 0.0 : 1.0;
+	}
+	if (v_ob.z >= 0.0) {
+		ivec2 tc = ivec2(int(v_ob.z + 0.5), int(v_ob.w + 0.5));
+		vec4 fr = texelFetch(ob_tab, tc, 0);                  // x0, y0, w, h
+		vec4 an = texelFetch(ob_tab, tc + ivec2(1, 0), 0);    // anchor x, anchor y, mirrored
+		vec2 lp = v_ob.xy;
+		if (an.z > 0.5) {
+			lp.x = -lp.x;
+		}
+		vec2 fp = an.xy + lp;
+		float inside = step(0.0, fp.x) * step(0.0, fp.y) * step(fp.x, fr.z) * step(fp.y, fr.w);
+		vec2 uvo = (fr.xy + clamp(fp, vec2(0.0), fr.zw)) / ob_sheet;
+		vec4 so = texture(ob_shade, uvo);
+		vec4 mo = texture(ob_mask, uvo);
+		COLOR = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb), so.a * v_color.a * inside * occ_keep);
+	} else {
+#endif
 	// Every sampler is read unconditionally (implicit derivatives stay
 	// defined); the branch only picks the result.
 	vec4 proc = texture(TEXTURE, UV) * v_color;
@@ -402,4 +623,8 @@ void fragment() {
 	} else {
 		COLOR = proc;
 	}
+#ifdef OBLIQUE
+	COLOR.a *= occ_keep;
+	}
+#endif
 }

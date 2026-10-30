@@ -540,6 +540,7 @@ func _options_page() -> void:
 		"quality": func(): return Quality.load_pref(),
 		"soldiers": func(): return SoldierLayer.load_pref(),
 		"battle_look": func(): return BattleLook.pref(),
+		"battle_view": func(): return preload("res://game/board_view.gd").pref(),
 		"map_view": func(): return "terrain" if MapView.terrain_view else "political",
 		"map_style": func(): return MapView.style_pref,
 		"menu_emblems": func(): return MenuPrefs.stored_emblems(),

@@ -32,6 +32,17 @@ const CityDraw := preload("res://game/city_draw.gd")
 ## The mitred wall strips (tools/battlekit/pack_strips.py): one texture per strip, repeated along the wall.
 const Strips := preload("res://game/battlekit_strips.gd")
 const SHADER_STRIP := preload("res://game/battlekit_strip.gdshader")
+const BoardView := preload("res://game/board_view.gd")
+const KitOb := preload("res://game/kit_ob.gd")
+## The oblique view (tabletop pass 3, game/board_view.gd): every piece stands upright at its place (the oblique kit
+## sheet, game/kit_ob.gd, when present: each piece rendered once at 40 degrees, its anchor on the ground at the
+## footprint's centre; else the top-down piece stood up with its lower edge at the footprint's centre), the walls of
+## the strip rings extruded (a front face and a top per stretch of at most WALL_SEG metres, shaded in the shader,
+## cut at the gates), and all of it in one MultiMesh sorted by nearness (farther first), so a nearer house hides a
+## farther one. The soldiers behind a piece are hidden by the kit's nearness (game/kit_occluder.gd).
+const WALL_FACE := 62           # oblique wall instances: a front face, a top (piece slots the atlases do not use)
+const WALL_TOP := 63
+const WALL_SEG := 8.0
 const MITRE_MAX := 2.5          # a mitre longer than this many wall thicknesses is bevelled instead
 ## Loaded when needed (the script checkers' scratch project has no assets/).
 var TEX_ALB: Texture2D
@@ -121,6 +132,14 @@ var s_rot := PackedFloat32Array()   # per triangle
 var s_a := PackedVector2Array()     # per triangle
 var s_d := PackedVector2Array()
 var s_step := PackedFloat32Array()
+# The oblique view.
+var _rings: Array = []              # [polygon (PackedInt32Array, m), thickness m, height m] per wall ring
+var _ob_slot := PackedInt32Array()  # instance -> its slot in the sorted MultiMesh (-1: none)
+var _ob_order: Array = []           # the draw order: [kind (0 piece, 1 wall row), index] (the Low path)
+var _ob_wall := PackedFloat32Array() # wall rows, 12 floats each (board px transform, custom)
+var _ob_wkey := PackedFloat32Array() # their sort keys
+var ob_mm: MultiMesh                # the sorted MultiMesh (game/kit_occluder.gd draws it again)
+var ob_mat: ShaderMaterial          # its material (the occluder duplicates it)
 
 
 func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
@@ -266,6 +285,7 @@ func _build_instances() -> void:
 	strip_name = wname.replace("wall_", "ws_").replace("pal_", "ps_")
 	for poly: PackedInt32Array in rings:
 		_wall_ring(poly, t / wt)
+		_rings.append([poly, t, hs * 5.0])
 	if s_vx.is_empty():
 		strip_name = ""
 		strip_at = 0
@@ -848,8 +868,11 @@ func _make_nodes() -> void:
 		var pn := _PieceDraw.new()
 		pn.kit = self
 		add_child(pn)
+		BoardView.lift_node(pn)
 	if i_piece.is_empty():
 		return
+	if BoardView.oblique:
+		_ob_sort()
 	if low:
 		_low_node = _LowDraw.new()
 		_low_node.kit = self
@@ -865,6 +888,12 @@ func _make_nodes() -> void:
 		_shadow.build(self)
 		add_child(_shadow)
 		shadow_ms = (Time.get_ticks_usec() - t0) / 1000.0
+		if BoardView.oblique and _shadow._spr != null:
+			var smul := ShaderMaterial.new()
+			smul.shader = load("res://game/board_ground_mul.gdshader")
+			BoardView.apply(smul)
+			_shadow._spr.material = smul
+			BoardView.cull_wide(_shadow._spr)
 	var mat := ShaderMaterial.new()
 	mat.shader = SHADER
 	mat.set_shader_parameter("albedo_tex", TEX_ALB)
@@ -881,6 +910,9 @@ func _make_nodes() -> void:
 	mat.set_shader_parameter("pal_g", PackedVector3Array(PAL_G))
 	mat.set_shader_parameter("pal_b", PackedVector3Array(PAL_B))
 	BattleLook.apply(mat)
+	if BoardView.oblique:
+		_make_ob_nodes(mat)
+		return
 	# Draw order: the instances before the walls (houses), the wall strip, then the rest (gates, towers).
 	if strip_at > 0:
 		_mm_a = _make_mm(0, strip_at)
@@ -912,6 +944,167 @@ func _make_nodes() -> void:
 	_mmi.multimesh = _mm
 	_mmi.material = mat
 	add_child(_mmi)
+
+
+# --------------------------------------------------------------- the oblique view ----
+
+## The draw order (nearness, farther first) of the pieces and the wall rows; the wall rows built here.
+func _ob_sort() -> void:
+	_ob_walls()
+	var items: Array = []
+	for i in i_piece.size():
+		items.append([BoardView.near_px(_ob_ground(i)), 0, i])
+	for w in _ob_wkey.size():
+		items.append([float(_ob_wkey[w]), 1, w])
+	items.sort_custom(func(p, q): return float(p[0]) < float(q[0]) or (float(p[0]) == float(q[0]) and int(p[2]) < int(q[2])))
+	_ob_order.clear()
+	_ob_slot.resize(i_piece.size())
+	_ob_slot.fill(-1)
+	for it in items:
+		if int(it[1]) == 0:
+			_ob_slot[int(it[2])] = _ob_order.size()
+		_ob_order.append([int(it[1]), int(it[2])])
+
+
+## The ground point (world px) a piece stands on: the oblique kit's anchor is the footprint's centre; the stand-in's
+## quad centre (the top-down image's) is stood up there.
+func _ob_ground(i: int) -> Vector2:
+	if KitOb.ok():
+		return i_pos[i] * k
+	return _xform(i, i_piece[i]).origin
+
+
+## The extruded walls: per wall ring, per stretch of at most WALL_SEG metres (none in a gate's opening) a front face
+## (the side facing the camera) and a top, as MultiMesh rows already on the board (the lift at the stretch's middle).
+func _ob_walls() -> void:
+	_ob_wall.clear()
+	_ob_wkey.clear()
+	var gates: Array = lay.get("gates", [])
+	for ring in _rings:
+		var poly: PackedInt32Array = ring[0]
+		var t: float = ring[1]
+		var hm: float = ring[2]
+		var p := PackedVector2Array()
+		for e in poly.size() / 2:
+			var q := Vector2(poly[e * 2], poly[e * 2 + 1])
+			if p.is_empty() or p[p.size() - 1].distance_to(q) >= 0.5:
+				p.append(q)
+		while p.size() > 1 and p[0].distance_to(p[p.size() - 1]) < 0.5:
+			p.remove_at(p.size() - 1)
+		var nv := p.size()
+		if nv < 2:
+			continue
+		var hs_px := hm * k * BoardView.OBLIQUE_SIN
+		for e in nv:
+			var a := p[e]
+			var b := p[(e + 1) % nv]
+			var l := a.distance_to(b)
+			if l < 0.3:
+				continue
+			var d := (b - a) / l
+			var nf := Vector2(-d.y, d.x)
+			if nf.y < 0.0 or (absf(nf.y) < 0.001 and nf.x > 0.0):
+				nf = -nf   # (the face the camera sees: toward the south; a north-south stretch: its west side)
+			var ns := maxi(ceili(l / WALL_SEG), 1)
+			for q in ns:
+				var a1 := a + d * (l * q / ns)
+				var b1 := a + d * (l * (q + 1) / ns)
+				var mid := (a1 + b1) * 0.5
+				var in_gate := false
+				for gd in gates:
+					var gp := Vector2(float(gd["x"]), float(gd["y"]))
+					if mid.distance_to(gp) < float(int(gd.get("hw", 4))) + 1.5:
+						in_gate = true
+				if in_gate:
+					continue
+				var lm := BoardView.lift_px(mid * k)
+				var p0 := (a1 + nf * t * 0.5) * k
+				var p1 := (b1 + nf * t * 0.5) * k
+				var k0 := (a1 - nf * t * 0.5) * k
+				var k1 := (b1 - nf * t * 0.5) * k
+				var cos_t := BoardView.OBLIQUE_COS
+				var b0 := Vector2(p0.x, p0.y * cos_t - lm)
+				var bb1 := Vector2(p1.x, p1.y * cos_t - lm)
+				var bk0 := Vector2(k0.x, k0.y * cos_t - lm) - Vector2(0, hs_px)
+				var bk1 := Vector2(k1.x, k1.y * cos_t - lm) - Vector2(0, hs_px)
+				var cul := float(culture + 8 * clampi(roundi(hm * 10.0), 0, 2000))
+				var key := BoardView.near_px((p0 + p1) * 0.5)
+				# The front face: x along the stretch, y from its top (UV 0) down to the ground.
+				_ob_row(Vector2(b0 + bb1) * 0.5 - Vector2(0, hs_px * 0.5), bb1 - b0, Vector2(0, hs_px),
+					Color(WALL_FACE, BoardView.near_px(p0), BoardView.near_px(p1), cul), key)
+				# The top: x along, y from the back edge (UV 0) to the front edge.
+				var f0 := b0 - Vector2(0, hs_px)
+				var f1 := bb1 - Vector2(0, hs_px)
+				_ob_row((f0 + f1 + bk0 + bk1) * 0.25, f1 - f0, f0 - bk0,
+					Color(WALL_TOP, BoardView.near_px(a1 * k, hm), BoardView.near_px(b1 * k, hm), cul), key + 0.01)
+
+
+func _ob_row(o: Vector2, ex: Vector2, ey: Vector2, cd: Color, key: float) -> void:
+	_ob_wall.append_array(PackedFloat32Array([ex.x, ey.x, 0.0, o.x, ex.y, ey.y, 0.0, o.y, cd.r, cd.g, cd.b, cd.a]))
+	_ob_wkey.append(key)
+
+
+## The sorted MultiMesh and its node, the rubble and the pieces above the ground (the oblique view, High).
+func _make_ob_nodes(mat: ShaderMaterial) -> void:
+	BoardView.apply(mat)
+	mat.set_shader_parameter("ob_ppm", k)
+	mat.set_shader_parameter("ob_timber", 1.0 if _timber else 0.0)
+	KitOb.apply(mat)
+	ob_mat = mat
+	_rubble_node = _RubbleDraw.new()
+	_rubble_node.kit = self
+	add_child(_rubble_node)
+	BoardView.lift_node(_rubble_node)
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_2D
+	mm.use_custom_data = true
+	mm.mesh = _make_quad()
+	mm.instance_count = _ob_order.size()
+	var buf := PackedFloat32Array()
+	buf.resize(_ob_order.size() * 12)
+	for s2 in _ob_order.size():
+		var it: Array = _ob_order[s2]
+		if int(it[0]) == 0:
+			_write(buf, int(it[1]), s2 * 12)
+			_ob_fix(buf, int(it[1]), s2 * 12)
+		else:
+			for f in 12:
+				buf[s2 * 12 + f] = _ob_wall[int(it[1]) * 12 + f]
+	mm.buffer = buf
+	var up := BoardView.lift_max + 60.0 * k
+	mm.custom_aabb = AABB(Vector3(-50, -50 - up, -1), Vector3(sim.field_w / 1024.0 * k + 100, sim.field_h / 1024.0 * k + 100 + up, 2))
+	ob_mm = mm
+	_mmi = MultiMeshInstance2D.new()
+	_mmi.multimesh = mm
+	_mmi.material = mat
+	add_child(_mmi)
+
+
+## The oblique kit (game/kit_ob.gd): a piece's row carries its footprint's centre and scale, not the top-down quad.
+func _ob_fix(buf: PackedFloat32Array, i: int, o: int) -> void:
+	if not KitOb.ok() or fallen(i):
+		return
+	var sc := (i_sx[i] + i_sy[i]) * 0.5
+	var c := i_pos[i] * k
+	buf[o] = sc
+	buf[o + 1] = 0.0
+	buf[o + 3] = c.x
+	buf[o + 4] = 0.0
+	buf[o + 5] = sc
+	buf[o + 7] = c.y
+
+
+## Rewrite instance i's row in the sorted MultiMesh (a gate's state, a fallen building).
+func _ob_put(i: int) -> void:
+	var sl := _ob_slot[i] if i < _ob_slot.size() else -1
+	if sl < 0:
+		return
+	var buf := PackedFloat32Array()
+	buf.resize(12)
+	_write(buf, i, 0)
+	_ob_fix(buf, i, 0)
+	ob_mm.set_instance_transform_2d(sl, Transform2D(Vector2(buf[0], buf[4]), Vector2(buf[1], buf[5]), Vector2(buf[3], buf[7])))
+	ob_mm.set_instance_custom_data(sl, Color(buf[8], buf[9], buf[10], buf[11]))
 
 
 ## A MultiMesh of the instances [a, b).
@@ -989,7 +1182,9 @@ func refresh() -> void:
 		i_piece[i] = _name_idx[_gate_name(st)]
 		i_flash[i] = 1.0 if hit != 0 else 0.0
 		changed = true
-		if _mm != null:
+		if ob_mm != null:
+			_ob_put(i)
+		elif _mm != null:
 			var buf := PackedFloat32Array()
 			buf.resize(12)
 			_write(buf, i, 0)
@@ -1025,7 +1220,9 @@ func _rubble_changed() -> void:
 	for i in i_piece.size():
 		if not fallen(i):
 			continue
-		if _mm != null:
+		if ob_mm != null:
+			_ob_put(i)
+		elif _mm != null:
 			var buf := PackedFloat32Array()
 			buf.resize(12)
 			_write(buf, i, 0)
@@ -1065,6 +1262,9 @@ class _LowDraw extends Node2D:
 	var strip_mesh: ArrayMesh
 
 	func _draw() -> void:
+		if kit.BoardView.oblique:
+			_draw_ob()
+			return
 		var lowk: float = float(kit.Atlas.LOW_PPM) / float(kit.Atlas.PPM)
 		var n: int = kit.i_piece.size()
 		for i in n + 1:
@@ -1101,3 +1301,44 @@ class _LowDraw extends Node2D:
 				c = col.lerp(Color(1.0, 0.62, 0.25), 0.45)
 			draw_texture_rect_region(kit.TEX_LOW, Rect2(-w * 0.5, -h * 0.5, w, h),
 				Rect2(float(r[0]) * lowk, float(r[1]) * lowk, float(r[2]) * lowk, float(r[3]) * lowk), c)
+
+	## The oblique view on Low: the pieces stood up and the wall rows as flat-shaded quads, in the sorted order,
+	## drawn straight on the board (this node has no material).
+	func _draw_ob() -> void:
+		var lowk: float = float(kit.Atlas.LOW_PPM) / float(kit.Atlas.PPM)
+		var stone: Vector3 = kit.STONE_TINT[kit.culture]
+		var sc := Color(0.62 * stone.x, 0.58 * stone.y, 0.52 * stone.z) if not kit._timber else Color(0.45, 0.33, 0.22)
+		for it in kit._ob_order:
+			if int(it[0]) == 1:
+				var o := int(it[1]) * 12
+				var wb: PackedFloat32Array = kit._ob_wall
+				var ex := Vector2(wb[o], wb[o + 4])
+				var ey := Vector2(wb[o + 1], wb[o + 5])
+				var c0 := Vector2(wb[o + 3], wb[o + 7])
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+				var top: bool = int(wb[o + 8]) == int(kit.WALL_TOP)
+				draw_colored_polygon(PackedVector2Array([c0 - ex * 0.5 - ey * 0.5, c0 + ex * 0.5 - ey * 0.5,
+					c0 + ex * 0.5 + ey * 0.5, c0 - ex * 0.5 + ey * 0.5]), sc * (1.05 if top else 0.7))
+				continue
+			var i := int(it[1])
+			if kit.fallen(i):
+				continue
+			var p: int = kit.i_piece[i]
+			var an: Array = kit.Atlas.ANCHOR[p]
+			var r: Array = kit.Atlas.RECT[p]
+			var e: Vector2 = kit.i_e[i]
+			var dn := Vector2(-e.y, e.x)
+			var w: float = float(an[2]) * kit.i_sx[i] * float(kit.k)
+			var h: float = float(an[3]) * kit.i_sy[i] * float(kit.k)
+			var og: Vector2 = kit._ob_ground(i)
+			var hb := 0.5 * (absf(e.y) * w + absf(dn.y) * h)
+			draw_set_transform_matrix(Transform2D(e, dn, kit.BoardView.to_board(og) - Vector2(0, hb)))
+			var cu: int = kit.i_cul[i]
+			var tint: Vector3 = kit.STONE_TINT[cu]
+			var c := Color(tint.x, tint.y, tint.z)
+			if kit.roofy[p] != 0:
+				var rr: Vector3 = kit.PAL_R[cu] / kit.PAL_R[0]
+				c = Color(1, 1, 1).lerp(Color(rr.x, rr.y, rr.z), 0.7)
+			draw_texture_rect_region(kit.TEX_LOW, Rect2(-w * 0.5, -h * 0.5, w, h),
+				Rect2(float(r[0]) * lowk, float(r[1]) * lowk, float(r[2]) * lowk, float(r[3]) * lowk), c)
+		draw_set_transform_matrix(Transform2D.IDENTITY)

@@ -193,8 +193,7 @@ func _open_fire_explain() -> void:
 func _world_pt(u: int) -> Vector2:
 	var sim = b.sim
 	var p: Vector2 = Vector2(sim.u_cx[u], sim.u_cy[u]) / float(b.M) * float(b.PX_PER_M)
-	var xf: Transform2D = b.get_viewport().get_canvas_transform()
-	return xf * p
+	return b.world_to_screen(p)   # (through the board transform: the oblique view too)
 
 
 func _centroid(own: bool) -> Variant:
@@ -208,8 +207,7 @@ func _centroid(own: bool) -> Variant:
 	if n == 0:
 		return null
 	var c: Vector2 = sum / float(n) / float(b.M) * float(b.PX_PER_M)
-	var xf: Transform2D = b.get_viewport().get_canvas_transform()
-	return xf * c
+	return b.world_to_screen(c)
 
 
 func _card_of(u: int) -> Variant:

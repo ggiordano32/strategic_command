@@ -26,6 +26,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 const CityDraw := preload("res://game/city_draw.gd")
 const LandLayer := preload("res://game/land_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const BoardView := preload("res://game/board_view.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
@@ -58,6 +59,12 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	material_ref = ShaderMaterial.new()
 	material_ref.shader = SHADER
 	rect.material = material_ref
+	BoardView.apply(material_ref)
+	if BoardView.oblique:
+		# The oblique view: the rectangle covers the field's board area; the shader finds the ground under each pixel.
+		var bf := BoardView.board_field()
+		rect.position = bf.position
+		rect.size = bf.size
 	add_child(rect)
 	z_index = -2  # the ground, then the cover (tree layer, -1), then everything else
 	var t0 := Time.get_ticks_usec()
@@ -71,12 +78,14 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		dec.low = Quality.is_low()
 		dec.board = BattleLook.is_diorama() and not ("--no-splat" in OS.get_cmdline_user_args())
 		add_child(dec)
+		BoardView.lift_node(dec)
 		_decals = dec
 	if sim.map_info.has("land"):
 		# Cliffs and outcrops (landforms), over the ground and its decals.
 		_land = LandLayer.new()
 		_land.setup(sim, px_per_m, Quality.is_low())
 		add_child(_land)
+		BoardView.lift_node(_land)
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	apply_quality()
 	_measure_from = Time.get_ticks_msec()

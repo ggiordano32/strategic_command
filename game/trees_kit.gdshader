@@ -6,6 +6,11 @@ shader_type canvas_item;
 // values) with rim and outline, tinted toward the ground palette's tree colours, the cast shadow sampled
 // from the piece's own silhouette displaced to the south-east. Low: the pre-lit atlas, no normals.
 // Canopies fade where soldiers stand under them (occupancy texture, 4 m cells).
+// The oblique view (tabletop pass 3, game/board_view.gd): the tree stands up at its foot's board point, the crown
+// unturned above a trunk drawn here (the stand-in until the oblique kit sheet's trees), no cast shadow of its own
+// (the ground's crown shadows lie under it), each part faded by the men on the ground it hides. The instances are sorted by y (farther
+// first) in game/tree_layer.gd.
+#include "res://game/board_view.gdshaderinc"
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -40,6 +45,7 @@ varying float piece;
 varying float var_l;
 varying vec2 rcs;
 varying float tk;
+varying vec3 v_trunk;   // the oblique view: trunk x, top y, foot y in q (0 none)
 
 const float M = 1.55;
 
@@ -66,6 +72,19 @@ void vertex() {
 	world = VERTEX;
 	vec2 so = vec2(0.8, 1.0) * cd.z * 0.6;
 	qoff = vec2(so.x * rcs.x + so.y * rcs.y, -so.x * rcs.y + so.y * rcs.x) / size;
+	v_trunk = vec3(0.0);
+	if (ob_on > 0.5) {
+		// Upright: the crown's centre 1.15 radii above the foot, unturned; the trunk from it down to the foot.
+		float rise = cd.z * 1.15;
+		rcs = vec2(1.0, 0.0);
+		VERTEX = ob_board(cd.xy) + vec2(loc.x, loc.y - rise);
+		// The fade samples the ground this part of the tree hides (behind it, north of its foot), so men behind
+		// a tree show through as men under a canopy do in the top view.
+		world = cd.xy + vec2(loc.x, min(loc.y - rise, 0.0) / OB_COS);
+		qoff = vec2(0.0);
+		vec2 qc = vec2(0.5) - off / size;
+		v_trunk = vec3(qc.x, qc.y, qc.y + rise / size.y);
+	}
 	tint = sh < 0.5 ? shade0 : (sh < 1.5 ? shade1 : shade2);
 	tk = (piece >= palm_lo && piece <= palm_hi) ? 0.15 : tint_k;
 	var_l = 0.92 + 0.16 * hash(float(INSTANCE_ID) * 0.37 + cd.x * 0.011);
@@ -130,5 +149,16 @@ void fragment() {
 	float sf = sa * fade * (1.0 - a);
 	float al = ca + sf * (1.0 - ca);
 	vec3 outc = al > 0.0 ? clamp(col, 0.0, 1.0) * ca / al : vec3(0.0);
+	if (v_trunk.z > 0.0) {
+		// The oblique view's trunk, under the crown: bark lit on its left.
+		float tw = 0.035 * (1.0 + 0.6 * (q.y - v_trunk.y) / max(v_trunk.z - v_trunk.y, 0.01));
+		float dx = q.x - v_trunk.x;
+		float ta = (1.0 - smoothstep(tw * 0.8, tw, abs(dx))) * step(v_trunk.y, q.y) * (1.0 - smoothstep(v_trunk.z - 0.01, v_trunk.z, q.y));
+		vec3 bark = vec3(0.30, 0.22, 0.15) * (dx < 0.0 ? 1.2 : 0.8);
+		float ab = ta * fade;
+		float al2 = ca + ab * (1.0 - ca);
+		outc = al2 > 0.0 ? (clamp(col, 0.0, 1.0) * ca + bark * ab * (1.0 - ca)) / al2 : vec3(0.0);
+		al = al2;
+	}
 	COLOR = vec4(outc, al);
 }

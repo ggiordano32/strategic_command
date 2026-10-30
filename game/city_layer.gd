@@ -14,6 +14,7 @@ const BattleKit := preload("res://game/battlekit.gd")
 const CityStreets := preload("res://game/city_streets.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Quality := preload("res://game/quality.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 var sim
 var px_per_m := 10.0
@@ -29,6 +30,7 @@ var bridge: Dictionary = {}   # a river crossing's bridge (sim.map_info["river"]
 func setup(p_sim, p_px_per_m: float) -> void:
 	sim = p_sim
 	px_per_m = p_px_per_m
+	BoardView.lift_node(self)
 	if sim.riv_on != 0 and sim.map_info.has("river") and int(sim.map_info["river"]["kind"]) == 1:
 		bridge = sim.map_info["river"]
 		queue_redraw()
@@ -48,16 +50,24 @@ func setup(p_sim, p_px_per_m: float) -> void:
 			if str(a).begins_with("--kit-culture="):
 				sty = clampi(int(str(a).get_slice("=", 1)), 0, 7)
 		st.build(lay, px_per_m, sty, sim)
+		if BoardView.oblique:
+			var smat := ShaderMaterial.new()
+			smat.shader = load("res://game/board_ground.gdshader")
+			BoardView.apply(smat)
+			st.material = smat
+			BoardView.cull_wide(st)
 		kit = BattleKit.new()
 		add_child(kit)
 		kit.setup(sim, lay, px_per_m)
 		over_node = _Over.new()
 		over_node.layer = self
 		add_child(over_node)
+		BoardView.lift_node(over_node)
 		over_node.queue_redraw()
 	gates_node = _Gates.new()
 	gates_node.layer = self
 	add_child(gates_node)
+	BoardView.lift_node(gates_node)
 	queue_redraw()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
@@ -73,12 +83,19 @@ func setup(p_sim, p_px_per_m: float) -> void:
 const SETTINGS := "user://settings.cfg"
 const PATHS_SHADER := """
 shader_type canvas_item;
+render_mode skip_vertex_transform;
+#include "res://game/board_ground.gdshaderinc"
 uniform float alpha = 0.0;
 uniform float period = 10.0;
-varying vec2 wpos;
-void vertex() { wpos = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy; }
+void vertex() {
+	VERTEX = ob_ground_vertex(VERTEX, UV, MODEL_MATRIX);
+	v_b = VERTEX;
+	v_rect = ob_ground_rect(MODEL_MATRIX, TEXTURE_PIXEL_SIZE);
+}
 void fragment() {
-	float m = texture(TEXTURE, UV).r;
+	vec2 wpos;
+	vec3 g = ob_ground_uv(wpos);
+	float m = texture(TEXTURE, g.xy).r * g.z;
 	float h = fract((wpos.x + wpos.y) / period);
 	float d = abs(h - 0.5) * 2.0;
 	float w = max(fwidth(d), 0.02);
@@ -154,8 +171,10 @@ func set_paths_alpha(a: float) -> void:
 		sh.code = PATHS_SHADER
 		mat.shader = sh
 		mat.set_shader_parameter("period", px_per_m * 0.9)
+		BoardView.apply(mat)
 		paths_node.material = mat
 		add_child(paths_node)
+		BoardView.cull_wide(paths_node)
 	paths_node.visible = true
 	(paths_node.material as ShaderMaterial).set_shader_parameter("alpha", a)
 

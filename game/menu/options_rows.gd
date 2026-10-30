@@ -9,7 +9,7 @@ extends RefCounted
 ##   rows.build(parent, {"prefix": "home", "narrow": false, "title": true, "dev": false, "win": get_window(),
 ##       "on_size": Callable, "on_controls": Callable, "on_book": Callable, "on_tests": Callable})
 ##   rows.refresh()   # the controls show the stored values again
-## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, map_view, map_style,
+## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, battle_view, map_view, map_style,
 ## menu_emblems; audio_mute and audio_master / audio_effects / audio_ambient (sliders).
 
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -18,6 +18,7 @@ const UiScale := preload("res://game/ui_scale.gd")
 const Quality := preload("res://game/quality.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const BoardView := preload("res://game/board_view.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
@@ -60,9 +61,13 @@ func build(parent: Control, o: Dictionary) -> void:
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
 	_section(parent, "Looks", true)
-	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
+	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter. The view: Top, or Oblique from the table's edge.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
 		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
+	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
+	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"]], BoardView.pref(), "Battle view",
+		"Top: the battle map from straight above, as before. Oblique: the tabletop seen from its southern edge at 40 degrees, " \
+		+ "the hills rising, the figures and the town standing upright (a first build: stand-in figures). Takes effect at the next battle.", func(v): BoardView.save_pref(str(v)))
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",
@@ -241,6 +246,25 @@ func _choice(parent: Control, key: String, label: String, desc: String, options:
 	_frame(parent, key, label, desc, sg)
 
 
+## A second capsule on an existing row, beside that row's control (its own key, value and tip).
+func _beside(row_key: String, key: String, options: Array, value, tip_title: String, tip_text: String, cb: Callable) -> void:
+	var first := seg[row_key] as Control
+	var host := first.get_parent()
+	var pair := Kit.hbox(10)
+	pair.size_flags_vertical = first.size_flags_vertical
+	pair.size_flags_horizontal = first.size_flags_horizontal
+	host.add_child(pair)
+	host.move_child(pair, first.get_index())
+	first.reparent(pair, false)
+	var sg := Kit.segmented(options, value, Callable(), "%s_%s" % [str(_o["prefix"]), key])
+	sg.changed.connect(func(v):
+		if not _building:
+			cb.call(v))
+	Kit.tip(sg, tip_title, tip_text)
+	seg[key] = sg
+	pair.add_child(sg)
+
+
 func _toggle(parent: Control, key: String, label: String, desc: String, on: bool, tip_title: String, tip_text: String, cb: Callable) -> void:
 	var nm := key if key.begins_with("audio_") else "%s_%s" % [str(_o["prefix"]), key]
 	var sg := Kit.toggle(on, Callable(), nm)
@@ -291,6 +315,7 @@ func refresh() -> void:
 	put.call("soldiers", SoldierLayer.load_pref())
 	put.call("fullscreen", 1 if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else 0)
 	put.call("battle_look", BattleLook.pref())
+	put.call("battle_view", BoardView.pref())
 	MapView.load_view_pref()
 	put.call("map_view", "terrain" if MapView.terrain_view else "political")
 	put.call("map_style", MapView.style_pref)
