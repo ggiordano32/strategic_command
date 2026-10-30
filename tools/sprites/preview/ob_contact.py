@@ -6,7 +6,7 @@ camera) and kit pieces (houses, walls, a tower, a gate) with their footprint
 rectangle and anchor drawn on the ground.
 
     python3 tools/sprites/preview/ob_contact.py OUT.png [--scale 3]
-        [--units heavy_swords,shock_cavalry,...] [--pieces p_house_s_wh__y0,...]
+        [--sheets DIR] [--units heavy_swords,shock_cavalry,...] [--pieces p_house_s_wh__y0,...]
 """
 import json
 import math
@@ -64,11 +64,12 @@ def main():
     units = arg("--units", "heavy_swords,pikemen,shock_cavalry,musketeers,elephant,cannon").split(",")
     pieces = arg("--pieces", "p_house_s_wh__y0,p_house_s_wh__y4,p_house_m_oc__y0,p_church__y0,p_pal_wall__y0,"
                  "p_stone_wall__y0,p_stone_tower__y0,p_stone_gate__y0,p_palm_a__y0").split(",")
-    man = json.load(open(os.path.join(ROOT, "assets", "sprites_ob", "manifest.json")))
+    sheets = arg("--sheets", os.path.join(ROOT, "assets", "sprites_ob"))   # a folder of the same layout (before / after)
+    man = json.load(open(os.path.join(sheets, "manifest.json")))
     ppm = man["px_per_m"]
     sinE = math.sin(math.radians(man["elevation_deg"]))
-    sh = pack.Img.load(os.path.join(ROOT, "assets", "sprites_ob", "atlas_shade.png"))
-    mk = pack.Img.load(os.path.join(ROOT, "assets", "sprites_ob", "atlas_mask.png"))
+    sh = pack.Img.load(os.path.join(sheets, "atlas_shade.png"))
+    mk = pack.Img.load(os.path.join(sheets, "atlas_mask.png"))
     pal = man["palettes"]["rome"]
     # cell size from the largest frame
     cw = ch = 0

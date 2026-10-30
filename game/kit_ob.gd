@@ -7,7 +7,10 @@ extends RefCounted
 ## the footprint's centre on the ground. Every piece the battle uses is in it (the 62 block 1 pieces, walls to trees and
 ## rocks, and the 32 landmark and civic pieces of block 2), so the structures kit (assets/kit_ob, the overworld's minis
 ## at 40 degrees) is not needed here. Missing (the web export leaves the folder out): `ok()` is false and the kit draws
-## the stand-in (the top-down piece stood up). View only.
+## the stand-in (the top-down piece stood up). Pass 4: a piece whose footprint is not square (long side over short
+## above 1.2) also has `__y2` and `__y6` (turned 90 / 270 degrees); `yaws(name)` lists what the sheet holds for a piece
+## and `index_yaw(name, yaw_deg)` picks the nearest. The y0 / y4 sprites load first, so a sheet larger than `MAX`
+## (the shader's table) loses only turned sprites. View only.
 
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const DIR := "res://assets/battlekit_ob/"
@@ -22,7 +25,8 @@ static var low: Texture2D
 static var ppm := 8.0
 static var rects := PackedVector4Array()    # per sprite: uv rect in the atlas
 static var anch := PackedVector4Array()     # per sprite: size px, anchor px
-static var _idx := {}                       # "<piece>__y0" / "__y4" -> sprite index
+static var _idx := {}                       # "<piece>__y0" / "__y4" (and "__y2" / "__y6") -> sprite index
+static var _yaws := {}                      # piece -> PackedInt32Array of the yaws (degrees, 0 / 90 / 180 / 270) it has
 static var _px := []                        # per sprite: [x, y, w, h, ax, ay] px (the Low path)
 
 
@@ -75,7 +79,12 @@ static func _load() -> bool:
 	var th := float(alb.get_height())
 	var keys := pieces.keys()
 	keys.sort()
+	var base_keys := []
+	var turned := []
 	for key in keys:
+		(turned if (str(key).ends_with("__y2") or str(key).ends_with("__y6")) else base_keys).append(key)
+	_yaws.clear()
+	for key in base_keys + turned:
 		if _px.size() >= MAX:
 			push_warning("oblique view: battlekit_ob has more than %d sprites; the rest are stand-ins" % MAX)
 			break
@@ -89,6 +98,11 @@ static func _load() -> bool:
 		anch[q] = Vector4(float(r[2]), float(r[3]), float(a[0]), float(a[1]))
 		_px.append([float(r[0]), float(r[1]), float(r[2]), float(r[3]), float(a[0]), float(a[1])])
 		_idx[str(key)] = q
+		var ks := str(key)
+		var pn := ks.substr(0, ks.length() - 4)
+		var yv: PackedInt32Array = _yaws.get(pn, PackedInt32Array())
+		yv.append(int(ks.substr(ks.length() - 1)) * 45)
+		_yaws[pn] = yv
 	return not _idx.is_empty()
 
 
@@ -111,6 +125,28 @@ static func index(name: String, toward: bool) -> int:
 	if _idx.has(k):
 		return int(_idx[k])
 	return int(_idx.get(name + "__y0", -1))
+
+
+## The yaws (degrees: 0, 180 and, for a non-square piece, 90 and 270) the sheet holds for piece `name`; a yaw is the
+## world direction (counter-clockwise from east, north up) of the piece's local +x.
+static func yaws(name: String) -> PackedInt32Array:
+	if not ok():
+		return PackedInt32Array()
+	return _yaws.get(name, PackedInt32Array())
+
+
+## The sprite of piece `name` whose yaw is nearest `yaw_deg` (any angle), or -1; a square piece has 0 and 180 only.
+static func index_yaw(name: String, yaw_deg: float) -> int:
+	if not ok():
+		return -1
+	var best := -1
+	var bd := 1e9
+	for y in yaws(name):
+		var d := absf(fposmod(yaw_deg - float(y) + 180.0, 360.0) - 180.0)
+		if d < bd:
+			bd = d
+			best = int(_idx.get("%s__y%d" % [name, y / 45], -1))
+	return best
 
 
 ## [x, y, w, h, anchor x, anchor y] px of sprite q in the full-size atlas.

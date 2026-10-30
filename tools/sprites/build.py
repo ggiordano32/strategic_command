@@ -21,6 +21,13 @@ with a transparent background and the Raw view transform (bytes = values):
   mask   R = primary, G = secondary, B = accent weight (unlit emission);
   pat    the cloth check of `pattern` parts (unlit, R channel).
 
+Pass 4 (painted figures) adds two more, hard (no anti-aliasing, one sample),
+for `pack.py --painted`; `--no-aux` skips them:
+
+  nrm    the camera-space normal * 0.5 + 0.5 (x right, y up, z to the camera);
+  id     R part id (one per mesh object), G 255 on metal parts, B view depth
+         over 26..34 m.
+
 Frames are written as <out>/<unit>/<action>_<i>_<pass>.png (and
 <out>/iso_<unit>/d<dir>_<i>_<pass>.png), with <out>/<unit>/info.json holding
 the camera box so pack.py can place the anchor (the man's feet, the unit's
@@ -58,6 +65,9 @@ def action_for(act, uid):
 
 # ---------------------------------------------------------------- arguments
 
+AUX = True
+
+
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     a = {"units": list(SPEC["units"].keys()), "iso": True, "ob": False,
@@ -78,6 +88,8 @@ def parse_args():
         elif k == "--oblique-only":
             a["ob"] = True              # ... and nothing else (no top-down, no iso)
             a["only_ob"] = True
+        elif k == "--no-aux":
+            a["aux"] = False            # pass 4: skip the normal and part-id passes
         elif k == "--out-ob":
             a["out_ob"] = os.path.abspath(argv[i + 1]); i += 1
         i += 1
@@ -239,6 +251,65 @@ def pattern_material():
     out = node(nt, "ShaderNodeOutputMaterial")
     nt.links.new(em.outputs[0], out.inputs["Surface"])
     return m
+
+
+def normal_material():
+    """Pass 4: the camera-space normal (x right, y up, z toward the camera)
+    * 0.5 + 0.5 as emission; read by pack.py --painted for the edge
+    highlights and the varnish."""
+    m, nt = new_material("pass_nrm")
+    g = node(nt, "ShaderNodeNewGeometry")
+    vt = node(nt, "ShaderNodeVectorTransform", vector_type="NORMAL",
+              convert_from="WORLD", convert_to="CAMERA")
+    nt.links.new(g.outputs["Normal"], vt.inputs[0])
+    v = node(nt, "ShaderNodeVectorMath", operation="MULTIPLY_ADD")
+    nt.links.new(vt.outputs[0], v.inputs[0])
+    v.inputs[1].default_value = (0.5, 0.5, 0.5)
+    v.inputs[2].default_value = (0.5, 0.5, 0.5)
+    em = node(nt, "ShaderNodeEmission")
+    nt.links.new(v.outputs[0], em.inputs["Color"])
+    out = node(nt, "ShaderNodeOutputMaterial")
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    return m
+
+
+DEPTH_NEAR, DEPTH_FAR = 26.0, 34.0   # m along the view (the camera stands 30 m off)
+
+
+def id_material():
+    """Pass 4: R = part id (one per mesh object, 1..255), G = 255 on metal
+    parts, B = view depth over DEPTH_NEAR..DEPTH_FAR; emission."""
+    m, nt = new_material("pass_id")
+    at = node(nt, "ShaderNodeAttribute", attribute_type="OBJECT", attribute_name="sc_id")
+    cd = node(nt, "ShaderNodeCameraData")
+    mr = node(nt, "ShaderNodeMapRange", clamp=True)
+    nt.links.new(cd.outputs["View Z Depth"], mr.inputs["Value"])
+    mr.inputs["From Min"].default_value = DEPTH_NEAR
+    mr.inputs["From Max"].default_value = DEPTH_FAR
+    sp = node(nt, "ShaderNodeSeparateColor")
+    nt.links.new(at.outputs["Color"], sp.inputs[0])
+    cb = node(nt, "ShaderNodeCombineColor")
+    nt.links.new(sp.outputs["Red"], cb.inputs["Red"])
+    nt.links.new(sp.outputs["Green"], cb.inputs["Green"])
+    nt.links.new(mr.outputs["Result"], cb.inputs["Blue"])
+    em = node(nt, "ShaderNodeEmission")
+    nt.links.new(cb.outputs["Color"], em.inputs["Color"])
+    out = node(nt, "ShaderNodeOutputMaterial")
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    return m
+
+
+METALS = ("m_metal", "m_bronze")
+
+
+def tag_parts():
+    """Give every mesh object its part id (sorted by name, so a frame's ids
+    are the same in every pass and frame) and a metal flag for pass 4."""
+    obs = sorted((o for o in bpy.context.scene.objects if o.type == "MESH"), key=lambda o: o.name)
+    for n, ob in enumerate(obs):
+        mat = ob.active_material
+        metal = 1.0 if (mat is not None and mat.name.split(".")[0] in METALS) else 0.0
+        ob["sc_id"] = [((n % 254) + 1) / 255.0, metal, 0.0]
 
 
 TEAM = {"primary": (1, 0, 0), "secondary": (0, 1, 0), "accent": (0, 0, 1)}
@@ -1206,18 +1277,38 @@ def setup_camera_light(sc, kind, box, elev_deg=90.0):
 
 def render_passes(sc, path_base, mats):
     vl = bpy.context.view_layer
-    for pname, mo in (("shade", None), ("mask", mats["mask"]), ("pat", mats["pat"])):
+    for pname, mo in (("shade", None), ("mask", mats["mask"]), ("pat", mats["pat"]),
+                      ("nrm", mats.get("nrm")), ("id", mats.get("id"))):
+        if pname in ("nrm", "id") and mo is None:
+            continue
         vl.material_override = mo
         sc.render.filepath = path_base + "_" + pname + ".png"
+        hard = pname in ("nrm", "id")   # pass 4: no anti-aliasing, one sample a pixel
+        if hard:
+            sc.render.filter_size = 0.0
+            sc.render.dither_intensity = 0.0
+            sc.eevee.taa_render_samples = 1
         bpy.ops.render.render(write_still=True)
+        if hard:
+            sc.render.filter_size = 1.0
+            sc.render.dither_intensity = 1.0
+            sc.eevee.taa_render_samples = 16
     vl.material_override = None
+
+
+def aux_mats():
+    """The pass 4 override materials (unless --no-aux) and the part ids."""
+    if not AUX:
+        return {}
+    tag_parts()
+    return {"nrm": normal_material(), "id": id_material()}
 
 
 def render_unit(uid, out):
     t0 = time.time()
     sc = reset_scene()
     arm = build_unit(uid)
-    mats = {"mask": mask_material(), "pat": pattern_material()}
+    mats = {"mask": mask_material(), "pat": pattern_material(), **aux_mats()}
     box = SPEC["units"][uid]["render_box"]
     setup_camera_light(sc, "top", box)
     d = os.path.join(out, uid)
@@ -1247,7 +1338,7 @@ def render_iso(out):
     uid = iso["unit"]
     sc = reset_scene()
     arm = build_unit(uid)
-    mats = {"mask": mask_material(), "pat": pattern_material()}
+    mats = {"mask": mask_material(), "pat": pattern_material(), **aux_mats()}
     cam = setup_camera_light(sc, "iso", iso["box"], iso["elevation_deg"])
     d = os.path.join(out, "iso_" + uid)
     os.makedirs(d, exist_ok=True)
@@ -1318,7 +1409,7 @@ def render_oblique(uid, out):
     t0 = time.time()
     sc = reset_scene()
     arm = build_unit(uid)
-    mats = {"mask": mask_material(), "pat": pattern_material()}
+    mats = {"mask": mask_material(), "pat": pattern_material(), **aux_mats()}
     box = SPEC["units"][uid]["render_box"]
     e = math.radians(OB["elevation_deg"])
     R = max(math.hypot(x, y) for x in box[0:2] for y in box[2:4])
@@ -1356,7 +1447,9 @@ def render_oblique(uid, out):
 
 
 def main():
+    global AUX
     a = parse_args()
+    AUX = a.get("aux", True)
     os.makedirs(a["out"], exist_ok=True)
     open(os.path.join(a["out"], ".gdignore"), "w").close()
     times = {}

@@ -179,8 +179,133 @@ def alpha_box(img, thr=128):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def finish_frame(shade, mask, pat, outline):
-    """Hard alpha, 1 px outline; mask alpha carries the pattern."""
+# ---------------------------------------------------------------- painted (pass 4)
+
+PAINTED = True            # --no-painted switches the paint off (today's sheets)
+PAINT = {
+    "contrast": 1.10, "saturation": 1.10,   # the shade lifted off the board
+    "line": 0.55,          # interior black-line: the local colour x this
+    "edge": 1.35,          # edge highlight: the local colour x this, warmed
+    "warm": (1.05, 1.0, 0.90),
+    "varnish": 0.25, "varnish_metal": 0.65,   # the lobe's gain; metal parts also get a white lift
+    "lobe_lo": 0.90,       # n.h where the varnish starts (1 = the mirror direction)
+    "team_head": 0.08,     # team parts (shade white, multiplied by the faction) lose this much so the highlights have headroom
+    "crease": 0.30,        # a lit facet next to a facet this much less lit: its edge is highlighted
+}
+_LT = (-0.55, 0.60, 0.75)  # toward the key light in camera space (build.py: travel_cam reversed)
+_ln = sum(c * c for c in _LT) ** 0.5
+LIGHT = tuple(c / _ln for c in _LT)
+_hv = (LIGHT[0], LIGHT[1], LIGHT[2] + 1.0)   # half vector with the view (0, 0, 1)
+_hn = sum(c * c for c in _hv) ** 0.5
+HALF = tuple(c / _hn for c in _hv)
+
+
+def paint_frame(shade_px, mask_px, nrm, idp, w, h, solid):
+    """The painter's pass on one cropped frame (in place on shade_px, an
+    RGBA bytearray). nrm, idp: the camera-space normal and the id / metal /
+    depth passes (RGBA, hard). solid: bool per pixel. Terms: contrast and
+    saturation, the varnish lobe, interior black-lines where the part id
+    steps (on the farther part), edge highlights on the near side of a step,
+    on the top of the silhouette and on lit creases."""
+    P = PAINT
+    kc, ks = P["contrast"], P["saturation"]
+    wr, wg, wb = P["warm"]
+    n = w * h
+    # per pixel: id (0 = unknown), depth, normal . light, n . half
+    pid = [0] * n
+    dep = [0] * n
+    nl = [0.0] * n
+    spec = [0.0] * n
+    lo = P["lobe_lo"]
+    for i in range(n):
+        if not solid[i]:
+            continue
+        a = idp[i * 4 + 3]
+        if a < 128:
+            continue
+        pid[i] = idp[i * 4] or 1
+        dep[i] = idp[i * 4 + 2]
+        nx = nrm[i * 4] / 127.5 - 1.0
+        ny = nrm[i * 4 + 1] / 127.5 - 1.0
+        nz = nrm[i * 4 + 2] / 127.5 - 1.0
+        nl[i] = nx * LIGHT[0] + ny * LIGHT[1] + nz * LIGHT[2]
+        d = nx * HALF[0] + ny * HALF[1] + nz * HALF[2]
+        if d > lo:
+            t = (d - lo) / (1.0 - lo)
+            spec[i] = t * t
+    out = bytearray(shade_px)
+    for y in range(h):
+        for x in range(w):
+            i = y * w + x
+            if not solid[i]:
+                continue
+            r, g, b = shade_px[i * 4], shade_px[i * 4 + 1], shade_px[i * 4 + 2]
+            tw = (mask_px[i * 4] + mask_px[i * 4 + 1] + mask_px[i * 4 + 2]) / 255.0
+            # (d) contrast and saturation
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            r = lum + (r - lum) * ks
+            g = lum + (g - lum) * ks
+            b = lum + (b - lum) * ks
+            r = (r - 127.5) * kc + 127.5
+            g = (g - 127.5) * kc + 127.5
+            b = (b - 127.5) * kc + 127.5
+            if tw > 0.0:
+                f = 1.0 - P["team_head"] * min(tw, 1.0)
+                r *= f; g *= f; b *= f
+            ident = pid[i]
+            if ident:
+                metal = idp[i * 4 + 1] > 127
+                # (c) varnish
+                sp = spec[i]
+                if sp > 0.0:
+                    if metal:
+                        gain = 1.0 + P["varnish_metal"] * sp
+                        lift = 40.0 * sp
+                    else:
+                        gain = 1.0 + P["varnish"] * sp
+                        lift = 0.0
+                    r = r * gain + lift; g = g * gain + lift; b = b * gain + lift
+                # neighbours: left, right, up, down
+                line = False
+                edge = False
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nx_, ny_ = x + dx, y + dy
+                    if nx_ < 0 or nx_ >= w or ny_ < 0 or ny_ >= h:
+                        outside = True
+                        j = -1
+                    else:
+                        j = ny_ * w + nx_
+                        outside = not solid[j]
+                    if outside:
+                        if dy == -1:
+                            edge = True      # the top of the silhouette
+                        continue
+                    q = pid[j]
+                    if not q:
+                        continue
+                    if q != ident:
+                        dd = dep[i] - dep[j]
+                        if dd > 0 or (dd == 0 and ident < q):
+                            line = True      # this part is the one behind
+                        elif (dx < 0 or dy < 0) and nl[i] > 0.2:
+                            edge = True      # the near part's left / top rim, facing the key
+                    elif nl[i] > 0.55 and nl[j] < nl[i] - P["crease"] and (dx <= 0 or dy <= 0):
+                        edge = True          # a lit facet beside a darker one (a bevel's rim)
+                if line:
+                    f = P["line"]
+                    r *= f; g *= f; b *= f
+                elif edge:
+                    f = P["edge"]
+                    r *= f * wr; g *= f * wg; b *= f * wb
+            out[i * 4] = 0 if r < 0 else (255 if r > 255 else int(r + 0.5))
+            out[i * 4 + 1] = 0 if g < 0 else (255 if g > 255 else int(g + 0.5))
+            out[i * 4 + 2] = 0 if b < 0 else (255 if b > 255 else int(b + 0.5))
+    return out
+
+
+def finish_frame(shade, mask, pat, outline, nrm=None, idp=None):
+    """Hard alpha, 1 px outline; mask alpha carries the pattern. With the
+    pass 4 passes (nrm, idp) and PAINTED, the shade is painted first."""
     w, h = shade.w, shade.h
     solid = [shade.px[i * 4 + 3] >= 128 for i in range(w * h)]
     s = Img(w, h)
@@ -204,6 +329,8 @@ def finish_frame(shade, mask, pat, outline):
                     s.put(x, y, outline + (255,))
                 else:
                     s.put(x, y, outline + (0,))  # dark rgb: mip fringes stay dark
+    if PAINTED and nrm is not None and idp is not None:
+        s.px = paint_frame(s.px, m.px, nrm.px, idp.px, w, h, solid)
     return s, m
 
 
@@ -292,6 +419,22 @@ def _has(act, uid):
     return us is None or uid in us
 
 
+def _aux(base):
+    """The pass 4 frames (normal, part id) next to a frame, or None."""
+    if not PAINTED:
+        return None
+    pn, pi = base + "nrm.png", base + "id.png"
+    if not (os.path.exists(pn) and os.path.exists(pi)):
+        return None
+    return Img.load(pn), Img.load(pi)
+
+
+def _aux_crop(ax, x0, y0, w, h):
+    if ax is None:
+        return (None, None)
+    return (ax[0].crop(x0, y0, w, h), ax[1].crop(x0, y0, w, h))
+
+
 def load_action(d, prefix, n, oc):
     """Load frames <prefix>_<i>_*.png, crop to their union box (+1 px),
     finish them. -> (list of (shade, mask), crop origin)."""
@@ -300,7 +443,7 @@ def load_action(d, prefix, n, oc):
     for i in range(n):
         base = os.path.join(d, "%s_%d_" % (prefix, i))
         sh, mk, pt = (Img.load(base + p + ".png") for p in ("shade", "mask", "pat"))
-        raw.append((sh, mk, pt))
+        raw.append((sh, mk, pt, _aux(base)))
         b = alpha_box(sh)
         if b:
             box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]),
@@ -310,16 +453,19 @@ def load_action(d, prefix, n, oc):
     x0, y0 = box[0] - 1, box[1] - 1
     w, h = box[2] - box[0] + 3, box[3] - box[1] + 3
     frames = []
-    for sh, mk, pt in raw:
+    for sh, mk, pt, ax in raw:
         frames.append(finish_frame(sh.crop(x0, y0, w, h), mk.crop(x0, y0, w, h),
-                                   pt.crop(x0, y0, w, h), oc))
+                                   pt.crop(x0, y0, w, h), oc, *_aux_crop(ax, x0, y0, w, h)))
     return frames, (x0, y0)
 
 
 def main():
     if "--oblique" in sys.argv:
         return main_oblique(sys.argv[1:])
+    global PAINTED
     args = sys.argv[1:]
+    if "--no-painted" in args:
+        PAINTED = False
     frames_dir = os.path.join(HERE, "_frames")
     out_dir = os.path.join(ROOT, "assets", "sprites")
     contact = None
@@ -479,7 +625,7 @@ def _ob_action(job):
         for i in range(nframes):
             base = os.path.join(d, "%s_d%d_%d_" % (act, k, i))
             sh, mk, pt = (Img.load(base + p + ".png") for p in ("shade", "mask", "pat"))
-            lst.append((sh, mk, pt))
+            lst.append((sh, mk, pt, _aux(base)))
             b = alpha_box(sh)
             if b:
                 box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]),
@@ -495,8 +641,9 @@ def _ob_action(job):
     w, h = box[2] - box[0] + 3, box[3] - box[1] + 3
     out = {}
     for dn, lst in raw.items():
-        out[dn] = [finish_frame(sh.crop(x0, y0, w, h), mk.crop(x0, y0, w, h), pt.crop(x0, y0, w, h), oc)
-                   for sh, mk, pt in lst]
+        out[dn] = [finish_frame(sh.crop(x0, y0, w, h), mk.crop(x0, y0, w, h), pt.crop(x0, y0, w, h), oc,
+                                *_aux_crop(ax_, x0, y0, w, h))
+                   for sh, mk, pt, ax_ in lst]
     return uid, act, out, (info["anchor"][0] - x0, info["anchor"][1] - y0)
 
 
@@ -511,6 +658,9 @@ def main_oblique(args):
     --mirror keeps only S, SW, W, NW, N rendered: SE, E, NE list the frames of
     SW, W, NW and the manifest says "mirror": true (the view draws them flipped)."""
     import multiprocessing
+    global PAINTED
+    if "--no-painted" in args:
+        PAINTED = False
     frames_dir = os.path.join(HERE, "_frames_ob")
     out_dir = os.path.join(ROOT, "assets", "sprites_ob")
     mirror = False

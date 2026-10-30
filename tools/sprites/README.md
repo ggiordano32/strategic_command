@@ -7,7 +7,7 @@ reads. No hand modelling, no downloaded models.
 ```
 spec.json          units (parts lists), rigs, bodies, materials, palettes, atlas sets, iso test
 fmt_spec.py        rewrites spec.json in its compact style after a scripted edit
-build.py           Blender script: meshes, armature, actions, renders (3 passes a frame)
+build.py           Blender script: meshes, armature, actions, renders (3 passes a frame + 2 for the paint)
 pack.py            stdlib Python: outline, crop, atlas, manifest, game tables (+ --contact preview)
 preview/           Godot scene: the atlas recoloured per palette at 3 zooms, iso 8 directions
 iso/               iso test sheets (.gdignore'd: not in the game)
@@ -148,3 +148,16 @@ the manifest).
 - The game loads the imported atlas (lossless, mipmaps, no alpha-border
   fix: the shade's empty texels are already outline-dark); the preview
   reads the PNGs directly.
+
+## Pass 4, painted figures (2026-10-30)
+
+`build.py` renders two more passes a frame, hard (no anti-aliasing, one
+sample, no dither), `nrm` (camera-space normal) and `id` (R part id, G 255 on
+metal parts, B view depth over 26..34 m); `--no-aux` skips them. `pack.py`
+(top-down and `--oblique`) paints the shade with them when they exist:
+contrast and saturation +10 %, a varnish lobe from the normal, a black line
+(x0.55) on the farther part where the part id steps, edge highlights (x1.35,
+warm) on the top of the silhouette, the left / top rim of a near part and lit
+creases. `--no-painted` packs today's unpainted sheets (the three old passes
+are pixel-identical). Numbers: `PAINT` in pack.py. Team parts lose 8 % of
+their white so highlights have headroom after the recolour.

@@ -961,3 +961,40 @@ View only; `sim/` and `campaign/` untouched, the native builds unchanged (the fi
   `build/web`, `.pck` as `application/octet-stream`, compressed on request.
 - **Tests.** `tests/oblique_pack_test.gd` (the state machine against a stubbed request: absent, downloading, loaded, cancel, HTTP and
   network failures, an unmountable pack, a pack without the sheets, retry, `wait()`, the URL); `server/cmd/webcheck -oblique`.
+
+### Pass 4, painted figures (as built, 2026-10-30)
+
+Art half (`tools/`, the two sheet sets, one loader in `game/kit_ob.gd`); `sim/` and `campaign/` untouched, the generated tables did not change.
+
+- **Passes.** `build.py` renders two more passes a frame beside shade / mask / pat: `nrm` (camera-space normal * 0.5 + 0.5, a material
+  override with a Vector Transform world to camera) and `id` (R part id = the mesh object's index in name order, G 255 on metal parts
+  (`m_metal`, `m_bronze`), B view depth over 26..34 m). Both are hard: filter 0, one EEVEE sample, no dither (with the default dither the id
+  had +-1 noise), so a pixel is one part. `--no-aux` skips them. The three old passes are pixel-identical (checked on heavy_swords; the
+  old pipeline itself shifts a few noise pixels between runs in a handful of frames, as before). Cost: top-down about +40 %
+  (all 48 units 3 min), oblique 48 units in 4 parallel processes about 16 min wall.
+- **The paint** (`pack.py`, `paint_frame`, numbers in `PAINT`; `--no-painted` packs today's sheets; on by default when the passes exist),
+  inside the silhouette only: (a) **black-lining**: where the part id steps between 4-neighbours, the farther part's pixel (greater
+  depth, ties by id) is multiplied by 0.55; (b) **edge highlights**: x1.35 with a warm tint (1.05, 1.0, 0.90) on the top row of the
+  silhouette, on the left / top rim of the nearer part of an id step when its normal faces the key (n.L > 0.2), and on a lit facet (n.L > 0.55)
+  beside a facet 0.30 less lit (a bevel's rim); (c) **varnish**: the lobe of n.H (H = half vector of the key (-0.55, 0.60, 0.75) and the view),
+  starting at 0.90, squared; gain +25 % on the lit side, +65 % and a +40 white lift on metal parts; (d) contrast x1.10 about mid grey and
+  saturation x1.10 first. **Recolour.** The game does `rgb = shade * (rest + team)`, team parts being white in the shade sheet, so a
+  highlight on a team part cannot exceed the white: team pixels lose 8 % x their team weight before the paint (the highlights climb back to
+  white, +8.7 %); the mask sheet is unchanged (the highlight is in the shade, so it takes the faction colour with it, a lighter faction
+  colour, not a white glint). Lines and highlights are in the shade, so they survive every palette.
+- **What differs from the plan.** No flock (the other agent's). No depth pass of its own beyond the id's B channel. The lines are 1 px at
+  the sheets' resolution (24 px/m), so on the 1x top view they read as texture; the oblique view's larger figures show them.
+  The varnish is on the shade, not a second map: a glint cannot be recoloured, so it is as team-coloured as its part.
+- **Sizes** (PNG bytes, shade; mask and manifests unchanged): top-down atlas 980,924 -> 1,026,929 (+4.7 %; against an unpainted re-render of the
+  same frames 948,909, +8.2 %); oblique atlas 6,209,098 -> 6,719,382 (+8.2 %, 4096 x 5248; the sheet set 9.7 -> 10.2 MB, +5.1 %). No
+  posterising needed. `git diff --stat game/` shows only `kit_ob.gd`: the frame rects and anchors are as committed.
+- **The turned houses.** `tools/battlekit/build.py --oblique` also renders `__y2` and `__y6` (yaw 90 / 270, the same camera) for every
+  piece whose footprint's long side / short side > 1.2 and whose long side is at least 1.5 m: 52 pieces, 104 renders. `pack.py
+  --oblique` packs the 86 whose piece the atlas list holds: 274 sprites, 2048 x 2496 (was 188, 2048 x 1920), albedo 5.6 MB, nrm 1.2 MB, low 1.7 MB, 8.3 MB in all. Key numbers are
+  the yaw in 45 degree steps: y2 = counter-clockwise seen from above, the piece's local +x pointing north and its outer face west; y6 the
+  opposite. `KitOb.yaws(name)` lists the yaws a piece has, `KitOb.index_yaw(name, yaw_deg)` picks the nearest. **Open:** the shader's tables
+  hold 192 sprites (`ob_krect[192]`, `ob_kanch[192]`; `KitOb.MAX`): the loader loads y0 / y4 first, so today only 4 of the 86 turned sprites fit and the rest
+  wait until the shader's arrays and `MAX` grow to 288 or more and `battlekit.gd` calls `index_yaw` (see the STATUS row).
+- **Preview.** `pack.py --contact` (top) and `preview/ob_contact.py --sheets DIR` (oblique, a folder of the same layout) for before / after.
+- **Open.** The owner's eye on the line weight and the warm edge; the mirrored E / NE / SE figures have their highlights on the right
+  (flipped with the sprite); the elephant's many small parts get busy lines; a 6-bit posterise stays available if the on-demand pack grows.

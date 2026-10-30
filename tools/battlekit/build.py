@@ -1344,6 +1344,18 @@ def render_ob(name, ppm, yaw_deg, out):
               open(base + ".json", "w"))
 
 
+def long_piece(name, out):
+    """True when the piece's footprint (the yaw 0 render's json) is not square: the longer side over the shorter
+    above 1.2 (and the longer side at least 1.5 m: not a trunk), so it gets the yaw 90 / 270 renders."""
+    try:
+        fp = json.load(open(os.path.join(out, "%s__y0.json" % name)))["footprint_m"]
+    except (OSError, KeyError, ValueError):
+        return False
+    a, b = fp[2] - fp[0], fp[3] - fp[1]
+    lo, hi = min(a, b), max(a, b)
+    return hi >= 1.5 and lo > 0.0 and hi / lo > 1.2
+
+
 def _add_trace(name, path):
     """A landmark fort piece's trace (the outer line of its rampart) into its .json: tools/battlekit/fort_trace.py
     (also generates sim/fort_traces.gd when run on its own)."""
@@ -1366,7 +1378,7 @@ def main():
         elif k == "--tilt": a["tilt"] = float(argv[i + 1]); i += 1
         elif k == "--out": a["out"] = os.path.abspath(argv[i + 1]); i += 1
         elif k == "--oblique":
-            a["oblique"] = True    # pass 3: every piece at 40 degrees elevation, yaw 0 and 180, into _frames_ob
+            a["oblique"] = True    # pass 3: every piece at 40 degrees elevation, yaw 0 and 180 (pass 4: also 90 and 270 for the non-square ones), into _frames_ob
             if "--pieces" not in argv:
                 a["pieces"] = list(PIECES) + list(PIECES_W) + list(PIECES_L)
             if "--out" not in argv:
@@ -1376,6 +1388,10 @@ def main():
         if a["oblique"]:
             for yaw in (0, 180):
                 render_ob(n, a["ppm"], yaw, a["out"])
+            if long_piece(n, a["out"]):
+                # pass 4: a house turned near 90 degrees shows its own side, not the 0 / 180 sprite at the wrong width
+                for yaw in (90, 270):
+                    render_ob(n, a["ppm"], yaw, a["out"])
         else:
             render(n, a["ppm"], a["tilt"], a["out"])
         print("DONE", n)

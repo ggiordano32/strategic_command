@@ -109,7 +109,7 @@ def main_oblique(args):
     os.makedirs(out, exist_ok=True)
     items = []
     for name in PIECES + PIECES2:
-        for yk in (0, 4):
+        for yk in (0, 4, 2, 6):    # 2, 6: the yaw 90 / 270 renders of the non-square pieces (pass 4)
             key = "%s__y%d" % (name, yk)
             jp = os.path.join(frames, key + ".json")
             if not os.path.exists(jp):
@@ -189,7 +189,7 @@ def main_oblique(args):
                              "height_m": it["meta"]["height_m"]}
     man = {"version": 1, "view": "oblique", "elevation_deg": 40, "px_per_m": 8, "size": [W, H], "low_size": [W // 2, H // 2],
            "albedo": "atlas_albedo.png", "nrm": "atlas_nrm.png", "low": "atlas_low.png",
-           "doc": "The battle kit (tools/battlekit) at 40 degrees elevation, camera looking north from the south, upright. Keys: <piece>__y0 (the piece as the top-down kit: its outer face +y, away from the camera) and <piece>__y4 (turned 180 degrees: the flip the kit's hash uses, outer face to the camera). rect: [x, y, w, h] px in atlas_albedo / atlas_nrm (halve for atlas_low, 4 px/m, pre-lit, no AO); channels as the top-down atlases (nrm: R,G world normal x,y * 0.5 + 0.5, B world height / 20 m, A mask class 1.0 none / 0.7 roof / 0.4 plaster / 0.1 accent); anchor: px from the rect's top-left to the footprint's centre on the ground; footprint_m: [x0, y0, x1, y1] metres relative to the anchor (x east, y north), the bounds of the geometry up to 1 m high; the ground's vertical screen scale is sin(elevation) x px_per_m.",
+           "doc": "The battle kit (tools/battlekit) at 40 degrees elevation, camera looking north from the south, upright. Keys: <piece>__y0 (the piece as the top-down kit: its outer face +y, away from the camera) and <piece>__y4 (turned 180 degrees: the flip the kit's hash uses, outer face to the camera); non-square pieces (long side over short above 1.2) also <piece>__y2 (turned 90 degrees counter-clockwise seen from above: its local +x points north, its outer face west) and __y6 (270 degrees: +x south, outer face east); the key's number is the yaw in 45 degree steps. rect: [x, y, w, h] px in atlas_albedo / atlas_nrm (halve for atlas_low, 4 px/m, pre-lit, no AO); channels as the top-down atlases (nrm: R,G world normal x,y * 0.5 + 0.5, B world height / 20 m, A mask class 1.0 none / 0.7 roof / 0.4 plaster / 0.1 accent); anchor: px from the rect's top-left to the footprint's centre on the ground; footprint_m: [x0, y0, x1, y1] metres relative to the anchor (x east, y north), the bounds of the geometry up to 1 m high; the ground's vertical screen scale is sin(elevation) x px_per_m.",
            "pieces": pieces}
     with open(os.path.join(out, "manifest.json"), "w") as f:
         json.dump(man, f, indent=1)
