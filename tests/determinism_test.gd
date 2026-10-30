@@ -8854,25 +8854,43 @@ func _amb_piece() -> Dictionary:
 			"width": 0, "run": 0}]}
 
 
-## The Swedish salvo (docs/AI.md 44.6; part of "--only=plays"). A set piece
-## (_salvo_piece: side 1, AI with the salvo's bit, two musket companies, a
-## pike block a rank behind and pistoleers on the flank; side 0, a player's
-## pike block of 240 standing 55 m in front of the lines and another far
-## off): the salvo starts at once (counted once), the lines' countermarch on
-## Hold, fire held, no shot on the walk; the fire order with each line
-## within SALVO_FIRE_R (+ SV_SLACK) of the target; each line fires every man
-## in one tick, the two within FIRE_THINK of each other; the charge (the
-## foot and horse at the target, the run) the tick after the last volley;
-## at Average the lines fire at will (no butt), at Skilled they charge with
-## the butt to contact (and, against this block, are thrown back: they
-## leave the field); the reset (the target routs or SALVO_RESET_T): the
-## lines back to Auto (a line routing then, once it is ready again). With the bit off, none; the set piece identical on
-## repeat and across snapshot / restore mid-walk.
+## The Swedish salvo (docs/AI.md 44.6 and its redesign; part of
+## "--only=plays"). A set piece (_salvo_piece: side 1, AI with the salvo's
+## bit, two musket companies, a pike block a rank behind and pistoleers on
+## the flank; side 0, a player's company of 300 rodeleros standing 55 m in
+## front of the lines and a pike block far off): the salvo starts at once
+## (counted once), the lines' countermarch on Hold, fire held, no shot on the
+## walk; the fire order with each line within SALVO_FIRE_R (+ SV_SLACK) of
+## the target; each line fires every man in one tick, the two within
+## FIRE_THINK of each other; the charge the tick after the last volley: the
+## horse at the target at the run; at Average (SALVO_PIKE_CHARGE 0) the pike
+## does not charge and stays behind the lines, the lines step back at the
+## walk, fire held (at least 5 m by the time they are at their post or the
+## target routs; SALVO_BACK_R), then on Auto; at Skilled the pike charges
+## too and the lines charge with the butt (to contact, or the target routs
+## first); at
+## Average with SALVO_PIKE_CHARGE 1 (the profile row changed for the run,
+## then restored) the pike charges and after the rout walks back behind the
+## lines (SV_REFORM), the reset within SV_REFORM_T; the reset (the target
+## routs or SALVO_RESET_T): the lines back to Auto (a line routing then, once
+## it is ready again). No salvo at a lone pike block (SALVO_TARGET 1). With
+## the bit off, none; the set piece identical on repeat and across snapshot /
+## restore mid-walk.
 func _check_salvo() -> void:
 	var bad: Array[String] = []
 	var txt: Array[String] = []
-	for skill in [AIP.AVERAGE, AIP.SKILLED]:
+	for run in 3:
+		var skill: int = AIP.SKILLED if run == 1 else AIP.AVERAGE
+		var saved: Array = []
+		if run == 2:
+			AIP.row(0, 0)
+			saved = AIP._tab.duplicate()
+			for k in AIP._tab.size():
+				var p: PackedInt32Array = (AIP._tab[k] as PackedInt32Array).duplicate()
+				p[AIP.SALVO_PIKE_CHARGE] = 1
+				AIP._tab[k] = p
 		var kn := AIP.row(skill, AIP.BALANCED)
+		var pikec := kn[AIP.SALVO_PIKE_CHARGE] != 0
 		var sim := BattleSim.new()
 		sim.setup(_salvo_piece(skill, 10), 7)
 		var lines := [2, 3]
@@ -8882,10 +8900,15 @@ func _check_salvo() -> void:
 		var charge_t := -1
 		var reset_t := -1
 		var auto_t := -1
+		var post_t := -1
+		var reform_t := -1
+		var fire_gap := 0
+		var back_gap := 0
 		var butt := false
 		var contact := false
 		var walked := false
-		var tag := "salvo %s" % ("Skilled" if skill == AIP.SKILLED else "Average")
+		var routed := false
+		var tag := "salvo %s" % ["Average", "Skilled", "Average, the pike charging"][run]
 		for t in 2400:
 			var ph0 := Plays._ps(sim, 1, Plays.PS_SV_PH)
 			mam.clear()
@@ -8927,6 +8950,7 @@ func _check_salvo() -> void:
 				fire_t = sim.tick
 				for l in lines:
 					var gp: int = sim._box_gap(l, 0)
+					fire_gap = maxi(fire_gap, gp)
 					if gp > kn[AIP.SALVO_FIRE_R] + Plays.SV_SLACK or gp < kn[AIP.SALVO_FIRE_R] - 6 * M:
 						bad.append("%s: line %d given the fire order %d m off (want %d)" % [tag, l, gp / M, kn[AIP.SALVO_FIRE_R] / M])
 			for k in 2:
@@ -8938,19 +8962,47 @@ func _check_salvo() -> void:
 			if ph0 == Plays.SV_FIRE and ph == Plays.SV_CHARGE:
 				charge_t = sim.tick
 			if charge_t >= 0 and sim.tick == charge_t + 2:
-				for u in [4, 5]:
-					if sim.u_order[u] != BattleAI.O_ATTACK or sim.u_target[u] != 0 or sim.u_run[u] == 0:
-						bad.append("%s: unit %d not charging the target after the volley" % [tag, u])
+				if sim.u_order[5] != BattleAI.O_ATTACK or sim.u_target[5] != 0 or sim.u_run[5] == 0:
+					bad.append("%s: the horse not charging the target after the volley" % tag)
+				if (sim.u_order[4] == BattleAI.O_ATTACK and sim.u_target[4] == 0) != pikec:
+					bad.append("%s: the pike's charge is %s (SALVO_PIKE_CHARGE %d)" % [tag, str(not pikec), kn[AIP.SALVO_PIKE_CHARGE]])
 				for l in lines:
 					if (sim._butt(l)) != (kn[AIP.SALVO_MUSKET_CHARGE] != 0):
 						bad.append("%s: line %d's butt charge is %s" % [tag, l, str(sim._butt(l))])
-					if kn[AIP.SALVO_MUSKET_CHARGE] == 0 and sim.u_fire[l] == 0:
-						bad.append("%s: line %d holds its fire after the volley" % [tag, l])
+					if kn[AIP.SALVO_MUSKET_CHARGE] == 0 and (Plays._sv_step(sim, 1, l) != Plays.SB_BACK \
+							or sim.u_order[l] != BattleAI.O_MOVE or sim.u_fire[l] != 0):
+						bad.append("%s: line %d not stepping back with fire held (step %d, order %d, fire %d)" % [tag, l,
+							Plays._sv_step(sim, 1, l), sim.u_order[l], sim.u_fire[l]])
+			if ph == Plays.SV_CHARGE:
+				if not pikec and sim.u_order[4] == BattleAI.O_ATTACK and sim.u_target[4] == 0:
+					bad.append("%s: the pike charged the target (tick %d)" % [tag, sim.tick])
+				if sim.u_state[0] == BattleAI.U_READY:
+					for l in lines:
+						back_gap = maxi(back_gap, sim._box_gap(l, 0))
+				if not pikec and sim.tick % 10 == 0:
+					# (the pike behind the lines: on their far side from the target)
+					var mx: int = (sim.u_cx[2] + sim.u_cx[3]) / 2
+					var my: int = (sim.u_cy[2] + sim.u_cy[3]) / 2
+					if (sim.u_cx[4] - mx) * (sim.u_cx[0] - mx) + (sim.u_cy[4] - my) * (sim.u_cy[0] - my) > 0:
+						bad.append("%s: the pike in front of the lines in the charge (tick %d)" % [tag, sim.tick])
+				if post_t < 0 and kn[AIP.SALVO_MUSKET_CHARGE] == 0 and Plays._sv_step(sim, 1, 2) == Plays.SB_POST \
+						and Plays._sv_step(sim, 1, 3) == Plays.SB_POST:
+					post_t = sim.tick
+			if post_t >= 0 and sim.tick == post_t + 2:
+				for l in lines:
+					if sim.u_state[l] == BattleAI.U_READY and ((sim.u_abs[l] >> (UT.AB_ROLL * 2)) & 3) != UT.AB_AUTO:
+						bad.append("%s: line %d not on Auto at its post" % [tag, l])
+			if ph0 == Plays.SV_CHARGE and ph == Plays.SV_REFORM:
+				reform_t = sim.tick
+			if ph == Plays.SV_REFORM and sim.u_fighting[4] == 0 and sim.u_state[4] == BattleAI.U_READY \
+					and sim.u_order[4] == BattleAI.O_ATTACK:
+				bad.append("%s: the pike attacking in the reform (tick %d)" % [tag, sim.tick])
 			if charge_t >= 0 and reset_t < 0:
+				routed = routed or sim.u_state[0] != BattleAI.U_READY
 				for l in lines:
 					butt = butt or sim._butt(l)
 					contact = contact or (sim._butt(l) and (sim.u_fighting[l] > 0 or sim._box_gap(l, 0) == 0))
-			if ph0 == Plays.SV_CHARGE and ph == Plays.SV_LOOK:
+			if (ph0 == Plays.SV_CHARGE or ph0 == Plays.SV_REFORM) and ph == Plays.SV_LOOK:
 				reset_t = sim.tick
 			if reset_t >= 0 and auto_t < 0:
 				# (every line back to Auto; a line routing at the reset once it
@@ -8964,6 +9016,8 @@ func _check_salvo() -> void:
 				if all and ready > 0:
 					auto_t = sim.tick
 					break
+		if run == 2:
+			AIP._tab = saved
 		if not walked:
 			bad.append("%s: the lines never walked" % tag)
 		if fire_t < 0 or vol[0] < 0 or vol[1] < 0 or charge_t < 0:
@@ -8973,19 +9027,32 @@ func _check_salvo() -> void:
 				bad.append("%s: the volleys %d ticks apart" % [tag, absi(vol[0] - vol[1])])
 			if charge_t - maxi(vol[0], vol[1]) > 1:
 				bad.append("%s: the charge %d ticks after the last volley" % [tag, charge_t - maxi(vol[0], vol[1])])
-		if skill == AIP.SKILLED and not contact:
-			bad.append("%s: the lines never charged home with the butt" % tag)
-		if skill == AIP.AVERAGE and butt:
-			bad.append("%s: a butt charge at Average" % tag)
+		if skill == AIP.SKILLED and not contact and not routed:
+			bad.append("%s: the lines never charged home with the butt (and the target did not rout)" % tag)
+		if skill == AIP.AVERAGE:
+			if butt:
+				bad.append("%s: a butt charge at Average" % tag)
+			if post_t < 0 or back_gap < fire_gap + 5 * M:
+				bad.append("%s: the step back: at the post at %d, %d m from the target (fired at %d m)" % [tag, post_t, back_gap / M, fire_gap / M])
+		if run == 2 and (reform_t < 0 or reset_t - reform_t > Plays.SV_REFORM_T + 10):
+			bad.append("%s: the reform at %d, the reset at %d" % [tag, reform_t, reset_t])
 		var gone := true
 		for l in lines:
 			gone = gone and sim.u_state[l] != BattleAI.U_READY and sim.u_state[l] != BattleAI.U_ROUTING
 		if reset_t < 0 or (auto_t < 0 and not (skill == AIP.SKILLED and gone)) or (skill == AIP.AVERAGE and auto_t - reset_t > 2) \
-				or reset_t - charge_t > kn[AIP.SALVO_RESET_T] + 10:
+				or reset_t - charge_t > kn[AIP.SALVO_RESET_T] + Plays.SV_REFORM_T + 10:
 			bad.append("%s: reset at %d (charge %d), back to Auto at %d" % [tag, reset_t, charge_t, auto_t])
-		txt.append("%s: fire order at %d, volleys at %d / %d, charge at %d, reset at %d, %s%s" % [tag, fire_t, vol[0], vol[1],
-			charge_t, reset_t, ("Auto at %d" % auto_t) if auto_t >= 0 else "the lines thrown back off the field",
-			", butt to contact" if contact else ""])
+		txt.append("%s: fire order at %d (%d m), volleys at %d / %d, charge at %d, %sreset at %d, %s%s" % [tag, fire_t, fire_gap / M,
+			vol[0], vol[1], charge_t, ("the lines stepped back to %d m, at their post at %d, " % [back_gap / M, post_t]) if post_t >= 0 else "",
+			reset_t, ("Auto at %d" % auto_t) if auto_t >= 0 else "the lines thrown back off the field",
+			(", butt to contact" if contact else (", butt charge, the target routed first" if butt else "")) + ((", the pike reformed from %d" % reform_t) if reform_t >= 0 else "")])
+	# No salvo at a lone pike block (SALVO_TARGET 1).
+	var sp := BattleSim.new()
+	sp.setup(_salvo_piece(AIP.AVERAGE, 10, "w_pikemen", 240), 7)
+	for t in 200:
+		sp.step()
+	if sp.stat_aic[AIP.N_COUNTERS + AIP.C_PLAY_SALVO] != 0:
+		bad.append("a salvo at a pike block")
 	# The bit off: no salvo.
 	var s0 := BattleSim.new()
 	s0.setup(_salvo_piece(AIP.AVERAGE, 2), 7)
@@ -9021,21 +9088,21 @@ func _check_salvo() -> void:
 	if bad.is_empty():
 		for x in txt:
 			print("PASS plays: " + x)
-		print("PASS plays: salvo off with the bit off; repeat and snapshot exact")
+		print("PASS plays: no salvo at a lone pike block; salvo off with the bit off; repeat and snapshot exact")
 	else:
 		for b in bad:
 			_fail("plays: " + b)
 
 
 ## The salvo set piece: 400 x 400 m, flat; side 1 (AI at `skill`, ai_plays
-## `bits`): two musket companies side by side 55 m from side 0's pike block
-## of 240 (a player's, standing), a pike block behind them, pistoleers on
-## the right; side 0's second pike block far off (the battle goes on after
-## the target routs).
-func _salvo_piece(skill: int, bits: int) -> Dictionary:
+## `bits`): two musket companies side by side 55 m from side 0's target
+## (a player's, standing: 300 rodeleros, or `tgt` of `men`), a pike block
+## behind them, pistoleers on the right; side 0's pike block far off (the
+## battle goes on after the target routs).
+func _salvo_piece(skill: int, bits: int, tgt: String = "rodeleros", men: int = 300) -> Dictionary:
 	return {"width_m": 400, "height_m": 400, "ai_sides": [1], "ai_skill": [1, skill], "ai_plays": [0, bits],
 		"terrain": {"kind": Terrain.K_FLAT}, "units": [
-		Scenarios.unit(0, UT.index_of("w_pikemen"), 240, 200, 205, Scenarios.FACE_UP),
+		Scenarios.unit(0, UT.index_of(tgt), men, 200, 205, Scenarios.FACE_UP),
 		Scenarios.unit(0, UT.index_of("w_pikemen"), 120, 380, 380, Scenarios.FACE_UP),
 		Scenarios.unit(1, UT.index_of("musketeers"), 100, 170, 150, Scenarios.FACE_DOWN),
 		Scenarios.unit(1, UT.index_of("musketeers"), 100, 230, 150, Scenarios.FACE_DOWN),

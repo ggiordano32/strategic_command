@@ -342,7 +342,7 @@ const AI_LIVE_MIX := 1
 ## bit 3 the Swedish salvo (docs/AI.md 44.6: England, France and the Dutch;
 ## not Spain, whose drill is the tercio's). A faction not listed (and the
 ## independents) runs none; a pack without the table (Rome) every one.
-## The Swedish salvo (bit 3) is built but measured as a loss for its side (docs/AI.md 44.6): no campaign faction has the bit until the redesign; custom battles and scenario keys get every bit.
+## The Swedish salvo (bit 3) is built and redesigned (docs/AI.md 44.6 "Redesign", 2026-10-30: no pike targets, the step back, the pike kept as the screen) but still measured short of the bit off on salvo_field (32 of 48 English wins against 38; play_field level, 16 / 16): no campaign faction has the bit yet; custom battles and scenario keys get every bit.
 const PLAYS := {"new_spain": 3, "tierra_firme": 3, "england": 2, "france": 2, "dutch": 2,
 	"brethren": 0, "itza": 4, "miskito": 4}
 

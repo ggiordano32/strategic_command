@@ -26,6 +26,8 @@ extends SceneTree
 ## volleys and charges; the SALVO summary line the men lost a battle on each
 ## side and, for side 1, the men its salvo lines lost while walking in
 ## (fire held, SV_HOLD) and the salvos, volleys and charges a battle.
+## --knob=ID:VALUE sets a knob in every profile row (repeatable), e.g.
+## --knob=336:2 the salvo's targets shooters only.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -55,6 +57,15 @@ func _init() -> void:
 			plays1 = int(a.substr(9))
 		elif a == "--trace-amb":
 			trace = true
+		elif a.begins_with("--knob="):
+			# (--knob=ID:VALUE: every profile row's knob ID set to VALUE, for a
+			# variant's measure without an edit; repeatable)
+			var kv := a.substr(7).split(":")
+			AP.row(0, 0)
+			for i in AP._tab.size():
+				var p: PackedInt32Array = AP._tab[i]
+				p[int(kv[0])] = int(kv[1])
+				AP._tab[i] = p
 	var w := [0, 0, 0]
 	var rv := 0
 	var hd := 0

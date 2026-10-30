@@ -393,7 +393,12 @@ const SALVO_FIRE_R := 332      # ... the lines walk to this distance (box to box
 const SALVO_WAIT_T := 333      # ... a line still reloading at the range waits this long for the fuller volley, then fires what is loaded
 const SALVO_MUSKET_CHARGE := 334  # 1: the lines charge with the butt behind their volley (Skilled); 0 they reload and fire at will
 const SALVO_RESET_T := 335     # ... the charge lasts this long (or until the target routs); then the lines go back to the countermarch and a new target may be taken
-const N_KNOBS := 336
+# The salvo's redesign (docs/AI.md 44.6 "Redesign", 2026-10-30).
+const SALVO_TARGET := 336      # ... its targets: 0 any foot (as built); 1 no pike block and no braced unit; 2 shooters only (gun foot); 1 and 2 prefer a musket line or a shaken / disordered unit
+const SALVO_BACK_R := 337      # ... the tick after the volley the lines step back at the walk to this distance (box to box) of the target, then fire on Auto; 0 they stand (as built)
+const SALVO_PIKE_CHARGE := 338  # 1: the melee foot charge the volleyed unit with the horse (as built; Skilled); 0 only the horse, the foot stay behind the lines as their screen
+const SALVO_RUN_R := 339       # ... the lines close the last this many metres (box to box) at the run; 0 at the walk
+const N_KNOBS := 340
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[293, 300], [304, 311], [312, 320], [326, 330]]
@@ -693,6 +698,10 @@ const KNOBS: Array = [
 	[SALVO_WAIT_T, 50, 50, 50],
 	[SALVO_MUSKET_CHARGE, 0, 0, 1],
 	[SALVO_RESET_T, 300, 300, 300],
+	[SALVO_TARGET, 1, 1, 1],
+	[SALVO_BACK_R, 45 * M, 45 * M, 45 * M],
+	[SALVO_PIKE_CHARGE, 0, 0, 1],
+	[SALVO_RUN_R, 0, 0, 0],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],

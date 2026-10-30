@@ -3711,7 +3711,7 @@ in `tests/asym_probe.gd`; test `determinism_test.gd --only=plays`
 | `SALVO_MUSKET_CHARGE` 334 | 0 | 0 | 1 |
 | `SALVO_RESET_T` 335 | 300 (30 s) | 300 | 300 |
 
-Ids 326-329 and 336-339 are gaps (326-329 in `KNOB_GAPS`; `N_KNOBS` 336).
+Ids 326-329 are a gap (`KNOB_GAPS`); 336-339 are the redesign's knobs (below; `N_KNOBS` 340).
 Constants (`plays.gd`): `SV_SLACK` 3 m, `SV_BEHIND` 6 m, `SV_WING` 10 m,
 `SV_HOLD_T` 600 (60 s), `SV_CLOSE` 40 m, `SV_GRACE` 30 (3 s).
 
@@ -3791,6 +3791,110 @@ the pike kept as the lines' screen (variant E above); no salvo at a pike
 block (the targets were three in four pike blocks; the volley there is
 worth most, the charge least). Skilled's butt charge was not measured on
 the pairs (the set piece shows it losing to an unbroken block).
+
+### 44.6 Redesign (2026-10-30)
+
+The leads above built and measured in four steps (`sim/plays.gd` the salvo
+section only; no hook changed in `battle_ai.gd` or `battle_sim.gd`; knobs
+336-339 in `sim/ai_profile.gd`; `tests/asym_probe.gd` gains `--knob=ID:VALUE`,
+a knob set in every profile row for a variant's measure without an edit).
+
+- **The target** (`SALVO_TARGET`): 1 (every level) never a pike block or a
+  braced unit (`u_braced`); 2 shooters only (gun foot); both take a musket
+  line or a shaken (morale below `SV_SHAKEN` 500, `BattleAI.CC_SHAKEN`) or
+  disordered (`u_disorder` at `SV_DISORDER` 25, `BattleSim.DISORDERED`)
+  unit before other foot; nothing in reach, no salvo. 0 is the build above.
+- **The step back** (`SALVO_BACK_R`, 45 m; 0 the build above): the tick
+  after the volley (the charge, `SV_CHARGE`) the lines walk to posts
+  `SALVO_BACK_R` short of the target's box (`_sv_posts` mode 1), fire held,
+  the countermarch on Hold; at `SALVO_BACK_R` - `SV_SLACK` (box to box), at
+  their post, the target gone, or caught on the way (contact, a melee,
+  charged within `SV_CLOSE`) each line is `SB_POST` (`PS_SV_A` in the charge):
+  re-formed where it stands facing the target (a move that short re-forms
+  in place), the countermarch on Auto, fire at will, held there until the
+  reset. With foot that charged (`SALVO_PIKE_CHARGE` 1), the charge's end
+  (the rout or `SALVO_RESET_T`) is the reform (`SV_REFORM`): the foot not in
+  a melee walk back to `SV_BEHIND` behind the lines' rear rank, the horse to
+  the ordinary rules; the reset when every such foot unit is within
+  `SV_HOME` 8 m of its post or after `SV_REFORM_T` 20 s.
+- **The screen kept** (`SALVO_PIKE_CHARGE`: 0 Average, 1 Skilled): at 0 only
+  the horse charges the volleyed unit; the foot stay `SV_BEHIND` behind the
+  lines (behind their step-back posts in the charge) and charge an enemy
+  foot or horse unit charging a salvo line within `SV_SCREEN_R` 60 m (or
+  fighting one), back to their post once it is gone or 120 m off.
+- **The run** (`SALVO_RUN_R`, 0 every level): the lines close the last this
+  many metres at the run.
+- Skilled keeps `SALVO_MUSKET_CHARGE` 1: its lines charge with the butt and
+  do not step back (not measured on the pairs).
+
+| Knob (`ai_profile.gd`) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SALVO_TARGET` 336 | 1 | 1 | 1 |
+| `SALVO_BACK_R` 337 | 45 m | 45 m | 45 m |
+| `SALVO_PIKE_CHARGE` 338 | 0 | 0 | 1 |
+| `SALVO_RUN_R` 339 | 0 | 0 | 0 |
+
+Constants (`plays.gd`): `SV_SHAKEN` 500, `SV_DISORDER` 25, `SV_REFORM_T`
+200 (20 s), `SV_HOME` 8 m, `SV_SCREEN_R` 60 m. Phases: `SV_REFORM` 4;
+a line's step back `SB_BACK` 1, `SB_POST` 2. The memory's layout is
+unchanged (`PS_K` 26).
+
+**Measured** (as above; the English wins of 48 seeds from 5000, the English
+lost / the Spanish lost a battle; 144 seeds from 5000 where given, the
+measure that tells the variants apart, a 48-seed count moving by 3 or so
+between near-equal variants). Steps 2 to 4 were measured with the lines
+halted where the walk back left them, still facing away from the target;
+the build turns them to face it (last rows).
+
+| Variant | salvo_field | play_field | 144 seeds (sf / pf) |
+|---|---|---|---|
+| the bit off | 38 (270 / 390) | 16 (506 / 490) | 109 / 48 |
+| as built (2026-10-29) | 16 (374 / 376) | 7 (536 / 456) | |
+| 1. `SALVO_TARGET` 1 | 31 (332 / 409) | 8 (523 / 449) | |
+| 1. `SALVO_TARGET` 2 | 31, the same battles | 8, the same | |
+| 1 + 2. the step back to 55 m, the pike charging (with the reform) | 32 (317 / 398) | 15 (526 / 487) | 85 / 47 |
+| 1 + 2 + 3. the pike held as the screen | 28 (312 / 385) | 15 (526 / 488) | 93 / 45 |
+| + 4. the run for the last 20 m (pike held) | 32 (301 / 382) | 15 (527 / 505) | 98 / 41 |
+| + 4. the run (pike charging) | 29 (322 / 395) | 15 (525 / 501) | |
+| `SALVO_BACK_R` 35 / 40 / 45 / 70 m (pike held) | 45 m: 32 (302 / 384) | 45 m: 16 (508 / 504) | 89 / 32, 94 / 46, 98 / 48, 84 / 34 |
+| 45 m, the pike charging / with the run | | | 80 / 48, 90 / 48 |
+| **kept**: 45 m, the pike held, the lines facing the target at their post | **28 (302 / 362)** | **19 (507 / 510)** | **88 / 44** |
+
+Tried and not kept (144 seeds unless given): the step back by 6 m hops
+re-formed in place every 4 s, facing the enemy (no turn about): 87 / 18
+(held at the post), 86 / 34 (released to the ordinary rules at it); the
+kept build holding its fire at the post: 88 / 20; the lines released to the
+ordinary rules at their post (walk back): pf 36; a "quiet" rule (no salvo
+starts, and one walking in is called off, while an enemy foot or horse unit
+within 80 m of the lines is in a melee or charging one of the side's units;
+96 seeds, off 72 / 35): 72 / 30, the play nearly never firing (0.35 salvos,
+0.05 volleys a battle); the fire order at 43 m (outside the enemy's last
+volley), step back 55 or 70 m: 30 / 31 of 48 on salvo_field; `SALVO_RANGE_R`
+40 m: 38 of 48 with 0.27 salvos a battle (the play mostly idle).
+
+**Reading.** Step 1 is most of the gain (no salvo into a pike block: the
+volley where the charge loses), the step back the rest on play_field (8 ->
+15-19), where the Spanish now lose more men than with the bit off (510
+against 490). salvo_field stays short (28-32 of 48 against 38; 88-98 of 144
+against 109): a salvo there mostly starts beside a melee (the Spanish pike
+coming on), and the two lines that hold their fire for the walk in stop the
+rolling fire that held it off; calling the salvo off near a melee leaves no
+salvo at all. The halted-facing-away step back measured best (98 / 48 of
+144) but leaves the lines with their backs to the enemy for up to 30 s; the
+kept build faces them about (88 / 44).
+
+**Kept, the bit off.** The build keeps the redesign at the knobs above; the
+target is met on play_field (19 of 48, at or above 16, the Spanish losses
+up) and missed on salvo_field (28 against 38), so England, France and the
+Dutch stay at `PLAYS` 2 (`west.gd`); custom battles and scenario keys get
+the play. `asym_field` and the campaign are unchanged (the four
+`campaign_sim` hash lines equal the pins). Test: `determinism_test.gd
+--only=plays` (`_check_salvo`): the set piece's target is now 300 rodeleros
+(no salvo at a lone pike block, checked); Average: the pike never charges
+and stays behind the lines, the lines step back at least 5 m with fire held
+and are on Auto at their post; Skilled: the pike and the lines (the butt)
+charge; Average with `SALVO_PIKE_CHARGE` 1 (the row changed for the run):
+the reform, the pike walking back, the reset within `SV_REFORM_T`.
 
 ## 45. Native siege: poles and torch raiders (2026-10-29)
 

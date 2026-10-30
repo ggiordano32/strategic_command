@@ -69,6 +69,11 @@ const SV_WING := 10 * M         # ... the horse stand this far out beyond the ou
 const SV_HOLD_T := 600          # ... a walk that has not reached the range in this long (60 s) is given up (reset)
 const SV_CLOSE := 40 * M        # ... an enemy charging a salvo line within this (the countermarch's CM_CLOSE): it fires now
 const SV_GRACE := 30            # ... a line that has not fired SALVO_WAIT_T + this after the order is left out of it (3 s)
+const SV_SHAKEN := 500          # ... a target below this morale (BattleAI.CC_SHAKEN) is shaken: ranked first (SALVO_TARGET 1, 2)
+const SV_REFORM_T := 200        # ... the foot's walk back to their post after the charge is given this long (20 s)
+const SV_HOME := 8 * M          # ... a foot unit this near its post is back
+const SV_SCREEN_R := 60 * M     # ... holding foot (SALVO_PIKE_CHARGE 0) charge an enemy foot or horse unit charging a salvo line within this
+const SV_DISORDER := 25         # ... or this disordered (BattleSim.DISORDERED: its formation broken)
 
 # Mirrored from BattleSim / BattleAI (preloading either here would be circular).
 const U_READY := 0
@@ -119,7 +124,7 @@ const PS_SV_TGT := 18           # ... the target + 1
 const PS_SV_L := 19             # ... the two musket lines + 1 (19, 20; 0 none or lost)
 const PS_SV_F := 21             # ... the melee foot + 1 (21, 22)
 const PS_SV_H := 23             # ... the horse + 1
-const PS_SV_A := 24             # ... each line's shots left at the fire order (24, 25); -1 fired (or left out)
+const PS_SV_A := 24             # ... each line's shots left at the fire order (24, 25); -1 fired (or left out); in SV_CHARGE / SV_REFORM its step back, SB_*
 const PS_K := 26
 
 # The ambush's parts (PU_ROLE) and states (PU_STATE), its phases (PS_AMB_PH).
@@ -138,7 +143,11 @@ const AP_SPRUNG := 3            # sprung; a melted unit springs again on its own
 const SV_LOOK := 0              # running, no target: the next one the trigger finds
 const SV_HOLD := 1              # the lines walk to SALVO_FIRE_R, fire held, the countermarch on Hold
 const SV_FIRE := 2              # the fire order given: each line fires every loaded man at once
-const SV_CHARGE := 3            # the foot and horse (and on Skilled the lines, with the butt) charge
+const SV_CHARGE := 3            # the foot and horse (and on Skilled the lines, with the butt) charge; the lines step back (SALVO_BACK_R)
+const SV_REFORM := 4            # the charge over: the foot that charged walk back to their post behind the lines (SV_REFORM_T at most)
+# A salvo line's step back (PS_SV_A in SV_CHARGE and SV_REFORM).
+const SB_BACK := 1              # walking back to SALVO_BACK_R, fire held
+const SB_POST := 2              # at its post (or caught on the way): the countermarch on Auto, fire at will
 
 
 # --------------------------------------------------------------- memory ---
@@ -1212,15 +1221,27 @@ static func salvo_target(sim, side: int, kn: PackedInt32Array) -> int:
 		return -1
 	var best := -1
 	var bd := 0
+	var br := 0
+	var tk := kn[AP.SALVO_TARGET]
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or _skip(sim, o) or sim.u_fighting[o] > 0:
 			continue
 		var c: int = sim.u_cls[o]
 		if not (c == UT.CLS_INF or c == UT.CLS_PIKE or _gun_foot(sim, o)) or sim.hidden_from(o, side):
 			continue
+		# SALVO_TARGET 1: no pike block, no braced unit; 2: shooters only;
+		# both rank a musket line or a shaken / disordered unit first.
+		var rk := 0
+		if tk != 0:
+			if sim.u_braced[o] != 0 or c == UT.CLS_PIKE or (tk == 2 and not _gun_foot(sim, o)):
+				continue
+			if not (_gun_foot(sim, o) or sim.u_morale[o] < SV_SHAKEN or sim.u_disorder[o] >= SV_DISORDER):
+				rk = 1
+		if best >= 0 and rk > br:
+			continue
 		for l in lines:
 			var d: int = sim._box_gap(l, o)
-			if d > kn[AP.SALVO_RANGE_R] or (best >= 0 and d >= bd):
+			if d > kn[AP.SALVO_RANGE_R] or (best >= 0 and rk == br and d >= bd):
 				continue
 			if sim.u_order[o] == O_ATTACK and sim.u_target[o] == l:
 				continue  # (charging it: the countermarch's last volley meets it)
@@ -1229,6 +1250,7 @@ static func salvo_target(sim, side: int, kn: PackedInt32Array) -> int:
 				continue  # (not in front of it)
 			best = o
 			bd = d
+			br = rk
 	return best
 
 
@@ -1266,16 +1288,25 @@ static func _sv_army(sim, side: int, kn: PackedInt32Array) -> void:
 	for k in 2:
 		if _ps(sim, side, PS_SV_L + k) != 0:
 			any = true
+	if ph == SV_REFORM:
+		_sv_reform(sim, side)
+		return
 	if t < 0 or sim.u_state[t] != U_READY or (not any and ph != SV_CHARGE):
-		_sv_reset(sim, side, false)
+		if ph == SV_CHARGE:
+			_sv_end_charge(sim, side, kn)
+		else:
+			_sv_reset(sim, side, false)
 		return
 	if ph == SV_HOLD:
 		if sim.tick - _ps(sim, side, PS_SV_T) >= SV_HOLD_T:
 			_sv_reset(sim, side, false)  # (it never got there: the target went back)
 			return
-		_sv_posts(sim, side, kn, t)
-	elif ph == SV_CHARGE and sim.tick - _ps(sim, side, PS_SV_T) >= kn[AP.SALVO_RESET_T]:
-		_sv_reset(sim, side, false)
+		_sv_posts(sim, side, kn, t, 0)
+	elif ph == SV_CHARGE:
+		if sim.tick - _ps(sim, side, PS_SV_T) >= kn[AP.SALVO_RESET_T]:
+			_sv_end_charge(sim, side, kn)
+		else:
+			_sv_posts(sim, side, kn, t, 1)
 
 
 ## The countermarch back to Auto on every ready musket line of the side
@@ -1321,7 +1352,7 @@ static func _sv_begin(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 			_order(sim, l, {"type": ORDER_ABILITY, "ability": UT.AB_ROLL, "state": UT.AB_HOLD, "target": -1}, 29)
 			if sim.u_fire[l] != 0:
 				_order(sim, l, {"type": ORDER_FIRE, "on": 0}, 21)
-	_sv_posts(sim, side, kn, t)
+	_sv_posts(sim, side, kn, t, 0)
 
 
 ## The free unit of kind k (0 a musket line, 1 melee foot, 2 horse) nearest
@@ -1355,12 +1386,15 @@ static func _sv_prune(sim, side: int) -> void:
 				_psset(sim, side, PS_SV_A + k - PS_SV_L, -1)
 
 
-## The salvo's posts (each army think while the lines walk): the lines side
-## by side, LINE_GAP apart, their front SALVO_FIRE_R short of the target's
-## box along the line from their middle to it, facing it; the melee foot
-## SV_BEHIND behind a line's rear rank (one foot unit: behind the middle);
-## the horse SV_WING out beyond the line's end on its own side, level.
-static func _sv_posts(sim, side: int, kn: PackedInt32Array, t: int) -> void:
+## The salvo's posts (each army think while the lines walk, `mode` 0): the
+## lines side by side, LINE_GAP apart, their front SALVO_FIRE_R short of the
+## target's box along the line from their middle to it, facing it; the melee
+## foot SV_BEHIND behind a line's rear rank (one foot unit: behind the
+## middle); the horse SV_WING out beyond the line's end on its own side,
+## level. `mode` 1 (the charge, SV_CHARGE): the lines still stepping back
+## (SB_BACK) to posts SALVO_BACK_R short of it, the foot that hold
+## (SALVO_PIKE_CHARGE 0, not counter-charging) behind them; the horse none.
+static func _sv_posts(sim, side: int, kn: PackedInt32Array, t: int, mode: int) -> void:
 	var gap := kn[AP.LINE_GAP]
 	var ls: Array = []
 	for k in 2:
@@ -1387,7 +1421,7 @@ static func _sv_posts(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 	var rx := -fy
 	var ry := fx
 	var ext: int = (absi(fx) * (sim.u_maxx[t] - sim.u_minx[t]) / 2 + absi(fy) * (sim.u_maxy[t] - sim.u_miny[t]) / 2) / FM.TRIG_ONE
-	var back := ext + kn[AP.SALVO_FIRE_R]
+	var back := ext + (kn[AP.SALVO_FIRE_R] if mode == 0 else kn[AP.SALVO_BACK_R])
 	var px: int = sim.u_cx[t] - fx * back / FM.TRIG_ONE
 	var py: int = sim.u_cy[t] - fy * back / FM.TRIG_ONE
 	if ls.size() == 2:
@@ -1411,11 +1445,15 @@ static func _sv_posts(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 		var l: int = ls[k]
 		var lat: int = lats[k]
 		deep = maxi(deep, _depth(sim, l))
-		_sv_go(sim, l, px + rx * lat / FM.TRIG_ONE, py + ry * lat / FM.TRIG_ONE, face, 0)
+		if mode == 1 and _sv_step(sim, side, l) == SB_BACK:
+			_sv_go(sim, l, px + rx * lat / FM.TRIG_ONE, py + ry * lat / FM.TRIG_ONE, face, 0, 0)
+		if mode == 0:
+			var run := 1 if mode == 0 and kn[AP.SALVO_RUN_R] > 0 and sim._box_gap(l, t) <= kn[AP.SALVO_FIRE_R] + kn[AP.SALVO_RUN_R] else 0
+			_sv_go(sim, l, px + rx * lat / FM.TRIG_ONE, py + ry * lat / FM.TRIG_ONE, face, 0, run)
 	var foot: Array = []
 	for k in 2:
 		var f := _ps(sim, side, PS_SV_F + k) - 1
-		if f >= 0:
+		if f >= 0 and (mode == 0 or kn[AP.SALVO_PIKE_CHARGE] == 0) and not (kn[AP.SALVO_PIKE_CHARGE] == 0 and _sv_screening(sim, f, t)):
 			foot.append(f)
 	if foot.size() == 2:
 		var fa: int = ((sim.u_ax[foot[0]] - mx) * rx + (sim.u_ay[foot[0]] - my) * ry) / FM.TRIG_ONE
@@ -1425,18 +1463,23 @@ static func _sv_posts(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 	var fb2 := deep + SV_BEHIND
 	for k in foot.size():
 		var lat: int = lats[k] if foot.size() == ls.size() else 0
-		_sv_go(sim, foot[k], px + (rx * lat - fx * fb2) / FM.TRIG_ONE, py + (ry * lat - fy * fb2) / FM.TRIG_ONE, face, 2)
+		_sv_go(sim, foot[k], px + (rx * lat - fx * fb2) / FM.TRIG_ONE, py + (ry * lat - fy * fb2) / FM.TRIG_ONE, face, 2, 0)
 	var h := _ps(sim, side, PS_SV_H) - 1
-	if h >= 0:
+	if h >= 0 and mode == 0:
 		var hl: int = ((sim.u_ax[h] - mx) * rx + (sim.u_ay[h] - my) * ry) / FM.TRIG_ONE
 		var sg := -1 if hl < 0 else 1
 		var lat: int = sg * (span + SV_WING + _width(sim, h) / 2)
-		_sv_go(sim, h, px + rx * lat / FM.TRIG_ONE, py + ry * lat / FM.TRIG_ONE, face, 4)
+		_sv_go(sim, h, px + rx * lat / FM.TRIG_ONE, py + ry * lat / FM.TRIG_ONE, face, 4, 0)
 
 
-## A salvo unit to its post at the walk (clamped into the field).
-static func _sv_go(sim, u: int, x: int, y: int, face: int, k: int) -> void:
-	_move(sim, u, clampi(x, 4 * M, sim.field_w - 4 * M), clampi(y, 4 * M, sim.field_h - 4 * M), face, _width(sim, u), 0, k)
+## A salvo unit to its post at the walk (`run` 1: the run; clamped into the field).
+static func _sv_go(sim, u: int, x: int, y: int, face: int, k: int, run: int) -> void:
+	x = clampi(x, 4 * M, sim.field_w - 4 * M)
+	y = clampi(y, 4 * M, sim.field_h - 4 * M)
+	if run != 0 and sim.u_run[u] == 0:
+		_order(sim, u, {"type": ORDER_MOVE, "x": x, "y": y, "facing": face, "width": _width(sim, u), "run": 1, "ground": 1}, 1 + k % 8)
+		return  # (the walk to the run: _move would keep the walk to the same post)
+	_move(sim, u, x, y, face, _width(sim, u), run, k)
 
 
 ## Every tick (BattleAI.think) for an AI side whose salvo runs with a
@@ -1449,6 +1492,9 @@ static func salvo_tick(sim, side: int) -> void:
 	if _ps(sim, side, PS_SV) != 1:
 		return
 	var ph := _ps(sim, side, PS_SV_PH)
+	if ph == SV_CHARGE:
+		_sv_step_tick(sim, side)
+		return
 	if ph != SV_HOLD and ph != SV_FIRE:
 		return
 	var t := _ps(sim, side, PS_SV_TGT) - 1
@@ -1529,6 +1575,7 @@ static func _sv_charge(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 	_psset(sim, side, PS_SV_PH, SV_CHARGE)
 	_psset(sim, side, PS_SV_T, sim.tick)
 	sim.stat_aic[side * AP.N_COUNTERS + AP.C_SALVO_CHARGE] += 1
+	var back := kn[AP.SALVO_BACK_R] > 0 and kn[AP.SALVO_MUSKET_CHARGE] == 0
 	for k in range(PS_SV_L, PS_SV_H + 1):
 		var u := _ps(sim, side, k) - 1
 		if u < 0 or sim.u_state[u] != U_READY:
@@ -1538,13 +1585,182 @@ static func _sv_charge(sim, side: int, kn: PackedInt32Array, t: int) -> void:
 				_order(sim, u, {"type": ORDER_ABILITY, "ability": UT.AB_ROLL, "state": UT.AB_HOLD, "target": -1}, 29)
 			if kn[AP.SALVO_MUSKET_CHARGE] != 0:
 				_butt_attack(sim, u, t)
+			elif back:
+				_psset(sim, side, PS_SV_A + k - PS_SV_L, SB_BACK)  # (the step back: _sv_posts mode 1)
+				continue
 			else:
 				_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		elif k < PS_SV_H and kn[AP.SALVO_PIKE_CHARGE] == 0:
+			continue  # (the foot hold behind the lines: their screen)
 		else:
 			_sv_attack(sim, u, t)
 		if sim.u_cls[u] != UT.CLS_CAV and sim.u_ai[u] == A_LINE:
 			sim.u_ai[u] = A_ATTACK
 			sim.u_ai_t[u] = sim.tick
+	if back or kn[AP.SALVO_PIKE_CHARGE] == 0:
+		_sv_posts(sim, side, kn, t, 1)
+
+
+## Every tick in SV_CHARGE: a line stepping back (SB_BACK; its post from
+## _sv_posts mode 1, at the walk) at SALVO_BACK_R - SV_SLACK from the target
+## (box to box) or at its post, the target gone, or caught on the way (in
+## contact, fighting, charged within SV_CLOSE): SB_POST, halted there, the
+## countermarch on Auto and fire at will.
+static func _sv_step_tick(sim, side: int) -> void:
+	var t := _ps(sim, side, PS_SV_TGT) - 1
+	var kn := AP.of(sim, side)
+	var dt: int = sim.tick - _ps(sim, side, PS_SV_T)
+	for k in 2:
+		var l := _ps(sim, side, PS_SV_L + k) - 1
+		if l < 0 or sim.u_state[l] != U_READY or _ps(sim, side, PS_SV_A + k) != SB_BACK:
+			continue
+		var there: bool = t < 0 or sim.u_state[t] != U_READY or sim._box_gap(l, t) >= kn[AP.SALVO_BACK_R] - SV_SLACK \
+			or (sim.u_order[l] == O_NONE and dt >= 10)
+		if there or sim.u_fighting[l] > 0 or sim.u_contact[l] != 0 or _sv_charged(sim, l):
+			_psset(sim, side, PS_SV_A + k, SB_POST)
+			_order(sim, l, {"type": ORDER_ABILITY, "ability": UT.AB_ROLL, "state": UT.AB_AUTO, "target": -1}, 29)
+			_order(sim, l, {"type": ORDER_FIRE, "on": 1}, 21)
+			if sim.u_fighting[l] == 0 and sim.u_contact[l] == 0:
+				# (halted where it stands, facing the target again: a move
+				# that short re-forms the line in place, BattleSim
+				# REFORM_IN_PLACE_DIST; the walk back turned it about)
+				var tx: int = sim.u_cx[t] if t >= 0 else sim.u_ax[l] + FM.cos_a(sim.u_dface[l])
+				var ty: int = sim.u_cy[t] if t >= 0 else sim.u_ay[l] + FM.sin_a(sim.u_dface[l])
+				_order(sim, l, {"type": ORDER_MOVE, "x": sim.u_ax[l], "y": sim.u_ay[l], "facing": FM.atan2_a(ty - sim.u_ay[l], tx - sim.u_ax[l]),
+					"width": _width(sim, l), "run": 0, "ground": 1}, 1)
+
+
+## Line l's step back (PS_SV_A in SV_CHARGE / SV_REFORM): SB_BACK, SB_POST; 0 none.
+static func _sv_step(sim, side: int, l: int) -> int:
+	for k in 2:
+		if _ps(sim, side, PS_SV_L + k) == l + 1:
+			return _ps(sim, side, PS_SV_A + k)
+	return 0
+
+
+## Holding foot f charging an enemy unit other than the target t that is
+## still near (2 x SV_SCREEN_R, box to box) or fighting it: the screen.
+static func _sv_screening(sim, f: int, t: int) -> bool:
+	if sim.u_order[f] != O_ATTACK:
+		return false
+	var e: int = sim.u_target[f]
+	return e >= 0 and e != t and sim.u_state[e] == U_READY and (sim.u_fighting[f] > 0 or sim._box_gap(f, e) <= 2 * SV_SCREEN_R)
+
+
+## The enemy foot or horse unit charging one of the side's salvo lines (an
+## attack order on it, within SV_SCREEN_R box to box) or fighting it,
+## nearest foot f; -1 none.
+static func _sv_threat(sim, side: int, f: int) -> int:
+	var best := -1
+	var bd := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or _skip(sim, o):
+			continue
+		var c: int = sim.u_cls[o]
+		if c != UT.CLS_INF and c != UT.CLS_PIKE and c != UT.CLS_CAV:
+			continue
+		var hit := false
+		for k in 2:
+			var l := _ps(sim, side, PS_SV_L + k) - 1
+			if l < 0 or sim.u_state[l] != U_READY:
+				continue
+			if (sim.u_order[o] == O_ATTACK and sim.u_target[o] == l and sim._box_gap(o, l) <= SV_SCREEN_R) \
+					or (sim.u_fighting[l] > 0 and sim._box_gap(o, l) == 0):
+				hit = true
+		if not hit:
+			continue
+		var d: int = sim._box_gap(f, o)
+		if best < 0 or d < bd:
+			best = o
+			bd = d
+	return best
+
+
+## The charge is over (SALVO_RESET_T, or the target routing or gone): with
+## the step back (SALVO_BACK_R) and foot that charged (SALVO_PIKE_CHARGE),
+## the reform (SV_REFORM: the foot walk back behind the lines, the horse to
+## the ordinary rules); else the reset.
+static func _sv_end_charge(sim, side: int, kn: PackedInt32Array) -> void:
+	var foot := false
+	for k in 2:
+		var f := _ps(sim, side, PS_SV_F + k) - 1
+		if f >= 0 and sim.u_state[f] == U_READY:
+			foot = true
+	var lines := false
+	for k in 2:
+		var l := _ps(sim, side, PS_SV_L + k) - 1
+		if l >= 0 and sim.u_state[l] == U_READY:
+			lines = true
+	if not (foot and lines and kn[AP.SALVO_BACK_R] > 0 and kn[AP.SALVO_PIKE_CHARGE] != 0 and kn[AP.SALVO_MUSKET_CHARGE] == 0):
+		_sv_reset(sim, side, false)
+		return
+	_psset(sim, side, PS_SV_PH, SV_REFORM)
+	_psset(sim, side, PS_SV_T, sim.tick)
+	_psset(sim, side, PS_SV_H, 0)
+	for k in 2:
+		var l := _ps(sim, side, PS_SV_L + k) - 1
+		if l >= 0 and sim.u_state[l] == U_READY and _ps(sim, side, PS_SV_A + k) != SB_POST:
+			_psset(sim, side, PS_SV_A + k, SB_POST)
+			_order(sim, l, {"type": ORDER_ABILITY, "ability": UT.AB_ROLL, "state": UT.AB_AUTO, "target": -1}, 29)
+			_order(sim, l, {"type": ORDER_FIRE, "on": 1}, 21)
+	_sv_reform(sim, side)
+
+
+## Each army think in SV_REFORM: the foot not in a melee walk to their post
+## SV_BEHIND behind the lines' rear rank (behind a line each, or one behind
+## the middle), facing as the lines face; when every such foot unit is
+## within SV_HOME of it, or after SV_REFORM_T, or with no line left: the
+## reset (the screen is back in place for the ordinary rules).
+static func _sv_reform(sim, side: int) -> void:
+	var ls: Array = []
+	for k in 2:
+		var l := _ps(sim, side, PS_SV_L + k) - 1
+		if l >= 0 and sim.u_state[l] == U_READY:
+			ls.append(l)
+	if ls.is_empty() or sim.tick - _ps(sim, side, PS_SV_T) >= SV_REFORM_T:
+		_sv_reset(sim, side, false)
+		return
+	var face: int = sim.u_face[ls[0]]
+	var fx := FM.cos_a(face)
+	var fy := FM.sin_a(face)
+	var rx := -fy
+	var ry := fx
+	if ls.size() == 2:
+		var a0: int = (sim.u_ax[ls[0]] * rx + sim.u_ay[ls[0]] * ry) / FM.TRIG_ONE
+		var a1: int = (sim.u_ax[ls[1]] * rx + sim.u_ay[ls[1]] * ry) / FM.TRIG_ONE
+		if a1 < a0:
+			ls = [ls[1], ls[0]]
+	var foot: Array = []
+	for k in 2:
+		var f := _ps(sim, side, PS_SV_F + k) - 1
+		if f >= 0 and sim.u_state[f] == U_READY and sim.u_fighting[f] == 0:
+			foot.append(f)
+	if foot.size() == 2:
+		var b0: int = (sim.u_ax[foot[0]] * rx + sim.u_ay[foot[0]] * ry) / FM.TRIG_ONE
+		var b1: int = (sim.u_ax[foot[1]] * rx + sim.u_ay[foot[1]] * ry) / FM.TRIG_ONE
+		if b1 < b0:
+			foot = [foot[1], foot[0]]
+	var mx := 0
+	var my := 0
+	var deep := 0
+	for l in ls:
+		mx += sim.u_ax[l]
+		my += sim.u_ay[l]
+		deep = maxi(deep, _depth(sim, l))
+	mx /= ls.size()
+	my /= ls.size()
+	var home := true
+	for k in foot.size():
+		var f: int = foot[k]
+		var ax: int = sim.u_ax[ls[k]] if foot.size() == ls.size() else mx
+		var ay: int = sim.u_ay[ls[k]] if foot.size() == ls.size() else my
+		var x := clampi(ax - fx * (deep + SV_BEHIND) / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+		var y := clampi(ay - fy * (deep + SV_BEHIND) / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+		if _d(sim.u_ax[f] - x, sim.u_ay[f] - y) > SV_HOME:
+			home = false
+			_move(sim, f, x, y, face, _width(sim, f), 0, 2 + k * 2)
+	if home:
+		_sv_reset(sim, side, false)
 
 
 ## The end of a salvo (`drop` false: the next target may be taken) or of the
@@ -1582,9 +1798,24 @@ static func salvo_slots(sim, side: int, slots: Dictionary) -> void:
 static func _sv_unit(sim, u: int, part: int) -> bool:
 	var side: int = sim.u_side[u]
 	var ph := _ps(sim, side, PS_SV_PH)
+	var kn := AP.of(sim, side)
+	if ph == SV_REFORM:
+		if part == 3 or sim.u_fighting[u] > 0:
+			return false
+		if part == 1 and sim.u_fire[u] == 0:
+			_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		return true
 	var t := _ps(sim, side, PS_SV_TGT) - 1
 	if t < 0 or sim.u_state[t] != U_READY:
 		return false
+	var hold := part == 2 and kn[AP.SALVO_PIKE_CHARGE] == 0  # (the foot as the lines' screen)
+	if hold:
+		if sim.u_fighting[u] > 0:
+			return false
+		var e := _sv_threat(sim, side, u)
+		if e >= 0 and not (sim.u_order[u] == O_ATTACK and sim.u_target[u] == e):
+			_sv_attack(sim, u, e)
+		return true
 	if ph == SV_HOLD:
 		if part == 1:
 			if sim.u_fire[u] != 0:
@@ -1594,10 +1825,16 @@ static func _sv_unit(sim, u: int, part: int) -> bool:
 	if ph == SV_FIRE:
 		return part == 1 or sim.u_fighting[u] == 0
 	# SV_CHARGE
-	var kn := AP.of(sim, side)
 	if part == 1:
 		if kn[AP.SALVO_MUSKET_CHARGE] == 0:
-			return false  # (reloading, fire at will: the ordinary rules)
+			if kn[AP.SALVO_BACK_R] <= 0 or sim.u_fighting[u] > 0:
+				return false  # (reloading, fire at will: the ordinary rules)
+			var sb := _sv_step(sim, side, u)
+			if sb == SB_BACK and sim.u_fire[u] != 0:
+				_order(sim, u, {"type": ORDER_FIRE, "on": 0}, 21)
+			elif sb == SB_POST and sim.u_fire[u] == 0:
+				_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+			return true  # (stepping back, then at its post on Auto until the reset)
 		if sim.u_fighting[u] == 0 and not (sim.u_order[u] == O_ATTACK and sim.u_target[u] == t and sim._butt(u)):
 			_butt_attack(sim, u, t)
 		return true
