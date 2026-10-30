@@ -30,6 +30,7 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const BoardView := preload("res://game/board_view.gd")
+const TrayLayer := preload("res://game/tray_layer.gd")
 
 var battle: Battle
 var frame := 0
@@ -2557,8 +2558,9 @@ func _step_gd_tap_door_marker() -> void:
 	var touch_r: int = battle._marker_hit_r()
 	var rx := maxi((sim.g_hw[_gd_gate] + 1) * 1024, touch_r)
 	var mr := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-	# The unit's centre under its marker (the marker floats marker_dy above it on the board: the oblique view too).
-	var mkb := BoardView.to_board(_gd_point(_gd_gate, rx + 512, 0)) + Vector2(0, Overlay.marker_dy(mr))
+	# The unit's centre under its marker (the marker floats marker_dy above it on the board, and a wall walk's height more:
+	# the oblique view).
+	var mkb := BoardView.to_board(_gd_point(_gd_gate, rx + 512, 0)) + Vector2(0, Overlay.marker_dy(mr) + TrayLayer.wall_lift(sim, _gd_wall))
 	var cw := BoardView.to_world(mkb, 6) / Battle.PX_PER_M * 1024.0
 	var cx := int(round(cw.x))
 	var cy := int(round(cw.y))

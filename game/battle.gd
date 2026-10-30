@@ -3571,7 +3571,7 @@ func _screen_to_board(p: Vector2) -> Vector2:
 
 ## Board point (px) of unit u's marker centre (marker radius mr, world px).
 func marker_board(u: int, mr: float) -> Vector2:
-	return BoardView.to_board(Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M) - Vector2(0, Overlay.marker_dy(mr))
+	return BoardView.to_board(Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M) - Vector2(0, Overlay.marker_dy(mr) + TrayLayer.wall_lift(sim, u))
 
 
 ## Screen (viewport) point of unit u's marker centre (tests).

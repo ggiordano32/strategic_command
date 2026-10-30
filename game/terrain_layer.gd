@@ -27,6 +27,7 @@ const CityDraw := preload("res://game/city_draw.gd")
 const LandLayer := preload("res://game/land_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
+const TuftLayer := preload("res://game/tuft_layer.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
@@ -100,6 +101,7 @@ var shade_mul := 1.0
 var relief_k := RELIEF_EXAGGERATE
 var valley_max := VALLEY_MAX   # valley (concave ground) darkening cap: the dark ring round hills came from this
 var _decals: Node2D
+var _tufts: Node2D
 var _land: LandLayer
 var _measuring := false
 var _measure_from := 0
@@ -114,7 +116,15 @@ func apply_quality() -> void:
 	quality_low = Quality.is_low()
 	material_ref.set_shader_parameter("low", quality_low)
 	# The terrain board (tabletop pass 2): flock on High and Low, tufts and the resin gloss on High only.
-	material_ref.set_shader_parameter("tufts_on", board_on and not quality_low)
+	# (The oblique view: the shader's tufts lie flat on the board, so they are off there and game/tuft_layer.gd stands them up.)
+	material_ref.set_shader_parameter("tufts_on", board_on and not quality_low and not BoardView.oblique)
+	var up_tufts := BoardView.oblique and board_on and not quality_low
+	if up_tufts and _tufts == null:
+		_tufts = TuftLayer.new()
+		_tufts.setup(sim, px_per_m)
+		add_child(_tufts)
+	if _tufts != null:
+		_tufts.visible = up_tufts
 	material_ref.set_shader_parameter("resin_on", board_on and not quality_low)
 	if _decals != null and _decals.low != quality_low:
 		_decals.low = quality_low

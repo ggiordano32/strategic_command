@@ -169,6 +169,7 @@ const SMOKE_WIND := Vector2(0.8, -0.35)   # m/s
 const SMOKE_CELL_M := [2.5, 6.0]          # high, low
 const SMOKE_CAP := [280, 70]
 const GunSmoke := preload("res://game/gun_smoke.gd")
+const TrayLayer := preload("res://game/tray_layer.gd")
 var _gs := GunSmoke.new()                # the banks, flashes and haze (game/gun_smoke.gd)
 var _sm_cell := {}                        # cell -> view clock of its last puff
 var _sm_low := false
@@ -379,7 +380,7 @@ func _smoke_at(s: Vector2, d: Vector2, big: bool) -> void:
 
 
 func _draw_smoke() -> void:
-	_gs.draw(self, SMOKE_WIND * px_per_m, _view_rect().grow(px_per_m * 20.0), px_per_m * 12.0, preload("res://game/battle_look.gd").is_diorama())
+	_gs.draw(self, SMOKE_WIND * px_per_m, _view_rect().grow(px_per_m * 20.0), px_per_m * 12.0, preload("res://game/battle_look.gd").is_diorama(), BoardView.oblique)
 
 
 func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
@@ -431,6 +432,7 @@ func _draw_fx(lw: float) -> void:
 			continue
 		var a := _fx_age[i]
 		var sd := int(absf(p.x) * 7.0 + absf(p.y) * 13.0)
+		_up(p)   # (the oblique view: the effect stands up at its ground point, as a billboard; the ground rings lie flat)
 		match _fx_kind[i]:
 			FX_FIRE:
 				if a < 0.38:
@@ -453,8 +455,10 @@ func _draw_fx(lw: float) -> void:
 					draw_circle(p, rr * 0.9, Color(1.0, 0.95, 0.7, 0.9 * (1.0 - a / 0.15)))
 				if a < 0.5:
 					var f := a / 0.5
-					draw_circle(p, rr * (0.3 + 0.8 * f), Color(0.45, 0.38, 0.3, 0.5 * (1.0 - f)))
+					draw_circle(p + Vector2(0, -rr * 0.3 * f if BoardView.oblique else 0.0), rr * (0.3 + 0.8 * f), Color(0.45, 0.38, 0.3, 0.5 * (1.0 - f)))
+					_flat()
 					draw_arc(p, rr * (0.35 + 0.9 * f), 0.0, TAU, 28, Color(0.8, 0.7, 0.55, 0.85 * (1.0 - f)), lw * 2.0)
+					_up(p)
 				var s := a / 3.0
 				for k in 4:
 					var ang := float(sd % 5) + k * 1.57
@@ -470,7 +474,7 @@ func _draw_fx(lw: float) -> void:
 					draw_circle(c2, rr2 * (0.7 + 0.5 * f), Color(0.72, 0.66, 0.56, 0.38 * (1.0 - f) * minf(1.0, a * 3.0)))
 			FX_DUST:
 				var f := a / 0.8
-				draw_circle(p, pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))
+				draw_circle(p + Vector2(0, -pm * (0.35 + 0.9 * f) * 0.5 if BoardView.oblique else 0.0), pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))
 			FX_CHIP:
 				# (Seen at any zoom: at least a few pixels across.)
 				var f := a / 1.6
@@ -484,6 +488,7 @@ func _draw_fx(lw: float) -> void:
 						draw_circle(c, r0 * 0.18, Color(0.35, 0.3, 0.24, 0.9 * (1.0 - a / 0.5)))
 				draw_circle(p + Vector2(0, -r0 * 0.6 * f), r0 * (0.6 + 1.2 * f), Color(0.72, 0.64, 0.5, 0.6 * (1.0 - f)))
 				draw_circle(p + Vector2(r0 * 0.5 * f, -r0 * 1.1 * f), r0 * (0.4 + 0.9 * f), Color(0.6, 0.53, 0.42, 0.45 * (1.0 - f)))
+	_flat()
 
 
 ## Burning units: a few of the men (every 7th, at most 12) carry a flame and
@@ -503,6 +508,7 @@ func _draw_burning_units(vr: Rect2) -> void:
 			var i: int = sim.slot_soldier[base + k]
 			var p := to_px(sim.pos_x[i], sim.pos_y[i])
 			if vr.has_point(p):
+				_up(p)
 				var f := 0.75 + 0.25 * sin(t + i * 1.9)
 				var h := maxf(pm * 1.3, 8.0 / zoom) * f
 				var w := h * 0.4
@@ -513,6 +519,7 @@ func _draw_burning_units(vr: Rect2) -> void:
 					p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
 				if n % 2 == 0:
 					_smoke_column(p - Vector2(0, h * 0.5), i, 2, pm * 3.0, pm * 0.9, 0.32, _clock * 0.5 + i * 0.17)
+				_flat()
 			k += step
 			n += 1
 
@@ -560,6 +567,64 @@ func _up(anchor: Vector2) -> void:
 	if BoardView.oblique:
 		draw_set_transform_matrix(BoardView.up_xf(anchor))
 		_up_on = true
+
+
+## Tabletop pass 3 leftovers (the oblique view): lines, dashes, polylines and arcs lying on the ground go to their board
+## points only at their vertices (board_lift.gdshader), so a long one across a hill would cut through it. In the oblique view
+## they are drawn in pieces of at most SEG_M metres so they follow the lift grid; the top view draws them as before.
+const SEG_M := 8.0
+
+
+func _dl(a: Vector2, b: Vector2, col: Color, w := -1.0, aa := false) -> void:
+	if not BoardView.oblique or _up_on:
+		draw_line(a, b, col, w, aa)
+		return
+	var n := ceili(a.distance_to(b) / (SEG_M * px_per_m))
+	if n <= 1:
+		draw_line(a, b, col, w, aa)
+		return
+	var pts := PackedVector2Array()
+	for k in n + 1:
+		pts.append(a.lerp(b, float(k) / n))
+	draw_polyline(pts, col, w, aa)
+
+
+func _dp(pts: PackedVector2Array, col: Color, w := -1.0, aa := false) -> void:
+	if not BoardView.oblique or _up_on:
+		draw_polyline(pts, col, w, aa)
+		return
+	var seg := SEG_M * px_per_m
+	var out := PackedVector2Array()
+	for k in pts.size():
+		if k > 0:
+			var n := ceili(pts[k - 1].distance_to(pts[k]) / seg)
+			for j in range(1, n):
+				out.append(pts[k - 1].lerp(pts[k], float(j) / n))
+		out.append(pts[k])
+	draw_polyline(out, col, w, aa)
+
+
+func _dd(a: Vector2, b: Vector2, col: Color, w := -1.0, dash := 2.0, aligned := true) -> void:
+	var dist := a.distance_to(b)
+	var seg := SEG_M * px_per_m
+	if not BoardView.oblique or _up_on or dist <= seg:
+		draw_dashed_line(a, b, col, w, dash, aligned)
+		return
+	# (Pieces of whole dash periods, so the pattern carries on across the joins.)
+	var period := maxf(dash * 2.0, 1.0)
+	var step := maxf(floorf(seg / period), 1.0) * period
+	var d := 0.0
+	var dir := (b - a) / dist
+	while d < dist:
+		var e := minf(d + step, dist)
+		draw_dashed_line(a + dir * d, a + dir * e, col, w, dash, false)
+		d = e
+
+
+func _da(c: Vector2, r: float, a0: float, a1: float, pts: int, col: Color, w := -1.0, aa := false) -> void:
+	if BoardView.oblique and not _up_on:
+		pts = maxi(pts, ceili(r * absf(a1 - a0) / (SEG_M * px_per_m)))
+	draw_arc(c, r, a0, a1, pts, col, w, aa)
 
 
 func _flat() -> void:
@@ -757,8 +822,8 @@ func _draw_held(lw: float) -> void:
 			for q in 4:
 				pts.append(Vector2(float(int(a[7 + q * 2])), float(int(a[8 + q * 2]))) * k)
 			pts.append(pts[0])
-			draw_polyline(pts, Color(0, 0, 0, 0.45), lw * 3.2)
-			draw_polyline(pts, Color(col.r, col.g, col.b, 0.9), lw * 1.8)
+			_dp(pts, Color(0, 0, 0, 0.45), lw * 3.2)
+			_dp(pts, Color(col.r, col.g, col.b, 0.9), lw * 1.8)
 			var dp := Vector2(sim.ob_dx[b], sim.ob_dy[b]) / 1024.0 * k
 			var fa: float = sim.ob_face[b] * TAU / 1024.0
 			var e := Vector2(-sin(fa), cos(fa)) * 1.2 * k
@@ -830,9 +895,9 @@ func _draw_occupy(lw: float) -> void:
 			pts.append(p * k)
 		draw_colored_polygon(pts, Color(COL_OCC, 0.23))
 		var edge := pts.slice(1)
-		draw_polyline(edge, Color(COL_OCC, 0.7), lw)
-		draw_line(pts[0], pts[1], Color(COL_OCC, 0.45), lw)
-		draw_line(pts[0], pts[pts.size() - 1], Color(COL_OCC, 0.45), lw)
+		_dp(edge, Color(COL_OCC, 0.7), lw)
+		_dl(pts[0], pts[1], Color(COL_OCC, 0.45), lw)
+		_dl(pts[0], pts[pts.size() - 1], Color(COL_OCC, 0.45), lw)
 	_draw_occ_outline(b, lw, 1.0, 2.6)
 	var s0: int = sim.ob_s0[b]
 	var pr := maxf(k * 0.28, 1.6)
@@ -873,8 +938,8 @@ func _draw_occ_outline(b: int, lw: float, a: float, wk: float) -> void:
 		pts.append(v * k)
 	pts.append(pts[0])
 	draw_colored_polygon(pts.slice(0, 4), Color(COL_OCC, 0.12 * a))
-	draw_polyline(pts, Color(0, 0, 0, 0.5 * a), lw * (wk + 1.6))
-	draw_polyline(pts, Color(COL_OCC, a), lw * wk)
+	_dp(pts, Color(0, 0, 0, 0.5 * a), lw * (wk + 1.6))
+	_dp(pts, Color(COL_OCC, a), lw * wk)
 	var dp := Vector2(sim.ob_dx[b], sim.ob_dy[b]) / M * k
 	var fa: float = sim.ob_face[b] * TAU / 1024.0
 	var out := Vector2(cos(fa), sin(fa))
@@ -970,7 +1035,7 @@ func _draw_markers(r: float, lw: float) -> void:
 			continue  # (the enemy's hidden assassin, a unit we do not see: not drawn)
 		var anc := to_px(sim.u_cx[u], sim.u_cy[u])
 		_up(anc)
-		var c := anc + Vector2(0, -marker_dy(r))
+		var c := anc + Vector2(0, -marker_dy(r) - TrayLayer.wall_lift(sim, u))   # (a unit on a wall walk: up with its men)
 		var col: Color = COL_SIDE[sim.u_side[u]]
 		if sim.u_state[u] == BattleSim.U_ROUTING:
 			col = Color(1.0, 0.9, 0.3)
@@ -1086,7 +1151,8 @@ func _draw_standards(r: float) -> void:
 		var corner := q[3]
 		if not vr.has_point(corner):
 			continue
-		var mc := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -marker_dy(r))
+		var wl := TrayLayer.wall_lift(sim, u)
+		var mc := to_px(sim.u_cx[u], sim.u_cy[u]) + Vector2(0, -marker_dy(r) - wl)
 		if st == BattleSim.U_READY and _box_hits(corner + box_off, box_size, mc, mr):
 			var alt := q[2]
 			if not _box_hits(alt + box_off, box_size, mc, mr):
@@ -1098,10 +1164,11 @@ func _draw_standards(r: float) -> void:
 			stex = Marks.standard_tex(_std_col[u], sel, sim.u_side[u] == player_side, str(u + 1), _std_emb[u])
 			_std_tex[ci] = stex
 		_up(corner)
+		var lf := Vector2(0, -wl)
 		if stex == null:
-			Marks.draw_standard_tex(self, null, corner + o * w, sm * w, _std_col[u])
+			Marks.draw_standard_tex(self, null, corner + o * w + lf, sm * w, _std_col[u])
 		else:
-			draw_texture_rect(stex, Rect2(corner + tex_off, tex_size), false)
+			draw_texture_rect(stex, Rect2(corner + tex_off + lf, tex_size), false)
 		_flat()
 		if st != BattleSim.U_READY:
 			continue
@@ -1123,9 +1190,9 @@ func _draw_standards(r: float) -> void:
 			var tc: Vector2 = q[0] + dirv * (rw * 1.4 + rw * 2.4 * i)
 			_up(tc)
 			if tt == null:
-				draw_circle(tc, rw, tk[1])
+				draw_circle(tc + lf, rw, tk[1])
 			else:
-				draw_texture_rect(tt, Rect2(tc - half, half * 2.0), false)
+				draw_texture_rect(tt, Rect2(tc - half + lf, half * 2.0), false)
 			_flat()
 	standards_us = Time.get_ticks_usec() - t0
 
@@ -1338,7 +1405,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			# Out of reach: its way to the gate (melee) or into range (missiles).
 			var gp := to_px(ug.x, ug.y)
 			_dash_outlined(a, gp, Color(1.0, 0.8, 0.45, 0.9), lw, 8.0 / zoom)
-			draw_dashed_line(gp, tp, Color(tcol, 0.35), lw, 4.0 / zoom)
+			_dd(gp, tp, Color(tcol, 0.35), lw, 4.0 / zoom)
 			if primary:
 				_dstr(gp + Vector2(r, -r * 1.5),
 					"NO WAY IN: TO THE GATE" if ug.z == 2 else "MOVING INTO RANGE",
@@ -1359,7 +1426,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 	elif order == BattleSim.O_ATTACK and _v(u, "gtarget") >= 0 and sim.n_gates > _v(u, "gtarget"):
 		# A battery shooting at a gate.
 		var gf: Vector2i = sim.gate_face(_v(u, "gtarget"))
-		draw_dashed_line(a, to_px(gf.x, gf.y), COL_FIRE, lw, 8.0 / zoom)
+		_dd(a, to_px(gf.x, gf.y), COL_FIRE, lw, 8.0 / zoom)
 		if primary:
 			_dstr(to_px(gf.x, gf.y) + Vector2(r, r), "SHOOT THE GATE",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
@@ -1397,17 +1464,17 @@ func _draw_art_range(u: int, lw: float) -> void:
 	var col := COL_ARC if ok else Color(0.6, 0.6, 0.6, 0.3)
 	_draw_range(u, 0.0, TAU, Color(col, col.a * 0.35), lw)
 	if rmin > 0.0:
-		draw_arc(c, rmin, 0, TAU, 48, Color(col, col.a * 0.35), lw)
+		_da(c, rmin, 0, TAU, 48, Color(col, col.a * 0.35), lw)
 	var face: float = _v(u, "dface") * TAU / 1024.0
 	var half: float = UT.stat(ty, "arc") * TAU / 1024.0
 	var a0 := face - half
 	var a1 := face + half
 	var ends := _draw_range(u, a0, a1, col, lw * 1.6)
-	draw_arc(c, maxf(rmin, px_per_m), a0, a1, 12, col, lw * 1.6)
+	_da(c, maxf(rmin, px_per_m), a0, a1, 12, col, lw * 1.6)
 	for e in 2:
 		var a: float = [a0, a1][e]
 		var d := Vector2(cos(a), sin(a))
-		draw_line(c + d * maxf(rmin, px_per_m), ends[e], col, lw)
+		_dl(c + d * maxf(rmin, px_per_m), ends[e], col, lw)
 
 
 ## Stone impacts in the last FX_TICKS ticks: a dust ring that spreads and
@@ -1422,7 +1489,9 @@ func _draw_impacts(lw: float) -> void:
 		var p := to_px(sim.fx_x[k], sim.fx_y[k])
 		var dir := Vector2(sim.fx_dx[k], sim.fx_dy[k]) / 4096.0
 		var a := 0.85 * (1.0 - f)
-		draw_circle(p, px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+		_up(p)
+		draw_circle(p + Vector2(0, -px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+		_flat()
 		draw_arc(p, px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
 		draw_line(p, p + dir * px_per_m * 8.0, Color(0.35, 0.27, 0.18, a), maxf(lw * 1.5, px_per_m * 0.5))
 
@@ -1430,15 +1499,15 @@ func _draw_impacts(lw: float) -> void:
 ## A dashed order line over a faint dark underlay, so it reads on light and
 ## dark ground alike.
 func _dash_outlined(a: Vector2, b: Vector2, col: Color, w: float, dash: float) -> void:
-	draw_line(a, b, Color(0, 0, 0, 0.32), w * 2.6)
-	draw_dashed_line(a, b, col, w, dash)
+	_dl(a, b, Color(0, 0, 0, 0.32), w * 2.6)
+	_dd(a, b, col, w, dash)
 
 
 func _draw_fire_line(u: int, w: float) -> void:
 	var t: int = sim.u_ftarget[u]
 	if t < 0 or sim.u_state[t] >= BattleSim.U_DESTROYED:
 		return
-	draw_dashed_line(to_px(sim.u_cx[u], sim.u_cy[u]), to_px(sim.u_cx[t], sim.u_cy[t]),
+	_dd(to_px(sim.u_cx[u], sim.u_cy[u]), to_px(sim.u_cx[t], sim.u_cy[t]),
 		COL_FIRE, w, 4.0 / zoom)
 
 
@@ -1466,7 +1535,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 				var py := cy + int(dir.y * r)
 				r = sim.range_h(ty, sim.u_h[u], sim.height_at(px, py))
 		pts.append(c + dir * (r * px_per_m / M))
-	draw_polyline(pts, col, w)
+	_dp(pts, col, w)
 	return [pts[0], pts[pts.size() - 1]]
 
 
@@ -1488,8 +1557,8 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var a := to_px(x0, y0)
 	var b := to_px(x1, y1)
 	var crest := a.lerp(b, clampf(blk / dist, 0.05, 0.95)) if blk >= 0 else (a + b) * 0.5
-	draw_dashed_line(a, crest, COL_BLOCKED, w * 1.3, 10.0 / zoom, false)
-	draw_dashed_line(crest, b, Color(COL_BLOCKED, 0.3), w, 4.0 / zoom)
+	_dd(a, crest, COL_BLOCKED, w * 1.3, 10.0 / zoom, false)
+	_dd(crest, b, Color(COL_BLOCKED, 0.3), w, 4.0 / zoom)
 	var s := 9.0 / zoom
 	draw_line(crest + Vector2(-s, -s), crest + Vector2(s, s), COL_BLOCKED, w * 2.0)
 	draw_line(crest + Vector2(-s, s), crest + Vector2(s, -s), COL_BLOCKED, w * 2.0)
@@ -1547,7 +1616,7 @@ func _draw_woods_along(x0: int, y0: int, x1: int, y1: int, lw: float) -> void:
 		var d: int = sim.veg_d(x, y)
 		var pb := to_px(x, y)
 		if prev > 0:
-			draw_line(pa, pb, Color(COL_WOODS, 0.45 + 0.18 * prev), lw * (1.5 + 0.5 * prev))
+			_dl(pa, pb, Color(COL_WOODS, 0.45 + 0.18 * prev), lw * (1.5 + 0.5 * prev))
 		if (d > 0) != (prev > 0):
 			draw_circle(pb, maxf(lw * 2.8, px_per_m * 0.75), Color(0, 0, 0, 0.5))
 			draw_circle(pb, maxf(lw * 2.2, px_per_m * 0.6), COL_WOODS)
@@ -1558,7 +1627,7 @@ func _draw_woods_along(x0: int, y0: int, x1: int, y1: int, lw: float) -> void:
 func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
 	var edge: float = (sim.field_h if sim.u_side[u] == 0 else 0) * px_per_m / M
 	var to := Vector2(from.x, edge)
-	draw_dashed_line(from, to, col, w, 10.0 / zoom)
+	_dd(from, to, col, w, 10.0 / zoom)
 	var dir := signf(to.y - from.y)
 	var s := 12.0 / zoom
 	draw_line(to, to + Vector2(-s, -dir * s), col, w * 1.5)
@@ -1569,8 +1638,8 @@ func _draw_withdraw(u: int, from: Vector2, col: Color, w: float) -> void:
 
 func _draw_preview(lw: float) -> void:
 	var col := Color(1, 1, 1, 0.9) if preview_ok else Color(1, 1, 1, 0.4)
-	draw_line(preview_a, preview_b, Color(0, 0, 0, 0.35), lw * 3.5)
-	draw_line(preview_a, preview_b, col, lw * 1.5)
+	_dl(preview_a, preview_b, Color(0, 0, 0, 0.35), lw * 3.5)
+	_dl(preview_a, preview_b, col, lw * 1.5)
 	# End caps: hollow while the line can grow, solid once it is one rank
 	# long (it stops following the finger there).
 	var cap := maxf(px_per_m * 0.6, 5.0 / zoom)
@@ -1667,7 +1736,7 @@ func _draw_chain(u: int, ch: Array, lw: float, primary: bool) -> void:
 		var ring := Color(1.0, 0.85, 0.35, 0.95) if int((ch[i] as Dictionary)["run"]) != 0 else Color(COL_CHAIN, 0.95)
 		draw_circle(c, dr * 1.25, Color(0, 0, 0, 0.55))
 		draw_circle(c, dr, Color(0.08, 0.14, 0.08, 0.85))
-		draw_arc(c, dr, 0, TAU, 18, ring, lw)
+		_da(c, dr, 0, TAU, 18, ring, lw)
 		var txt := str(i + 1)
 		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		_dstr(c + Vector2(-tw * 0.5, fs * 0.35), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 0.9))
@@ -1728,8 +1797,8 @@ func _draw_footprint(u: int, front: Vector2, face: int, files: int, alive: int, 
 	var d := a - fwd * (depth + px_per_m * 0.45)
 	if fill.a > 0.0:
 		draw_colored_polygon(PackedVector2Array([a, b, c, d]), fill)
-	draw_polyline(PackedVector2Array([b, c, d, a]), Color(edge, edge.a * 0.6), w)
-	draw_line(a, b, edge, w * 1.6)  # front rank, stronger
+	_dp(PackedVector2Array([b, c, d, a]), Color(edge, edge.a * 0.6), w)
+	_dl(a, b, edge, w * 1.6)  # front rank, stronger
 	draw_line(front, front + fwd * px_per_m * 2.5, edge, w)
 
 
@@ -1750,12 +1819,12 @@ func _draw_all_orders() -> void:
 		var order: int = _v(u, "order")
 		if order == BattleSim.O_MOVE:
 			var dest := to_px(_v(u, "dx"), _v(u, "dy"))
-			draw_line(to_px(sim.u_cx[u], sim.u_cy[u]), dest, Color(col_move, 0.3), w)
+			_dl(to_px(sim.u_cx[u], sim.u_cy[u]), dest, Color(col_move, 0.3), w)
 			_draw_footprint(u, dest, _v(u, "dface"), _fv(u), alive, col_move, fill_move, w)
 		elif order == BattleSim.O_ATTACK and _v(u, "target") >= 0:
 			var t: int = _v(u, "target")
 			if not (sim.u_ammo[u] > 0 and _draw_blocked(u, t, w)):
-				draw_dashed_line(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
+				_dd(anchor, to_px(sim.u_cx[t], sim.u_cy[t]), col_attack, w, 6.0 / zoom)
 			_draw_footprint(u, anchor, _v(u, "face"), _fv(u), alive, Color(col_attack, 0.3), Color(0, 0, 0, 0), w)
 		elif order == BattleSim.O_WITHDRAW:
 			_draw_withdraw(u, anchor, Color(COL_WITHDRAW, 0.5), w)
@@ -1864,8 +1933,8 @@ func max_line_px() -> float:
 func _draw_stretch(sg: int, lw: float, a: float) -> void:
 	var p0 := to_px(sim.ws_x0[sg], sim.ws_y0[sg])
 	var p1 := to_px(sim.ws_x1[sg], sim.ws_y1[sg])
-	draw_line(p0, p1, Color(COL_WALL, a * 0.5), maxf(px_per_m * 4.0, lw * 3.0))
-	draw_line(p0, p1, Color(COL_WALL, a), lw)
+	_dl(p0, p1, Color(COL_WALL, a * 0.5), maxf(px_per_m * 4.0, lw * 3.0))
+	_dl(p0, p1, Color(COL_WALL, a), lw)
 
 
 ## Mouse over a wall with a unit selected that may man it: its stretch.
@@ -2095,7 +2164,7 @@ func _cover_rect(front: Vector2, face: int, ln: int, depth: int, col: Color, fil
 	draw_colored_polygon(pts, fill)
 	pts.append(pts[0])
 	for k in 4:
-		draw_dashed_line(pts[k], pts[k + 1], col, lw, 5.0 / zoom)
+		_dd(pts[k], pts[k + 1], col, lw, 5.0 / zoom)
 
 
 ## Siege towers on the ground (anyone's for the taking, the enemy's too): a
@@ -2189,6 +2258,7 @@ func _draw_fires(lw: float) -> void:
 			pts.append(to_px(qc.x, qc.y))
 	for k in pts.size():
 		var p: Vector2 = pts[k]
+		_up(p)
 		var f := 0.75 + 0.25 * sin(t + k * 1.7)
 		var h := maxf(px_per_m * 3.0, 14.0 / zoom) * f
 		var w := h * 0.45
@@ -2198,6 +2268,7 @@ func _draw_fires(lw: float) -> void:
 			p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
 		draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
 		_smoke_column(p - Vector2(0, h * 0.7), k, 4, px_per_m * 9.0, px_per_m * 1.5, 0.4, _clock * 0.25 + k * 0.31)
+		_flat()
 	if sim.ob_fire_n > 0:
 		_draw_bld_fires(lw)
 
@@ -2228,6 +2299,7 @@ func _draw_bld_fires(lw: float) -> void:
 		var n := clampi(int(along.length() / 8.0) + 1, 1, 3)
 		for k in n:
 			var p := c + along * pm * ((k + 0.5) / n - 0.5) * 0.7
+			_up(p)
 			var f := 0.7 + 0.3 * sin(t + b * 2.3 + k * 1.9)
 			var h := maxf(pm * (2.2 + 2.0 * burnt), 12.0 / zoom) * f
 			var w := h * 0.42
@@ -2236,8 +2308,10 @@ func _draw_bld_fires(lw: float) -> void:
 			draw_colored_polygon(PackedVector2Array([p + Vector2(-w * 0.5, 0), p + Vector2(0, -h * 0.6),
 				p + Vector2(w * 0.5, 0)]), Color(1.0, 0.85, 0.3, 0.9))
 			draw_line(p + Vector2(-w, 0), p + Vector2(w, 0), Color(0.3, 0.1, 0.0, 0.8), lw)
+		_up(c)
 		_smoke_column(c - Vector2(0, pm * 3.0), b, 4, pm * (12.0 + 6.0 * burnt), pm * (2.0 + 1.5 * burnt), 0.45,
 			_clock * 0.2 + b * 0.37)
+		_flat()
 
 
 ## Piece q's heading on screen (radians): its carriers' facing, a little

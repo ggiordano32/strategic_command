@@ -10,6 +10,13 @@ extends Node2D
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const BoardView := preload("res://game/board_view.gd")
+## The oblique view (tabletop pass 3 leftovers): an upright piece's ground shadow is not this top-down height field but
+## its own footprint's soft contact shadow and a cast shadow to the lower right, `CAST_K` x the piece's height long
+## (game/kit_shadow_ob.gdshader, one MultiMesh); the walls, palisades, cliffs and low pieces keep the height field.
+const OB_SHADER := preload("res://game/kit_shadow_ob.gdshader")
+const CAST_K := 0.35
+const OB_FLAT := ["wall_", "pal_", "lowwall", "stakes", "cliff", "pier", "tree_", "bush"]
 
 var cell := 0.5                    # metres (the kit's shadow_cell)
 const TAN_ELEV := 0.62             # tan(32 degrees): a shadow is 1.6 x its piece's height long
@@ -46,6 +53,8 @@ var _sh_px := 0
 var _touch := PackedInt32Array()
 var _ao_n := 3
 var _k := 1.0                      # look strength (diorama 1, painterly PAINT_K)
+var _ob_hmax := {}                 # oblique: atlas piece -> its height in metres (the normal pass's B, x 20)
+var _ob_mm: MultiMesh
 
 
 func build(p_kit) -> void:
@@ -83,7 +92,7 @@ func build(p_kit) -> void:
 	for i in kit.i_piece.size() + 1:
 		if i == kit.strip_at:
 			_raster_strip(0, 0, _w, _h)   # (the walls stand over the houses before them, under the gates and towers after)
-		if i < kit.i_piece.size():
+		if i < kit.i_piece.size() and not _ob_upright(i):
 			_raster(i, 0, 0, _w, _h)
 	_cast(0, 0, _w, _h, 0, 0, _w, _h)
 	_blur(0, 0, _w, _h)
@@ -103,6 +112,8 @@ func build(p_kit) -> void:
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_MUL
 	_spr.material = mat
 	add_child(_spr)
+	if BoardView.oblique:
+		_ob_build()
 	_nrm = PackedByteArray()   # only needed while baking; re-read on a rebake
 
 
@@ -336,9 +347,11 @@ func rebake_rect(fp: Rect2) -> void:
 		if f2.end.x < _org.x + x0 * cell or f2.position.x > _org.x + x1 * cell \
 				or f2.end.y < _org.y + y0 * cell or f2.position.y > _org.y + y1 * cell:
 			continue
-		_raster(j, x0, y0, x1, y1)
+		if not _ob_upright(j):
+			_raster(j, x0, y0, x1, y1)
 	var m := int(MAX_LEN / cell)
 	_cast(maxi(x0 - m, 0), maxi(y0 - m, 0), x1, y1, x0, y0, x1, y1)
+	_ob_refresh()
 	_nrm = PackedByteArray()
 	_blur(x0, y0, x1, y1)
 	for y in range(y0, y1):
@@ -346,3 +359,94 @@ func rebake_rect(fp: Rect2) -> void:
 			_set_px(y * _w + x)
 	_img.set_data(_w, _h, false, Image.FORMAT_RGBA8, _px)
 	_tex.update(_img)
+
+
+## Oblique view: does instance i stand upright (a house, tower, gate, bastion, rock, prop) and so get the footprint's own
+## shadows instead of the height field's?
+func _ob_upright(i: int) -> bool:
+	if not BoardView.oblique:
+		return false
+	return _ob_is_upright(kit.i_piece[i])
+
+
+func _ob_is_upright(p: int) -> bool:
+	var nm: String = Atlas.NAMES[p]
+	for f in OB_FLAT:
+		if nm.begins_with(f):
+			return false
+	return true
+
+
+## The piece's height in metres: the highest value of the atlas's normal pass (B / 255 x 20) where the piece is.
+func _ob_height(p: int) -> float:
+	if _ob_hmax.has(p):
+		return _ob_hmax[p]
+	if _nrm.is_empty():
+		return 4.0
+	var rc: Array = Atlas.RECT[p]
+	var hi := 0
+	for y in range(int(rc[1]), int(rc[1]) + int(rc[3])):
+		for x in range(int(rc[0]), int(rc[0]) + int(rc[2])):
+			var o := (y * _aw + x) * 4
+			if _alb[o + 3] >= 128 and _nrm[o + 2] > hi:
+				hi = _nrm[o + 2]
+	var h := float(hi) / 255.0 * 20.0
+	_ob_hmax[p] = h
+	return h
+
+
+func _ob_build() -> void:
+	for p in Atlas.NAMES.size():
+		if _ob_is_upright(p):
+			_ob_height(p)
+	_ob_mm = MultiMesh.new()
+	_ob_mm.transform_format = MultiMesh.TRANSFORM_2D
+	_ob_mm.use_custom_data = true
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = PackedVector2Array([Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)])
+	arr[Mesh.ARRAY_INDEX] = PackedInt32Array([0, 1, 2, 0, 2, 3])
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	_ob_mm.mesh = mesh
+	_ob_mm.instance_count = maxi(kit.i_piece.size(), 1)
+	_ob_mm.visible_instance_count = 0
+	_ob_mm.custom_aabb = AABB(Vector3(-4000, -4000, -1), Vector3(40000, 40000, 2))
+	var mat := ShaderMaterial.new()
+	mat.shader = OB_SHADER
+	mat.set_shader_parameter("ppm", kit.k)
+	BoardView.apply(mat)
+	var mmi := MultiMeshInstance2D.new()
+	mmi.multimesh = _ob_mm
+	mmi.material = mat
+	add_child(mmi)
+	BoardView.cull_wide(mmi)
+	_ob_refresh()
+
+
+## Rewrites the shadow instances from the pieces as they stand (a gate broken, a building fallen).
+## Instance: the quad is centred on the footprint's centre, half-size = the footprint's reach + the soft edge + the cast;
+## custom data = (half width, half depth, cast length, angle of the piece's right) in metres / radians.
+func _ob_refresh() -> void:
+	if _ob_mm == null:
+		return
+	var n := 0
+	for i in kit.i_piece.size():
+		if not _ob_upright(i) or kit.fallen(i):
+			continue
+		var p: int = kit.i_piece[i]
+		var an: Array = Atlas.ANCHOR[p]
+		var e: Vector2 = kit.i_e[i]
+		var dn := Vector2(-e.y, e.x)
+		var sx: float = kit.i_sx[i]
+		var sy: float = kit.i_sy[i]
+		var c: Vector2 = kit.i_pos[i] + e * (float(an[0]) * sx) + dn * (float(an[1]) * sy)
+		var hw := float(an[2]) * sx * 0.5
+		var hh := float(an[3]) * sy * 0.5
+		var hgt := minf(_ob_height(p) * kit.i_hs[i] * H_SHADOW, H_CAP)
+		var cast := hgt * CAST_K
+		var reach := maxf(hw, hh) * 1.4143 + 2.0 + cast
+		_ob_mm.set_instance_transform_2d(n, Transform2D(Vector2(reach * kit.k, 0.0), Vector2(0.0, reach * kit.k), c * kit.k))
+		_ob_mm.set_instance_custom_data(n, Color(hw, hh, cast, e.angle()))
+		n += 1
+	_ob_mm.visible_instance_count = n

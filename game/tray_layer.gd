@@ -75,6 +75,14 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		_rsp[u] = UT.stat(sim.u_type[u], "rank_sp")
 
 
+## The oblique view: how far (board px) a unit standing on a wall walk is lifted by it (0 on the ground and in the top view):
+## its tray, standard, tokens and marker go up with the men.
+static func wall_lift(p_sim, u: int) -> float:
+	if not BoardView.oblique or p_sim.u_wall[u] <= 0:
+		return 0.0
+	return float(p_sim.wall_h) / 1024.0 * BoardView.px_per_m * BoardView.OBLIQUE_SIN
+
+
 func _process(_d: float) -> void:
 	if sim == null:
 		return
@@ -104,7 +112,7 @@ func _process(_d: float) -> void:
 		var ex := q[1] - q[0]
 		var ey := q[3] - q[0]
 		_mm.set_instance_transform_2d(n, Transform2D(ex, ey, (q[0] + q[2]) * 0.5))
-		_mm.set_instance_custom_data(n, Color(ex.length(), ey.length(), 0.0, 0.0))
+		_mm.set_instance_custom_data(n, Color(ex.length(), ey.length(), wall_lift(sim, u), 0.0))
 		n += 1
 	_mm.visible_instance_count = n
 	_mat.set_shader_parameter("w", 1.0 / zoom)

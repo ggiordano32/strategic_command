@@ -2,7 +2,8 @@ shader_type canvas_item;
 // The movement trays (game/tray_layer.gd): one quad per tray in one MultiMesh, the card drawn here from the pixel distance
 // to the nearest edge: a dark edge 1.5 screen px wide, a lighter bevel line just inside it, a translucent dark fill.
 // `w` is the world pixels per screen pixel (1 / the camera zoom); the instance's custom data is its size in world pixels.
-// The oblique view (tabletop pass 3): the corners go to their board points (squashed, lifted with the ground).
+// The oblique view (tabletop pass 3): the corners go to their board points (squashed, lifted with the ground); the custom
+// data's z is the wall walk's height in board px for a unit standing on a wall (tabletop pass 3 leftovers).
 render_mode skip_vertex_transform;
 #include "res://game/board_view.gdshaderinc"
 uniform float w = 1.0;
@@ -11,7 +12,7 @@ varying vec2 v_size;
 void vertex() {
 	v_size = INSTANCE_CUSTOM.xy;
 	vec2 wp = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
-	VERTEX = ob_on > 0.5 ? ob_board(wp) : wp;
+	VERTEX = ob_on > 0.5 ? ob_board(wp) - vec2(0.0, INSTANCE_CUSTOM.z) : wp;
 }
 
 void fragment() {

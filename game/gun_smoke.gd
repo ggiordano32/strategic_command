@@ -9,6 +9,8 @@ extends RefCounted
 ## so the canvas batches the draws. The diorama look reads as soft white
 ## cotton tufts, the painterly look as grey smoke.
 
+const BoardView := preload("res://game/board_view.gd")
+
 const LIFE := 10.0
 const TILE := 64
 const VARIANTS := 4          # cloud tiles, then one glow tile
@@ -178,12 +180,16 @@ func feed_haze(p: Vector2, cell_px: float, amt: float) -> void:
 
 ## Draws the banks, flashes and haze on canvas item ci. wind: px/s; vr: the
 ## visible rect (cull); haze_px: haze radius px; diorama: look.
-func draw(ci: CanvasItem, wind: Vector2, vr: Rect2, haze_px: float, diorama: bool) -> void:
+func draw(ci: CanvasItem, wind: Vector2, vr: Rect2, haze_px: float, diorama: bool, upright := false) -> void:
 	var tex := texture()
 	var tint := Color(1.0, 1.0, 0.99) if diorama else Color(0.8, 0.82, 0.86)
 	var amax := 0.8 if diorama else 0.78
 	var dust := Color(0.78, 0.66, 0.48)
 	var gl := Rect2(TILE * VARIANTS, 0, TILE, TILE)
+	# The oblique view (tabletop pass 3 leftovers): the haze lies on the board (squashed with the ground); every puff stands up
+	# as a billboard at its ground point (draw_set_transform_matrix(BoardView.up_xf): the offsets from the anchor stay
+	# screen-aligned), lifted by its height, and the muzzle flash at the muzzle's height.
+	var up := upright and BoardView.oblique   # (the land battle's overlay passes it; the sea view's smoke lies as before)
 	if haze_on:
 		for h in hz_pos.size():
 			if vr.grow(haze_px).has_point(hz_pos[h]):
@@ -196,26 +202,37 @@ func draw(ci: CanvasItem, wind: Vector2, vr: Rect2, haze_px: float, diorama: boo
 		var grow := 1.0 + 2.6 * sqrt(f)
 		var rl := roll[k] * (1.0 - exp(-a * 1.7))
 		var p := pos[k] + dir[k] * rl + wind * a * minf(1.0, 0.4 + a * 0.3)
+		var g := p
 		var dk := kind[k] == 1
-		if not dk:
-			p.y -= sz * 1.4 * sqrt(f)
-		if not vr.has_point(p):
-			continue
 		var r := sz * (0.8 + (grow - 1.0) * 0.8 if dk else 1.45 * grow)
+		if up:
+			p = g + Vector2(0.0, -(r * 0.3 if dk else sz * 0.7 + sz * 1.4 * sqrt(f)))
+		elif not dk:
+			p.y -= sz * 1.4 * sqrt(f)
+		if not vr.has_point(g if up else p):
+			continue
 		var al := amax * pow(1.0 - f, 1.5) * minf(1.0, a * 9.0)
 		if dk:
 			al *= 0.55
 		var c := dust if dk else tint
 		c.a = al
 		var vi := (k * 5 + int(pos[k].x * 0.13)) % VARIANTS
+		if up:
+			ci.draw_set_transform_matrix(BoardView.up_xf(g))
 		ci.draw_texture_rect_region(tex, Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0), Rect2(vi * TILE, 0, TILE, TILE), c)
 		if a < 0.09 and not dk:
 			# The muzzle flash (a frame or two): a flame tongue along the
 			# shot and a brief glow.
 			var d := dir[k]
 			var q := pos[k] - d * sz * 0.5
+			if up:
+				ci.draw_set_transform_matrix(BoardView.up_xf(q))
+				d = Vector2(d.x, d.y * BoardView.OBLIQUE_COS).normalized()   # the shot's direction on the screen
+				q += Vector2(0.0, -sz * 0.6)
 			var w := Vector2(-d.y, d.x) * sz * 0.38
 			var fl := 1.0 - a / 0.09
 			ci.draw_texture_rect_region(tex, Rect2(q - Vector2(sz, sz) * 1.5, Vector2(sz, sz) * 3.0), gl, Color(1.0, 0.7, 0.3, 0.6 * fl))
 			ci.draw_colored_polygon(PackedVector2Array([q - w, q + d * sz * 1.9, q + w]), Color(1.0, 0.55, 0.15, 0.85 * fl))
 			ci.draw_colored_polygon(PackedVector2Array([q - w * 0.5, q + d * sz * 1.3, q + w * 0.5]), Color(1.0, 0.92, 0.5, 0.95 * fl))
+	if up:
+		ci.draw_set_transform_matrix(Transform2D.IDENTITY)

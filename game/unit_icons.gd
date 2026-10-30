@@ -87,8 +87,13 @@ static func draw_glyph(ci: CanvasItem, icon: int, c: Vector2, s: float, col: Col
 			for k in 3:
 				var o := Vector2(-0.4 + 0.4 * k, 0.0) * s
 				ci.draw_line(c + o + Vector2(-0.35, 0.95) * s, c + o + Vector2(0.35, -0.75) * s, col, w * 0.85, true)
-				ci.draw_colored_polygon(PackedVector2Array([c + o + Vector2(0.45, -0.98) * s,
-					c + o + Vector2(0.48, -0.66) * s, c + o + Vector2(0.24, -0.72) * s]), col)
+				if s < 10.0:
+					# (A marker this small: the tip's triangle is under 4 px2 and the triangulator refuses it, "Invalid polygon
+					# data"; a short heavy stroke reads the same.)
+					ci.draw_line(c + o + Vector2(0.37, -0.76) * s, c + o + Vector2(0.45, -0.98) * s, col, w * 1.6, true)
+				else:
+					ci.draw_colored_polygon(PackedVector2Array([c + o + Vector2(0.45, -0.98) * s,
+						c + o + Vector2(0.48, -0.66) * s, c + o + Vector2(0.24, -0.72) * s]), col)
 		4:  # bow, string and an arrow
 			ci.draw_arc(c + Vector2(-0.35, 0) * s, 0.95 * s, -1.15, 1.15, 12, col, w, true)
 			ci.draw_line(c + Vector2(0.03, -0.87) * s, c + Vector2(0.03, 0.87) * s, col, w * 0.6, true)

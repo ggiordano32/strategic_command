@@ -7,6 +7,10 @@
 // `#define CPU_FED`). A dead man's base stays with his toppled figure and
 // fades with it (the state word's heading code, see soldiers.gdshaderinc).
 // View only. `low` (Graphics Low): a plain dark ellipse, no ring.
+// Flock (tabletop pass 3 leftovers): inside the ring the base is dressed like a painted miniature's: a green-brown
+// static-grass speckle (round specks of two greens and straw on a dark earth green, by a hash of the cell and of the man's
+// position so no two bases are alike) instead of the plain fill; the faction-coloured rim and the contact shadow stay. The
+// speckle fades to its mean colour where a speck would be under about 2 px (far out).
 // The oblique view (`#define OBLIQUE`, tabletop pass 3): the base lies on the board under the figure's feet (the circle
 // squashed into an ellipse, lifted with the ground and the wall walk), in the soldiers' per-tick order, hidden behind
 // a nearer kit piece as the figures are (soldiers.gdshaderinc).
@@ -25,6 +29,34 @@ uniform sampler2D pal_tex : filter_nearest, repeat_disable;
 
 varying vec4 v_b;   // x palette row, y fade, z 1 = a base here
 varying vec2 v_c;   // the corner in base radii
+varying float v_seed;   // 0..1 by the man's position (the flock's lattice offset)
+
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+// The flock inside a base at corner coordinates c (base radii): the colour.
+vec3 flock_col(vec2 c, float seed) {
+	vec2 q = c / 0.2 + vec2(seed * 37.0, seed * 91.0);
+	vec2 id = floor(q);
+	vec2 f = fract(q) - 0.5;
+	float h = hash12(id);
+	float h2 = hash12(id + vec2(7.7, 3.1));
+	vec2 jit = vec2(hash12(id + vec2(1.3, 9.9)), hash12(id + vec2(5.5, 2.2))) - 0.5;
+	float rr = 0.26 + 0.22 * h2;
+	float sp = 1.0 - smoothstep(rr - 0.12, rr, length(f - jit * 0.35));
+	vec3 g1 = vec3(0.17, 0.34, 0.08);
+	vec3 g2 = vec3(0.30, 0.48, 0.12);
+	vec3 straw = vec3(0.62, 0.54, 0.28);
+	vec3 sc = h < 0.45 ? g1 : (h < 0.8 ? g2 : straw);
+	vec3 earth = vec3(0.24, 0.17, 0.09);
+	vec3 col = mix(earth, sc, sp);
+	vec3 mean = mix(earth, vec3(0.30, 0.43, 0.15), 0.45);
+	float fw = fwidth(c.x);
+	return mix(col, mean, smoothstep(0.07, 0.14, fw));
+}
 
 // The base radius in metres by sprite (soldier_layer.gd SPR_RECT: 5 horse and rider,
 // 9 camel, 10 elephant, 11 dog).
@@ -96,6 +128,7 @@ void vertex() {
 		VERTEX = vec2(-100000.0);
 		v_b = vec4(0.0);
 		v_c = vec2(0.0);
+		v_seed = 0.0;
 #ifdef OBLIQUE
 		v_near = 0.0;
 #endif
@@ -105,6 +138,7 @@ void vertex() {
 		float fade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;
 		v_b = vec4(float(pal), fade * (st == 4 ? 0.9 : 1.0), 1.0, 0.0);
 		v_c = c;
+		v_seed = hash12(floor(cur * 0.004));
 		vec2 p = mix(prv, cur, alpha) * px_per_unit + c * (r * px_per_unit * 1024.0);
 #ifdef OBLIQUE
 		vec2 g = mix(prv, cur, alpha) * px_per_unit;
@@ -130,7 +164,7 @@ void fragment() {
 		float disc = 1.0 - smoothstep(1.0 - aa, 1.0, d);
 		float ring = smoothstep(0.74 - aa, 0.74, d);
 		float luma = dot(prim, vec3(0.3, 0.59, 0.11));
-		vec3 inner = mix(vec3(luma), prim, 0.5) * 0.9;
+		vec3 inner = mix(flock_col(v_c, v_seed), mix(vec3(luma), prim, 0.5) * 0.9, 0.1) * 0.85;
 		vec3 rim = prim * 0.4;
 		vec3 col = mix(inner, rim, ring);
 		col += vec3(0.07) * (1.0 - smoothstep(-0.7, 0.1, v_c.y + v_c.x * 0.3)) * (1.0 - ring);   // a lit top

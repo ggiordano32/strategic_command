@@ -1080,6 +1080,90 @@ right; and we need to work out how we are going to see inside the walls". View o
   (still y0 / y4); the Tab S7 and the phone GPU cost of the occluder pass with more rows; the web flow above wants a
   real first-visit check on the phone (webcheck `-oblique` covers the fetch, not the Cancel path).
 
+#### Pass 3 leftovers (2026-10-30)
+
+The seven leftovers the as-built list above named, in that order. View only: `sim/` and `campaign/` untouched (`git diff --stat sim/
+campaign/` empty), no hash, no lockstep input. Code: `game/battlekit_shadow.gd` + `kit_shadow_ob.gdshader` (new), `game/gun_smoke.gd`,
+`game/overlay.gd`, `game/tuft_layer.gd` + `tuft.gdshader` (new), `game/terrain_layer.gd`, `game/tray_layer.gd` + `tray.gdshader`,
+`game/battle.gd`, `game/unit_icons.gd`, `game/soldier_bases.gdshaderinc`, `tests/input_test.gd`.
+
+- **1. The kit's ground shadow stands up.** In the oblique view `battlekit_shadow.gd` no longer rasterises the upright pieces (houses,
+  towers, gates, bastions, rocks, props: every piece but the walls, palisades, low walls, stakes, cliffs, piers and the tree and bush
+  sprites, `OB_FLAT`) into its top-down height field; the walls keep the field (the strips' cast shadow and rim are right for a wall).
+  Each upright piece gets instead, in one MultiMesh under the pieces (`kit_shadow_ob.gdshader`, multiplied over the ground, lifted with
+  it), the footprint's **soft contact shadow** (60 % at the foot, gone 1.5 m out; the footprint's oriented box, from the piece's
+  anchor and scale) and a **cast shadow to the lower right** (the lamp is the upper left key), the footprint swept along (0.707, 0.707) by
+  `CAST_K` 0.35 x the piece's height (the atlas normal pass's highest B x 20 m x the instance's height scale x `H_SHADOW` 1.4, capped
+  15 m), 45 % dark, soft-edged over 1.3 m, a little lighter with distance. A gate that breaks or a building that falls refreshes the
+  rows (`_ob_refresh`, from `rebake_*`). **Differs from the brief:** the brown squares in `fort_12.png` are **not** this shadow. They stay
+  with `--no-kit-shadow`, and they are the terrain shader's *trodden ground* (`terrain_layer.gd _west_built`: the West town's urban
+  channel at 4 m cells, 8 m round every house and road, hence the stair-stepped edge) which the top view has too. The squares are unchanged
+  here (a design item for the owner: soften the mask's edge or lighten it in the oblique view). The top view is unchanged (a paused
+  `--seed=7` shot of both trees differs only in the animated sea and under the new bases).
+- **2. Upright effects.** The gun smoke (`GunSmoke.draw`, `upright` by `BoardView.oblique`): each puff is the same cotton-wool tile
+  drawn as a billboard at its ground point (`up_xf`), lifted by `0.7 x` its radius plus its rise, a dust kick by 0.3 of its radius, the
+  muzzle flash at the muzzle's height and its tongue along the shot's screen direction; the long-fire haze keeps lying on the board. In the
+  overlay (`_up(p)` per effect, so the existing offsets, which already meant "up", now stand): fire sparks and smoke, blast flash and
+  smoke (its shock ring stays flat), ruin dust, dust puffs, chips, engine hit puffs (the hit line and ring stay flat), burning men,
+  burning gates, engines and equipment, burning buildings and their smoke columns. They draw in the overlay, after the men
+  (the brief allowed that for smoke): a puff in front of a man covers him, a man in front of a puff does not cover it.
+- **3. Upright tufts.** `tuft_layer.gd`: the shader's tufts are off in the oblique view (`tufts_on` false there) and a MultiMesh of small
+  upright quads stands in their place (High and diorama only, from camera zoom 1.2, at most 6,000): `tuft.gdshader` draws three blades in
+  each (0.2 to 0.32 m, dark at the foot, lighter to the tip and on the left, a little lean). **Same hash as the shader's:** the 0.9 m cell
+  id, the 0.24 threshold, the tuft's offset in the cell and the blades' lengths come from the same `hash12` inputs (ported to
+  GDScript), so a tuft stands where the top view's stroke is. Open ground only, tested on the sim's own data: no felt (the wood density at
+  the shader's 0.075 contour), road, plaza or urban cell, field, water, ditch or river bank, building or other obstacle cell, nor ground
+  steeper than 0.45. (The West town's untrodden yards, which the shader keeps flocked, get no tufts here: the urban flag alone cannot say.)
+  **Differs from the brief:** not rebuilt whenever the camera moves by a cell. The ground is cut into 27 m chunks (30 cells), each
+  worked out once (at most two a frame, kept: 80 at most) and the MultiMesh buffer is put together from the chunks in view when that set
+  changes, so a pan costs one buffer copy a chunk crossed and no per-frame work; a 6,000 cap takes the chunks nearest the view's centre first.
+  Tufts sit under the men and under the kit (the ground layer), and are not sorted with them (0.3 m tall).
+- **4. Standards, tokens, markers and trays on a wall walk.** `TrayLayer.wall_lift(sim, u)`: the unit's wall walk height
+  (`sim.wall_h` for a unit with `u_wall > 0`, the value the soldier layer's `_unit_ext` carries to the men) as board px. The marker,
+  the standard, the tokens and the marker's test circle in the overlay, `Battle.marker_board` (the tap target) and **the tray itself**
+  (custom data z of its instance, read by `tray.gdshader`: not in the brief, but a tray left at the wall's foot under men standing on
+  the wall looked wrong) go up by it. `tests/input_test.gd` (the gate doorway's marker set-up) adds the lift to its unit's marker.
+- **5. Long overlay lines follow the hill.** `Overlay._dl`, `_dp`, `_dd`, `_da`: in the oblique view a ground line, polyline, dashed line
+  or arc is drawn in pieces of at most 8 m (`SEG_M`; dashes in whole dash periods so the pattern carries on across the joins; arcs get
+  the point count their length needs), so it follows the lift grid. Used for the order preview and chains, move and attack lines,
+  the fire and blocked lines, range arcs and sector edges, the occupy marks, wall stretches and the formation box; the markers' own small
+  drawing is unchanged. `order_preview.gd` draws nothing (it predicts orders), so it is not touched. The top view calls the engine's
+  functions directly.
+- **6. "Invalid polygon data".** The unit marker's glyph for icon 3 (three pikes) drew each pike's tip as a triangle of about 0.04 s^2:
+  under about 4 px2 (a marker of radius 22 px / zoom, so from zoom 2) the engine's triangulator refuses it and prints the error each frame
+  (10 to 23 lines a frame at HEAD: both views). Below s = 10 px the tip is now a short heavy stroke. Zoom 1.8 and 3 on the town and zoom 3 on
+  the fort in both views print none.
+- **7. Flock on the bases.** `soldier_bases.gdshaderinc` (both views, both data paths): inside the ring the base is a dark earth with round specks
+  of two greens and straw (a 0.2 base-radius lattice, hashed by cell and by the man's position, so no two bases match), a tenth of the
+  old faction-tinted fill kept; fades to its mean colour where a speck would be under about 2 px. The faction-coloured ring, the lit top and the
+  contact shadow are as before; Graphics Low keeps its plain ellipse.
+- **Cost** (desktop RTX 3070, 1280 x 720, vsync off, `--quality=high --seed=7`, 8 s after tick 600, mean frame ms, interleaved,
+  before = 5227d38 in another folder; the machine was shared with other builds, so the runs scatter by 1 to 2 ms and the means are
+  good to about 0.3):
+
+  | scenario, zoom, view | before | after | delta |
+  |---|---|---|---|---|
+  | bench_4000_hills, default fit, oblique | 6.75 | 6.74 | -0.01 |
+  | bench_4000_hills, default fit, top | 6.47 | 6.58 | +0.11 |
+  | bench_4000_hills, zoom 2.0, oblique | 6.56 | 6.42 | -0.15 |
+  | bench_4000_hills, zoom 2.0, top | 6.46 | 6.10 | -0.36 |
+  | west_town, default fit, oblique | 3.91 | 3.99 | +0.08 |
+  | west_town, default fit, top | 3.82 | 3.84 | +0.02 |
+  | west_town, zoom 2.0, oblique | 3.77 | 3.79 | +0.02 |
+  | west_town, zoom 2.0, top | 3.79 | 3.89 | +0.10 |
+
+  (Means of the first two of three runs: the third ran while the machine was loaded by other builds, 7 to 15 ms, before and after alike. The tufts are in the west_town zoom 2.0 oblique line: +0.02 ms.)
+
+- **Checked:** scripts clean (warnings as errors); `battle_screen_test`, `lockstep_test` RESULT PASS; windowed `input_test` RESULT PASS in
+  both views (the oblique run after the test's wall-lift set-up); `soldier_facing_test` RESULT PASS; `git diff --stat sim/ campaign/`
+  empty. Shots (1280 x 720) before / after for each item: the town's houses, a musket line's smoke, the field's tufts, the bases and a siege
+  wall's markers.
+- **Open.** The brown trodden-ground squares round the West town's houses (item 1; see there); smoke is drawn after the men, not sorted with
+  them; the tufts' hash agrees with the shader's to float precision (a cell at the 0.24 threshold may differ), and the West
+  yards get none; the flock is dim at the default fit (it is a 1 m disc there) and its look on the phone is the owner's eye; the tuft layer
+  and the kit shadow rows on the Tab S7 (no measurement); the tray lift is a whole-card shift, so a unit on a stair shows its tray at
+  the walk's height while the men are still climbing.
+
 ### Pass 4, painted figures (as built, 2026-10-30)
 
 Art half (`tools/`, the two sheet sets, one loader in `game/kit_ob.gd`); `sim/` and `campaign/` untouched, the generated tables did not change.
