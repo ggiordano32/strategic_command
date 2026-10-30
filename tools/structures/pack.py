@@ -27,6 +27,94 @@ def arg(n, d):
     return a[a.index(n) + 1] if n in a else d
 
 
+# ---------------------------------------------------------------- painted kit (the cities pass, as pass 4 did the figures)
+
+PAINTED = "--no-painted" not in sys.argv   # --no-painted packs the committed atlases byte for byte
+PAINT = {
+    "contrast": 1.10, "saturation": 1.10,   # the shade lifted off the board
+    "line": {"big": 0.55, "small": 0.68},   # interior black-line: the local colour x this (the small atlas is 2 px a metre: lighter)
+    "edge": 1.35,          # edge highlight: the local colour x this, warmed
+    "warm": (1.05, 1.0, 0.90),
+    "varnish": 0.0,        # roofs and walls stay matte: the lobe is on metal and water / glass only
+    "varnish_metal": 0.65, "varnish_water": 0.45,
+    "lobe_lo": 0.90,       # n.h where the varnish starts (1 = the mirror direction)
+    "team_head": 0.08,     # team parts (shade white, multiplied by the faction) lose this much so the highlights have headroom
+    "crease": 0.30,        # a lit facet next to a facet this much less lit: its edge is highlighted
+}
+# toward the key in camera space for tilt 52 (build.py KEY_TO = (-0.55, 0.45, 0.70)): x right, y up the screen, z at the camera
+_T = math.radians(52.0)
+_LT = (-0.55, 0.45 * math.cos(_T) + 0.70 * math.sin(_T), -0.45 * math.sin(_T) + 0.70 * math.cos(_T))
+_n = math.sqrt(sum(c * c for c in _LT))
+LIGHT = np.array([c / _n for c in _LT], np.float32)
+_hv = np.array([LIGHT[0], LIGHT[1], LIGHT[2] + 1.0], np.float32)
+HALF = _hv / np.linalg.norm(_hv)
+
+
+def _shift(a, dx, dy, fill):
+    """a[y + dy, x + dx] as an array (fill outside the frame)."""
+    h, w = a.shape[:2]
+    out = np.full_like(a, fill)
+    ys = slice(max(0, -dy), min(h, h - dy)); yd = slice(max(0, dy), min(h, h + dy))
+    xs = slice(max(0, -dx), min(w, w - dx)); xd = slice(max(0, dx), min(w, w + dx))
+    out[ys, xs] = a[yd, xd]
+    return out
+
+
+def paint_frame(sh, mk, nrm, idp, sname):
+    """The painter's pass on one cropped frame (sh, mk, nrm, idp: float RGBA 0..1; sh is changed in place), inside the
+    silhouette only: contrast and saturation, the varnish lobe on metal / water, black-lines where the part id steps
+    (on the farther part), warm edge highlights on the near side of a step, the top of the silhouette and lit creases."""
+    P = PAINT
+    solid = sh[..., 3] > 0.0
+    rgb = sh[..., :3]
+    lum = (rgb * np.array([0.299, 0.587, 0.114], np.float32)).sum(-1, keepdims=True)
+    rgb = lum + (rgb - lum) * P["saturation"]
+    rgb = (rgb - 0.5) * P["contrast"] + 0.5
+    tw = np.clip(mk[..., :3].sum(-1, keepdims=True), 0.0, 1.0)
+    rgb = rgb * (1.0 - P["team_head"] * tw)
+    known = solid & (idp[..., 3] > 0.5) & (idp[..., 0] > 0.0)
+    pid = np.where(known, np.rint(idp[..., 0] * 255.0), 0).astype(np.int16)
+    dep = np.rint(idp[..., 2] * 255.0).astype(np.int16)
+    n = nrm[..., :3] * 2.0 - 1.0
+    nl = (n * LIGHT).sum(-1)
+    d = (n * HALF).sum(-1)
+    lo = P["lobe_lo"]
+    spec = np.where(d > lo, ((d - lo) / (1.0 - lo)) ** 2, 0.0)
+    spec = np.where(known, spec, 0.0)[..., None]
+    gl = idp[..., 1:2]
+    metal = (gl > 0.8) & known[..., None]
+    water = (gl > 0.4) & (gl <= 0.8) & known[..., None]
+    gain = np.where(metal, 1.0 + P["varnish_metal"] * spec, np.where(water, 1.0 + P["varnish_water"] * spec, 1.0 + P["varnish"] * spec))
+    lift = np.where(metal, 0.16 * spec, 0.0)
+    rgb = rgb * gain + lift
+    line = np.zeros(pid.shape, bool)
+    edge = np.zeros(pid.shape, bool)
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        sj = _shift(solid, dx, dy, False)
+        qj = _shift(pid, dx, dy, 0)
+        depj = _shift(dep, dx, dy, 0)
+        nlj = _shift(nl, dx, dy, 0.0)
+        if dy == -1:
+            edge |= known & ~sj                     # the top of the silhouette
+        both = known & sj & (qj > 0)
+        diff = both & (qj != pid)
+        dd = dep - depj
+        behind = diff & ((dd > 0) | ((dd == 0) & (pid < qj)))
+        line |= behind
+        if dx < 0 or dy < 0:
+            edge |= diff & ~behind & (nl > 0.2)     # the near part's left / top rim, facing the key
+            edge |= both & (qj == pid) & (nl > 0.55) & (nlj < nl - P["crease"])
+        else:
+            pass
+    edge &= ~line
+    fl = P["line"][sname]
+    rgb = np.where(line[..., None], rgb * fl, rgb)
+    wr = np.array(P["warm"], np.float32)
+    rgb = np.where(edge[..., None], rgb * P["edge"] * wr, rgb)
+    sh[..., :3] = np.where(solid[..., None], np.clip(rgb, 0.0, 1.0), sh[..., :3])
+    return sh
+
+
 def main_oblique():
     """Pass 3 (tabletop): pack the oblique kit (build.py --oblique, 40 degrees
     elevation, 8 px / m) into assets/kit_ob/: atlas_shade.png + atlas_mask.png
@@ -128,6 +216,9 @@ def main():
             sh_c = sh[y0:y1, x0:x1].copy(); mk_c = mk[y0:y1, x0:x1].copy()
             mk_c[..., 3] = 1.0
             sh_c[..., :3] *= (sh_c[..., 3:4] > 0.0)
+            if PAINTED and os.path.exists(base + "_nrm.png") and os.path.exists(base + "_id.png"):
+                nr = C.load(base + "_nrm.png")[y0:y1, x0:x1]; ip = C.load(base + "_id.png")[y0:y1, x0:x1]
+                sh_c = paint_frame(sh_c, mk_c, nr, ip, sname)
             ox, oy = info["origin_px"]
             sprites.append((key, sh_c, mk_c, ox - x0, oy - y0, info["ppm"]))
         # a white, primary-masked block: untextured shapes (the map trees round a town) draw through the same shader

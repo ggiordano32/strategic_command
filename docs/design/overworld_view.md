@@ -481,3 +481,91 @@ redrawn 14 times a second and the miniatures' ships every frame (High), for the 
 - **Left**: an army selected costs about 1 ms, most of it the side panel's UI (about 260 draw calls; at 1.2 the
   846 include the start panel) and the map's reach node, outside the overlay; the overlay's settlements part still costs 2.8 to 3.5 ms to redraw (names, label
   placement, fog lookups), on a state change or zoom step only; not yet measured on a phone or the web build.
+
+### The cities pass: ring walls, the painted kit, contact shadows, bastioned traces (as built, 2026-10-30)
+
+The owner, after the battle's walls landed as a mitred mesh: "Now the cities in the overworld may need a similar pass." View
+only: `sim/` and `campaign/` untouched, no state, no hash (the plan stays deterministic from the region index; `git diff
+--stat sim/ campaign/` is empty). Four parts, each shot before / after (scratch `cities_before/`, `cities_after/`).
+
+- **1. One mitred ring a town** (`game/campaign/town_ring.gd`, new; `town_plan.gd _walls` / `_sea_wall`; `town_layer.gd`). The 6 m wall pieces
+  (a lattice path in eight directions) are gone; towers, posts, bastion points and gates stay sprites. `_walls` now walks the
+  footprint's loop (`rad_at * sc * 0.93`, the radius smoothed over its two neighbours, one vertex every 6 m from the gate round),
+  flags the edges left open (the harbour side, edges whose middle is in the sea: the old rules) and cuts the loop with
+  `TownRing.clip_runs` at a circle round every tower (0.95 of its body: 2.6 m stone, 0.95 m post, 3.8 m bastion point), at the
+  gate (4.2 m) and at the open edges; the runs, travelling clockwise on the screen (the outside on the left of (d.y, -d.x)),
+  are `plan["wrings"]` = `[{"kind": stone | bast | star | pal, "runs": [...]}]`. `TownRing.cmds(ring, detail)` turns a ring
+  into one triangle soup per 6 m stretch with the y it sorts by (the foot of its centre line). Cross-section from the kit's
+  pieces, heights as the sprites show them (zex 1.7): **stone** body to 7.5 m, a darker cap band to 8.7 with a lit lip, the walk
+  on top (a lit lip along its inner edge, a shaded crenel bed on the outer 1.5 m) and merlons 1.15 m wide every 2.4 m to 10.1;
+  **bast** (West level 3, Rome level 3, Campeche, Cartagena's sea wall) body 6.1, a cornice to 7.1, no merlons; **pal** a row of
+  0.95 m stakes (a lit and a shaded half each, a pointed tip, a hash of the ring and the stake for the height and tone, the
+  nearest drawn last, rails on the inner side when the camera sees it). Every vertex is **mitred** (a mitre longer than 3
+  half thicknesses is bevelled), so adjacent faces share their edge and the ring has no gap or overlap. Each stretch draws
+  the face the camera sees (the outer one in the south of the ring, the inner one in its north), the top (always), the merlons
+  (their visible face and top), the cut section at a run's ends when it faces the camera (the gate, the harbour opening, a
+  tower), a darker foot with an ink line on the ground, thin courses on dressed stone (every 1.5 m). Faces are lit by the kit's own
+  light (`KEY_TO` and `FILL_TO` of `build.py`: a south or south-east face catches the fill, a south-west one almost nothing),
+  the colours are the kit's lit material, so ring and sprites agree under the same map look (posterised bands, LUT, grain:
+  the soups are textured with the atlas' white block, the colour in the vertices, drawn with `RenderingServer.canvas_item_add_triangle_array`
+  through the same material). **Sort:** the town layer merges the ring's stretches with the pieces and trees by y (`_ring_cmds`,
+  `_build_cmds`), so a house in front covers the wall and the wall covers a house behind it; stretches that follow each other
+  with no piece overlapping them between join one draw call (`_push_soup`). The big atlas (zoom 1.67 up, not Low) draws the detail; the
+  small atlas and Graphics Low draw the ring flat (no courses, merlons one band, a stake one block). Cartagena's sea wall
+  is a ring along the shore, outside to the sea, stopping at each baluarte (still a sprite) and at the quay.
+  **Cast shadow and foot** are painted into the town ground (`town_paint.gd`): the stretches' shadow hulls merged per run
+  (one outline, so translucent paint does not double up at the joints), then three growing bands round the foot.
+- **2. The painted kit** (`tools/structures/build.py`, `pack.py`; README "Painted kit"). `build.py` renders `_nrm` and `_id`
+  beside shade / mask (the same code as `tools/sprites/build.py`; the part id is the part's index in build order, G a gloss
+  class, B depth over 120..180 m; hard, one sample); `pack.py` applies `paint_frame` inside each sprite's silhouette:
+  black-lining where the part id steps (the farther part x 0.55 big / 0.68 small: the small atlas is 2 px a metre), warm x 1.35
+  edge highlights on the lit edges (the key from the north-west: the top row, left and top rims facing it, lit creases), a
+  varnish lobe on **metal and water / glass only** (roofs and walls matte), contrast and saturation x 1.10. Rects, anchors and
+  `game/minis_atlas.gd` do not change (the git diff of the table is empty); `--no-painted` packs the committed atlases pixel
+  for pixel (4 noise pixels of 2 M differ: Blender's own run-to-run noise; the PNG bytes differ only in the date chunk).
+  **Sizes** (shade PNG): big 2048 x 1216 1,708,815 -> 1,793,375 bytes (+4.9 %), small 2048 x 384 597,251 -> 614,976 (+3.0 %);
+  masks and tables unchanged; the video memory is the same. The 494 structures were re-rendered (about 4 min).
+- **3. Contact shadows with depth** (`town_paint.gd _halo`). Every piece on the ground (not ships, piers, slipways,
+  camp pieces) gets four stacked octagons round its footprint rectangle (grown 0, 0.33, 0.66, 1.0 m, alpha summing to about 0.6
+  at the foot, fading to nothing a metre out; three on Low), painted under the cast shadows. This replaces the old single
+  1.15 x "ao" rectangle. The bake was 350 ms for 49 plans before; the halos add about 15 k polygons to the one bake
+  (see the cost row).
+- **4. Bastioned traces** (`town_plan.gd _star`). The West's harbour fort (`harbour_fort`: every West port's first fort, both
+  of Portobelo's) and the lvl-2 citadel (`fort`) are drawn as a **four-bastion star**: the battle's `fuerza` trace
+  (`sim/fort_traces.gd`, read only) scaled (1.0 citadel, 0.74 harbour fort), turned so its gate edge faces the plaza, offset in
+  by half the rampart (1.9 m) and walked by the ring (kind `star`: coquina, a cornice, no merlons) with a 3.8 m opening at
+  the gate, a parade ground painted inside (`ring["parade"]`) and the owner's flag (`camp_flag`) in it. The bastion points are
+  the ring's faces (no bastion point sprites). The named landmarks (El Morro, the Fuerza, San Marcos, Ulua...) stay sprites;
+  Rome keeps its square citadel (`tower_rome`). The replaced fort piece stays in the plan's items (collision, the test of
+  agreement with the battle) and is listed in `plan["hidden"]`: the layer and the shadow painter skip it.
+- **What differs from the brief and why.** (a) The ring's thickness is plan metres (1.2 px a metre both ways) like the rest of the
+  plan, not foreshortened by the camera: a wall seen from the south shows its top 3.2 m x 1.2 px deep, about 1.3 times what the
+  sprite's top showed. (b) The merlons are 1.5 m deep (the old pieces' were the whole 3.4 m of the top): at 0.9 m the teeth did
+  not read at the chart's scale. (c) Only the stretches are polygons; the cannon on the bastion points of the old star were sprites
+  of the point piece and stay there; a star fort has no cannons yet (a sprite stands on the ground, a rampart's top is 6 m up:
+  needs a lifted draw). (d) The Low path draws the same soups (flat) rather than a separate polygon list.
+- **Cost.** `tests/look_bench.gd` (2000 x 923, vsync off, two rounds each, base = `git archive HEAD` in a scratch copy; the machine
+  was loaded by other agents so a frame is 25 ms (West) / 16 ms (Rome), not the 3 to 7 ms of earlier rows: the deltas are what counts), frame mean ms,
+  base -> after: West table 1.2: 26.46, 26.80 -> 26.87, 27.53; 0.6: 25.64, 26.18 -> 26.06, 26.83; 0.226: 23.96, 24.93 -> 24.30, 24.93;
+  Rome table 1.2: 15.61, 16.66 -> 16.11, 16.86; 0.6: 18.31, 18.93 -> 19.40, 19.59; 0.379: 14.51, 15.07 -> 14.95, 14.84. About +0.4 ms
+  (within the run-to-run spread of 0.5 to 1 ms), the towns layer's share is **not** shown to be inside the +0.3 ms line: the ring's
+  cost is draw calls, not triangles (a polygon command is its own draw call and breaks the sprites' batch): per frame draw calls
+  (`RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME`) West table 1.2 5299 -> 5347, 0.6 5323 -> 5388, Rome 1.2 4004 -> 4092, 0.6 4910 -> 5135
+  (before joining stretches 5403 / 5460 / 4121 / 5227); primitives +1 to +4 k of 400 to 790 k. The joining across non-overlapping
+  pieces is conservative (the sprites' rectangles are tall); joining all of a ring's south half into one soup drawn last would save most of the
+  rest at the price of the order of the houses just outside the wall (not done).
+  `tests/zoom_sweep.gd --pack=west --quick` medians (ms, base -> after, same loaded machine): steady 0.5 19.3 -> 19.8, 1.2 20.8 -> 20.3, 2.4 23.3 -> 22.6;
+  wheel in 24.1 -> 23.0, out 22.5 -> 22.0; pinch in 23.2 -> 22.1, out 22.6 -> 22.6; the refocus frames (a jump that redraws the towns) 38.9 -> 48.4.
+  The ship lag check (`--lag`): max and mean 0.00 px, 0 late wakes, both builds. `tests/campaign_input_test.gd` RESULT: PASS; `tests/town_plan_test.gd`
+  PASS (landmark sets, turn order and civic pieces agree with the battle's plan: 0 / 0 / 0); `tools/check_scripts.sh` clean for every file (the one line it
+  printed was the scratch `tests/cities_dc.gd` I deleted mid-run).
+- **Shot recipe.** `tests/cities_shots.gd` (new): `DISPLAY=:0 godot --path . --resolution 1600x900 -s tests/cities_shots.gd -- --pack=west|rome
+  --focus=havana,portobelo --zooms=0.5,1.2,2.4 [--walls=3] [--level=2] [--yard=2] [--quality=low] --shots=DIR` opens a new campaign of the
+  pack on the campaign screen (everything in sight), sets walls / level / shipyard on the listed towns before the first frame and saves
+  `<pack>_<key>_z<zoom>.png` 0.9 s after each jump. A before set: `git archive HEAD | tar -x -C DIR`, copy the script in, `godot --headless
+  --import` there, run the same command. Close-ups used: West `la_guaira` (stone ring, star harbour fort, citadel) walls 2, `portobelo` walls 1 (two stars),
+  `havana` walls 3; Rome `latium` walls 1 / 2 / 3, `sicilia_or`; Low: `puerto_principe` walls 2, `latium` walls 3.
+- **Open.** The owner's eye on the ring's colours against the sprites (the stone is lit by the kit's light, the kit sprites' own stone, sampled from the painted atlas (the stone wall and tower faces and tops; coquina for the bastioned kind, darker for the star forts; the palisade from its post), under the fill, the
+  bast walls read cream on sand); the star forts are small and pale on sand at zoom 1.2 (a darker coquina or an ink edge on the
+  faces would help); cannons on the star's bastions; the draw-call cost (join the south half into one soup); a house on the wall line
+  (the plan puts houses within the footprint, the ring is at 0.93 of it: a few stand in the wall as before); the palisade has no earth bank.

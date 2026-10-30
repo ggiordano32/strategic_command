@@ -20,6 +20,8 @@ const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const Geo := preload("res://game/campaign/map_geo.gd")
 const Atlas := preload("res://game/minis_atlas.gd")
 const CTown := preload("res://campaign/ctown.gd")
+const TownRing := preload("res://game/campaign/town_ring.gd")
+const FortTraces := preload("res://sim/fort_traces.gd")   # (read only: the battle's star trace "fuerza", the shape of the chart's bastioned citadel)
 
 const K := 1.2               # world px a metre
 const NA := 24               # footprint radii (angles)
@@ -838,8 +840,9 @@ static func plan(st: Dictionary, r: int, grid: bool, known: Dictionary = {}) -> 
 	return p
 
 
-static func _item(items: Array, pos: Vector2, name: String, yaw: int) -> void:
+static func _item(items: Array, pos: Vector2, name: String, yaw: int) -> bool:
 	items.append([pos, name, yaw])
+	return true
 
 
 static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
@@ -856,6 +859,8 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 	if style == "maya" or style == "native" or style == "haven":
 		sc *= float(CTown.STYLE_S) / 1000.0
 	var items: Array = []
+	var wrings: Array = []      # the wall rings (town_ring.gd): the curtain, a sea wall, the star forts
+	var hidden: Array = []      # positions of fort pieces a star ring stands for (kept as items: occupancy, the battle's agreement)
 	var paint_shadows: Array = []
 	var streets_out: Array = []
 	var cd: Vector2 = s["cdir"]
@@ -904,7 +909,8 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 					_item(items, mp, "mansion", yaw_facing(-Vector2(-cdirv.y, cdirv.x) + cdirv * 0.5))
 			var fp: Vector2 = s["fort"]
 			if lvl == 2 and fp != Vector2.ZERO and fp.distance_to(church_pos) > 14.0 * K and not _lm_on(lms, "high", f):
-				_item(items, fp, "fort", 0)
+				if _item(items, fp, "fort", 0) and CData.pack == "west":
+					_star(s, items, wrings, hidden, fp, 1.0)
 		"roman":
 			var tn := "shrine" if lvl == 0 else "temple"
 			if rkey == "latium" and lvl >= 1:
@@ -956,7 +962,7 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 				_item(items, fp3, "skull_rock", 0)
 	# landmarks (before the houses: they keep clear of them) and the harbour's first fort
 	var wall_items: Array = []
-	_landmarks(s, f, lms, items, wall_items)
+	_landmarks(s, f, lms, items, wall_items, wrings, hidden)
 	# houses
 	var n_houses := 0
 	match style:
@@ -1124,7 +1130,7 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 		water = _find_water(sh0[0] as Vector2, sh0[1] as Vector2)
 	# the walls
 	if walls > 0:
-		_walls(s, sc, walls, style, port and harbour, items, wall_items, rkey)
+		_walls(s, sc, walls, style, port and harbour, items, wall_items, rkey, wrings)
 	var moored: Array = []
 	if harbour and port:
 		moored = _moored(s, f, lvl, water)
@@ -1199,13 +1205,13 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 		var pd3: Array = pd_of(nm3)
 		if pd3.is_empty():
 			continue
-		if nm3 == "ulua" or nm3.begins_with("ship_"):
+		if nm3 == "ulua" or nm3.begins_with("ship_") or hidden.has(ii2[0]):
 			continue
 		if float(pd3[3]) >= 5.0 and not nm3.begins_with("quay") and not nm3.begins_with("pier") and not nm3.begins_with("slipway"):
 			paint_shadows.append([ii2[0], nm3, ii2[2]])
 	return {"c": c, "items": items, "walls": wall_items, "streets": streets_out, "fields": fields_out, "sc": sc,
 		"quay": quay_line, "water": water, "harbour": harbour, "half_w": half_w, "top": top, "bottom": bottom,
-		"shadows": paint_shadows, "style": style, "lvl": lvl, "ring": ring_style}
+		"shadows": paint_shadows, "style": style, "lvl": lvl, "ring": ring_style, "wrings": wrings, "hidden": hidden}
 
 
 static func _yaw4(k: int) -> int:
@@ -1311,7 +1317,7 @@ static func _put(s: Dictionary, items: Array, pos: Vector2, name: String, yaw: i
 	return false
 
 
-static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, wall_out: Array) -> void:
+static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, wall_out: Array, wrings: Array, hidden: Array) -> void:
 	var c: Vector2 = s["c"]
 	var shore: Array = s["shore"]
 	var have_shore := bool(s["near_sea"]) and shore.size() >= 3
@@ -1326,7 +1332,7 @@ static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, w
 		var at := str(d.get("at", ""))
 		if pn == "seawall":
 			if have_shore:
-				_sea_wall(s, items, wall_out)
+				_sea_wall(s, items, wall_out, wrings)
 				placed_fort = true
 			continue
 		match at:
@@ -1336,6 +1342,8 @@ static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, w
 					var nv: Vector2 = m[1]
 					if _put(s, items, m[0], pn, yaw_facing(-nv) if str(d.get("face", "")) == "land" else 0):
 						placed_fort = placed_fort or bool(d.get("fort", false))
+						if pn == "harbour_fort" and CData.pack == "west":
+							_star(s, items, wrings, hidden, (items[items.size() - 1] as Array)[0], 0.74)
 			"high":
 				var hp: Vector2 = s["fort"]
 				if hp != Vector2.ZERO:
@@ -1392,36 +1400,83 @@ static func _landmarks(s: Dictionary, f: Dictionary, lms: Array, items: Array, w
 	# every West port's first fort: a harbour fort on the headland, unless a landmark is the fort
 	if str(f["style"]) == "town" and CData.pack == "west" and bool(f["port"]) and int(f["walls"]) >= 1 and not placed_fort and have_shore:
 		var m2 := _mouth(s, 0, 3.0)
-		if not m2.is_empty():
-			_put(s, items, m2[0], "harbour_fort", 0)
+		if not m2.is_empty() and _put(s, items, m2[0], "harbour_fort", 0):
+			_star(s, items, wrings, hidden, (items[items.size() - 1] as Array)[0], 0.74)
 
 
-## Cartagena's long sea walls: wall pieces along the shore with a baluarte every fourth, a gap at the quay.
-static func _sea_wall(s: Dictionary, items: Array, out: Array) -> void:
+## Cartagena's long sea walls: a mitred bastioned ring along the shore (its outside to the sea) with a baluarte every
+## fourth shore point (those stay sprites; the ring stops at them) and a gap at the quay.
+static func _sea_wall(s: Dictionary, items: Array, out: Array, wrings: Array) -> void:
 	var shore: Array = s["shore"]
 	var n := shore.size()
 	var mid := n / 2
+	var circles: Array = []
+	var runs: Array = []
+	var cur := PackedVector2Array()
+	var sea_dir := Vector2.ZERO
 	for i in n:
-		if absi(i - mid) <= 3:
-			continue
+		var skip := absi(i - mid) <= 3
 		var sp: Vector2 = (shore[i] as Array)[0]
 		var nv: Vector2 = (shore[i] as Array)[1]
-		var a: Vector2 = (shore[maxi(i - 1, 0)] as Array)[0]
-		var b: Vector2 = (shore[mini(i + 1, n - 1)] as Array)[0]
-		var tv := b - a
-		if tv.length() < 0.5:
-			continue
 		var pos := sp - nv * 2.0 * K
-		if depth(pos) < 0.8:
+		if not skip and depth(pos) < 0.8:
+			skip = true
+		if skip:
+			if cur.size() >= 2:
+				runs.append(cur)
+			cur = PackedVector2Array()
 			continue
-		var it: Array = [pos, "bast_wall", yaw_along(tv)]
-		items.append(it)
-		out.append(it)
+		cur.append(pos)
+		sea_dir += nv
 		if i % 4 == 1:
 			var bp := sp - nv * 2.6 * K
 			var bit: Array = [bp, "baluarte", yaw_facing(nv)]
 			items.append(bit)
 			out.append(bit)
+			circles.append([bp, 3.6 * K])
+	if cur.size() >= 2:
+		runs.append(cur)
+	var fin: Array = []
+	for r in runs:
+		var pl: PackedVector2Array = r
+		# the outside is to the sea: reverse a run that travels the other way (the outside is on the left of (d.y, -d.x))
+		var side := 0.0
+		for e in pl.size() - 1:
+			side += TownRing.out_normal(pl[e], pl[e + 1]).dot(sea_dir)
+		if side < 0.0:
+			pl.reverse()
+		fin.append_array(TownRing.clip_runs(pl, false, circles))
+	if not fin.is_empty():
+		wrings.append({"kind": "bast", "runs": fin, "seed": 5})
+
+
+## A bastioned star trace (the battle's four-bastion "fuerza" trace, scaled to `sc`, its gate towards the town) at pos:
+## the chart's citadel and harbour fort. The ring walks the trace's inside by half its thickness, with an opening at
+## the gate; the piece the plan placed there stays in the items (collision, the battle's agreement) and is not drawn;
+## the owner's flag stands in the parade (a camp flag: the civic-piece test reads flagpoles).
+static func _star(s: Dictionary, items: Array, wrings: Array, hidden: Array, pos: Vector2, sc: float) -> void:
+	hidden.append(pos)
+	var c: Vector2 = s["c"]
+	var towards := (c - pos)
+	if towards.length() < 1.0:
+		towards = Vector2(0.0, 1.0)
+	towards = towards.normalized()
+	var th := atan2(towards.y, towards.x) + PI * 0.5   # the trace's gate faces -y
+	var trace: Dictionary = FortTraces.T["fuerza"]
+	var v: Array = trace["v"]
+	var loop := PackedVector2Array()
+	for i in v.size() / 2:
+		var q := Vector2(float(v[2 * i]), float(v[2 * i + 1])) * 0.1 * sc * K
+		loop.append(pos + q.rotated(th))
+	var ring := {"kind": "star", "t": 1.9}
+	loop = TownRing.offset_loop(loop, -TownRing.thickness(ring) * K * 0.5)
+	var g: int = int(trace["gate"])
+	var gate_mid := (loop[g] + loop[(g + 1) % loop.size()]) * 0.5
+	ring["runs"] = TownRing.clip_runs(loop, true, [[gate_mid, 1.9 * K]])
+	ring["parade"] = TownRing.offset_loop(loop, -TownRing.thickness(ring) * K * 0.5)   # the ground inside the ramparts
+	ring["seed"] = int(pos.x) + int(pos.y)
+	wrings.append(ring)
+	items.append([pos, "camp_flag", 0])
 
 
 ## True when a disc of radius rad round p is all sea, with a margin (px of depth) off the coast.
@@ -1600,9 +1655,10 @@ static func _house_name(style: String, h: int, lvl: int, s: Dictionary) -> Strin
 	return "hut"
 
 
-## The wall loop round the town: pieces in 8 directions walked along the footprint (a lattice path), towers,
-## a gate where the main street leaves it, the harbour side left open.
-static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour: bool, items: Array, out: Array, rkey: String = "") -> void:
+## The wall ring round the town: the footprint's loop (smoothed, one sample every 6 m) as a mitred ring (town_ring.gd)
+## with towers and a gate (sprites, where the main street leaves the town; the ring stops at them) and the harbour
+## side left open. Level 1 / 2 / 3 keep their kind (palisade, stone, bastioned).
+static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour: bool, items: Array, out: Array, rkey: String = "", wrings: Array = []) -> void:
 	var c: Vector2 = s["c"]
 	var rad: PackedFloat32Array = s["rad"]
 	var kind := "pal"
@@ -1614,7 +1670,6 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 	if west_port and walls == 1:
 		return             # a harbour fort beside an open town (the West walls history), no circuit yet
 	var sea_thr := 0.3 if (west_port and walls == 2) else 0.78   # level 2: a landward wall only, level 3: the full curtain
-	var L := 6.0 * K
 	var cd: Vector2 = s["cdir"]
 	var wsc := 0.93
 	# the gate: where the main street's far end leaves the town, on the land side
@@ -1629,40 +1684,31 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 		if sco > best:
 			best = sco
 			ga = atan2(dv.y, dv.x)
-	var gate_u := Vector2(cos(ga), sin(ga))
-	# start on the loop at the gate
-	var rg := rad_at(rad, ga) * sc * _lvl_dir(s, gate_u, sc) * wsc
-	var pos := c + gate_u * rg
-	var heading := _snap8(Vector2(-gate_u.y, gate_u.x))
-	var acc := 0.0
-	var prev_a := ga
-	var pieces: Array = []   # [pos, dir index, skip]
-	var guard := 0
-	while guard < 90:
-		guard += 1
-		var d: Vector2 = pos - c
-		var a := atan2(d.y, d.x)
-		var da := fposmod(a - prev_a + PI, TAU) - PI
-		acc += da
-		prev_a = a
-		if acc >= TAU - 0.05 and guard > 6:
-			break
-		# the target: a point on the loop a little ahead
-		var ta := a + L * 1.05 / maxf(d.length(), 8.0)
-		var tu := Vector2(cos(ta), sin(ta))
-		var tgt := c + tu * (rad_at(rad, ta) * sc * _lvl_dir(s, tu, sc) * wsc)
-		var want := (tgt - pos)
-		var bestk := heading
-		var bd := -2.0
-		for k in 8:
-			var dv2 := _dir8(k)
-			var sco2 := dv2.dot(want.normalized()) + (0.12 if k == heading else 0.0)
-			if sco2 > bd:
-				bd = sco2
-				bestk = k
-		heading = bestk
-		var dvec := _dir8(heading)
-		var mid := pos + dvec * L * 0.5
+	# the loop: N samples from the gate round, the radius smoothed over its neighbours
+	var rm := 0.0
+	for k in 24:
+		var a0 := TAU * float(k) / 24.0
+		var u0 := Vector2(cos(a0), sin(a0))
+		rm += rad_at(rad, a0) * sc * _lvl_dir(s, u0, sc) * wsc / 24.0
+	var N := clampi(int(round(TAU * rm / (6.0 * K))), 18, 72)
+	var da := TAU / float(N)
+	var rr := PackedFloat32Array()
+	for j in N:
+		var aj := ga + da * float(j)
+		var vals := 0.0
+		for dd in [-1.0, 0.0, 1.0]:
+			var ak: float = aj + da * float(dd)
+			var uk := Vector2(cos(ak), sin(ak))
+			vals += rad_at(rad, ak) * sc * _lvl_dir(s, uk, sc) * wsc * (0.5 if dd == 0.0 else 0.25)
+		rr.append(vals)
+	var loop := PackedVector2Array()
+	for j in N:
+		var aj2 := ga + da * float(j)
+		loop.append(c + Vector2(cos(aj2), sin(aj2)) * rr[j])
+	# the opening where the harbour is and where the wall would stand in the sea
+	var open := PackedByteArray()
+	for j in N:
+		var mid := (loop[j] + loop[(j + 1) % N]) * 0.5
 		var skip := false
 		if harbour:
 			var md := (mid - c)
@@ -1670,44 +1716,34 @@ static func _walls(s: Dictionary, sc: float, walls: int, style: String, harbour:
 				skip = true
 		if depth(mid) < 1.5:
 			skip = true
-		pieces.append([mid, heading, skip])
-		pos += dvec * L
-	var np := pieces.size()
-	var gate_i := 0
+		open.append(1 if skip else 0)
+	# the gate and the towers: sprites on the loop; the ring ends at their body
+	var gname := "pal_gate" if kind == "pal" else ("stone_gate" if kind == "stone" else "bast_gate")
+	var gate_rc := (4.0 if kind == "pal" else 4.3) * K
 	var tower_every := 5 if kind != "pal" else (3 if (style == "native" and walls >= 2) else 4)
-	for i in np:
-		var pc: Array = pieces[i]
-		var mid2: Vector2 = pc[0]
-		var hd: int = pc[1]
-		if bool(pc[2]):
+	var tower_rc: float = float({"pal": 0.95, "stone": 2.6, "bast": 3.8}[kind]) * K
+	var circles: Array = [[loop[0], gate_rc]]
+	var tangent := loop[1 % N] - loop[N - 1]
+	var mine: Array = [[loop[0], gname, yaw_along(tangent)]]
+	if kind == "bast" and rkey == "campeche":
+		tower_rc = 3.4 * K
+	for j in range(2, N - 1):
+		if j % tower_every != 2 or open[j - 1] != 0:
 			continue
-		var wname := kind + "_wall" if kind != "bast" else "bast_wall"
-		if kind == "pal":
-			wname = "pal_wall"
-		elif kind == "stone":
-			wname = "stone_wall"
-		if i == gate_i:
-			var gname := "pal_gate" if kind == "pal" else ("stone_gate" if kind == "stone" else "bast_gate")
-			out.append([mid2, gname, hd & 3])
-			continue
-		if i == np - 1 and np > 8:
-			continue   # the closing piece is hidden by the gate
-		out.append([mid2, wname, hd & 3])
-		if i % tower_every == 2:
-			var vtx := mid2 + _dir8(hd) * L * 0.5
-			var tname := "pal_post" if kind == "pal" else ("stone_tower" if kind == "stone" else "bast_point")
-			if kind == "bast":
-				out.append([vtx, "baluarte" if rkey == "campeche" else tname, yaw_facing(vtx - c)])
-			else:
-				out.append([vtx, tname, 0])
-	# the wall pieces and the town share one y order
-	for o in out:
+		var vtx := loop[j]
+		var tname := "pal_post" if kind == "pal" else ("stone_tower" if kind == "stone" else "bast_point")
+		if kind == "bast":
+			mine.append([vtx, "baluarte" if rkey == "campeche" else tname, yaw_facing(vtx - c)])
+		else:
+			mine.append([vtx, tname, 0])
+		circles.append([vtx, tower_rc])
+	var runs := TownRing.clip_runs(loop, true, circles, open)
+	if not runs.is_empty():
+		wrings.append({"kind": kind, "runs": runs, "seed": int(c.x) * 7 + int(c.y)})
+	# the towers and the gate and the town share one y order
+	for o in mine:
+		out.append(o)
 		items.append(o)
-
-
-static func _snap8(d: Vector2) -> int:
-	var phi := atan2(-d.y, d.x)
-	return posmod(int(round(phi / (PI * 0.25))), 8)
 
 
 ## Atlas sprite name of a piece at a yaw, falling back to the nearest yaw that was rendered.

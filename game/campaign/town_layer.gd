@@ -13,6 +13,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const TownPlan := preload("res://game/campaign/town_plan.gd")
 const TownPaint := preload("res://game/campaign/town_paint.gd")
+const TownRing := preload("res://game/campaign/town_ring.gd")
 const Landscape := preload("res://game/campaign/landscape.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const Atlas := preload("res://game/minis_atlas.gd")
@@ -237,21 +238,115 @@ static var _DBG: bool = OS.get_cmdline_user_args().has("townsdbg")
 func _draw_cmds(kid: Node2D, r: int, aname: String, table: Dictionary, shade: Texture2D, col: Color) -> void:
 	var per: Dictionary = _cmds.get(r, {})
 	if not per.has(aname):
-		per[aname] = _build_cmds(r, aname, table)
+		per[aname] = _build_cmds(r, aname, table, shade)
 		_cmds[r] = per
 	for c in per[aname]:
 		if int(c[0]) == 0:
 			kid.draw_texture_rect_region(shade, c[1], c[2], col if c[3] == null else c[3])
+		elif int(c[0]) == 2:
+			_soup(kid, c, shade)
 		else:
 			kid.draw_set_transform((c[1] as Vector2) + Vector2(2.5, 3.0), 0.0, Vector2(1.0, 0.42))
 			kid.draw_circle(Vector2.ZERO, float(c[2]), Color(0.04, 0.10, 0.18, 0.28))
 			kid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-func _build_cmds(r: int, aname: String, table: Dictionary) -> Array:
+## The ring walls of town r for atlas aname as sorted soups [2, idx, pts, cols, uvs, key_y] (every vertex's uv in the atlas'
+## white block, the colour in the vertex): the small atlas and Graphics Low draw them flat.
+func _ring_cmds(r: int, aname: String, table: Dictionary, shade: Texture2D) -> Array:
+	var per: Dictionary = _cmds.get(r, {})
+	var ck := "ring|" + aname
+	if per.has(ck):
+		return per[ck]
 	var out: Array = []
-	var items: Array = (_plans[r] as Dictionary)["items"]
+	var pl: Dictionary = _plans[r]
+	var wh: Array = table["white"]
+	var wuv := Vector2((float(wh[0]) + 4.0) / float(shade.get_width()), (float(wh[1]) + 4.0) / float(shade.get_height()))
+	var detail := aname == "big" and not Quality.is_low()
+	for ring in pl.get("wrings", []):
+		for sp in TownRing.cmds(ring as Dictionary, detail):
+			var pts: PackedVector2Array = sp[2]
+			var uvs := PackedVector2Array()
+			uvs.resize(pts.size())
+			uvs.fill(wuv)
+			var lo := Vector2(INF, INF)
+			var hi := Vector2(-INF, -INF)
+			for q in pts:
+				lo = lo.min(q)
+				hi = hi.max(q)
+			out.append([2, sp[1], pts, sp[3], uvs, float(sp[0]), false, Rect2(lo, hi - lo)])
+	out.sort_custom(func(a, b): return float(a[5]) < float(b[5]))
+	per[ck] = out
+	_cmds[r] = per
+	return out
+
+
+## Append a ring soup to a draw list. A stretch joins the last soup of the list when none of the pieces drawn since
+## overlaps it (their order would not show): one draw call for a run of stretches instead of one each, the
+## draw-call count being the cost of the ring, not its triangles. Entries: [2, indices, points, colours, uvs, key y,
+## joined (the arrays are the list's own), bounds of the stretch].
+func _push_soup(out: Array, c: Array) -> void:
+	var bb: Rect2 = c[7]
+	var gb := bb.grow(2.0)
+	var j := out.size() - 1
+	var steps := 0
+	while j >= 0 and steps < 48:
+		var e: Array = out[j]
+		var kind := int(e[0])
+		if kind == 2:
+			break
+		var er: Rect2
+		if kind == 0:
+			er = e[1]
+		else:
+			var rr := float(e[2]) * 1.2
+			er = Rect2((e[1] as Vector2) - Vector2(rr, rr), Vector2(rr, rr) * 2.0 + Vector2(3.0, 3.0))
+		if er.intersects(gb):
+			j = -1
+			break
+		j -= 1
+		steps += 1
+	if j >= 0 and int((out[j] as Array)[0]) == 2:
+		var p: Array = out[j]
+		var pts: PackedVector2Array = p[2]
+		var base := pts.size()
+		var idx: PackedInt32Array = p[1]
+		for i in c[1] as PackedInt32Array:
+			idx.append(int(i) + base)
+		var cols: PackedColorArray = p[3]
+		var uvs: PackedVector2Array = p[4]
+		pts.append_array(c[2])
+		cols.append_array(c[3])
+		uvs.append_array(c[4])
+		p[1] = idx
+		p[2] = pts
+		p[3] = cols
+		p[4] = uvs
+		return
+	# (a copy: the cached list of ring soups keeps the single stretches, the draw list owns the joined arrays)
+	out.append([2, (c[1] as PackedInt32Array).duplicate(), (c[2] as PackedVector2Array).duplicate(), (c[3] as PackedColorArray).duplicate(), (c[4] as PackedVector2Array).duplicate(), c[5], true, bb])
+
+
+func _flush_pend(kid: Node2D, pend: Array, shade: Texture2D) -> void:
+	if not pend.is_empty():
+		_soup(kid, pend[0], shade)
+		pend.clear()
+
+
+## One ring soup: a single triangle array with the colours in the vertices.
+func _soup(kid: Node2D, c: Array, shade: Texture2D) -> void:
+	RenderingServer.canvas_item_add_triangle_array(kid.get_canvas_item(), c[1], c[2], c[3], c[4], PackedInt32Array(), PackedFloat32Array(), shade.get_rid())
+
+
+func _build_cmds(r: int, aname: String, table: Dictionary, shade: Texture2D) -> Array:
+	var out: Array = []
+	var pl0: Dictionary = _plans[r]
+	var items: Array = pl0["items"]
+	var stars: Array = pl0.get("hidden", [])
 	var trees := _trees(r)
+	var rc := _ring_cmds(r, aname, table, shade)
+	var ri := 0
+	var nr := rc.size()
 	var ti := 0
 	var nt := trees.size()
 	for it in items:
@@ -260,6 +355,11 @@ func _build_cmds(r: int, aname: String, table: Dictionary) -> Array:
 		while ti < nt and float((trees[ti] as Array)[1]) <= pos.y:
 			_tree_cmd(out, trees[ti], table)
 			ti += 1
+		while ri < nr and float((rc[ri] as Array)[5]) <= pos.y:
+			_push_soup(out, rc[ri])
+			ri += 1
+		if stars.has(pos) and (str(ii[1]) == "fort" or str(ii[1]) == "harbour_fort"):
+			continue
 		var pn := str(ii[1])
 		var ck := "%s|%d|%s" % [pn, int(ii[2]), aname]
 		var key: String
@@ -282,6 +382,9 @@ func _build_cmds(r: int, aname: String, table: Dictionary) -> Array:
 	while ti < nt:
 		_tree_cmd(out, trees[ti], table)
 		ti += 1
+	while ri < nr:
+		_push_soup(out, rc[ri])
+		ri += 1
 	return out
 
 
@@ -329,13 +432,24 @@ func _draw_town_body(kid: Node2D, r: int) -> void:
 	var ti := 0
 	var low := Quality.is_low()
 	var nt := trees.size()
+	var rc := _ring_cmds(r, aname, table, shade)
+	var ri := 0
+	var nr := rc.size()
+	var stars: Array = pl.get("hidden", [])
+	var pend: Array = []   # ring stretches waiting for the next piece to be drawn (they join into one draw call)
 	for it in items:
 		var ii: Array = it
 		var pos: Vector2 = ii[0]
 		while ti < nt and float((trees[ti] as Array)[1]) <= pos.y:
+			_flush_pend(kid, pend, shade)
 			_ring_tree(kid, trees[ti], table, shade, wuv)
 			ti += 1
+		while ri < nr and float((rc[ri] as Array)[5]) <= pos.y:
+			_push_soup(pend, rc[ri])
+			ri += 1
 		var pn := str(ii[1])
+		if stars.has(pos) and (pn == "fort" or pn == "harbour_fort"):
+			continue
 		if low and (pn.begins_with("tree") or pn.begins_with("palm") or pn == "orange" or LOW_SKIP.has(pn) or ((pn.begins_with("house") or pn.begins_with("adobe") or pn == "hut") and (int(pos.x) + int(pos.y)) % 2 == 0)):
 			continue
 		var ck := "%s|%d|%s" % [pn, int(ii[2]), aname]
@@ -350,6 +464,7 @@ func _draw_town_body(kid: Node2D, r: int) -> void:
 		var e: Array = table[key]
 		var k := TownPlan.K / float(e[6])
 		var dst := Rect2(pos - Vector2(float(e[4]), float(e[5])) * k, Vector2(float(e[2]), float(e[3])) * k)
+		_flush_pend(kid, pend, shade)
 		var icol := col
 		if ii.size() > 3:   # a besieger's camp is in its own colour
 			icol = CData.faction_color(int(ii[3]))
@@ -360,8 +475,13 @@ func _draw_town_body(kid: Node2D, r: int) -> void:
 			kid.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 		kid.draw_texture_rect_region(shade, dst, Rect2(float(e[0]), float(e[1]), float(e[2]), float(e[3])), icol)
 	while ti < nt:
+		_flush_pend(kid, pend, shade)
 		_ring_tree(kid, trees[ti], table, shade, wuv)
 		ti += 1
+	while ri < nr:
+		_push_soup(pend, rc[ri])
+		ri += 1
+	_flush_pend(kid, pend, shade)
 	if _DBG:
 		var sd := TownPlan.site(r, _grid)
 		var rad: PackedFloat32Array = sd["rad"]

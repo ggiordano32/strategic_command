@@ -91,3 +91,15 @@ pier, lighthouse, trees, landscape trees and rocks `lt_*`, ...): frame `"auto"` 
 yaw k = k * 45 degrees (front towards the south at 0). Render with `--sizes 300,140` (4.2 and 1.97 px a
 metre), then `pack.py` (a white primary-masked block named "white" is packed too) and `godot --headless
 --import`. The overworld assembles them (`game/campaign/town_plan.gd`).
+
+## Painted kit (2026-10-30, the cities pass)
+
+`build.py` renders two more passes a frame beside shade / mask: `_nrm` (camera-space normal * 0.5 + 0.5) and `_id` (R part id
+= the part's index in build order, G gloss class: 255 metal (`iron`, `gold`, `ship_gold`), 153 water / glass, B view depth over
+120..180 m; hard, one sample, no filter); `--no-aux` skips them. The three old passes are pixel-identical. `pack.py` applies
+`paint_frame` to every cropped sprite when its passes exist (`--no-painted` packs the old atlases: pixel for pixel the
+committed ones, only the PNG's date chunk differs; the paint is inside the silhouette, so rects, anchors and the generated
+`game/minis_atlas.gd` do not move): black-lining where the part id steps (x 0.55 big / 0.68 small), warm x 1.35 edge
+highlights on the lit edges (the NW key: top row, left / top rims, lit creases), a varnish lobe on metal and water / glass
+only (roofs and walls stay matte), contrast and saturation x 1.10. Rebuild: render every `p_*` at `--sizes 300,140` and every
+`ship_*` at `--sizes 128,64` into one `--out`, then `python3 tools/structures/pack.py --frames DIR` and `godot --headless --import`.

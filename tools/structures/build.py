@@ -39,6 +39,10 @@ KEY_TO = Vector((-0.55, 0.45, 0.70)).normalized()
 FILL_TO = Vector((0.25, -0.60, 0.76)).normalized()
 
 
+AUX = True           # the painted kit's normal and part-id passes (--no-aux skips them)
+GLOSS = {"iron": 1.0, "gold": 1.0, "ship_gold": 1.0, "water_dk": 0.6, "glass": 0.6}   # id pass G: 1 metal, 0.6 water / glass
+
+
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     a = {"structs": list(SPEC["structures"].keys()), "styles": ["D"],
@@ -52,6 +56,7 @@ def parse_args():
         elif k == "--sizes": a["sizes"] = [int(x) for x in argv[i + 1].split(",")]; i += 1
         elif k == "--tilt": a["tilt"] = float(argv[i + 1]); i += 1
         elif k == "--out": a["out"] = os.path.abspath(argv[i + 1]); i += 1
+        elif k == "--no-aux": a["aux"] = False
         elif k == "--ppm": a["ppm"] = float(argv[i + 1]); i += 1       # fixed px / m for "auto" pieces (overrides --sizes' scale)
         elif k == "--zex": a["zex"] = float(argv[i + 1]); i += 1       # force the height exaggeration (1.0 = true heights)
         elif k == "--oblique":
@@ -607,6 +612,8 @@ def build_structure(key, style, sizepx, tilt, ppm_fixed=0.0, zex_force=None):
             ob = bpy.data.objects.new("o", me)
             sc.collection.objects.link(ob)
             ob["sc_mask"] = list(TEAM.get(mk, (0.0, 0.0, 0.0))) + [1.0]
+            # cities pass (painted kit): part id (one per mesh object, build order) and a gloss class for pack.py --painted
+            ob["sc_id"] = [((len(objs) % 254) + 1) / 255.0, GLOSS.get(mk, 0.0), 0.0]
             matte = bool(pp.get("ground"))
             ck = (mk, matte)
             if ck not in mat_cache:
@@ -709,17 +716,67 @@ def build_structure(key, style, sizepx, tilt, ppm_fixed=0.0, zex_force=None):
     return sc, outlines, info
 
 
+DEPTH_NEAR, DEPTH_FAR = 120.0, 180.0   # m along the view (the camera stands 150 m off): the id pass's B channel
+
+
+def normal_material():
+    """Painted kit: the camera-space normal (x right, y up, z toward the camera) * 0.5 + 0.5 as emission."""
+    m, nt = new_material("pass_nrm")
+    g = node(nt, "ShaderNodeNewGeometry")
+    vt = node(nt, "ShaderNodeVectorTransform", vector_type="NORMAL", convert_from="WORLD", convert_to="CAMERA")
+    nt.links.new(g.outputs["Normal"], vt.inputs[0])
+    v = node(nt, "ShaderNodeVectorMath", operation="MULTIPLY_ADD")
+    nt.links.new(vt.outputs[0], v.inputs[0])
+    v.inputs[1].default_value = (0.5, 0.5, 0.5)
+    v.inputs[2].default_value = (0.5, 0.5, 0.5)
+    em = node(nt, "ShaderNodeEmission")
+    nt.links.new(v.outputs[0], em.inputs["Color"])
+    out = node(nt, "ShaderNodeOutputMaterial")
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    return m
+
+
+def id_material():
+    """Painted kit: R part id, G gloss class (1 metal, 0.6 water / glass), B view depth over DEPTH_NEAR..DEPTH_FAR."""
+    m, nt = new_material("pass_id")
+    at = node(nt, "ShaderNodeAttribute", attribute_type="OBJECT", attribute_name="sc_id")
+    cd = node(nt, "ShaderNodeCameraData")
+    mr = node(nt, "ShaderNodeMapRange", clamp=True)
+    nt.links.new(cd.outputs["View Z Depth"], mr.inputs["Value"])
+    mr.inputs["From Min"].default_value = DEPTH_NEAR
+    mr.inputs["From Max"].default_value = DEPTH_FAR
+    sp = node(nt, "ShaderNodeSeparateColor")
+    nt.links.new(at.outputs["Color"], sp.inputs[0])
+    cb = node(nt, "ShaderNodeCombineColor")
+    nt.links.new(sp.outputs["Red"], cb.inputs["Red"])
+    nt.links.new(sp.outputs["Green"], cb.inputs["Green"])
+    nt.links.new(mr.outputs["Result"], cb.inputs["Blue"])
+    em = node(nt, "ShaderNodeEmission")
+    nt.links.new(cb.outputs["Color"], em.inputs["Color"])
+    out = node(nt, "ShaderNodeOutputMaterial")
+    nt.links.new(em.outputs[0], out.inputs["Surface"])
+    return m
+
+
 def render_structure(key, style, sizepx, tilt, outdir, ppm_fixed=0.0, zex_force=None):
     t0 = time.time()
     sc, outlines, info = build_structure(key, style, sizepx, tilt, ppm_fixed, zex_force)
     os.makedirs(outdir, exist_ok=True)
     base = os.path.join(outdir, "%s_%d" % (key, sizepx))
     vl = bpy.context.view_layer
-    for pname, mo, hide in (("shade", None, False), ("mask", mask_material(), True)):
+    passes = [("shade", None, False), ("mask", mask_material(), True)]
+    if AUX:
+        passes += [("nrm", normal_material(), True), ("id", id_material(), True)]
+    for pname, mo, hide in passes:
         for o in outlines:
             o.hide_render = hide
         vl.material_override = mo
         sc.render.filepath = base + "_" + pname + ".png"
+        hard = pname in ("nrm", "id")   # no anti-aliasing, one sample a pixel: a pixel is one part
+        if hard:
+            sc.render.filter_size = 0.0
+            sc.render.dither_intensity = 0.0
+            sc.eevee.taa_render_samples = 1
         bpy.ops.render.render(write_still=True)
     vl.material_override = None
     json.dump(info, open(base + ".json", "w"))
@@ -727,7 +784,9 @@ def render_structure(key, style, sizepx, tilt, outdir, ppm_fixed=0.0, zex_force=
 
 
 def main():
+    global AUX
     a = parse_args()
+    AUX = a.get("aux", True)
     for style in a["styles"]:
         for key in a["structs"]:
             tm = []

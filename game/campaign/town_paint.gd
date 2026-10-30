@@ -10,6 +10,7 @@ const CData := preload("res://campaign/cdata.gd")
 const TownPlan := preload("res://game/campaign/town_plan.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const Quality := preload("res://game/quality.gd")
+const TownRing := preload("res://game/campaign/town_ring.gd")
 
 const DIRT := Color(0.74, 0.62, 0.40)
 const COBBLE := Color(0.83, 0.77, 0.63)
@@ -133,10 +134,25 @@ func _rect(c: Vector2, yaw: int, hw: float, hd: float, wall: bool) -> PackedVect
 	return PackedVector2Array([c - ex * h - ey * hd, c + ex * h - ey * hd, c + ex * h + ey * hd, c - ex * h + ey * hd])
 
 
+## The contact halo of a piece grown by g px: its footprint rectangle (half width hw, half depth hd, turned by yaw) with
+## the corners cut, an eight-sided outline.
+func _halo(pos: Vector2, yaw: int, hw: float, hd: float, g: float) -> PackedVector2Array:
+	var a := float(yaw) * PI * 0.25
+	var ex := Vector2(cos(a), -sin(a))
+	var ey := Vector2(-sin(a), -cos(a))
+	var w := hw + g
+	var d := hd + g
+	var cut := minf(g, minf(w, d)) * 0.7 + 0.01
+	return PackedVector2Array([pos + ex * (w - cut) - ey * d, pos + ex * w - ey * (d - cut), pos + ex * w + ey * (d - cut), pos + ex * (w - cut) + ey * d,
+		pos - ex * (w - cut) + ey * d, pos - ex * w + ey * (d - cut), pos - ex * w - ey * (d - cut), pos - ex * (w - cut) - ey * d])
+
+
 func _paint() -> void:
 	var t0 := Time.get_ticks_usec()
 	var rings := 2 if low else 4
 	var shadows: Array = []
+	var halos: Array = []       # [pos, yaw, half width, half depth] of every piece standing on the ground
+	var wrings: Array = []
 	for e in _entries:
 		var plan: Dictionary = e[0]
 		var s: Dictionary = e[1]
@@ -228,10 +244,43 @@ func _paint() -> void:
 		# 7 contact shadows of the pieces (south-east, the light is north-west)
 		for sd in plan["shadows"]:
 			shadows.append(sd)
+		var hid: Array = plan.get("hidden", [])
+		for it in plan["items"]:
+			var nm0: String = it[1]
+			if nm0.begins_with("ship_") or nm0.begins_with("pier") or nm0 == "slipway" or nm0.begins_with("camp_") or (hid.has(it[0]) and (nm0 == "fort" or nm0 == "harbour_fort")):
+				continue
+			var pd0: Array = TownPlan.pd_of(nm0)
+			if pd0.is_empty() or float(pd0[1]) <= 0.0 or float(pd0[2]) <= 0.0:
+				continue
+			halos.append([it[0], int(it[2]), float(pd0[1]) * TownPlan.K, float(pd0[2]) * TownPlan.K])
+		wrings.append_array(plan.get("wrings", []))
+	# 7a the parade ground inside a star fort
+	var pc := Color(0.62, 0.56, 0.44, 0.92)
+	for ring in wrings:
+		if ring.has("parade"):
+			_poly(ring["parade"], pc)
+	# 7b contact shadows with depth: a dark halo at the foot of every piece (about 0.6 at the footprint) fading over a
+	# metre into the ground, so a piece sits in the ground and not on it; the wall rings' foot likewise
+	var halo := SHADOW
+	var gs := [0.0, 0.33, 0.66, 1.0] if not low else [0.0, 0.5, 1.0]
+	halo.a = (0.6 if not low else 0.55) / float(gs.size()) * 1.18
+	for g: float in gs:
+		var gp := g * TownPlan.K
+		for h in halos:
+			_poly(_halo(h[0], int(h[1]), float(h[2]), float(h[3]), gp), halo)
+	var fa := SHADOW
+	fa.a = 0.17
+	for g: float in [0.3, 0.7, 1.1]:
+		for ring in wrings:
+			for pg in TownRing.foot_polys(ring, g * TownPlan.K):
+				_poly(pg, fa)
+	var sh2r := SHADOW
+	sh2r.a = 0.30
+	for ring in wrings:
+		for pg in TownRing.shadow_polys(ring, TownPlan.SHADOW_DIR):
+			_poly(pg, sh2r)
 	var sh2 := SHADOW
 	sh2.a = 0.30
-	var ao := SHADOW
-	ao.a = 0.2
 	for sd in shadows:
 		var nm: String = sd[1]
 		var pd: Array = TownPlan.pd_of(nm)
@@ -259,8 +308,6 @@ func _paint() -> void:
 			all.append(q + TownPlan.SHADOW_DIR * slen)
 		var hl2 := Geometry2D.convex_hull(all)
 		_poly(hl2, sh2)
-		# the contact darkening right under it
-		_poly(_scaled(base, pos, 1.15), ao)
 	# the landscape's trees and rocks: the same north-west cast shadow (soft ellipse towards the south-east)
 	var ts := SHADOW
 	ts.a = 0.30
