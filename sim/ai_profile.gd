@@ -371,8 +371,9 @@ const S_DEF_ZONE := 291        # 1: West street posts at the start stand out of 
 const R_TORCH_GATE := 292      # 1: a melee batter unit (the torch raiders) attacking a town batters the attacked gate (Use now) while the storm has no ram to work it; 0 its fire pots only (the grenadiers' rule)
 # The play library (docs/AI.md 44, 2026-10-27): scripted historical plays
 # (sim/plays.gd) a side runs by its scenario's ai_plays bits. Ids 300-309
-# the framework and the tercio, 310-319 the countermarch, 320-329 the ambush;
-# 293-299, 304-310, 312-319 unused (KNOB_GAPS: 0, no row).
+# the framework and the tercio, 310-319 the countermarch, 320-329 the ambush,
+# 330-339 the Swedish salvo; 293-299, 304-310, 312-319, 326-329 unused
+# (KNOB_GAPS: 0, no row).
 const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits allow (Plays.army_think); 0 none (Easy)
 const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
 const TERCIO_FILES := 302      # ... a block stands max(this, isqrt(men)) files wide
@@ -385,10 +386,17 @@ const AMBUSH_PULL_R := 322     # ... an enemy unit this near the bait (centroids
 const AMBUSH_SPRING_R := 323   # ... an enemy unit this near a hidden unit (box to box) springs the ambush
 const AMBUSH_FIGHT_T := 324    # ... a sprung unit that has fought this long and is not winning melts back into the woods
 const AMBUSH_FLANK := 325      # 1: half the hidden units take a second wood on the enemy's flank when there is one (Skilled); 0 one wood
-const N_KNOBS := 326
+# The Swedish salvo (docs/AI.md 44.6, 2026-10-29; ai_plays bit 3): ids 330-339.
+const SALVO := 330             # 1: the Swedish salvo (Plays: two musket lines hold their fire, close, fire as one, the pike and horse charge behind it); 0 never
+const SALVO_RANGE_R := 331     # ... it starts on an enemy foot unit this near (box to box) one of the side's musket lines, not charging it
+const SALVO_FIRE_R := 332      # ... the lines walk to this distance (box to box) of the target and fire
+const SALVO_WAIT_T := 333      # ... a line still reloading at the range waits this long for the fuller volley, then fires what is loaded
+const SALVO_MUSKET_CHARGE := 334  # 1: the lines charge with the butt behind their volley (Skilled); 0 they reload and fire at will
+const SALVO_RESET_T := 335     # ... the charge lasts this long (or until the target routs); then the lines go back to the countermarch and a new target may be taken
+const N_KNOBS := 336
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[293, 300], [304, 311], [312, 320]]
+const KNOB_GAPS: Array = [[293, 300], [304, 311], [312, 320], [326, 330]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -678,6 +686,13 @@ const KNOBS: Array = [
 	[AMBUSH_SPRING_R, 40 * M, 40 * M, 40 * M],
 	[AMBUSH_FIGHT_T, 200, 200, 200],
 	[AMBUSH_FLANK, 0, 0, 1],
+	# The Swedish salvo (docs/AI.md 44.6): Easy never holds its fire for it (a deliberate mistake).
+	[SALVO, 0, 1, 1],
+	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
+	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],
+	[SALVO_WAIT_T, 50, 50, 50],
+	[SALVO_MUSKET_CHARGE, 0, 0, 1],
+	[SALVO_RESET_T, 300, 300, 300],
 	# Behaviours a level switches off (Average: on, as before).
 	[CLEAR_SPOT, 0, 1, 1],
 	[MIS_SKIRM, 0, 1, 1],
@@ -789,14 +804,17 @@ const C_CM := C_CAV_STAY + 15  # the countermarch: the side's lines fired by ran
 const C_PLAY_AMBUSH := C_CAV_STAY + 16  # the ambush laid (docs/AI.md 44.5; once a battle per side)
 const C_AMB_SPRING := C_CAV_STAY + 17  # ... sprung (the whole hidden line at once, or one hidden unit after a melt)
 const C_AMB_MELT := C_CAV_STAY + 18  # ... a sprung unit not winning melted back into the woods
-const N_COUNTERS := C_CAV_STAY + 19
+const C_PLAY_SALVO := C_CAV_STAY + 19  # the Swedish salvo: a target taken (docs/AI.md 44.6; each salvo)
+const C_SALVO_VOLLEY := C_CAV_STAY + 20  # ... a line's salvo fired (every loaded man at once)
+const C_SALVO_CHARGE := C_CAV_STAY + 21  # ... the charge behind it ordered
+const N_COUNTERS := C_CAV_STAY + 22
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
 	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio", "countermarch",
-	"play_ambush", "amb_spring", "amb_melt"]
+	"play_ambush", "amb_spring", "amb_melt", "play_salvo", "salvo_volley", "salvo_charge"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.

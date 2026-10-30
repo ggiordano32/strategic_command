@@ -2751,6 +2751,15 @@ Per-man fire (`_pm_on`: in a building, on a wall, the Cover or Hold-street stanc
 `_gun_unit` and is untouched. Stats: `stat_cm_rank`, `stat_cm_full`, `stat_cm_fright`. Tests:
 `tests/roles_sim_test.gd --only=countermarch`.
 
+#### The charge with the butt (as built, 2026-10-29)
+
+docs/AI.md 44.6 (the Swedish salvo, Skilled). An attack order with `"butt"` 1 on a countermarch row (a West line
+musketeer) closes it to contact and it fights as shock foot (not shy in a melee, as grenades held) while that attack
+order lasts; any other order but run, fire, skirmish, ammunition or stance ends it (`_butt_order` after each unit
+order, `_butt`; the two hooks are the attack's "shoot it: close to most of the range" branch and the melee's `shy`).
+State: `u_butt` per unit, sized with `cm_on`, hashed from the first such order (`butt_on`), so every battle without
+one hashes as before; snapshot-covered as script variables. No player order carries it yet (no chip): the AI's only.
+
 ### Native siege: the torch raiders (as built, 2026-10-29)
 
 docs/design/campaign_rules.md "Native siege, and the natives' buildings (plan)". One row after the shaman, the last

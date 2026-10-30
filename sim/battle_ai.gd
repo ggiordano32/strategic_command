@@ -221,6 +221,10 @@ static func think(sim) -> void:
 	for side in 2:
 		if sim.ai_sides[side] != 0 and tick % (kn0 if side == 0 else kn1)[AP.ARMY_THINK] == 0:
 			_army_think(sim, side)
+	if sim.ai_mem.size() > 0 and Plays.has_mem(sim):
+		for side in 2:
+			if sim.ai_sides[side] != 0:
+				Plays.salvo_tick(sim, side)  # (the Swedish salvo's volley and charge, to the tick: docs/AI.md 44.6)
 	if sim.ai_sides[0] == 0 and sim.ai_sides[1] == 0:
 		return
 	# Units think in turn, staggered by their index *within their own side*,
@@ -896,6 +900,8 @@ static func _issue_line(sim, side: int, plan: Dictionary, cx: int, cy: int, depl
 		Plays.post_line(sim, side, line1, slots, guard)
 	if Plays.ambush_on(sim, side):
 		Plays.amb_slots(sim, side, slots)  # (the ambush's hidden line and bait: docs/AI.md 44.5)
+	if Plays.salvo_on(sim, side):
+		Plays.salvo_slots(sim, side, slots)  # (the salvo's lines, foot and horse: docs/AI.md 44.6)
 	var seq := 0
 	var keys := slots.keys()
 	keys.sort()  # index order, never Dictionary order

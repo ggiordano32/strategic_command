@@ -1595,6 +1595,11 @@ var s_cms := PackedInt32Array()       # per man: his unit's clock at his last sh
 var stat_cm_rank: int = 0             # rank volleys fired (rolling fire)
 var stat_cm_full: int = 0             # full volleys of a countermarch unit not on Hold (the opening, the last volley)
 var stat_cm_fright: int = 0           # rank volleys that frightened a unit
+# The Swedish salvo's charge with the butt (docs/AI.md 44.6): an attack order with "butt" 1 on a countermarch row
+# (a West line musketeer) closes it to contact and it fights as shock foot (not shy in a melee) while that attack
+# order lasts; any other order ends it. Sized with cm_on; hashed from the first such order (butt_on).
+var butt_on: int = 0                  # a line was ordered to charge with the butt (u_butt hashed from then on)
+var u_butt := PackedInt32Array()      # per unit: 1 its attack order is a charge with the butt
 # Poisoned arrows (Caribbean batch 2): hashed from the first poisoning on (a battle without one hashes as before).
 var mb_on: int = 0                    # native siege: a town battle with a melee batterer (t_mbat): _update_mbat runs, u_lacc hashed without siege gear
 var poi_on: int = 0                   # a man was poisoned: u_poisoned, u_poison_t, u_poison_by hashed from then on
@@ -8035,6 +8040,8 @@ func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
 	u_pick[u] = int(d["pick"])
 	u_akind[u] = int(d["akind"])
 	u_forage[u] = int(d["forage"])
+	if cm_on != 0:
+		_butt_order(u, o)
 	if int(d["occ"]) != u_ocg[u]:
 		u_ocg[u] = int(d["occ"])
 		u_oct[u] = 0
@@ -9751,7 +9758,7 @@ func _update_units() -> void:
 				# fire (houses between), they go round by the streets too
 				# (fight jitter pass, 2026-10-16: they closed straight into
 				# a house and stood there for minutes).
-				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u)
+				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u) and not _butt(u)
 				var mlof := true
 				if mis and (ton or mon):
 					mlof = lof_units(u, t)
@@ -11070,7 +11077,7 @@ func _update_soldiers() -> void:
 		var keep_front := (SEARCH_FRONT + TARGET_KEEP_EXTRA) * (SEARCH_FRONT + TARGET_KEEP_EXTRA)
 		# Missile troops with ammunition, and gun crews, only defend
 		# themselves at close range.
-		var shy := (u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u)) or u_cls[u] == UT.CLS_ART
+		var shy := (u_cls[u] == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u) and not _butt(u)) or u_cls[u] == UT.CLS_ART
 		var rear_r := SEARCH_REAR
 		if u_fighting[u] > 0 and not shy and tick - u_charged_t[u] < ENGAGED_AFTER_CHARGE:
 			rear_r = SEARCH_ENGAGED
@@ -18528,6 +18535,8 @@ func state_hash() -> int:
 		# The countermarch (a battle without a unit that has it hashes as before).
 		for arr in [u_cmc, u_cmr, u_cmt, u_cml, u_cmv, s_cms]:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+		if butt_on != 0:
+			ctx.update(u_butt.to_byte_array())  # (the salvo's charge with the butt: from its first order)
 	if mb_on != 0 and sg_on == 0:
 		# Native siege: the melee batter's work toward its next blow (with siege gear it is hashed above).
 		ctx.update(u_lacc.to_byte_array())
@@ -20889,6 +20898,9 @@ func _setup_cm() -> void:
 	u_cml.fill(-CM_NEVER)
 	s_cms.resize(n if cm_on != 0 else 0)
 	s_cms.fill(-CM_NEVER)
+	butt_on = 0
+	u_butt.resize(nu)
+	u_butt.fill(0)
 
 
 ## Unit u (a countermarch row) fires by ranks now: the ability on Auto or Use now (Hold: volleys as before),
@@ -20966,6 +20978,25 @@ func _cm_unit(u: int, ft: int, still: int) -> void:
 	var sd := u_side[u]
 	if ai_sides[sd] != 0 and stat_aic[sd * AIProfile.N_COUNTERS + AIProfile.C_CM] == 0:
 		BattleAI._count(self, sd, AIProfile.C_CM)  # (once a battle a side: its lines rolled)
+
+
+## The salvo's charge with the butt (docs/AI.md 44.6), after order o to unit u (cm_on): an attack order with
+## "butt" 1 on a countermarch row starts it; any other order but run, fire, skirmish, ammunition or stance ends it.
+func _butt_order(u: int, o: Dictionary) -> void:
+	var typ := int(o["type"])
+	if typ == ORDER_ATTACK and int(o.get("butt", 0)) != 0 and u_order[u] == O_ATTACK \
+			and (t_abil[u_type[u]] & (1 << UT.AB_ROLL)) != 0:
+		u_butt[u] = 1
+		butt_on = 1
+	elif u_butt[u] != 0 and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH and typ != ORDER_AMMO \
+			and typ != ORDER_STANCE:
+		u_butt[u] = 0
+
+
+## Unit u charges with the butt (docs/AI.md 44.6): its attack order came with "butt" 1; it closes to contact and
+## fights as shock foot (as grenades held) while that order lasts.
+func _butt(u: int) -> bool:
+	return butt_on != 0 and u_butt[u] != 0 and u_order[u] == O_ATTACK
 
 
 ## Grenades held (the ability on Hold): unit u throws none and fights as

@@ -3394,10 +3394,11 @@ instead; if walls 0 should stay near 40 % the lever is the defenders' charge dis
 
 ### 44.3 Later plays (not yet)
 
-The Swedish salvo (three ranks firing as one, then the charge), the pirate
-boarding rush at sea, the caracole as a play (the ability exists). Each
-after the first two prove out in the harness. (The native ambush from cover
-with a feigned retreat into it: built, 44.5.)
+The pirate boarding rush at sea, the caracole as a play (the ability
+exists). Each after the first two prove out in the harness. (The native
+ambush from cover with a feigned retreat into it: built, 44.5. The Swedish
+salvo, three ranks firing as one, then the charge: built, 44.6, and measured
+worse than no play on both pairs; open there.)
 
 ### 44.4 The learned chooser (not yet)
 
@@ -3622,6 +3623,174 @@ from near 10 springs a battle to 2.5 without them.
 unit's target is the nearest enemy seen, riders too); the Skilled flank never won a
 battle in `ambush_field` (the Spanish Average column does not come in); a
 spring has no chronicle line (no view element, as the tercio).
+
+### 44.6 The Swedish salvo (as built, 2026-10-29)
+
+Gustavus Adolphus's drill: a musket line holds its fire, closes to point
+blank, fires every loaded man in one volley (three ranks as one) and the
+pike and horse charge in behind it. Bit 3 of `ai_plays` (`Plays.P_SALVO`),
+England's, France's and the Dutch rows in `west.gd` `PLAYS` (2 -> 10; Spain
+not: its drill is the tercio; the natives and the Brethren not). Code:
+`sim/plays.gd` (the salvo section), knobs and counters in
+`sim/ai_profile.gd`, two hooks in `sim/battle_ai.gd` (`think` calls
+`Plays.salvo_tick` every tick for an AI side, so the charge follows the
+volley to the tick; `_issue_line` leaves the salvo's units out of its
+orders, `Plays.salvo_slots`) and one sim rule in `sim/battle_sim.gd` (the
+charge with the butt, below; docs/design/battle_sim.md "The charge with the
+butt"); scenario `salvo_field` in `sim/scenarios.gd`; the probe's SALVO line
+in `tests/asym_probe.gd`; test `determinism_test.gd --only=plays`
+(`_check_salvo`).
+
+- **Trigger** (`salvo_target`, each army think while the play runs and has
+  no target): no settlement, no town plan; the side has two free musket
+  lines (gun foot with shots, `_gun_foot`; not mauled, guarding, held in
+  reserve, manning works or in a melee) and a free melee unit (pikes, line
+  or shock foot, horse; not the general); an enemy foot unit (line or shock
+  foot, pikes, a musket line) the side sees, ready and not in a melee,
+  within `SALVO_RANGE_R` (box to box) **in front of** one of the free lines
+  and not charging it (an attack order on it: the countermarch's last
+  volley meets that). The nearest such pair, in index order, is the target.
+  The play starts at the first army think with a target (never while the
+  side lies in ambush).
+- **Hold** (`SV_HOLD`): the two free lines nearest the target, the two free
+  melee foot nearest it and the nearest free horse are the salvo's
+  (`PS_SV_*` in the side's memory; the tercio's layout rewrites every unit's
+  `PU_*` at each line order, so the salvo keeps its units there). The lines'
+  countermarch goes to Hold and fire at will off; each army think the posts:
+  the lines side by side `LINE_GAP` apart, their front `SALVO_FIRE_R` short
+  of the target's box along the line from their middle to it, facing it,
+  at the walk; the foot `SV_BEHIND` 6 m behind a line's rear rank (one foot
+  unit: behind the middle); the horse `SV_WING` 10 m out beyond the outer
+  line's end on its own side, level. A walk that has not got there in
+  `SV_HOLD_T` 60 s is given up (the reset).
+- **Salvo** (`SV_FIRE`, `salvo_tick`): when every line is within
+  `SALVO_FIRE_R` + `SV_SLACK` 3 m of the target (or has stopped within
+  `SALVO_RANGE_R`), or a line is in contact, fighting or charged by enemy
+  foot or horse within `SV_CLOSE` 40 m, each line is ordered at the target
+  (an attack order: at 25 m it stands and shoots). On Hold its next volley
+  is the body volley: every formed man with a charge in one tick, the sim's
+  `_gun_unit`; the two lines fire within `FIRE_THINK` (0.5 s) of each other,
+  each as the sim's staggered fire think picks the target up. A line still
+  reloading at the order waits for its volley up to `SALVO_WAIT_T`; then its
+  countermarch goes to Auto, whose last volley (the target within
+  `CM_CLOSE`) fires every man loaded by his own clock: what is loaded. A
+  line that has fired nothing `SV_GRACE` 3 s after that is left out.
+- **Charge** (`SV_CHARGE`): the tick after the last line's volley the foot
+  and horse are ordered at the target at the run (riders with `"charge"` 1:
+  a caracole row charges home, it does not ride a pass); the lines with
+  `SALVO_MUSKET_CHARGE` charge it too with the butt (the sim rule below),
+  else they reload and fire at will (back to the ordinary rules, the
+  countermarch still on Hold). The foot become `A_ATTACK`.
+- **Reset**: `SALVO_RESET_T` after the charge, the target routing or gone,
+  both lines lost before the volley, or the walk timed out: the lines'
+  countermarch back to Auto, the units back to the ordinary rules, the next
+  target may be taken (`SV_LOOK`). Every army think while the play has run,
+  any ready musket line of the side on Hold that is not in a salvo under way
+  is set back to Auto (a line routing at the reset cannot take the order;
+  the AI never sets Hold otherwise).
+- **Drop** (for good, `PS_SV` 2, after the reset's orders): the side has
+  fewer than two ready musket lines with shots or no melee unit, or no
+  target has been found for `PLAY_DROP_T` 30 s.
+- **With the other plays**: the tercio may run beside it (a salvo line that
+  is a sleeve or a pike block that is a salvo foot unit is the salvo's while
+  it runs: `unit_think` asks the salvo first); never while the side lies in
+  ambush. The countermarch is on Hold on the salvo's lines while it runs.
+- **Memory** (the plays' tail; `PS_K` 14 -> 26: every battle with the plays'
+  memory hashes differently, none pinned): per side the state, phase, phase
+  tick, trigger tick, target, the two lines, two foot and the horse, the
+  lines' shots left at the fire order. Integers, index order, no RNG.
+- **Counters** (`stat_aic`, diagnostics): `play_salvo` (a target taken),
+  `salvo_volley` (a line's salvo fired), `salvo_charge`.
+
+| Knob (`ai_profile.gd`) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SALVO` 330 | 0 | 1 | 1 |
+| `SALVO_RANGE_R` 331 | 60 m | 60 m | 60 m |
+| `SALVO_FIRE_R` 332 | 25 m | 25 m | 25 m |
+| `SALVO_WAIT_T` 333 | 50 (5 s) | 50 | 50 |
+| `SALVO_MUSKET_CHARGE` 334 | 0 | 0 | 1 |
+| `SALVO_RESET_T` 335 | 300 (30 s) | 300 | 300 |
+
+Ids 326-329 and 336-339 are gaps (326-329 in `KNOB_GAPS`; `N_KNOBS` 336).
+Constants (`plays.gd`): `SV_SLACK` 3 m, `SV_BEHIND` 6 m, `SV_WING` 10 m,
+`SV_HOLD_T` 600 (60 s), `SV_CLOSE` 40 m, `SV_GRACE` 30 (3 s).
+
+**The set piece** (`_check_salvo`: two English musket companies 55 m from a
+standing pike block of 240, a pike block behind them, pistoleers on the
+flank, Average): started at once; the lines on Hold, fire held, not a shot
+on the walk; the fire order at 25-27 m; each line's volley every formed
+loaded man in one tick (100 of 100), the two a tick apart (ticks 248, 249);
+the charge at 250 (the volley + 1); the 240 lose 71 men to the two volleys;
+the reset when the block routs, the lines on Auto the same tick. Skilled:
+the lines charge with the butt and reach contact; against 240 pikes they
+are thrown back off the field (a butt charge into an unbroken pike block
+loses).
+
+**Measured** (`tests/asym_probe.gd`, 48 seeds from 5000, both sides
+Average; the English side 1 with `--plays1=2` off / `10` on, the Spanish of
+`play_field` with `--plays=7` (their default is every bit, so they would run
+the salvo too); `salvo_field` new: the Spanish 3 musket companies of 100, 2
+pike blocks of 120 and 60 lancers, 3,540, against the English 4 musket
+companies of 100, a pike block of 120 and 50 pistoleers, 3,500, 600 x 400 m
+open; the English wins of 48, the men lost a battle, the English salvo
+lines' losses while walking in (fire held), the salvos and volleys a
+battle):
+
+| Probe | English wins (Spanish / draws) | English lost | Spanish lost | lines lost walking in | salvos / volleys |
+|---|---|---|---|---|---|
+| salvo_field off | 38 (10 / 0) | 270 | 390 | | |
+| salvo_field on (as built) | 16 (32 / 0) | 374 | 376 | 18.8 | 2.58 / 4.12 |
+| play_field off | 16 (32 / 0) | 506 | 490 | | |
+| play_field on (as built) | 7 (41 / 0) | 536 | 456 | 21.8 | 2.85 / 4.10 |
+| asym_field, the Spanish without the bit (`--plays=7`) | natives 6 (42 / 0) | | | | every battle as before the play |
+
+`play_field` off is every battle as before the play (HEAD `306af30`);
+`asym_field --plays=7` likewise (the Spanish side's default there is every
+bit; with it the Spanish run the salvo against the natives and fall 42 ->
+31 wins, natives' losses 471 -> 487, the Spanish 217 -> 264: not their row's
+play, measured for information).
+
+**The target missed.** The English lose 22 more battles of 48 in
+`salvo_field` and 9 more in `play_field`, with more men lost, and the
+Spanish lose fewer. Not the closing: the lines lose 19-22 men a battle
+walking in. A per-phase diagnostic (16 seeds, `salvo_field`) found the
+salvo itself trades well (in its phases the Spanish lose 203 men a battle,
+the English 175), and the loss comes after it: the English musketeers' dead
+double (133 -> 256 a battle), killed by the Spanish musketeers (103 -> 163:
+the lines are left at 25 m, in the Spanish line's last-volley range, for
+the rest of the battle) and the lancers (24 -> 66), while the English pike's
+kills of lancers fall 21 -> 5: the pike and horse spent on the charge no
+longer screen the lines, and with the English melee gone the Spanish
+melee is no longer held back from the musket lines (section 29's reserve
+rule, `_melee_left`). The targets: pike blocks 30, musket companies 10 (of
+40 salvos in 16 battles).
+
+Two changes within the plan were tried (48 seeds each, the play on):
+
+| Variant | salvo_field English wins (lost / Spanish lost) | play_field English wins (lost / Spanish lost) | salvos / volleys a battle (salvo_field) |
+|---|---|---|---|
+| as built | 16 (374 / 376) | 7 (536 / 456) | 2.58 / 4.12 |
+| A. a shorter closing: `SALVO_RANGE_R` 40 m | 28 (311 / 393) | 11 (507 / 473) | 1.25 / 1.08 |
+| B. the horse charges first (at the fire order) | 18 (362 / 388) | 5 (532 / 445) | 2.42 / 3.81 |
+
+Two diagnostic variants beyond the plan (not kept), to test the reading below:
+
+| Variant | salvo_field English wins (lost / Spanish lost) | play_field English wins (lost / Spanish lost) |
+|---|---|---|
+| C. the lines alone: no foot or horse in the salvo | 21 (370 / 394) | 6 (537 / 464) |
+| E. the horse only, the foot kept back as the lines' screen | 25, 1 draw (366 / 405) | 7 (536 / 461) |
+
+Neither reaches the target; A is better only because fewer salvos happen.
+The build keeps the plan's values. Keeping the melee back (C, E) helps a little in `salvo_field` and not at all in `play_field`, so the larger cost is the lines left at point blank after the volley (the Spanish musketeers' kills of English musketeers +60 a battle), not the charge.
+
+**Open.** The play costs the English battles on both pairs as built; until
+it is redesigned the PLAYS rows can go back to 2 (one line). Leads, not
+built: after the volley the lines step back out of the enemy's last-volley
+range to reload (or re-form on the line); the charge only with the horse,
+the pike kept as the lines' screen (variant E above); no salvo at a pike
+block (the targets were three in four pike blocks; the volley there is
+worth most, the charge least). Skilled's butt charge was not measured on
+the pairs (the set piece shows it losing to an unbroken block).
 
 ## 45. Native siege: poles and torch raiders (2026-10-29)
 

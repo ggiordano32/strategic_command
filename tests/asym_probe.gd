@@ -19,6 +19,13 @@ extends SceneTree
 ## Spanish unit (type, metres ahead of the woods' front, order, men lost);
 ## at the end a table per native type over all seeds (men lost, kills,
 ## springs, melts, seconds hidden / fighting / melting).
+## The Swedish salvo (docs/AI.md 44.6): salvo_field (the English, side 1,
+## with the salvo bit 8 against the Spanish); --plays1=2 without it, 10 with
+## it (play_field likewise; --plays=7 keeps the salvo from the Spanish side,
+## whose default there is every bit). Each battle prints both sides' salvos,
+## volleys and charges; the SALVO summary line the men lost a battle on each
+## side and, for side 1, the men its salvo lines lost while walking in
+## (fire held, SV_HOLD) and the salvos, volleys and charges a battle.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -56,6 +63,7 @@ func _init() -> void:
 	var ln := 0
 	var amb := [0, 0, 0, 0]
 	var agg := {}  # native type key -> [lost, kills, springs, melts, t_hide, t_fight, t_melt, units]
+	var sv := [0, 0, 0, 0, 0, 0, 0]  # side 0 lost, side 1 lost, side 1 closing losses, salvos, volleys, charges, side 0 salvos
 	for k in seeds:
 		var sd := 5000 + seed0 + k
 		var sim := BattleSim.new()
@@ -75,8 +83,17 @@ func _init() -> void:
 		var n0 := {}
 		for u in sim.n_units:
 			n0[u] = sim.u_alive[u]
+		var lalive := {}
+		var close_lost := 0
 		while sim.tick < 12000 and sim.winner < 0:
 			sim.step()
+			if Plays.has_mem(sim) and Plays.salvo_on(sim, 1) and Plays._ps(sim, 1, Plays.PS_SV_PH) == Plays.SV_HOLD:
+				for j in 2:
+					var l := Plays._ps(sim, 1, Plays.PS_SV_L + j) - 1
+					if l >= 0:
+						close_lost += maxi(int(lalive.get(l, sim.u_alive[l])) - sim.u_alive[l], 0)
+			for u in sim.n_units:
+				lalive[u] = sim.u_alive[u]
 			if trace:
 				_trace_tick(sim, sd, pst, n0, agg)
 		if trace:
@@ -108,6 +125,16 @@ func _init() -> void:
 		print("  tercio %d reveals %d hidden %d lingers %d ambush %d springs %d melts %d strikes %d natives_lost %d spanish_lost %d" % [
 			sim.stat_aic[AP.C_PLAY_TERCIO], sim.stat_reveals, sim.stat_hidden, lin, sim.stat_aic[na + AP.C_PLAY_AMBUSH],
 			sim.stat_aic[na + AP.C_AMB_SPRING], sim.stat_aic[na + AP.C_AMB_MELT], sim.stat_ambush, lost1, n0_0 - sim.alive_count(0)])
+		print("  salvo side0 %d/%d/%d side1 %d/%d/%d (salvos/volleys/charges) closing_lost %d" % [sim.stat_aic[AP.C_PLAY_SALVO],
+			sim.stat_aic[AP.C_SALVO_VOLLEY], sim.stat_aic[AP.C_SALVO_CHARGE], sim.stat_aic[na + AP.C_PLAY_SALVO],
+			sim.stat_aic[na + AP.C_SALVO_VOLLEY], sim.stat_aic[na + AP.C_SALVO_CHARGE], close_lost])
+		sv[0] += n0_0 - sim.alive_count(0)
+		sv[1] += lost1
+		sv[2] += close_lost
+		sv[3] += sim.stat_aic[na + AP.C_PLAY_SALVO]
+		sv[4] += sim.stat_aic[na + AP.C_SALVO_VOLLEY]
+		sv[5] += sim.stat_aic[na + AP.C_SALVO_CHARGE]
+		sv[6] += sim.stat_aic[AP.C_PLAY_SALVO]
 		amb[0] += sim.stat_aic[na + AP.C_PLAY_AMBUSH]
 		amb[1] += sim.stat_aic[na + AP.C_AMB_SPRING]
 		amb[2] += sim.stat_aic[na + AP.C_AMB_MELT]
@@ -122,6 +149,8 @@ func _init() -> void:
 	var sn := float(maxi(seeds, 1))
 	print("AMBUSH %s natives_lost/battle %.1f length_s %.1f laid %d springs/battle %.2f melts/battle %.2f strikes/battle %.2f" % [scen,
 		nl / sn, ln / sn / 10.0, amb[0], amb[1] / sn, amb[2] / sn, amb[3] / sn])
+	print("SALVO %s side0_lost/battle %.1f side1_lost/battle %.1f side1_closing_lost/battle %.1f side1 salvos/battle %.2f volleys/battle %.2f charges/battle %.2f side0 salvos/battle %.2f" % [
+		scen, sv[0] / sn, sv[1] / sn, sv[2] / sn, sv[3] / sn, sv[4] / sn, sv[5] / sn, sv[6] / sn])
 	if trace:
 		print("TYPE natives: type units lost kills springs melts s_hide s_fight s_melt (sums over seeds)")
 		for k in agg.keys():
