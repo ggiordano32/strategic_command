@@ -1365,3 +1365,40 @@ handles: zoom in); the front handle has no "snap off" key for the mouse (hold no
 not follow units that stand on a wall walk; the toolbar's Run does not know the guns (they never run); the group tap ignores
 a unit that cannot stand on the spot (the sim's refusal shows after Go as ever); the hold guard is touch only and does not
 cover line drags; a short phone playtest should decide whether 300 ms and 0.25 s are right.
+
+### Rome emblems (as built, 2026-10-30)
+
+The owner: "the roman side needs symbols for their flags and armies. I think it is still only color right now." Cause:
+`FactionEmblem.KEYS` held only the West's eight, so Rome's factions fell back to the colour swatch (`Kit.faction_mark`)
+and a colour-only pennant; only the painted menu crests existed for them. View only; nothing in `sim/` or `campaign/`
+changed.
+
+`game/faction_emblem.gd` now draws eight more, keyed by the FACTIONS `key` (so `has()` is true and every caller picks
+them up with no other change: `Kit.faction_mark` for cards, Diplomacy, Realm, the battle screen's lists and the command
+bar; `map_overlay._standard` for the overworld armies; `tabletop_marks.draw_standard` for the battle standards). The
+motifs follow the painted crests (`assets/ui/crests/rome/*.png`), not the first brief where they differ:
+
+| key | motif | field |
+|---|---|---|
+| rome | gold spread eagle (head, two wings, tail) | red c8402f |
+| carthage | gold elephant with a palm on its back (the crest's; not the sign of Tanit) | purple 7a4fc4 |
+| macedon | Vergina sun, 16 rays (8 long, 8 short), gold with a brown edge (the crest's helmet is left out) | cream |
+| epirus | cream eagle over the Molossian hound (the crest's pair; the eagle is a smaller cousin of Rome's) | orange e07a2a |
+| greeks | Corinthian helmet in profile, bronze, eye slit and nose guard | blue 3f7fd8 |
+| syracuse | two gold dolphins round a ship (the crest's ring, without Arethusa's head) | teal 2fa8a0 |
+| iberians | falcata (curved blade) beside a round shield | brown 8a5a2b |
+| gauls | gold boar with a bristle crest under a carnyx | green 3c9a3c |
+
+Style as the West's: flat shapes, the INK outline, the faction colour (or the crest's cream for Macedon) as the field.
+Below 22 px (`simple`) the Rome shapes drop their ink edges (`_re`) and the finer details (the eye, the palm trunk) so
+the silhouette reads at the standard's 13 px; the West code paths are unchanged (the West half of
+`tests/emblem_gallery.gd` is pixel-identical to before, apart from a strip of background below the old sheet). The
+painted crests stay for the menu under the painted emblems setting. `tests/emblem_gallery.gd` renders both packs
+(West top, Rome bottom; 96, 16, 24 and 32 px on dark and light grounds).
+
+**Open.** The motifs are code-drawn approximations: the elephant's palm trunk is hidden behind its back, the dolphins read
+as a ring at 16 px, the Epirus hound is crude; a painted-style pass or a sprite sheet would do them justice. Carthage's
+sign of Tanit and the Iberian horseman were not used because the crests show other things; if the crests change, change
+these. The STATUS "Crests" item "Rome's references are plain shields" is about the painted crests' references and is
+untouched. `tools/menu_art/render_refs.gd` still says Rome has no drawn emblem (its comment and the Rome references are
+for the painted crests' generation; a re-render would now use these marks).

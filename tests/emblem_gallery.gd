@@ -1,7 +1,7 @@
 extends SceneTree
-## Contact sheet of the West faction emblems (game/faction_emblem.gd) at 16,
-## 24, 32 and 96 px on a dark and a light ground. Needs a window:
-##   godot --resolution 1000x420 --script res://tests/emblem_gallery.gd [-- --out=path.png]
+## Contact sheet of the drawn faction emblems (game/faction_emblem.gd): the West pack's eight (top block) and Rome's
+## eight (bottom block), each at 96, 16, 24 and 32 px on a dark and a light ground. Needs a window:
+##   godot --resolution 1000x840 --script res://tests/emblem_gallery.gd [-- --out=path.png]
 
 const FE := preload("res://game/faction_emblem.gd")
 var frames := 0
@@ -11,15 +11,18 @@ var out := "user://emblems.png"
 class Sheet extends Control:
 	func _draw() -> void:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0.12, 0.14, 0.12))
-		draw_rect(Rect2(0, 210, size.x, 210), Color(0.85, 0.82, 0.72))
-		for i in FE.KEYS.size():
-			var x := 20.0 + i * 120.0
-			for row in 2:
-				var y0 := row * 210.0
-				FE.draw(self, FE.KEYS[i], Rect2(x, y0 + 10, 96, 96))
-				FE.draw(self, FE.KEYS[i], Rect2(x, y0 + 120, 16, 16))
-				FE.draw(self, FE.KEYS[i], Rect2(x + 24, y0 + 120, 24, 24))
-				FE.draw(self, FE.KEYS[i], Rect2(x + 56, y0 + 120, 32, 32))
+		for blk in 2:
+			var by := blk * 420.0
+			draw_rect(Rect2(0, by + 210, size.x, 210), Color(0.85, 0.82, 0.72))
+			for i in 8:
+				var key: String = FE.KEYS[blk * 8 + i]
+				var x := 20.0 + i * 120.0
+				for row in 2:
+					var y0 := by + row * 210.0
+					FE.draw(self, key, Rect2(x, y0 + 10, 96, 96))
+					FE.draw(self, key, Rect2(x, y0 + 120, 16, 16))
+					FE.draw(self, key, Rect2(x + 24, y0 + 120, 24, 24))
+					FE.draw(self, key, Rect2(x + 56, y0 + 120, 32, 32))
 
 
 func _initialize() -> void:
@@ -27,7 +30,7 @@ func _initialize() -> void:
 		if a.begins_with("--out="):
 			out = a.substr(6)
 	var s := Sheet.new()
-	s.size = Vector2(1000, 420)
+	s.size = Vector2(1000, 840)
 	root.add_child(s)
 
 
