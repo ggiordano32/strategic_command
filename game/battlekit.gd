@@ -1267,6 +1267,15 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 	mat.set_shader_parameter("ob_timber", 1.0 if _timber else 0.0)
 	mat.set_shader_parameter("ob_wall_cul", float(culture))
 	KitOb.apply(mat, k)
+	var rq := PackedFloat32Array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0])
+	var ri := 0
+	for rn in ["rock_a", "rock_b", "rock_c"]:
+		for tw in [false, true]:
+			var qi := KitOb.index(rn, tw)
+			if qi >= 0 and ri < 6:
+				rq[ri] = float(qi)
+				ri += 1
+	mat.set_shader_parameter("ob_rockq", PackedVector4Array([Vector4(rq[0], rq[1], rq[2], rq[3]), Vector4(rq[4], rq[5], rq[6], rq[7])]))
 	ob_mat = mat
 	_rubble_node = _RubbleDraw.new()
 	_rubble_node.kit = self

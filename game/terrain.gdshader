@@ -114,6 +114,16 @@ highp vec3 node(ivec2 p) {
 	return vec3(h, t.b, t.a);
 }
 
+// The smooth ground height in metres (above the texture's lowest node) at a world point: the four nodes, bilinear.
+highp float hm_at(highp vec2 wp) {
+	highp vec2 tp = wp / texel_px;
+	highp vec2 f0 = floor(tp);
+	highp vec2 fr = tp - f0;
+	ivec2 i = ivec2(f0);
+	highp float h = mix(mix(node(i).x, node(i + ivec2(1, 0)).x, fr.x), mix(node(i + ivec2(0, 1)).x, node(i + ivec2(1, 1)).x, fr.x), fr.y);
+	return h * (h_range_m / 65535.0);
+}
+
 // Coverage of a line at distance `d` (in line units) given the derivative
 // `fw` of those units per pixel; `half_px` is the half width in pixels.
 float line_a(highp float d, highp float fw, float half_px) {
@@ -407,17 +417,18 @@ void fragment() {
 		// Lit slopes brighten less than shaded ones darken (no washed-out crests).
 		// Foam steps: the step tops are flat, so the hill shade fades there and the risers carry the light.
 		highp float fw0 = fwidth(lv0);
-		float tf0 = 1.0 - smoothstep(0.1, 0.2, fw0);
+		bool stepsOn = ob_on > 0.5 && ob_fine > 0.5 && ob_fq.x > 0.0;   // pass 6: real foam steps (the tops are flat)
+		float tf0 = stepsOn ? 1.0 : 1.0 - smoothstep(0.1, 0.2, fw0);
 		float tshade = shade * (1.0 - 0.6 * terrace * tf0);
 		col *= 1.0 + shade_k * (tshade > 0.0 ? tshade * 0.7 : tshade * (terrace > 0.0 ? 0.62 : 1.0)) * (1.0 - sea);
 		// Slopes darken a little; steep ground and, on hill maps, ground
 		// above the tree line turns to bare rock (less in the woods).
 		float wood = veg_on ? texture(vegmap, world / veg_size_px).r : 0.0;
-		col *= 1.0 - 0.2 * smoothstep(0.08, 0.45, grade) * (1.0 - sea);
+		col *= 1.0 - (stepsOn ? 0.05 : 0.2) * smoothstep(0.08, 0.45, grade) * (1.0 - sea);
 		if (terrace > 0.0) {
 			// Slope tone: steep grass turns to bare earth before it turns to rock.
 			vec3 earth = mix(rock_col, base_col, 0.45) * 0.95;
-			col = mix(col, earth * (1.0 + 0.5 * shade), terrace * 0.42 * smoothstep(0.12, 0.34, grade) * (1.0 - sea));
+			col = mix(col, earth * (1.0 + 0.5 * shade), terrace * (stepsOn ? 0.12 : 0.42) * smoothstep(0.12, 0.34, grade) * (1.0 - sea));
 		}
 		float hf = hm / h_range_m;
 		float above = smoothstep(tree_line, tree_line + 0.12, hf + (n2 - 0.5) * 0.18);
@@ -435,8 +446,32 @@ void fragment() {
 		highp float fw = fwidth(lv);
 		highp float dist = abs(fract(lv) - 0.5);
 		float k = floor(lv);
-		if (terrace > 0.0) {
-			// Layered-foam steps (tabletop pass 2): flat step tops, a crisp bevelled riser above each step edge, lit
+		if (stepsOn) {
+			// Pass 6, true foam steps: the lift is quantised into these same bands (board_view.gdshaderinc ob_quant), so each
+			// riser is a ramp of the first RAMP of a band's height, a vertical face on the board. The face is darker (and
+			// lit or shaded by the way it looks), the step's top edge has a lit lip, the step below a soft foot shadow.
+			float u = fract(lv + 0.5);
+			highp vec2 gdir = vec2((b.x - a.x) + (d.x - c.x), (c.x - a.x) + (d.x - b.x));
+			float lvpm = length(gdir) * (h_range_m / 65535.0) * 0.25 / minor_m;   // bands per metre along the slope
+			float t = clamp(u / ob_fq.w, 0.0, 1.0);
+			float face = smoothstep(0.0, 0.2, t) * (1.0 - smoothstep(0.8, 1.0, t)) * step(u, ob_fq.w) * (1.0 - sea);
+			float lipw = clamp(0.5 * lvpm, 0.01, 0.12);
+			float lip = (1.0 - smoothstep(0.0, lipw, u - ob_fq.w)) * step(ob_fq.w, u) * (1.0 - sea);
+			float footw = clamp(1.4 * lvpm, 0.02, 0.3);
+			float foot = (1.0 - smoothstep(0.0, footw, 1.0 - u)) * (1.0 - sea) * (1.0 - face);
+			float foot2 = (1.0 - smoothstep(0.0, ob_fq.w * 0.5, u)) * step(u, ob_fq.w) * (1.0 - sea);
+			float steep = smoothstep(0.0, 0.03, lvpm);
+			float rl = clamp(dot(gdir / (length(gdir) + 1e-3), vec2(0.7071)) * 1.5, -1.0, 1.0);
+			vec3 earthf = mix(rock_col, base_col, 0.5) * 0.9;   // the cut face: bare foam, a little earthier than the flock
+			col = mix(col, earthf * (1.0 + 0.35 * shade), terrace * face * steep * 0.3);
+			col *= 1.0 + terrace * face * steep * (rl > 0.0 ? 0.18 * rl - 0.14 : 0.30 * rl - 0.14);
+			col = mix(col, vec3(0.86, 0.83, 0.68), terrace * face * steep * 0.09);
+			col = mix(col, vec3(0.93, 0.9, 0.74), terrace * lip * steep * 0.32);
+			col *= 1.0 + terrace * lip * steep * 0.12;
+			float shaded = 0.25 + 0.75 * smoothstep(0.1, -0.5, rl);   // the lamp is upper left: a foot shadow falls to the lower right
+			col *= 1.0 - terrace * (foot * 0.3 + foot2 * 0.3) * shaded * steep;
+		} else if (terrace > 0.0) {
+			// Layered-foam steps (tabletop pass 2)
 			// on the upper-left faces and shaded on the lower-right ones (the NW hill shade), a pale lip along its
 			// top edge and a thin dark shadow line at its foot; fades out where bands crowd.
 			float tf = 1.0 - smoothstep(0.1, 0.2, fw);
@@ -459,6 +494,20 @@ void fragment() {
 		bool major = abs(mod(k, major_every) - floor(major_every * 0.5)) < 0.5;
 		// Fade where lines would be packed tighter than ~6 px (minor) or
 		// ~8 px apart (major), so a zoomed-out hill is shaded, not hatched.
+		contour_k *= stepsOn ? 0.0 : 1.0;
+		if (ob_on > 0.5 && board && !low && sea < 0.5 && ob_in > 0.5) {
+			// Pass 6, the lamp on the hills (the oblique view's diorama only): a soft cast shadow on the lee of a rise (lamp
+			// upper left; the ground towards it is higher, scaled by how much), and a lit rim along a crest that faces it.
+			vec2 ld = vec2(0.6154, 0.7882);   // towards the lamp (normalised (0.55, 0.7)), world x right, y down
+			highp float h3 = hm_at(world - ld * 3.0 * ppm);
+			highp float h8 = hm_at(world - ld * 8.0 * ppm);
+			highp float ha = hm_at(world + ld * 3.0 * ppm);
+			float cast_s = smoothstep(0.3, 2.4, h3 - hm) * 0.55 + smoothstep(0.8, 5.0, h8 - hm) * 0.45;
+			col *= mix(vec3(1.0), vec3(0.74, 0.8, 0.9), 0.3 * cast_s * (1.0 - rock_o * 0.5));
+			float convex = smoothstep(0.04, 0.35, hm - 0.5 * (h3 + ha));
+			float facing = smoothstep(0.1, 0.9, hm - h3);
+			col += vec3(0.1, 0.095, 0.06) * convex * facing;
+		}
 		if (major) {
 			float fade = 1.0 - smoothstep(0.35, 0.6, fw);
 			col = mix(col, major_col.rgb, major_col.a * contour_k * fade * line_a(dist, fw, 0.75));

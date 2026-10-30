@@ -326,6 +326,8 @@ func setup(p_sim, p_px_per_m: float) -> void:
 ## Use the CPU-fed path (true) or the texture path (false) from now on.
 func set_cpu_fed(on: bool) -> void:
 	cpu_fed = on
+	if on and BoardView.oblique:
+		BoardView.use_grid()   # the CPU-fed shaders cannot read the fine lift field: every layer uses the coarse grid
 	if on:
 		_build_cpu()
 	else:

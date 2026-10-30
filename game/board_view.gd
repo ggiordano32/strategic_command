@@ -15,6 +15,11 @@ extends RefCounted
 ## all of them meet the ground exactly. Taps go back through `to_world`: the board point to the ground plane at h = 0,
 ## then refined by the lift under it (Newton steps; the lift is bilinear, so a step inside one cell is exact).
 ##
+## Pass 6 (the hills, docs/design/art_pipeline.md): every lift is scaled by HEIGHT_EXAG (the oblique view only), and on the
+## texture path the coarse grid gives way to a fine lift field (2 m nodes, a half-float texture read in the vertex stage:
+## `fine`), quantised into the terrain's foam bands with a short ramp so each riser is a vertical face; the coarse grid stays
+## for the CPU-fed soldier path, Graphics Low and `--lift-grid`. The inverse then marches along the view ray.
+##
 ## Shaders read the same grid (game/board_view.gdshaderinc, `apply` sets the uniforms). The figures' nearness (what
 ## draws over what) is NEAR(y, h) = y * OBLIQUE_SIN + h * OBLIQUE_COS (world pixels along the view).
 
@@ -28,6 +33,13 @@ const MIN_CELL_M := 20.0
 ## The upright mark (game/board_lift.gdshader): a draw transform scale(1, UP_K) with origin anchor * (1 - UP_K) tells
 ## the lift shader to draw the following items upright (screen-aligned, unsquashed) at the anchor's board point.
 const UP_K := 0.999
+## Vertical exaggeration of every lift in the oblique view (pass 6; the top view is unchanged). `--height-exag=` overrides it.
+const HEIGHT_EXAG := 1.4
+const FINE_M := 2.0                 # the fine lift field's node spacing (metres); 4 m past FINE_MAX_NODES nodes a side
+const FINE_MAX_NODES := 1100
+const BAND_M := 2.0                 # the terrain's contour / foam band (terrain.gdshader minor_m)
+const RAMP := 0.18                  # the riser's share of a band (height), a smoothstep ramp: the vertical face
+const TerrainNodes := preload("res://game/terrain_nodes.gd")
 
 ## The view of the battle being set up (set by `begin`; tests set `force` first).
 static var oblique := false
@@ -43,6 +55,22 @@ static var lift_max := 0.0
 static var lift_min := 0.0
 static var base_m := 0.0
 static var _uni := PackedVector4Array()
+static var exag := HEIGHT_EXAG
+static var fine := false             # the fine lift field is in use (else the coarse grid)
+static var fine_nx := 2
+static var fine_ny := 2
+static var fine_cell_px := 20.0
+static var fine_l := PackedFloat32Array()  # smooth lift (board px) per fine node
+static var fine_tex: Texture2D
+static var fine_max := 0.0           # the quantised field's highest / lowest lift (the active mode's range is lrange)
+static var fine_min := 0.0
+static var steps := false            # the fine field is quantised into foam bands (diorama)
+static var q_band := 1.0             # a band's height in lift px
+static var q_off := 0.0              # lv = lift / q_band + q_off: band 0 starts at the terrain's commonest height
+static var crest_ghost := false
+static var grid_max := 0.0           # the coarse grid's own lift range (board px)
+static var grid_min := 0.0
+static var _mats: Array = []         # weak refs of every material `apply` was called on (use_grid re-applies them)
 
 
 static func pref() -> String:
@@ -70,10 +98,41 @@ static func save_pref(v: String) -> void:
 	cf.save(SETTINGS)
 
 
+## Testing aids: "--height-exag=1.4", "--lift-grid" (the coarse grid everywhere), "--no-steps" (the fine field smooth),
+## "--crest-ghost=on|off" (the setting `[video] crest_ghost`, default off).
+static func _arg(prefix: String, default := "") -> String:
+	for a in OS.get_cmdline_user_args():
+		if str(a).begins_with(prefix):
+			return str(a).get_slice("=", 1)
+	return default
+
+
+static func crest_ghost_pref() -> bool:
+	var v := _arg("--crest-ghost=")
+	if v != "":
+		return v == "on" or v == "1" or v == "true"
+	var cf := ConfigFile.new()
+	if cf.load(SETTINGS) != OK:
+		return false
+	return str(cf.get_value("video", "crest_ghost", "off")) == "on"
+
+
+static func save_crest_ghost(on: bool) -> void:
+	var cf := ConfigFile.new()
+	cf.load(SETTINGS)
+	cf.set_value("video", "crest_ghost", "on" if on else "off")
+	cf.save(SETTINGS)
+
+
 ## Set up the view for a new battle on `sim` (before the layers are built).
 static func begin(sim, p_px_per_m: float) -> void:
 	oblique = pref() == "oblique" and not web_top
 	px_per_m = p_px_per_m
+	exag = HEIGHT_EXAG
+	var ex := _arg("--height-exag=")
+	if ex != "":
+		exag = clampf(float(ex), 0.5, 4.0)
+	_mats.clear()
 	field_px = Vector2(sim.field_w, sim.field_h) / 1024.0 * px_per_m
 	var fw_m: float = sim.field_w / 1024.0
 	var fh_m: float = sim.field_h / 1024.0
@@ -86,7 +145,16 @@ static func begin(sim, p_px_per_m: float) -> void:
 	lift.fill(0.0)
 	lift_max = 0.0
 	lift_min = 0.0
+	grid_max = 0.0
+	grid_min = 0.0
 	base_m = 0.0
+	fine = false
+	steps = false
+	fine_max = 0.0
+	fine_min = 0.0
+	fine_tex = null
+	crest_ghost = oblique and crest_ghost_pref()
+	var k_lift := px_per_m * OBLIQUE_SIN * exag
 	if oblique and sim.ter_on != 0:
 		# Each node: the mean of 5 x 5 samples over its cell (a smooth lift), then the commonest height (1 m bins) as 0.
 		var hm := PackedFloat32Array()
@@ -114,10 +182,13 @@ static func begin(sim, p_px_per_m: float) -> void:
 					best_n = int(hist[b])
 		base_m = best + 0.5
 		for k in nx * ny:
-			var v := (hm[k] - base_m) * px_per_m * OBLIQUE_SIN
+			var v := (hm[k] - base_m) * k_lift
 			lift[k] = v
 			lift_max = maxf(lift_max, v)
 			lift_min = minf(lift_min, v)
+		grid_max = lift_max
+		grid_min = lift_min
+		_build_fine(sim, k_lift)
 	_uni = PackedVector4Array()
 	_uni.resize(GRID_VEC4)
 	for q in GRID_VEC4:
@@ -128,19 +199,102 @@ static func begin(sim, p_px_per_m: float) -> void:
 		_uni[q] = v4
 
 
+## The fine lift field: the terrain's 2 m height nodes (4 m past FINE_MAX_NODES a side), a half-float texture, quantised
+## into the terrain's foam bands in the shaders and `lift_px` when `steps` (the diorama look). The coarse grid's range is
+## kept in lift_max / lift_min as well: the union is what rects and culls use, so a fall-back to the grid needs no resize.
+static func _build_fine(sim, k_lift: float) -> void:
+	# (loaded at run time: quality.gd and soldier_layer.gd preload this file)
+	var Quality = load("res://game/quality.gd")
+	var BattleLook = load("res://game/battle_look.gd")
+	if "--lift-grid" in OS.get_cmdline_user_args() or Quality.is_low():
+		return
+	var sl = load("res://game/soldier_layer.gd")
+	var forced: String = sl.forced_path()
+	if forced == "cpu" or (forced == "" and sl.load_pref() == "cpu"):
+		return
+	var hn := TerrainNodes.build(sim)
+	var tnx := TerrainNodes.nx
+	var tny := TerrainNodes.ny
+	var st := 1 if maxi(tnx, tny) <= FINE_MAX_NODES else 2
+	fine_nx = (tnx - 1) / st + 1
+	fine_ny = (tny - 1) / st + 1
+	fine_cell_px = FINE_M * st * px_per_m
+	fine_l = PackedFloat32Array()
+	fine_l.resize(fine_nx * fine_ny)
+	var lo := hn[0]
+	for v in hn:
+		lo = minf(lo, v)
+	var hb := TerrainNodes.commonest(hn, lo)   # the terrain's commonest height, the foam bands' origin
+	steps = BattleLook.is_diorama() and "--no-steps" not in OS.get_cmdline_user_args()
+	q_band = BAND_M * px_per_m * OBLIQUE_SIN * exag
+	q_off = (base_m - hb) / BAND_M
+	for j in fine_ny:
+		for i in fine_nx:
+			fine_l[j * fine_nx + i] = (hn[(j * st) * tnx + i * st] - base_m) * k_lift
+	var mx := -1e9
+	var mn := 1e9
+	for v in fine_l:
+		mx = maxf(mx, v)
+		mn = minf(mn, v)
+	fine_max = _quant(mx)
+	fine_min = _quant(mn)
+	var img := Image.create_from_data(fine_nx, fine_ny, false, Image.FORMAT_RF, fine_l.to_byte_array())
+	img.convert(Image.FORMAT_RH)
+	fine_tex = ImageTexture.create_from_image(img)
+	fine = true
+	if "--lift-stats" in OS.get_cmdline_user_args():
+		print("LIFT fine %d x %d nodes (%.0f m), lift %.1f .. %.1f px (quantised %.1f .. %.1f), steps=%s exag=%.2f field %.0f x %.0f m" % [
+			fine_nx, fine_ny, fine_cell_px / px_per_m, mn, mx, fine_min, fine_max, str(steps), exag, field_px.x / px_per_m, field_px.y / px_per_m])
+	lift_max = maxf(lift_max, maxf(fine_max, mx))
+	lift_min = minf(lift_min, minf(fine_min, mn))
+
+
+## The foam steps: lift (board px) snapped to the terrain's bands, each riser a ramp RAMP of a band high (terrain.gdshader's
+## ob_quant is the same function).
+static func _quant(l: float) -> float:
+	if not steps:
+		return l
+	var lv := l / q_band + q_off
+	var n := floorf(lv + 0.5)
+	var u := lv + 0.5 - n
+	var t := clampf(u / RAMP, 0.0, 1.0)
+	return (n - 1.0 + t * t * (3.0 - 2.0 * t) - q_off) * q_band
+
+
+## Drop to the coarse grid for the rest of the battle (the CPU-fed soldier path was chosen at run time: it cannot read
+## the field), and re-apply every material that was given the field.
+static func use_grid() -> void:
+	if not fine:
+		return
+	fine = false
+	steps = false
+	for r in _mats:
+		var m = r.get_ref()
+		if m != null:
+			apply(m, false)
+
+
 ## Sets the view's uniforms (game/board_view.gdshaderinc) on a material whose shader includes it.
-static func apply(mat: ShaderMaterial) -> void:
+static func apply(mat: ShaderMaterial, register := true) -> void:
+	if register:
+		_mats.append(weakref(mat))
 	mat.set_shader_parameter("ob_on", 1.0 if oblique else 0.0)
 	mat.set_shader_parameter("ob_geo", Vector4(cell_px, float(nx), float(ny), 0.0))
 	mat.set_shader_parameter("ob_field", field_px)
 	mat.set_shader_parameter("ob_lift", _uni)
-	mat.set_shader_parameter("ob_lrange", Vector2(lift_max, lift_min))
+	if fine:
+		mat.set_shader_parameter("ob_lrange", Vector2(fine_max, fine_min))
+		mat.set_shader_parameter("ob_fine", 1.0)
+		mat.set_shader_parameter("ob_fgeo", Vector4(fine_cell_px, float(fine_nx), float(fine_ny), 0.0))
+		mat.set_shader_parameter("ob_fq", Vector4(q_band if steps else 0.0, 1.0 / q_band, q_off, RAMP))
+		mat.set_shader_parameter("ob_ftex", fine_tex)
+	else:
+		mat.set_shader_parameter("ob_lrange", Vector2(grid_max, grid_min))
+		mat.set_shader_parameter("ob_fine", 0.0)
 
 
-## The lift (board px) at world point w, and its derivative along y (per world px).
+## The coarse grid's lift (board px) at world point w, and its derivative along y (per world px).
 static func lift_dy(w: Vector2) -> Vector2:
-	if not oblique:
-		return Vector2.ZERO
 	var g := w.clamp(Vector2.ZERO, field_px) / cell_px
 	var i0 := clampi(int(floor(g.x)), 0, nx - 2)
 	var j0 := clampi(int(floor(g.y)), 0, ny - 2)
@@ -153,7 +307,22 @@ static func lift_dy(w: Vector2) -> Vector2:
 	return Vector2(lerpf(top, bot, fy), d)
 
 
+## The smooth fine lift (board px) at world point w: bilinear over the fine nodes (the texture's own filter).
+static func _fine_smooth(w: Vector2) -> float:
+	var g := w.clamp(Vector2.ZERO, field_px) / fine_cell_px
+	var i0 := clampi(int(floor(g.x)), 0, fine_nx - 2)
+	var j0 := clampi(int(floor(g.y)), 0, fine_ny - 2)
+	var fx := clampf(g.x - i0, 0.0, 1.0)
+	var fy := clampf(g.y - j0, 0.0, 1.0)
+	var k := j0 * fine_nx + i0
+	return lerpf(lerpf(fine_l[k], fine_l[k + 1], fx), lerpf(fine_l[k + fine_nx], fine_l[k + fine_nx + 1], fx), fy)
+
+
 static func lift_px(w: Vector2) -> float:
+	if not oblique:
+		return 0.0
+	if fine:
+		return _quant(_fine_smooth(w))
 	return lift_dy(w).x
 
 
@@ -164,10 +333,33 @@ static func to_board(w: Vector2, h_m := 0.0) -> Vector2:
 	return Vector2(w.x, w.y * OBLIQUE_COS - lift_px(w) - h_m * px_per_m * OBLIQUE_SIN)
 
 
-## Board point (px) -> the ground point under it (world px): the ground plane at h = 0, then refined by the lift.
+## Board point (px) -> the ground point under it (world px). The coarse grid: the ground plane at h = 0 refined by Newton
+## steps (the lift is linear along y inside a cell). The fine field: the nearest root of y x COS - lift(x, y) = b along the
+## view ray, marched from the near end in 1/32 of the lift's range and bisected (the steps' risers are ramps, so the
+## function is continuous).
 static func to_world(b: Vector2, iters := 3) -> Vector2:
 	if not oblique:
 		return b
+	if fine:
+		var y_hi := (b.y + lift_max) / OBLIQUE_COS
+		var y_lo := (b.y + lift_min) / OBLIQUE_COS
+		var n := 48
+		var step := (y_hi - y_lo) / float(n)
+		var ya := y_hi
+		var yb := y_lo
+		for i in range(1, n + 1):
+			var yy := y_hi - step * i
+			if yy * OBLIQUE_COS - lift_px(Vector2(b.x, yy)) - b.y <= 0.0:
+				yb = yy
+				break
+			ya = yy
+		for it in 24:
+			var ym := 0.5 * (ya + yb)
+			if ym * OBLIQUE_COS - lift_px(Vector2(b.x, ym)) - b.y > 0.0:
+				ya = ym
+			else:
+				yb = ym
+		return Vector2(b.x, 0.5 * (ya + yb))
 	var y := b.y / OBLIQUE_COS
 	for it in iters:
 		var l := lift_dy(Vector2(b.x, y))
@@ -208,12 +400,16 @@ static func up_xf(anchor: Vector2) -> Transform2D:
 
 ## A plain lift material (game/board_lift.gdshader) for a draw-based layer: its ground drawing is squashed and lifted,
 ## items under up_xf are drawn upright. Also widens the node's cull rect (its drawing moves on screen).
-static func lift_node(ci: CanvasItem) -> void:
+## `draped`: the node's long straight pieces (a cliff's brow, a track, a field's edge) follow the smooth lift, not the foam steps
+## (their vertices are far apart, so a step between two of them would tear the drawing); short marks stay on the steps.
+static func lift_node(ci: CanvasItem, draped := false) -> void:
 	if not oblique or ci == null:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = load("res://game/board_lift.gdshader")
 	apply(mat)
+	if draped and fine and steps:
+		mat.set_shader_parameter("ob_fq", Vector4(0.0, 1.0 / q_band, q_off, RAMP))
 	ci.material = mat
 	cull_wide(ci)
 

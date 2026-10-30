@@ -1275,3 +1275,109 @@ Built in this order, each shot in both views.
 - **Open.** The die's faces are drawn flat (a 2D flip), not a rolled 3D cube; a sea auto-resolve has no die; the dive's tilt is not eased (the camera is baked);
   the dive and the die are not yet on the phone (Tab S7, the web build); ring ticks start at east; the lane zone's "yard" of a **non**-West town is unchanged
   (Rome's cobbled lanes keep their rim); the first top-view shots of the smoke at Low were not compared.
+
+### Pass 6, the hills (as built, 2026-10-30)
+
+The owner: "Now that the cities are oblique the hills feel a bit flat on the battlefield", and on the rocks: "They feel placed down instead
+of part of the landscape." View only: `git diff --stat sim/ campaign/` is empty, no hash, no lockstep input. The hills stay foam steps on a
+table (the felt, the flock and the resin water are untouched), not a terrain renderer. Code: `game/board_view.gd` and
+`board_view.gdshaderinc` (the field, the exaggeration, the inverse), `game/terrain_nodes.gd` (new: the 2 m height nodes, one copy for the
+terrain texture and the lift field), `game/terrain.gdshader` (steps, shadows), `game/ground_depth.gdshader` (new, the crest ghost's pass),
+`game/kit_occluder.gd`, `game/battlekit.gdshader` / `battlekit.gd` (rocks sunk), `game/land_layer.gd` (earth skirt and halo),
+`game/tuft_layer.gd` (tufts at a rock's foot), `game/soldier_layer.gd` (one line), `game/menu/options_rows.gd` (the crest capsule).
+
+- **1. The exaggeration.** `BoardView.HEIGHT_EXAG = 1.4`, folded into every lift value (`lift = (h - base) x px_per_m x OBLIQUE_SIN x exag`,
+  the coarse grid and the fine field alike), so every layer that meets the ground through `ob_board` / `to_board` / `near_px` meets it
+  exactly: figures, trays and bases, the kit, the walls' mesh, the overlay's marks, trees and tufts, the missiles' arcs (they ride the
+  ground under both ends, their own arc height is not terrain) and a wall walk (its height is above the ground, not the terrain's).
+  Nearness (`near_px`, `ob_near`) uses the drawn height (lift / OBLIQUE_SIN), so what hides what matches the picture. The top view never
+  reads it (no lift there); `--height-exag=` overrides it for a run. **Differs from the brief:** nothing; the arcs' own height and the
+  walk's are not scaled (a figure's height is a figure's, not the hill's).
+- **2. The fine field.** `BoardView._build_fine`: the terrain's 2 m height nodes (`TerrainNodes.build`, the same cubic interpolation of the
+  sim's 4 m heights the ground texture uses; **2 m, not 4 m**: the field of bench_4000_hills is 281 x 301 nodes, the largest map 2 m
+  keeps under 1,100 nodes a side, past that the builder takes every second node) as a **half-float texture (R16F, converted from R32F
+  natively; half floats are filterable in WebGL2 without an extension)** read with `textureLod(ob_ftex, uv, 0)`: one bilinear fetch in
+  the vertex stage (and in the fragment stage for the ground). `ob_lift_px` is the one entry point; everything that included
+  `board_view.gdshaderinc` (soldiers, bases, trays, kit, trees, tufts, projectiles, the lift shader, ground-texture sprites) gets it with
+  no change. GDScript replicates it (`lift_px`: the same bilinear of the same float array, then the same quantiser) for the overlay, taps and
+  `near_px`. **The fallback:** the coarse grid (29 x 29, uniform array) is kept and used for the **CPU-fed soldier shaders** (`CPU_FED`:
+  no sampler is declared there, `ob_lift_px` compiles to the grid), for **Graphics Low** and for `--lift-grid`. The decision is made once per
+  battle in `begin` (soldier path forced or remembered as cpu, Low, the flag) and a run-time switch to the CPU path (the probe) calls
+  `BoardView.use_grid()`, which re-applies every registered material (`_mats`, weak refs) so the **whole** battle (ground included) is on
+  the grid together and never half-and-half. The union of both ranges is what the rects and culls use, so that switch needs no resize.
+  **The inverse** (`ob_world`, `to_world`): the grid keeps its Newton steps; the fine field cannot (a step's riser is steeper than the
+  view), so it marches the view ray: from the near end of the field's lift range in 14 steps (GDScript 48) until `y x COS - lift - b.y`
+  changes sign, then 5 bisections (24): the nearest surface, so a hill hides what is behind it. A flat map skips it.
+- **3. Foam steps.** With the diorama look the fine lift is quantised into the same bands pass 2 shades (`minor_m` 2 m, origin the
+  terrain's commonest height), in the shaders (`ob_quant`) and in GDScript (`_quant`; one formula, a smoothstep ramp over the first 0.18 of a band's
+  height, so the field stays continuous and the march finds every face). A band edge is therefore a **vertical face 0.36 m x 1.4 high
+  on the board** (about 21 board px at the default scale), with the **flat top** of the step above it. The ground shader's riser logic for
+  this mode is by height, not by pixel width: the face (the ramp's middle) is darker, earthier and lit or shaded by the way it looks (the
+  same node gradient as pass 2: a face that looks south, the only kind the camera sees, is in shade); a **lit lip** on the step's top edge
+  (cream, 32 %, +12 %); a **soft foot shadow** on the step below (a band's tenth of the face's height and a metre and a half of slope), stronger
+  where the face looks away from the lamp; the hill shade on the tops is cut to 40 % as pass 2 had, the slope darkening and the earthy slope tone
+  nearly off (the tops are flat now) and the contour lines off (the face is the line). The flock stays on the tops. The **painterly look** and
+  the grid fallback keep the smooth field and pass 2's drawn risers. The top view's terrace shading is untouched.
+- **4. Shadows and crests.** `terrain.gdshader`, High, oblique, diorama: three taps of the smooth height (3 m and 8 m toward the lamp, 3 m away):
+  a soft cast shadow on the lee of a rise (the ground toward the upper left higher, `smoothstep` of the difference, a cool 30 % at most) and a
+  lit rim along a crest facing the lamp (convexity of the three taps times the drop toward the lamp; +0.1 warm). Both subtle. **The crest
+  ghost** (`[video] crest_ghost`, default off, `--crest-ghost=on|off`, a capsule on the Battle look row): `kit_occluder.gd` draws the ground's
+  nearness (`ground_depth.gdshader`: `ob_world` per pixel, `ob_near`, the kit's 16 bit encoding) first into the occluder viewport; a man
+  whose nearness is below the ground's at his pixel is drawn as the faction ghost by the existing code (his base not at all). The kit
+  pieces are drawn over it, so a house farther than a crest in front of it keeps its own nearness (a corner case). Its cost is measured on its own below.
+- **5. Rocks.** Every kit rock (`rock_a / b / c`, `battlekit.gdshader`'s `ob_rockq`) is drawn `ob_sink = 0.14` of its height lower and its foot fades out
+  over the bottom third (alpha, so the ground's flock shows through) and darkens a little above that; `land_layer.gd` (`_Skirts`, a child node with its own lift material so the skirts stand on the steps): under every boulder, both views,
+  High, a soft skirt of bare earth (five translucent discs to 1.7 radii) and a dark halo hugging the foot; `tuft_layer.gd`: three tufts on the boulder's south
+  half. Positions are the sim's: nothing moves, only how the rock sits. **Not done, and why:** (a) a rock **on a terrace face flush with the riser**
+  with the riser's lip: the rock records carry no knowledge of the bands, and a flush outcrop needs its sprite clipped by the face (a per-pixel test
+  against the field in the kit shader); a rock on a face currently stands on the ramp like any figure. (b) **Cliffs as risers with a rock
+  material**: `land_layer.gd _cliff` still draws the straight face polylines (lifted per vertex); the sim's cliff lines and the terrain's bands do not
+  coincide (the cliff face height is a separate datum, 4.4 m, the terrain's slope there is gentle), so a riser cannot replace a cliff without moving
+  heights, which is the sim's. Where the terrain is steep the steps' faces take the rock tile by the grade (pass 2's `rock` mask), which is the nearest thing.
+- **Draped layers.** A draw-based layer whose pieces are long (the cliffs' faces and brow, the settlement surroundings' tracks and fields) gets the
+  **smooth** field (`BoardView.lift_node(ci, true)`: `ob_fq.x = 0` on its material): their vertices are metres apart, so a step between two of them tore the
+  cliff's lit brow into a floating band (seen in the first shot). The short marks (overlay, rubble, skirts, bases) stay on the steps.
+- **What differs from the brief, and why.**
+  (1) The coarse grid is not replaced by the texture on the **CPU-fed path**: there the *whole battle* (ground included) uses the grid with the exaggeration,
+  and the ground keeps pass 2's drawn risers; the steps are a texture-path feature (Tab S7 Chrome therefore does not get them: it chooses the CPU path and Low).
+  (2) The riser's foot shadow and lip are by height (bands per metre of slope), not pixel width, because a face is now geometry.
+  (3) Rocks on a riser flush with the face and cliffs as risers are **not built** (see 5).
+  (4) The crest ghost is built and switchable but was **not seen working on a clean example**: the two maps tried (test_ridge_defend, bench hills) had no man
+  standing right behind a crest in view; the pixels differ where men stand near risers (410 and 2,863 px of 921,600 in two shots). It needs a look on a ridge map.
+  (5) The top view is **not pixel-identical** only by the rocks' skirt and halo (intended: the brief's top-view rule); ground, trees and kit are identical in
+  a paused same-tick shot (test_woods: 0 px differ outside the figures; the figures differ by 548 px that a before / before pair does not, which the
+  run's tick phase explains but was not proved: **to recheck** with `--pause` and the same tick on both).
+- **Cost** (desktop RTX 3070, 1280 x 720, vsync off (`--disable-vsync` before the `--`), `--quality=high`, `--soldiers=gpu`, seed 7, 9 s after tick 600, 3 interleaved runs, mean
+  frame ms of the three means; before = the main repo at 4e3f13f, after = this tree). **The machine was shared** (another agent's determinism test and a script check ran
+  the whole time, load average 4 to 5), so single runs scatter by +-1 ms (a 17 ms first run is in the crest rows): read the signs and sizes, not the second decimal.
+
+  | scenario, zoom, view | before | after | delta |
+  |---|---|---|---|
+  | bench_4000_hills, default fit, oblique | 8.46 | 8.34 | -0.12 |
+  | bench_4000_hills, zoom 2, oblique | 7.85 | 8.12 | +0.27 |
+  | west_town, default fit, oblique | 4.46 | 4.74 | +0.28 |
+  | west_town, zoom 2, oblique | 4.57 | 4.70 | +0.13 |
+  | bench_4000_hills, default fit, top | 8.27 | 8.91 | +0.64 (noise: the top view runs the same code; runs 7.44 / 9.99 / 9.29 vs 7.48 / 8.92 / 8.42) |
+  | bench_4000_hills, zoom 2, top | 7.53 | 6.91 | -0.62 (noise) |
+  | west_town, default fit, top | 4.45 | 4.56 | +0.11 |
+  | west_town, zoom 2, top | 4.32 | 4.41 | +0.09 |
+  | crest ghost on vs off, bench_4000_hills, default fit, oblique | 9.12 | 9.38 | +0.26 |
+  | crest ghost on vs off, bench_4000_hills, zoom 2, oblique | 8.59 (median of 3; one 17 ms outlier) | 8.77 (median) | +0.18 |
+  | the grid fallback (`--lift-grid`), default fit / zoom 2 | 8.87 / 8.26 | | about the fine path's cost |
+
+  The oblique rows are +0.13 .. +0.28 ms, inside the +0.3 ms line the brief set, but not clear of the noise; the ground shader's march (14 + 5 texture fetches a
+  pixel where the lift range is large, none on a flat map) is the new work, the figures' one fetch a vertex is not measurable here. The frames are CPU-bound on this
+  machine, so the **GPU-bound phones are the open question**.
+- **Checked.** `tools/check_scripts.sh` clean; `tests/battle_screen_test.gd` PASS (both views); `tests/input_test.gd` PASS (taps on the hills go through the
+  new inverse; both views); `tests/soldier_facing_test.gd` PASS in both views (the two soldier paths draw the same pixels for a standing line, 0 differ, on the test's
+  flat board: the lift is zero there, **the two paths on a hill are not compared**); `tests/oblique_sets_shot.gd` runs (the sets sheet; flat board too);
+  `tests/lockstep_test.gd --quick` PASS; `tests/menu_test.gd` PASS with the fourth capsule (the row still fits at 1024 x 576 and the narrow layouts);
+  `git diff --stat sim/ campaign/` empty.
+- **Open.** (a) The phone: vertex texture fetch (half-float, linear) on the Adreno 650 Chrome path is untested (that tablet falls to the CPU path today, so it
+  would not use it), the ground's 19-fetch march on a mobile GPU is unmeasured, R16F filtering on old Mali / Adreno WebGL2 is assumed. (b) Flush rocks and cliff
+  risers (above). (c) A **river** crossing: the bed lies below the plain, so with the fine field the water sits in a one-band trench (the coarse grid averaged
+  it away); no river map was shot. Water should be clamped to the bank's height in the field. (d) Overlay marks, trays and the walls' mesh are per vertex: a long piece
+  across a riser slants over the face (the overlay cuts at 8 m; trays and long wall stretches were not checked on a hill town; `west_hill_village` and `siege_hill`
+  were not shot). (e) A tap on a riser's face resolves to the face's world point (the ramp's 0.36 m), which is the nearest surface, as the eye reads it.
+  (f) The cast shadow and the crest rim are subtle by design and have not been judged by the owner. (g) The crest ghost's corner case: a kit piece farther than a crest
+  keeps its own nearness over the ground's. (h) The exaggeration 1.4 and the ramp 0.18 are guesses at the owner's eye: `--height-exag=`, `RAMP`, `ob_sink`.

@@ -31,6 +31,8 @@ uniform sampler2D ob_knrm : filter_linear, repeat_disable;
 uniform vec4 ob_krect[288];
 uniform vec4 ob_kanch[288];   // size px, anchor px (the footprint's centre on the ground)
 uniform float ob_kk = 1.25;   // board px per sheet px
+uniform vec4 ob_rockq[2];     // pass 6: the oblique kit sheet's rock sprites (indices, -1 unused): sunk into the ground
+uniform float ob_sink = 0.14; // how far the rock sits below its footprint, a share of its height
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -53,6 +55,7 @@ varying vec2 rot_cs;
 varying float culture;
 varying float flash;
 varying float v_near;   // the oblique view: nearness (world px)
+varying float v_rock;   // a rock sprite: 0 its top .. 1 its foot (the foot fades into the ground); else 2
 varying vec4 v_wall;    // x: 0 a piece, 3 an oblique-kit piece, 10 + kind a wall row; y: metres along; z: metres up (a
                         // face) or 0..1 across (a top); w: the face's top, or the top's height, m
 
@@ -62,6 +65,7 @@ void vertex() {
 	vec2 w = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
 	v_wall = vec4(0.0);
 	v_near = 0.0;
+	v_rock = 2.0;
 	vec4 r = rects[clamp(pi, 0, 63)];
 	if (ob_on > 0.5 && pi >= 400 && pi < 2048) {
 		// A wall row (world px): a face or a top, placed on the board here.
@@ -99,6 +103,12 @@ void vertex() {
 				vec4 ka = ob_kanch[q];
 				float sc = MODEL_MATRIX[0].x * ob_kk;
 				w = ob_board(o) + (UV * ka.xy - ka.zw) * sc;
+				float fq = float(q);
+				if (abs(ob_rockq[0].x - fq) < 0.5 || abs(ob_rockq[0].y - fq) < 0.5 || abs(ob_rockq[0].z - fq) < 0.5
+						|| abs(ob_rockq[0].w - fq) < 0.5 || abs(ob_rockq[1].x - fq) < 0.5 || abs(ob_rockq[1].y - fq) < 0.5) {
+					v_rock = UV.y;
+					w.y += ob_sink * ka.y * sc;
+				}
 				r = ob_krect[q];
 				v_wall.x = 3.0;
 			} else {
@@ -239,6 +249,11 @@ void fragment() {
 		vec2 tx = 1.5 / vec2(textureSize(nrm_tex, 0));
 		hn = (texture(nrm_tex, UV + vec2(tx.x, 0.0)).b + texture(nrm_tex, UV - vec2(tx.x, 0.0)).b
 			+ texture(nrm_tex, UV + vec2(0.0, tx.y)).b + texture(nrm_tex, UV - vec2(0.0, tx.y)).b) * 0.25;
+	}
+	if (v_rock < 1.5) {
+		// A rock sits in the ground: its foot fades out over the flock the ground draws, and darkens a little above it.
+		a.a *= 1.0 - smoothstep(0.64, 0.96, v_rock);
+		a.rgb *= 1.0 - 0.22 * smoothstep(0.45, 0.85, v_rock);
 	}
 	if (a.a < 0.01) {
 		discard;

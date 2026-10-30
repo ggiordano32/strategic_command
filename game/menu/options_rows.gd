@@ -84,6 +84,9 @@ func build(parent: Control, o: Dictionary) -> void:
 	_beside("battle_view", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",
 		"Motion (the default): the camera dives onto the table as a battle opens, and a die rolls on an Auto-resolve. Still: " \
 		+ "neither. A tap or a key skips either one. Takes effect at the next battle.", func(v): TableMotion.save_pref(str(v) == "on"))
+	_beside("battle_dive", "crest_ghost", [["Crest off", "off"], ["Crest on", "on"]], "on" if BoardView.crest_ghost_pref() else "off", "Crest ghost",
+		"Off (the default): men behind a hill's crest are drawn as they are. On (the oblique view): a man hidden by a crest nearer the camera is drawn as a ghost, "
+		+ "as men behind a wall are. Costs a pass over the ground. Takes effect at the next battle.", func(v): BoardView.save_crest_ghost(str(v) == "on"))
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",
@@ -340,6 +343,7 @@ func refresh() -> void:
 	put.call("battle_look", BattleLook.pref())
 	put.call("battle_view", BoardView.pref())
 	put.call("battle_dive", "on" if TableMotion.enabled() else "off")
+	put.call("crest_ghost", "on" if BoardView.crest_ghost_pref() else "off")
 	MapView.load_view_pref()
 	put.call("map_view", "terrain" if MapView.terrain_view else "political")
 	put.call("map_style", MapView.style_pref)

@@ -36,6 +36,7 @@ var _veg: PackedByteArray
 var _vw := 0
 var _vh := 0
 var _riv := {}
+var _rocks := PackedVector3Array()   # every boulder (x, y metres, radius): two or three tufts stand against its foot
 
 
 func setup(p_sim, p_px_per_m: float) -> void:
@@ -46,6 +47,9 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_vh = sim.veg_h
 	if sim.riv_on != 0:
 		_riv = {"g": sim.riv, "l": sim.map_info["river"]}
+	for rk in sim.map_info.get("land", {}).get("rocks", []):
+		for d in (rk.size() - 2) / 3:
+			_rocks.append(Vector3(float(int(rk[2 + d * 3])), float(int(rk[3 + d * 3])), float(int(rk[4 + d * 3]))))
 	_mm = MultiMesh.new()
 	_mm.transform_format = MultiMesh.TRANSFORM_2D
 	_mm.use_custom_data = true
@@ -168,6 +172,26 @@ func _build_chunk(k: Vector2i) -> PackedFloat32Array:
 			var jit := hash12(fx + 0.0, fy + 55.5)
 			out.append_array(PackedFloat32Array([1.0, 0.0, 0.0, mx * px_per_m, 0.0, 1.0, 0.0, my * px_per_m,
 				l0 / H_M, l1 / H_M, l2 / H_M, jit]))
+	# Pass 6: tufts against a boulder's foot (its south half, where an upright tuft shows against the rock).
+	var cm := float(CHUNK) * CS
+	for rk in _rocks:
+		if rk.x < k.x * cm or rk.x >= (k.x + 1) * cm or rk.y < k.y * cm or rk.y >= (k.y + 1) * cm:
+			continue
+		var sd := int(rk.x * 7.0 + rk.y * 13.0)
+		for t in 3:
+			var h1 := hash12(float(sd) + t * 5.3, 91.1)
+			var h2 := hash12(float(sd) + t * 2.9, 17.7)
+			var ang := PI * (0.12 + 0.76 * (float(t) + h1) / 3.0)   # 0 east .. PI west, through south (y down)
+			var dist := rk.z * (1.02 + 0.2 * h2)
+			var mx := rk.x + cos(ang) * dist
+			var my := rk.y + sin(ang) * dist * 0.9
+			if mx < 1.0 or my < 1.0 or mx > fw_m - 1.0 or my > fh_m - 1.0:
+				continue
+			var l0 := 0.24 + 0.14 * hash12(mx, my + 3.0)
+			var l1 := 0.22 + 0.14 * hash12(mx + 3.0, my)
+			var l2 := 0.24 + 0.14 * hash12(mx + 6.0, my + 6.0)
+			out.append_array(PackedFloat32Array([1.0, 0.0, 0.0, mx * px_per_m, 0.0, 1.0, 0.0, my * px_per_m,
+				l0 / H_M, l1 / H_M, l2 / H_M, h1]))
 	return out
 
 

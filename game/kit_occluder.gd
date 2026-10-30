@@ -18,11 +18,13 @@ var _hooked := false
 
 
 ## Builds the pass for the kits that have a sorted MultiMesh; false when none has (nothing to occlude).
+## With BoardView.crest_ghost the pass also holds the ground's nearness (game/ground_depth.gdshader), drawn first.
 func setup(kits: Array, field_h_px: float) -> bool:
 	for k in kits:
 		if k != null and k.ob_mm != null and k.ob_mat != null:
 			_kits.append(k)
-	if _kits.is_empty():
+	var ground := BoardView.crest_ghost and BoardView.oblique
+	if _kits.is_empty() and not ground:
 		return false
 	near_r = Vector2(-BoardView.px_per_m * 300.0, field_h_px * BoardView.OBLIQUE_SIN + BoardView.px_per_m * 700.0)
 	vp = SubViewport.new()
@@ -31,6 +33,18 @@ func setup(kits: Array, field_h_px: float) -> bool:
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	vp.canvas_item_default_texture_filter = Viewport.DEFAULT_CANVAS_ITEM_TEXTURE_FILTER_LINEAR
 	add_child(vp)
+	if ground:
+		var gm := ShaderMaterial.new()
+		gm.shader = load("res://game/ground_depth.gdshader")
+		BoardView.apply(gm)
+		gm.set_shader_parameter("ob_near_r", near_r)
+		var cr := ColorRect.new()
+		var bf := BoardView.board_field()
+		cr.position = bf.position
+		cr.size = bf.size
+		cr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		cr.material = gm
+		vp.add_child(cr)
 	for k in _kits:
 		var mmi := MultiMeshInstance2D.new()
 		mmi.multimesh = k.ob_mm

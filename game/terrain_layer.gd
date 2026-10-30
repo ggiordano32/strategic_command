@@ -28,6 +28,7 @@ const LandLayer := preload("res://game/land_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const TuftLayer := preload("res://game/tuft_layer.gd")
+const TerrainNodes := preload("res://game/terrain_nodes.gd")
 const NODE_M := 2.0                       # texture node spacing (metres)
 const LIGHT := Vector3(-0.55, -0.7, 0.85) # from the upper left, fairly high
 const RELIEF_EXAGGERATE := 3.4            # shading reads on gentle slopes too
@@ -79,14 +80,14 @@ func setup(p_sim, p_px_per_m: float) -> void:
 		dec.low = Quality.is_low()
 		dec.board = BattleLook.is_diorama() and not ("--no-splat" in OS.get_cmdline_user_args())
 		add_child(dec)
-		BoardView.lift_node(dec)
+		BoardView.lift_node(dec, true)
 		_decals = dec
 	if sim.map_info.has("land"):
 		# Cliffs and outcrops (landforms), over the ground and its decals.
 		_land = LandLayer.new()
 		_land.setup(sim, px_per_m, Quality.is_low())
 		add_child(_land)
-		BoardView.lift_node(_land)
+		BoardView.lift_node(_land, true)
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	apply_quality()
 	_measure_from = Time.get_ticks_msec()
@@ -216,41 +217,9 @@ func _build() -> void:
 		m.set_shader_parameter("hmap_size", Vector2i(2, 2))
 		m.set_shader_parameter("terrain_on", false)
 		return
-	var snx: int = sim.ter_nx
-	var sny: int = sim.ter_ny
-	var src := PackedFloat32Array()
-	src.resize(snx * sny)
-	var hmax := 0.0
-	for k in snx * sny:
-		var v: float = sim.ter_h[k] / 1024.0
-		src[k] = v
-		hmax = maxf(hmax, v)
-	# 2x along x, then along y.
-	nx = snx * 2 - 1
-	ny = sny * 2 - 1
-	var rows := PackedFloat32Array()
-	rows.resize(nx * sny)
-	for j in sny:
-		var o := j * snx
-		var r := j * nx
-		for i in snx:
-			rows[r + 2 * i] = src[o + i]
-			if i < snx - 1:
-				var a := src[o + maxi(i - 1, 0)]
-				var b := src[o + i]
-				var c := src[o + i + 1]
-				var d := src[o + mini(i + 2, snx - 1)]
-				rows[r + 2 * i + 1] = (-a + 9.0 * b + 9.0 * c - d) / 16.0
-	heights.resize(nx * ny)
-	for i in nx:
-		for j in sny:
-			heights[(2 * j) * nx + i] = rows[j * nx + i]
-			if j < sny - 1:
-				var a := rows[maxi(j - 1, 0) * nx + i]
-				var b := rows[j * nx + i]
-				var c := rows[(j + 1) * nx + i]
-				var d := rows[mini(j + 2, sny - 1) * nx + i]
-				heights[(2 * j + 1) * nx + i] = (-a + 9.0 * b + 9.0 * c - d) / 16.0
+	heights = TerrainNodes.build(sim)   # (one copy with the oblique view's lift field, board_view.gd)
+	nx = TerrainNodes.nx
+	ny = TerrainNodes.ny
 	var lo := heights[0]
 	var hi := heights[0]
 	var sum := 0.0

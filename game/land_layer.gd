@@ -13,6 +13,7 @@ extends Node2D
 
 const GroundPalette := preload("res://game/ground_palette.gd")
 const BattleKit := preload("res://game/battlekit.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 const LIGHT := Vector2(-0.62, -0.78)   # toward the light (upper left)
 
@@ -33,10 +34,19 @@ func setup(sim, px_per_m: float, p_low: bool) -> void:
 	if "--land-info" in OS.get_cmdline_user_args():
 		for c in cliffs:
 			print("CLIFF x=%d y=%d n=%d" % [int(c["p"][0]) / 100, int(c["p"][1]) / 100, c["p"].size() / 2])
+		for rk in rocks.slice(0, 6):
+			print("ROCK x=%d y=%d r=%d h=%d n=%d" % [int(rk[2]), int(rk[3]), int(rk[4]), int(rk[1]), (rk.size() - 2) / 3])
+		print("LAND cliffs=%d rocks=%d" % [cliffs.size(), rocks.size()])
 	var pal := GroundPalette.get_palette(int(sim.ter_info.get("palette", 0)))
 	var base: Color = pal["base"]
 	# Rock a little toward the ground's own colour, so it sits in the land.
 	rock_col = (pal["rock"] as Color).lerp(base, 0.18)
+	if not rocks.is_empty():
+		_skirts = _Skirts.new()
+		_skirts.layer = self
+		add_child(_skirts)
+		BoardView.lift_node(_skirts)
+		_skirts.visible = not low
 	if not ("--no-kit" in OS.get_cmdline_user_args()) and not rocks.is_empty():
 		kit = BattleKit.new()
 		add_child(kit)
@@ -46,9 +56,23 @@ func setup(sim, px_per_m: float, p_low: bool) -> void:
 func set_low(v: bool) -> void:
 	if v != low:
 		low = v
+		if _skirts != null:
+			_skirts.visible = not low
 		if kit != null:
 			kit.refresh()
 		queue_redraw()
+
+
+## The rocks' earth skirts, a node of their own: short marks, so they stand on the foam steps (BoardView.lift_node) while the
+## cliffs' long faces (this node) are draped over them.
+class _Skirts extends Node2D:
+	var layer
+	func _draw() -> void:
+		for r in layer.rocks:
+			layer._skirt(self, r)
+
+
+var _skirts: Node2D
 
 
 func _draw() -> void:
@@ -236,6 +260,20 @@ func _cliff(c: Dictionary) -> void:
 	for q in n - 1:
 		var lb := clampf(0.5 + nr[q].dot(lt) * 0.5, 0.0, 1.0)
 		draw_line(brow[q], brow[q + 1], rock_col.lightened(0.28 + 0.2 * lb), maxf(0.42 * k, 2.0))
+
+
+## Pass 6: a rock sits in the ground, not on it. Under every boulder (both views, High): a skirt of bare earth, soft round its
+## foot and a little wider toward the camera, and a darker halo hugging the foot. (The ground's flock is drawn first; the kit
+## sprite's foot fades into it.) Flat on the ground, so the oblique view squashes it with the lift shader.
+func _skirt(ci: CanvasItem, r: Array) -> void:
+	var earth := rock_col.lerp(Color(0.34, 0.27, 0.17), 0.55)
+	for d in (r.size() - 2) / 3:
+		var c := Vector2(float(int(r[2 + d * 3])), float(int(r[3 + d * 3]))) * k
+		var rad := float(int(r[4 + d * 3])) * k
+		for i in 5:
+			ci.draw_circle(c + Vector2(0.0, 0.12) * rad, rad * (1.7 - 0.17 * i), Color(earth.r, earth.g, earth.b, 0.085))
+		ci.draw_circle(c + Vector2(0.1, 0.18) * rad, rad * 1.02, Color(0.06, 0.05, 0.03, 0.2))
+		ci.draw_circle(c + Vector2(0.06, 0.1) * rad, rad * 0.92, Color(0.08, 0.06, 0.04, 0.16))
 
 
 ## One outcrop: [seed, height dm, x, y, r, x, y, r, ...] (metres).

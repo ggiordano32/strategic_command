@@ -850,6 +850,11 @@ a long string").** View only.
   battle opens (`Battle.dive`, game/battle.gd) and the die that rolls on the campaign's Auto-resolve
   (game/campaign/die_roll.gd); Still turns both off; `--no-dive` does the same for one run. A tap or key skips either. Takes effect at the next battle /
   auto-resolve. Details: docs/design/art_pipeline.md "Pass 5, furniture and motion".
+- *Crest ghost (tabletop pass 6, 2026-10-30)*: a fourth capsule **Crest off / Crest on** (`home_crest_ghost`, in-game `menu_crest_ghost`,
+  stored `[video] crest_ghost = on | off`, default off, `BoardView.crest_ghost_pref`, `--crest-ghost=on|off`) joins the same Battle look row
+  (the `_beside` pair, which wraps on the narrow layouts). On (oblique view only): a man hidden by a crest nearer the camera draws as the faction ghost,
+  as men behind a wall do. It costs a pass over the ground, so it is off by default. Takes effect at the next battle. Details:
+  docs/design/art_pipeline.md "Pass 6, the hills".
 
 **Map view switch and the Looks rows (as built, 2026-10-25).** The campaign map's bottom-left button showed the
 *current* view ("Political" or "Terrain"); on the owner's phone "Political" read as "switch to Political", so the map
