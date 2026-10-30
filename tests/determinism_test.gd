@@ -398,11 +398,13 @@ func _init() -> void:
 		return
 	if "--only=wp" in OS.get_cmdline_user_args():
 		_check_wp()
+		_check_wp_atk()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
 	_check_end()
 	_check_wp()
+	_check_wp_atk()
 	_check_deploy()
 	_check_deploy_unlimited()
 	_check_kills_by()
@@ -920,6 +922,178 @@ func _check_wp() -> void:
 		_fail("wp: rules (run keeps %s, attack drops %s, halt drops %s, append alone moves %s, holds WP_MAX %s)" % [run_keep, atk_drop, halt_drop, plain_move, cap])
 	else:
 		print("PASS wp: Run keeps the queue, an attack mid-chain and a Halt drop it, an append with no move is a move, the queue holds %d" % BattleSim.WP_MAX)
+
+
+## Attack as the final waypoint (battle_sim.md "Waypoints", 2026-10-30;
+## "--only=wp", also in the full run), on both packs (Rome, West): a foot
+## unit and a missile unit each given a move, an appended move and an
+## appended attack (ORDER_ATTACK "append" 1) walk the two stops and are then
+## given the attack (the record WP_ATTACK, the target in x, the queue's
+## last): the foot close and fight, the missile unit shoots. Queuing the
+## attack changes the hash; the same orders twice give the same hashes;
+## snapshot / restore with the attack queued runs on equal. Rules: a second
+## appended attack replaces the first, an appended move replaces it, an
+## attack on its own side is refused, an append with no move under way is
+## an ordinary attack, a target gone by the pop: dropped, the unit holds.
+func _wp_atk_sc(pack: String) -> Dictionary:
+	var ty: Array = [UT.HEAVY, UT.ARCHER, UT.HEAVY, UT.HEAVY, UT.LIGHT] if pack == "rome" else \
+		[UT.index_of("rodeleros"), UT.index_of("musketeers"), UT.index_of("w_pikemen"), UT.index_of("cutlass"), UT.index_of("buccaneers")]
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "terrain": {"kind": 0},
+		"units": [Scenarios.unit(0, ty[0], 60, 100, 330, Scenarios.FACE_UP),
+			Scenarios.unit(0, ty[1], 60, 260, 330, Scenarios.FACE_UP),
+			Scenarios.unit(1, ty[2], 60, 160, 150, Scenarios.FACE_DOWN),
+			Scenarios.unit(1, ty[3], 60, 280, 150, Scenarios.FACE_DOWN),
+			Scenarios.unit(1, ty[4], 20, 360, 30, Scenarios.FACE_DOWN)]}
+
+
+func _wp_atk_orders(sc: Dictionary, attacks: bool) -> Array:
+	var out: Array = []
+	var legs := [[0, [[100, 280, 0, 0], [160, 240, 0, 0]], 2], [1, [[260, 290, 0, 0], [230, 250, 0, 0]], 3]]
+	for lg in legs:
+		var u: int = lg[0]
+		var w := BattleSim.files_to_width(12, int(sc["units"][u]["type"]))
+		for i in (lg[1] as Array).size():
+			var pt: Array = lg[1][i]
+			var o := BattleSim.make_move_order(0, u, pt[0] * M, pt[1] * M, pt[2], w, pt[3])
+			if i > 0:
+				o["append"] = 1
+			out.append(o)
+		if attacks:
+			var oa := BattleSim.make_attack_order(0, u, lg[2], 1 if u == 0 else 0)
+			oa["append"] = 1
+			out.append(oa)
+	return out
+
+
+func _check_wp_atk() -> void:
+	for pack in ["rome", "west"]:
+		var sc := _wp_atk_sc(pack)
+		var sim := BattleSim.new()
+		sim.setup(sc, 11)
+		for o in _wp_atk_orders(sc, true):
+			sim.queue_order(o)
+		sim.step()
+		var q0 := BattleSim.wp_queue(sim, 0)
+		var q1 := BattleSim.wp_queue(sim, 1)
+		var K := BattleSim.WP_K
+		var rec_ok: bool = sim.u_wpn[0] == 2 and sim.u_wpn[1] == 2 and q0[K] == 2 and q0[K + 4] == (BattleSim.WP_ATTACK | BattleSim.WP_RUN) \
+			and q0[K + 1] == 0 and q0[K + 2] == 0 and q0[K + 3] == 0 and q1[K] == 3 and q1[K + 4] == BattleSim.WP_ATTACK \
+			and sim.u_order[0] == BattleSim.O_MOVE and sim.u_order[1] == BattleSim.O_MOVE
+		# The hash covers the attack record: the same moves without the attacks hash otherwise.
+		var sm := BattleSim.new()
+		sm.setup(sc, 11)
+		for o in _wp_atk_orders(sc, false):
+			sm.queue_order(o)
+		sm.step()
+		var hash_ok: bool = sm.wp_on == 1 and sim.wp_on == 1 and sm.state_hash() != sim.state_hash()
+		if not rec_ok or not hash_ok:
+			_fail("wp_atk %s: queued (records %s, queued %d / %d, %s / %s; hash differs %s)" % [pack, str(rec_ok), sim.u_wpn[0], sim.u_wpn[1], str(q0), str(q1), str(hash_ok)])
+			continue
+		var hashes := PackedInt64Array([sim.state_hash()])
+		var given := [-1, -1]
+		var snap := PackedByteArray()
+		var snap_t := -1
+		var alive2 := sim.u_alive[2]
+		var ammo1 := sim.u_ammo[1]
+		while sim.tick < 3000:
+			sim.step()
+			hashes.append(sim.state_hash())
+			for u in 2:
+				if given[u] < 0 and sim.u_wpn[u] == 0 and sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] == 2 + u:
+					given[u] = sim.tick
+			if snap.is_empty() and sim.u_wpn[0] == 1 and sim.u_wpn[1] >= 1:
+				snap = sim.snapshot()
+				snap_t = sim.tick
+			if given[0] >= 0 and given[1] >= 0 and sim.tick >= maxi(given[0], given[1]) + 600:
+				break
+		var fought := alive2 - sim.u_alive[2]
+		var shot := ammo1 - sim.u_ammo[1]
+		var ok: bool = given[0] >= 0 and given[1] >= 0 and sim.stat_wp_atk == 2 and sim.stat_wp_pop == 4 and fought > 0 and shot > 0
+		if not ok:
+			_fail("wp_atk %s: the paths (attacks given at %d / %d, %d attacks %d pops, foot killed %d, missiles spent %d)" % [pack, given[0], given[1], sim.stat_wp_atk, sim.stat_wp_pop, fought, shot])
+		else:
+			print("PASS wp_atk %s: two stops then the attack (foot given it at tick %d and killed %d of its target by %d; missile unit given it at %d and spent %d missiles); the attack record changes the hash" % [
+				pack, given[0], fought, sim.tick, given[1], shot])
+		# The same orders again: the same hashes.
+		var sb := BattleSim.new()
+		sb.setup(sc, 11)
+		for o in _wp_atk_orders(sc, true):
+			sb.queue_order(o)
+		sb.step()
+		var same := sb.state_hash() == hashes[0]
+		for t in range(1, hashes.size()):
+			sb.step()
+			if sb.state_hash() != hashes[t]:
+				same = false
+				break
+		# Snapshot / restore with the attack queued.
+		var sr := BattleSim.new()
+		sr.setup(sc, 11)
+		var rok := not snap.is_empty() and sr.restore(snap)
+		var sx := BattleSim.new()
+		sx.setup(sc, 11)
+		for o in _wp_atk_orders(sc, true):
+			sx.queue_order(o)
+		while sx.tick < snap_t:
+			sx.step()
+		var eq := rok and sr.u_wpn[0] == 1 and (sr.wp_q[4] & BattleSim.WP_ATTACK) != 0 and sr.state_hash() == sx.state_hash()
+		for t in 1000:
+			if not eq:
+				break
+			sr.step()
+			sx.step()
+			eq = sr.state_hash() == sx.state_hash()
+		if not same or not eq or sr.stat_wp_atk < 1:
+			_fail("wp_atk %s: repeat same %s; snapshot at %d restored %s, equal %s, attacks after %d" % [pack, str(same), snap_t, str(rok), str(eq), sr.stat_wp_atk])
+		else:
+			print("PASS wp_atk %s: the same orders twice: %d ticks identical; snapshot at tick %d with the attack queued: 1000 ticks on the same hash every tick" % [pack, hashes.size(), snap_t])
+		# Rules.
+		var sn := BattleSim.new()
+		sn.setup(sc, 11)
+		var w := BattleSim.files_to_width(12, int(sc["units"][0]["type"]))
+		sn.queue_order(BattleSim.make_move_order(0, 0, 100 * M, 250 * M, 0, w, 0))
+		var a2 := BattleSim.make_attack_order(0, 0, 2, 0)
+		a2["append"] = 1
+		var a3 := BattleSim.make_attack_order(0, 0, 3, 1)
+		a3["append"] = 1
+		sn.queue_order(a2)
+		sn.queue_order(a3)
+		sn.step()
+		var qn := BattleSim.wp_queue(sn, 0)
+		var repl := sn.u_wpn[0] == 1 and qn[0] == 3 and qn[4] == (BattleSim.WP_ATTACK | BattleSim.WP_RUN)
+		var mv := BattleSim.make_move_order(sn.tick, 0, 120 * M, 220 * M, 0, w, 0)
+		mv["append"] = 1
+		sn.queue_order(mv)
+		sn.step()
+		qn = BattleSim.wp_queue(sn, 0)
+		var mrep := sn.u_wpn[0] == 1 and qn[0] == 120 * M and qn[4] == 0
+		var own := BattleSim.make_attack_order(sn.tick, 0, 1, 0)
+		own["append"] = 1
+		sn.queue_order(own)
+		sn.step()
+		var refused := BattleSim.wp_queue(sn, 0) == qn and sn.u_order[0] == BattleSim.O_MOVE
+		var al := BattleSim.make_attack_order(sn.tick, 1, 3, 0)
+		al["append"] = 1
+		sn.queue_order(al)
+		sn.step()
+		var plain := sn.u_order[1] == BattleSim.O_ATTACK and sn.u_target[1] == 3 and sn.u_wpn[1] == 0
+		# A target gone by the pop: dropped, the unit holds where it is.
+		var sg := BattleSim.new()
+		sg.setup(sc, 11)
+		sg.queue_order(BattleSim.make_move_order(0, 0, 100 * M, 230 * M, 0, w, 0))
+		var a4 := BattleSim.make_attack_order(0, 0, 4, 0)
+		a4["append"] = 1
+		sg.queue_order(a4)
+		sg.queue_order({"tick": 0, "type": BattleSim.ORDER_WITHDRAW, "unit": 4})
+		while sg.tick < 3000 and sg.stat_wp_pop == 0:
+			sg.step()
+		var gone_ok: bool = sg.stat_wp_pop == 1 and sg.stat_wp_atk == 0 and sg.u_state[4] >= BattleSim.U_DESTROYED \
+			and sg.u_order[0] == BattleSim.O_NONE and sg.u_wpn[0] == 0
+		if not (repl and mrep and refused and plain and gone_ok):
+			_fail("wp_atk %s: rules (attack replaces attack %s, move replaces attack %s, own side refused %s, no move: an attack %s, gone target dropped %s: state %d order %d at tick %d)" % [
+				pack, str(repl), str(mrep), str(refused), str(plain), str(gone_ok), sg.u_state[4], sg.u_order[0], sg.tick])
+		else:
+			print("PASS wp_atk %s: an appended attack or move replaces the final attack, an attack on its own side is refused, with no move it is an ordinary attack, a target gone by the pop (left at tick %d) is dropped and the unit holds" % [pack, sg.tick])
 
 
 ## Every mechanic must actually have happened somewhere in the run.

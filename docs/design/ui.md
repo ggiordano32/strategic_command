@@ -301,6 +301,39 @@ selecting or ordering anything.
   `wp_append`, `wp_run`, `wp_remove`, `wp_full`, event `wp_toggle`. Tests:
   `determinism_test --only=wp`, `lockstep_test --only=wp`, `input_test`
   (the `_step_wp_*` section).
+  - Attack as the final waypoint (2026-10-30; owner: "can we add attacking
+    as a point? So we can have them take a path and finish in an
+    attack"). **Sim**: an `ORDER_ATTACK` at a unit (no `gate`, `wall`,
+    `bld`) with `append` 1 in the battle phase, on a unit with a move under
+    way or waypoints queued, is queued as the final record: flags
+    `WP_ATTACK` (4, with `WP_RUN` from the order's run), the target unit
+    index in x, y / facing / width 0 (`BattleSim.wp_appends` is the test,
+    shared by the sim and the preview). Nothing is queued after it: a later
+    appended move or attack replaces the attack record (a full queue ending
+    in an attack still takes the replacement). An appended attack on its
+    own side, a destroyed or gone target, a fixed engine: refused, the
+    queue as it was; with no move under way and no queue it is an ordinary
+    attack (and drops nothing). Queuing it changes only the queue (none of
+    an order's side effects: the bound, the caracole, the path plan). At
+    its pop (`_wp_pass`) the unit is given `make_attack_order(tick, u,
+    target, run)` through `_apply_unit`, so the order rules apply (a
+    missile unit shoots, foot close, foot inside the walls climb at a unit
+    on the wall); a target destroyed or gone by then: the record is
+    dropped and the unit holds where it is. The order's `charge` /
+    `butt` / `throw` flags are not kept in the record. `stat_wp_atk`
+    counts the attacks given (checks). Hash: the record is in `wp_q`
+    (hashed once `wp_on`), the target index included. **Lockstep**: the
+    order travels as any order (`receive` keeps every key, `append`
+    included). **Preview**: `OrderPreview.wp_of` returns the record;
+    `chain` / `chain_from` add the key `"attack"` to every entry (-1 for a
+    stop, the target for the final attack, whose `"at"` is the target's
+    centre, `"face"` towards it, `"blocked"` if the target is gone or the
+    order rule refuses it), predicted through `apply_order_rule`. Tests:
+    `determinism_test --only=wp` (`_check_wp_atk`, Rome and West: two stops
+    then the attack for foot and a missile unit, the hash, repeat,
+    snapshot / restore with the attack queued, the replacement and refusal
+    rules, a target gone by the pop), `lockstep_test --only=wp` (A's chain
+    ends in an appended attack on an AI unit, given on all three peers).
 - Campaign battles have no field result panel; they end with a choice
   (owner 2026-10-20, Rome 2's end of battle). **Battle end: End battle /
   Continue.** When a side is decided (the other has no ready unit; not a

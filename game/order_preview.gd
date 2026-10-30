@@ -365,7 +365,7 @@ func move_route_for(u: int, order: Dictionary) -> Dictionary:
 	var d: Dictionary = (_view[u] as Dictionary).duplicate() if _view.has(u) else BattleSim.order_fields(sim, u)
 	var q0: PackedInt32Array = d["wp"]
 	BattleSim.apply_order_rule(sim, u, d, order)
-	if int(order.get("append", 0)) != 0 and (d["wp"] as PackedInt32Array).size() > q0.size():
+	if int(order.get("append", 0)) != 0 and d["wp"] != q0:
 		# A waypoint: the leg from the chain's last stop to it.
 		var ch := chain_from(u, d)
 		if ch.is_empty():
@@ -416,7 +416,9 @@ func route_from_fields(u: int, d: Dictionary) -> Dictionary:
 # town maps (straight elsewhere).
 
 ## Unit u's predicted waypoint queue (pending orders included): WP_K values a
-## waypoint (x, y, facing, width, flags), raw as ordered.
+## waypoint (x, y, facing, width, flags), raw as ordered. A final attack
+## (ORDER_ATTACK "append" 1): flags has BattleSim.WP_ATTACK, x the target
+## unit, y / facing / width 0; always the last.
 func wp_of(u: int) -> PackedInt32Array:
 	if _view.has(u):
 		return (_view[u] as Dictionary)["wp"]
@@ -427,7 +429,9 @@ func wp_of(u: int) -> PackedInt32Array:
 ## entry a stop, the first the current move's destination: {"at": Vector2i
 ## (where its front centre forms up), "face", "files", "run", "pts" (the leg
 ## from the stop before, sim x, y pairs; empty for the first), "blocked"
-## (no way found for that leg)}.
+## (no way found for that leg), "attack": the target unit of a final attack
+## (its "at" the target's centre, its face towards it; "blocked" if the
+## target is gone or the order rule refuses it), else -1}.
 func chain(u: int) -> Array:
 	if sim.u_state[u] != BattleSim.U_READY:
 		return []
@@ -442,7 +446,7 @@ func chain_from(u: int, d: Dictionary) -> Array:
 	var mv := int(d["order"]) == BattleSim.O_MOVE
 	var prev := Vector2i(int(d["dx"]), int(d["dy"])) if mv else Vector2i(int(d["ax"]), int(d["ay"]))
 	var out: Array = [{"at": prev, "face": int(d["dface"]) if mv else int(d["face"]), "files": int(d["files"]),
-		"run": int(d["run"]), "pts": PackedInt32Array(), "blocked": false}]
+		"run": int(d["run"]), "pts": PackedInt32Array(), "blocked": false, "attack": -1}]
 	var f: Dictionary = d.duplicate()
 	f["wp"] = PackedInt32Array()
 	for i in q.size() / BattleSim.WP_K:
@@ -450,20 +454,40 @@ func chain_from(u: int, d: Dictionary) -> Array:
 		f["order"] = BattleSim.O_NONE
 		f["ax"] = prev.x
 		f["ay"] = prev.y
+		if (q[k + 4] & BattleSim.WP_ATTACK) != 0:
+			# The final attack, through the order rule as the sim gives it
+			# when it pops (_wp_pass).
+			var t := q[k]
+			var oa := BattleSim.make_attack_order(0, u, t, 1 if (q[k + 4] & BattleSim.WP_RUN) != 0 else 0)
+			BattleSim.apply_order_rule(sim, u, f, oa)
+			var gone: bool = t < 0 or t >= sim.n_units or sim.u_state[t] >= BattleSim.U_DESTROYED
+			var ok: bool = not gone and int(f["order"]) != BattleSim.O_NONE
+			var ta := Vector2i(sim.u_cx[t], sim.u_cy[t]) if not gone else prev
+			if ok and int(f["order"]) == BattleSim.O_MOVE:
+				ta = Vector2i(int(f["dx"]), int(f["dy"]))  # (the march up a stair at a unit on the wall)
+			var lga := _leg(u, prev, ta)
+			out.append({"at": ta, "face": BattleSim.FM.atan2_a(ta.y - prev.y, ta.x - prev.x) if ta != prev else int(out.back()["face"]),
+				"files": int(f["files"]), "run": int(f["run"]), "pts": lga["pts"],
+				"blocked": not ok or bool(lga["blocked"]), "attack": t})
+			break
 		var o := BattleSim.make_move_order(0, u, q[k], q[k + 1], q[k + 2], q[k + 3], q[k + 4] & BattleSim.WP_RUN)
 		BattleSim.apply_order_rule(sim, u, f, o)
 		var at := Vector2i(int(f["dx"]), int(f["dy"])) if int(f["order"]) == BattleSim.O_MOVE else Vector2i(int(f["ax"]), int(f["ay"]))
 		var lg := _leg(u, prev, at)
 		out.append({"at": at, "face": int(f["dface"]), "files": int(f["files"]), "run": int(f["run"]),
-			"pts": lg["pts"], "blocked": bool(lg["blocked"]) or int(f.get("snap", 0)) == 3})
+			"pts": lg["pts"], "blocked": bool(lg["blocked"]) or int(f.get("snap", 0)) == 3, "attack": -1})
 		prev = at
 	return out
 
 
 ## Where unit u ends up under its predicted order and waypoints: (x, y,
 ## facing) of the last stop, the move's destination, or where it stands.
+## A final attack is left out: the next appended order replaces it, so the
+## chain goes on from the stop before it.
 func chain_end(u: int) -> Vector3i:
 	var ch := chain(u)
+	if not ch.is_empty() and int((ch.back() as Dictionary)["attack"]) >= 0:
+		ch.pop_back()
 	if not ch.is_empty():
 		var e: Dictionary = ch.back()
 		return Vector3i((e["at"] as Vector2i).x, (e["at"] as Vector2i).y, int(e["face"]))

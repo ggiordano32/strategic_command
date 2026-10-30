@@ -99,7 +99,9 @@ extends SceneTree
 ##    two appended waypoints (one run), B one of its units a move and a
 ##    waypoint, then appends another mid-chain; A's append for B's unit is
 ##    refused alike; a third peer joins by snapshot with waypoints queued.
-##    Every frame equal, the same pops on all three.
+##    A's chain ends in an appended attack on an AI unit (ORDER_ATTACK
+##    "append" 1, 2026-10-30): queued on both as the final record and given
+##    on both at the same pop. Every frame equal, the same pops on all three.
 ## Exits 0 on success.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -2762,6 +2764,10 @@ func _test_lockstep_wp() -> void:
 			ua = u
 		elif home[u] == 1 and ub < 0:
 			ub = u
+	var ut := -1  # (A's final attack: the first enemy line unit)
+	for u in probe.n_units:
+		if ut < 0 and probe.u_side[u] != probe.u_side[ua] and UT.cls(probe.u_type[u]) != UT.CLS_ART:
+			ut = u
 	var M := BattleSim.M
 	var w := 24 * M
 	var relay := Relay.new()
@@ -2785,6 +2791,7 @@ func _test_lockstep_wp() -> void:
 				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax, "y": ay - 25 * M, "facing": 768, "width": w, "run": 0})
 				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax + 30 * M, "y": ay - 25 * M, "facing": 0, "width": w, "run": 1, "append": 1})
 				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ua, "x": ax + 30 * M, "y": ay - 55 * M, "facing": 768, "width": w, "run": 0, "append": 1})
+				p.issue({"type": BattleSim.ORDER_ATTACK, "unit": ua, "target": ut, "run": 0, "append": 1})
 				# (B's unit: refused alike.)
 				p.issue({"type": BattleSim.ORDER_MOVE, "unit": ub, "x": ax, "y": ay, "facing": 0, "width": w, "run": 0, "append": 1})
 			if p.me == 1 and now == 18:
@@ -2822,8 +2829,10 @@ func _test_lockstep_wp() -> void:
 	var sb = b.ls.sim
 	if n_ab < total / 2 or n_ac < 50:
 		_fail("waypoints lockstep: too few frames compared (A/B %d, A/C %d)" % [n_ab, n_ac])
+	elif sa.stat_wp_atk != 1 or sb.stat_wp_atk != 1 or (c != null and c.ls.sim.stat_wp_atk != 1):
+		_fail("waypoints lockstep: the final attack given A %d B %d C %d (target %d)" % [sa.stat_wp_atk, sb.stat_wp_atk, c.ls.sim.stat_wp_atk if c != null else -1, ut])
 	elif sa.stat_wp_pop < 3 or sa.stat_wp_pop != sb.stat_wp_pop or sa.wp_on != 1:
 		_fail("waypoints lockstep: pops A %d B %d (wp_on %d)" % [sa.stat_wp_pop, sb.stat_wp_pop, sa.wp_on])
 	elif n_ab > 0 and n_ac > 0:
-		print("PASS waypoints lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with waypoints queued); %d waypoints popped on each; rejected A %d B %d" % [
-			n_ab, n_ac, c_join, sa.stat_wp_pop, a.ls.rejected, b.ls.rejected])
+		print("PASS waypoints lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with waypoints queued); %d waypoints popped on each, A's final attack on unit %d given on all three; rejected A %d B %d" % [
+			n_ab, n_ac, c_join, sa.stat_wp_pop, ut, a.ls.rejected, b.ls.rejected])

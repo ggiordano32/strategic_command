@@ -1571,15 +1571,19 @@ var u_by := PackedInt32Array()
 # moves after its current one (ORDER_MOVE "append" 1). wp_q holds WP_K
 # values per slot, WP_MAX slots per unit: x, y, facing, width, flags
 # (WP_RUN, WP_BOUND). Hashed with wp_on: once an order queued one, so a
-# battle without such an order hashes as before.
+# battle without such an order hashes as before. An attack as the final
+# waypoint (ORDER_ATTACK "append" 1, 2026-10-30): flags WP_ATTACK, the
+# target unit in x (y, facing, width 0); always the queue's last.
 const WP_MAX := 8
 const WP_K := 5
 const WP_RUN := 1
 const WP_BOUND := 2
+const WP_ATTACK := 4
 var wp_on: int = 0
 var u_wpn := PackedInt32Array()       # waypoints queued after the current move
 var wp_q := PackedInt32Array()        # n_units * WP_MAX * WP_K
 var stat_wp_pop: int = 0              # waypoints popped into the current move (checks)
+var stat_wp_atk: int = 0              # ... of them final attacks given (checks)
 var stat_bounds: int = 0              # bounds begun
 var stat_shove: int = 0               # ground given in the press of a lane (checks)
 var stat_street_hold: int = 0         # rear-rank searches skipped in a lane (men-ticks)
@@ -8048,6 +8052,16 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 ## One unit's part of order o (_apply_orders; _wp_pass with keep_wp: the
 ## next waypoint, the rest of the queue kept).
 func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
+	if int(o["type"]) == ORDER_ATTACK and int(o.get("append", 0)) != 0 and not keep_wp:
+		var da := order_fields(self, u)
+		if wp_appends(self, u, da, o):
+			# An attack queued as the final waypoint: only the queue changes
+			# (the attack is given when it pops, _wp_pass).
+			var wa: PackedInt32Array = da["wp"]
+			apply_order_rule(self, u, da, o)
+			if da["wp"] != wa:
+				_wp_set(u, da["wp"])
+			return
 	if car_on != 0 and u_car[u] >= 2 and int(o["type"]) == ORDER_ATTACK and int(o.get("target", -1)) == u_crt[u] \
 			and int(o.get("charge", 0)) == 0 and int(o.get("gate", -1)) < 0 and int(o.get("wall", -1)) < 0:
 		return  # (caracoling at it already: riding back or reloading for the next pass)
@@ -8187,6 +8201,21 @@ func _wp_pass() -> void:
 			continue
 		var k := u * WP_MAX * WP_K
 		var fl := wp_q[k + 4]
+		if (fl & WP_ATTACK) != 0:
+			# The final attack: given through the order rules like an
+			# order now; a target destroyed or gone by then: dropped, the
+			# unit holds where it is.
+			var t := wp_q[k]
+			_wp_set(u, wp_q.slice(k + WP_K, k + u_wpn[u] * WP_K))
+			stat_wp_pop += 1
+			if t < 0 or t >= n_units or u_state[t] >= U_DESTROYED:
+				continue
+			var oa := make_attack_order(tick, u, t, 1 if (fl & WP_RUN) != 0 else 0)
+			oa["player"] = 0
+			oa["seq"] = 0
+			stat_wp_atk += 1
+			_apply_unit(u, oa, true)
+			continue
 		var o := {"tick": tick, "type": ORDER_MOVE, "unit": u, "x": wp_q[k], "y": wp_q[k + 1],
 			"facing": wp_q[k + 2], "width": wp_q[k + 3], "run": 1 if (fl & WP_RUN) != 0 else 0,
 			"bound": 1 if (fl & WP_BOUND) != 0 else 0, "player": 0, "seq": 0}
@@ -8221,22 +8250,48 @@ static func order_units(sim, o: Dictionary) -> Array[int]:
 static func apply_order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	var typ := int(o["type"])
 	var wq: PackedInt32Array = d["wp"] if d.has("wp") else PackedInt32Array()
-	if typ == ORDER_MOVE and int(o.get("append", 0)) != 0 and sim.phase == PHASE_BATTLE \
-			and (int(d["order"]) == O_MOVE or not wq.is_empty()):
+	if wp_appends(sim, u, d, o):
 		# Waypoints: after the current move (or the queue's last), at most
 		# WP_MAX; the order rules apply when it becomes the move (_wp_pass).
-		# No move under way: an ordinary move (below).
-		if wq.size() < WP_MAX * WP_K and UT.stat(sim.u_type[u], "fixed") == 0:
-			var nq := wq.duplicate()
+		# No move under way: an ordinary move or attack (below). An attack
+		# is the final waypoint: a later append replaces it.
+		var nq := wq.duplicate()
+		if nq.size() >= WP_K and (nq[nq.size() - 1] & WP_ATTACK) != 0:
+			nq.resize(nq.size() - WP_K)
+		if nq.size() < WP_MAX * WP_K and UT.stat(sim.u_type[u], "fixed") == 0:
 			var fl := (WP_RUN if int(o.get("run", 0)) != 0 else 0) | (WP_BOUND if int(o.get("bound", 0)) != 0 else 0)
-			nq.append_array([clampi(int(o["x"]), 0, sim.field_w), clampi(int(o["y"]), 0, sim.field_h),
-				int(o["facing"]) & FM.ANGLE_MASK, int(o["width"]), fl])
+			if typ == ORDER_ATTACK:
+				var t := int(o["target"])
+				if t >= sim.n_units or sim.u_side[t] == sim.u_side[u] or sim.u_state[t] >= U_DESTROYED:
+					return  # (no enemy to attack: refused, the queue as it was)
+				nq.append_array([t, 0, 0, 0, (fl & WP_RUN) | WP_ATTACK])
+			else:
+				nq.append_array([clampi(int(o["x"]), 0, sim.field_w), clampi(int(o["y"]), 0, sim.field_h),
+					int(o["facing"]) & FM.ANGLE_MASK, int(o["width"]), fl])
 			d["wp"] = nq
 		return
 	_order_rule(sim, u, d, o)
 	if not wq.is_empty() and typ != ORDER_RUN and typ != ORDER_FIRE and typ != ORDER_SKIRMISH \
 			and typ != ORDER_AMMO and typ != ORDER_STANCE:
 		d["wp"] = PackedInt32Array()  # any other order: the waypoints are dropped
+
+
+## Whether order o to unit u (fields d) is queued as a waypoint: an
+## ORDER_MOVE, or an ORDER_ATTACK at a unit (no gate, wall, building),
+## with "append" 1 in the battle phase while a move is under way or
+## waypoints are queued.
+static func wp_appends(sim, _u: int, d: Dictionary, o: Dictionary) -> bool:
+	var typ := int(o["type"])
+	if int(o.get("append", 0)) == 0 or sim.phase != PHASE_BATTLE:
+		return false
+	if typ == ORDER_ATTACK:
+		if int(o.get("target", -1)) < 0 or int(o.get("gate", -1)) >= 0 or int(o.get("wall", -1)) >= 0 \
+				or int(o.get("bld", -1)) >= 0:
+			return false
+	elif typ != ORDER_MOVE:
+		return false
+	var wq: PackedInt32Array = d["wp"] if d.has("wp") else PackedInt32Array()
+	return int(d["order"]) == O_MOVE or not wq.is_empty()
 
 
 static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
