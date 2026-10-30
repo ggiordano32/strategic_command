@@ -2087,6 +2087,82 @@ unit near obstacles `_u_obs`), so the four flat golden digests hold.
 - **Measured.** See docs/STATUS.md (the pathing probe at seeds 7-10, the
   cover probe, cost).
 
+### Pursuit as a unit (as built, 2026-10-30)
+
+Why: the owner, playtesting: a unit chasing a unit gets close enough for
+its first line to break off and fight while the other keeps fleeing; it
+is far less effective than pushing in with the whole unit, it gets split
+up, and then acts oddly when repositioned. Measured first
+(`tests/chase_probe.gd`, docs/AI.md 46): against routers or a unit
+walking away the attacker's anchor stopped 1 m short of the target's box
+edge, measured with the box's half depth from its centre, so behind the
+real rear edge of a strung-out target, and its front rank, capped at
+`PLACE_LEAD` ahead of its places, stood just out of reach (100 light
+after routing heavy: 0 kills in 60 s; horse after routing light: 11
+kills, then 35 s of nothing); after a target moving away (not routing)
+the anchor held while any man was within `INREACH_EXTRA` of his man, so
+the men stood at reach + 1 m and never struck (100 heavy at the run
+after 100 light walking away: 12 men "in reach", 0 blows, 0 kills); and
+after routers the anchor ran (7/8 of the run) while its men walked to
+within 3 m of their places (`CATCH_UP_DIST`), so the whole unit trailed
+3 m behind its places. Code: `sim/battle_sim.gd` (`_chase_mode`,
+`reform_anchor`; hooks in `_update_units`, the attack branch's closing,
+`_anchor_step0`, `_update_soldiers`, `_apply_unit`, `apply_order_rule`).
+Each rule has its switch (static, 1 on): `CHASE_BACK_ON`,
+`CHASE_PUSH_ON`, `CHASE_PACE_ON`, `CHASE_RUN_ON`, `CHASE_REFORM_ON`.
+**Not on settlement maps** (`CHASE_TOWN_ON` 0): built on every map they
+moved the town battles beyond their intervals (Rome walls 1-3 attackers
+47 -> 60 %, docs/AI.md 46), so there the battles play as before; on
+field maps (open, woods, landforms, hamlets) they apply.
+
+- **Moving away.** Every `CHASE_DT` 10 ticks each unit's centre is
+  sampled (`u_hx`, `u_hy`) and its movement since the last sample kept
+  (`u_vx`, `u_vy`). An attacker pursues (`_chase_mode`, `u_chase` this
+  tick): 2 when its target routs; 1 when fewer than a quarter of the
+  target's men fight and its centre went `CHASE_AWAY_MIN` 0.5 m or more
+  away from the attacker's anchor over the last sample (0.5 m/s; the
+  target's own movement, so an anchor keeping pace does not switch it
+  off).
+- **Push** (`CHASE_PUSH_ON`): a pursuer's anchor stops 1 m from the
+  target's centre (the pack's rule), not 1 m short of its box edge; it
+  may step into its own target's footprint with men in reach while it
+  pursues. The second and third ranks reach men too.
+- **Pace** (`CHASE_PACE_ON`): "wait for my men" (the anchor holding while
+  a man is in reach, or while its men fight and it is ahead of them)
+  applies only to a target that is not moving away; after one moving away
+  the anchor keeps closing at its own walk or run (the run flag as
+  ordered; after routers at the run as before).
+- **Men run with their places** (`CHASE_RUN_ON`): while its anchor runs
+  after routers (no run order), its men's formed pace is the run, not the
+  walk. Not in the brief; the rear leash needs it (without it every man
+  is 2.7-3 m behind his place and the leash drops them all: 0 kills in
+  the probe's rout and horse cases).
+- **Rear leash** (`CHASE_BACK_ON`, `PLACE_BACK` 3 m): while its anchor
+  moves (or it pursues), a fighting man more than `PLACE_BACK` behind his
+  place along the facing lets his man go and makes for it; he looks for a
+  man again only within `PLACE_LEAD` of it (no new per-man state: the
+  band between is the hysteresis). Not on a wall or a stair, in a
+  building, carrying, a pack (`t_chase`), a formed pike block or a charge
+  (those paths do not reach it). `stat_chase_back` counts man-ticks.
+- **Re-form on the men** (`CHASE_REFORM_ON`, `reform_anchor`): a new move
+  or attack (not a move to within `REFORM_IN_PLACE_DIST` of the current
+  destination, not an attack on the current target, so the AI's repeated
+  orders do not trigger it) to a ground unit (not artillery, a wall or a
+  stair unit, carrying, in a building, a pack) whose men's middle is more
+  than `REFORM_IN_PLACE_DIST` from its block's centre, or whose men spread
+  along its facing over twice its depth, first puts its anchor (the
+  block's front centre) on its men: the block centred on their middle
+  (among obstacles, off its ground: the man nearest their middle,
+  `_anchor_man`). It is in the order prediction (`apply_order_rule`), so
+  OrderPreview shows it. The lag regroup (`REGROUP`) does not fire within
+  `REFORM_QUIET` 50 ticks of a re-form (`u_rft`). `stat_reform`.
+- **State.** `u_hx`, `u_hy`, `u_vx`, `u_vy`, `u_chase`, `u_rft` (per unit,
+  in `_unit_arrays`: hashed everywhere, in snapshots). With every switch
+  0 the battles play as before the change (the probe's numbers equal
+  HEAD's) but the state hash differs by the new arrays.
+- **Measured.** docs/AI.md 46 (the probe per rule, the harness, the
+  pins).
+
 ## The Caribbean roster, batch 1 (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: "The different units for different armies is exactly where I want to go with it. They

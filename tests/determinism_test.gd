@@ -197,8 +197,10 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## for the field rebalance (2026-10-09: to-hit, flank / rear bonus, the
 ## wrap at the anchor level, bolts pin, javelins through shields, AI
 ## missile units out of ammunition leave; skirmish, bench_2000 and
-## test_stone_line changed, test_cav_art did not).
-const GOLDEN := {"skirmish": "d618e20340501cfa", "bench_2000": "5a0aadfb296bd646",
+## test_stone_line changed, test_cav_art did not), and for pursuit as a
+## unit (2026-10-30, docs/AI.md 46: skirmish and bench_2000 changed, were
+## d618e20340501cfa and 5a0aadfb296bd646).
+const GOLDEN := {"skirmish": "01925b7dfad9e615", "bench_2000": "946a33359bd5a466",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "b9d3025690cd28ba"}
 
 var _ok := true

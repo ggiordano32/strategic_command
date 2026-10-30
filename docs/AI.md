@@ -3934,3 +3934,96 @@ siege: scaling poles and the melee batter (as built)". Code: `sim/siege_ai.gd` (
 Knob: `R_TORCH_GATE` (292, from the play library's unused 292-299; `KNOB_GAPS` now 293-299). Tests:
 `tests/roles_sim_test.gd --only=native` (the AI at Average batters a walls-2 oppidum's gate with them and it falls;
 Easy gives no ability order), `tests/determinism_test.gd --only=native`.
+
+## 46. Pursuit as a unit (2026-10-30)
+
+**The owner's report:** "a unit can get really split up if they are chasing a unit and get close enough for the
+first line to break off and start attacking, as the other unit keeps fleeing 2 things happen. 1 the unit is way less
+affective than it could be if it pushed and attacked with the entire unit that is fleeing. 2 the unit gets split
+up, and then starts acting a little weird when trying to reposition this split up unit."
+
+Sim only (no AI rule or knob changed); as built in docs/design/battle_sim.md "Pursuit as a unit (as built,
+2026-10-30)". Code: `sim/battle_sim.gd` (`_chase_mode`, `reform_anchor`, the attack branch's closing, `_anchor_step0`,
+the man step's rear leash). Probe: `tests/chase_probe.gd`.
+
+1. **The reading, checked by the probe first.** Flat open ground, scripted orders, 8 seeds, 60 s from the order then a
+   move 40 m to the flank at the run for 30 s. Set pieces: *brk* 100 heavy attack 100 heavy face to face, the target
+   routs at 15 s; *rout* 100 light attack 100 heavy routing 15 m ahead; *walk* 100 heavy (at the run) attack 100
+   light walking away under a move order; *cav* a horse unit attacks 100 light routing 40 m ahead; *skirm* (West)
+   100 native warriors (at the run) attack 80 native bowmen in skirmish mode. What HEAD did:
+   - (a) *Routing target.* The anchor ran after it but stopped at the target's box edge + 1 m measured with the box's
+     half depth from its centre: a router box is long ahead and short behind its centre, so the stop was 3-4 m
+     behind the real rear men, and the front rank, capped at `PLACE_LEAD` 1.5 m ahead of its places, stood just out
+     of reach for the whole chase (*rout*: 0.1 kills in 60 s; *cav*: 11 kills in the first 10 s of contact, then 35 s
+     at 5-8 m with no blow). The main session's guess that fighters fall behind a running block was not what the
+     probe showed in the open: **after routers the anchor runs (7/8 of the run) while its men walk** (`u_run` 0: the
+     formed pace is the walk within `CATCH_UP_DIST` 3 m of a place), so the whole unit trails 2.7-2.9 m behind its
+     places. An anchor runs at 7/8 of its men's run and routers at 7/8 of theirs: a type never gains on routers of
+     its own speed (*brk*: only the men in contact when it broke kill; 18 kills, all within 10 s of the break).
+   - (b) *Target moving away (not routing).* Confirmed and worse than a stutter: the anchor holds while any man is
+     within `INREACH_EXTRA` (reach + 1 m) of his man, so the men stand at reach + 1 m, never within reach, and the
+     anchor moves only when they drop out of it (*walk*: 12.5 men "in reach", 0 blows, 0 kills in 60 s; *skirm*: the
+     same against bowmen falling back, 0 kills).
+   - (c) *Reposition.* In the open the move is taken cleanly (14-16 s to formed for a 40 m move at the run, no anchor
+     jump; the march faces its way, so the facing turns twice). The REGROUP jump the brief names fires only among
+     obstacles (`LAG_CUT`, `oon`); not reproduced on open ground.
+2. **The rules** (each with its switch, static, 1 on; constants in `sim/battle_sim.gd` next to `ANCHOR_LEAD`):
+   - *Moving away* (`_chase_mode`): each unit's centre sampled every `CHASE_DT` 10 ticks (`u_hx`, `u_hy`, the
+     movement since `u_vx`, `u_vy`); a target routs (2), or fewer than a quarter of its men fight and its centre went
+     `CHASE_AWAY_MIN` 0.5 m or more away from the attacker's anchor over the last sample (1). The target's own
+     movement: the brief's "distance grew" would switch off as soon as the anchor kept pace.
+   - *Push* (`CHASE_PUSH_ON`): a pursuer's anchor stops 1 m from the target's centre (the pack's stop) and may step
+     into its target's footprint with men in reach.
+   - *Pace* (`CHASE_PACE_ON`): "wait for my men" only against a target not moving away; otherwise the anchor keeps
+     closing at its own walk or run (it then follows the target at the target's speed).
+   - *Men run with their places* (`CHASE_RUN_ON`, not in the brief): its anchor running after routers, its men's
+     formed pace is the run. The rear leash needs it: without it every man is 2.7-3 m behind his place and the
+     leash drops them all.
+   - *Rear leash* (`CHASE_BACK_ON`, `PLACE_BACK` 3 m): while the anchor moves (or it pursues) a fighting man more than
+     3 m behind his place lets his man go and makes for it; he takes a man again within `PLACE_LEAD` of it. Not on
+     walls, stairs, in a building, carrying, a pack, a formed pike block, a charge.
+   - *Re-form on the men* (`CHASE_REFORM_ON`, `reform_anchor`): a new move or attack (not a move to about the same
+     point, not an attack on the same target: the AI's repeated orders) to a unit whose men's middle is more than
+     `REFORM_IN_PLACE_DIST` from its block or whose men spread along the facing over twice its depth puts the anchor
+     on the men first (the block centred on their middle); no lag regroup within `REFORM_QUIET` 50 ticks of one.
+   - *Settlement maps* (`CHASE_TOWN_ON` 0): none of the rules on a settlement map (`city_on`), see 4.
+3. **Probe, before -> after** (8 seeds; spread: the attacker's men along its facing, m; from place: mean m; in reach:
+   men within reach + 1 m; strikes: blows a second; kills in 60 s; the reposition's seconds to 90 % within 2 m and
+   its largest anchor step in a tick):
+
+   | Case | spread | from place | in reach | strikes/s | kills 60 s | reform s / step m |
+   |---|---|---|---|---|---|---|
+   | brk | 7.8 -> 6.3 | 2.4 -> 0.9 | 10.4 -> 10.7 | 4.2 -> 4.2 | 18.2 -> 18.6 | 16 / 0.31 -> 16 / 0.31 |
+   | rout | 7.0 -> 5.1 | 2.9 -> 1.0 | 0.9 -> 10.0 | 0.0 -> 3.6 | 0.1 -> 31.5 | 14 / 0.38 -> 14 / 0.38 |
+   | walk | 5.2 -> 4.3 | 0.3 -> 0.6 | 12.5 -> 2.7 | 0.0 -> 1.4 | 0.0 -> 25.1 | 16 / 0.31 -> 16 / 0.31 |
+   | cav | 12.7 -> 10.0 | 2.7 -> 1.7 | 2.0 -> 5.8 | 0.9 -> 3.0 | 10.8 -> 42.6 | 8 / 0.72 -> 8 / 0.72 |
+   | skirm | 5.7 -> 5.5 | 0.7 -> 1.2 | 0.2 -> 7.2 | 0.0 -> 2.2 | 0.0 -> 41.0 | 13 / 0.41 -> 13 / 0.60 |
+
+   One rule off (kills in 60 s, rout / walk / cav / skirm; all on 31.5 / 25.1 / 42.6 / 41.0): back off 28.0 / 25.0 /
+   46.9 / 36.5 (spread rout 5.1 -> 6.8; skirm's reposition re-forms, one 3.0 m anchor step); push off 4.1 / 24.9 /
+   15.1 / 5.9; pace off 31.5 / 0.0 / 42.6 / 0.0; run off 0.0 / 25.1 / 0.0 / 41.0 (the leash without the run); reform
+   off unchanged in the open (no unit is strung out at 60 s with the other rules on). With all switches 0 the probe
+   reproduces HEAD exactly. *brk* does not change: heavy cannot catch heavy routers.
+4. **Harness** (HEAD `7a43b72c88` -> this build `28061e061f`, `tools/balance/measure.py`, both packs). Built first
+   with the rules on every map: `rome_walls` attackers 47.2 -> 60.4 % (walls 1 70 -> 83, 2 40 -> 60, 3 32 -> 38;
+   five cells beyond their intervals), `open_town` 67 -> 92 % (Havana 25 -> 75 *). Walls 2 with one rule off: back
+   59, push 60, pace 48, run 53, reform 47 (and reform off on all walls 59 %): no one rule; pace and the re-form most
+   (in a siege the AI re-targets its storming units often, 40-130 re-forms a battle, and defenders falling back are
+   now pursued). So the rules are off on settlement maps (`CHASE_TOWN_ON` 0): with that, `rome_walls` 47.2 % (70 /
+   40 / 32) and `open_town` 67 % are HEAD's to the battle, `west_walls` 38 % (walls 0 / 1 / 2: 52 / 34 / 27) as HEAD's: the result lines of all three town plans equal HEAD's line for line. The campaign pins of all four sets
+   (Rome, rome10, West, west10) are unchanged (the campaign's battles are auto-resolved). Fight jitter and stuck runs
+   (`tests/pathing_probe.gd`, seeds 7-10, before -> after): fight jitter (town / near obstacles) 1.8 / 2.0 / 1.9 /
+   2.0 % -> 1.8 / 2.0 / 1.9 / 2.2 % (seed 10's near-obstacle field maps), stuck runs over 30 s 2 / 1 / 1 / 1 -> the
+   same, rout jitter and stationary routers within 0.1 %. Field balance (`tests/matchups.gd`, 20 seeds, scripted):
+   every winner and decision time of the set pieces is as before (the battle is decided at the break); what follows
+   the break kills more (pike 120 taken in the flank 58.7 -> 95.0 killed, from the rear 77.8 -> 104.9; a horse charge
+   into an engaged unit's rear 45.8 -> 82.0; horse into archers 49.7 -> 75.8; the rear charge into spears 50.2 ->
+   78.3); the equal-cost grid moves only where a melee unit runs down skirmishers: light vs javelins 30 -> 100 %,
+   spear vs javelins 20 -> 40 %, javelins vs light 70 -> 10 % (light infantry's own card says "skirmishers they can
+   run down"); spear vs pike 0 -> 10 %, pike vs spear 100 -> 90 %. `bench_2000` AI vs AI (10 seeds) decided after 7.4
+   -> 6.7 min, wins 5 / 5 as before; the hill-terrain AI battles 4.5-9.7 min as before (rolling 5.6 -> 5.0).
+5. **Open.** Pursuit in towns (the rules are built and switchable: `CHASE_TOWN_ON` 1 is the ungated build; a town
+   version needs its own design, perhaps pace only for routers and no re-form for AI orders); the reposition
+   "acting weird" among obstacles (REGROUP) is not reproduced in the open probe, and with the rules off in towns
+   it is as before; equal-speed pursuers never close on routers (an anchor at 7/8 of the run; the owner may want a
+   pursuit bonus); field battles are not in the harness plans (the matchups above are the field check).
