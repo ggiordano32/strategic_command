@@ -26,6 +26,8 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const Accounts := preload("res://game/net/accounts.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
+const ConfirmOrders := preload("res://game/confirm_orders.gd")
+const Controls := preload("res://game/controls.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const AudioFx := preload("res://game/audio.gd")
 
@@ -541,6 +543,7 @@ func _options_page() -> void:
 		"soldiers": func(): return SoldierLayer.load_pref(),
 		"battle_look": func(): return BattleLook.pref(),
 		"battle_view": func(): return preload("res://game/board_view.gd").pref(),
+		"confirm_orders": func(): return ConfirmOrders.pref(),
 		"map_view": func(): return "terrain" if MapView.terrain_view else "political",
 		"map_style": func(): return MapView.style_pref,
 		"menu_emblems": func(): return MenuPrefs.stored_emblems(),
@@ -559,6 +562,31 @@ func _options_page() -> void:
 				printerr("   %s: picked %s, stored %s" % [key, str(v), str((stored[key] as Callable).call())])
 		_check(all_ok, "%s: each choice sets the stored value (%s)" % [key, ", ".join(sg.values.map(func(x): return str(x)))])
 	UiScale.set_size_name(root, size0)
+	# Confirm orders shares the UI size row (one capsule beside the other, so the page keeps its height); the stored value is
+	# [ui] confirm_orders, "auto" with nothing stored; the Controls page lists the placement tool.
+	var cs_row = rows.seg.get("confirm_orders")
+	_check(cs_row != null and cs_row.get_parent() == rows.seg["ui_size"].get_parent() and cs_row.values == ["auto", "on", "off"],
+		"Options: Confirm orders is Auto / On / Off beside UI size")
+	cs_row.button_for("on").pressed.emit()
+	await _frames(1)
+	var cf := ConfigFile.new()
+	_check(cf.load("user://settings.cfg") == OK and str(cf.get_value("ui", "confirm_orders", "")) == "on", "Options: Confirm orders is kept in [ui] confirm_orders")
+	cs_row.button_for("auto").pressed.emit()
+	var ctl := Controls.new()
+	root.add_child(ctl)
+	ctl.open()
+	await _frames(2)
+	var found := false
+	var ids := {}
+	var dup := false
+	for b in Controls.BINDINGS:
+		dup = dup or ids.has(b["id"])
+		ids[b["id"]] = true
+	for l in ctl.find_children("*", "Label", true, false):
+		if (l as Label).text.begins_with("Placement tool") or (l as Label).text.contains("Drag the ghost's body handle"):
+			found = true
+	_check(ids.has("place_tool") and ids.has("stray_taps") and not dup and found, "the Controls page shows the placement tool and the stray-tap guards")
+	ctl.queue_free()
 	# Fullscreen is a toggle (the window mode is not touched here), Sound and the sliders reach the audio settings.
 	_check(rows.seg.has("fullscreen") and rows.seg.has("audio_mute") and _btn("home_controls") != null and _btn("home_unit_book") != null, "Options has Fullscreen, Sound, Controls and Unit book")
 	var a = AudioFx.inst()

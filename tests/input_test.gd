@@ -30,6 +30,7 @@ const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const BoardView := preload("res://game/board_view.gd")
+const ConfirmOrders := preload("res://game/confirm_orders.gd")
 const TrayLayer := preload("res://game/tray_layer.gd")
 
 var battle: Battle
@@ -59,6 +60,7 @@ func _initialize() -> void:
 	# died before restoring the size once left S there and the waypoint taps landed off their marks).
 	UiScale.load_settings()
 	UiScale.size_idx = 1
+	ConfirmOrders.force = "off"   # (the steps below are the direct-order rules; the placement tool's own steps turn it on)
 	battle = Battle.new()
 	battle.scenario_id = "skirmish"
 	battle.seed_value = 7
@@ -420,6 +422,68 @@ func _initialize() -> void:
 		_step_wp_check_undo,
 		_step_wp_pop_halt,
 		_step_wp_check_pop_undo,
+		# Confirm orders: the placement tool (ghost by tap and drag, handles, Go, X, Waypoint, the guards, the Undo toast).
+		_step_pl_start,
+		_step_pl_select,
+		_step_pl_tap,
+		_step_pl_check_tap,
+		_step_pl_body_down,
+		_step_pl_body_up,
+		_step_pl_check_body,
+		_step_pl_front_down,
+		_step_pl_front_up,
+		_step_pl_check_front,
+		_step_pl_end_down,
+		_step_pl_end_up,
+		_step_pl_check_end,
+		_step_pl_retap,
+		_step_pl_check_retap,
+		_step_pl_run,
+		_step_pl_go,
+		_step_pl_check_go,
+		_step_pl_undo,
+		_step_pl_check_undo,
+		_step_pl_x_setup,
+		_step_pl_x,
+		_step_pl_check_x,
+		_step_pl_drag_down,
+		_step_pl_drag_up,
+		_step_pl_check_drag,
+		_step_pl_enemy,
+		_step_pl_check_enemy,
+		_step_pl_double_a,
+		_step_pl_double_b,
+		_step_pl_check_double,
+		_step_pl_pinch,
+		_step_pl_check_pinch,
+		_step_pl_after_wait,
+		_step_pl_check_after,
+		_step_pl_wp_a,
+		_step_pl_wp_b,
+		_step_pl_check_wp,
+		_step_pl_group,
+		_step_pl_check_group,
+		_step_pl_two_finger,
+		_step_pl_check_two_finger,
+		_step_pl_off_quick,
+		_step_pl_check_off_quick,
+		_step_pl_off_hold_down,
+		_step_pl_off_hold_wait,
+		_step_pl_off_hold_up,
+		_step_pl_check_off_hold,
+		# Attack as the last waypoint (needs the sim's WP_ATTACK).
+		_step_wa_start,
+		_step_wa_tap_ground,
+		_step_wa_tap_enemy,
+		_step_wa_check,
+		_step_wa_remove,
+		_step_wa_check_removed,
+		# The caracole's phase on the card, and the double tap's charge flag.
+		_step_car_start,
+		_step_car_check,
+		_step_car_double_a,
+		_step_car_double_b,
+		_step_car_check_double,
 		# Campaign battle Leave: ignored in the first seconds, then a modal
 		# (Stay keeps the battle, Leave exits).
 		_step_lv_start,
@@ -3951,3 +4015,585 @@ func _step_wp_pop_halt() -> void:
 func _step_wp_check_pop_undo() -> void:
 	_check(battle.orders.wp_of(_wp_u) == _wp_popq and battle.orders.value(_wp_u, "order") == BattleSim.O_MOVE,
 		"waypoints: Undo of the Halt restores the move and the queue as it was after the pop (%d queued)" % _wp_count(_wp_u))
+
+
+# ----------------------------------- confirm orders: the placement tool ---
+
+var _pl_u := -1
+var _pl_u2 := -1
+var _pl_orders := 0
+var _pl_c0 := Vector2.ZERO
+var _pl_len0 := 0.0
+var _pl_face := 0
+var _pl_target := Vector2.ZERO   # world px
+var _pl_t0 := 0
+
+
+func _pl_handle(id: int) -> Vector2:
+	for h in battle.overlay.place_handles:
+		if int(h["id"]) == id:
+			return _world_to_screen(h["pos"])
+	return Vector2(-1, -1)
+
+
+## A viewport point at least 110 px from every handle of the ghost, clear of the HUD and of the toolbar.
+func _pl_free_spot() -> Vector2:
+	var vr := battle.get_viewport_rect()
+	for y in range(130, int(vr.size.y) - 200, 40):
+		for x in range(120, int(vr.size.x) - 120, 60):
+			var sp := Vector2(x, y)
+			if battle.hud.is_over_ui(sp):
+				continue
+			var ok := true
+			for h in battle.overlay.place_handles:
+				if battle.world_to_screen(h["pos"]).distance_to(sp) < 110.0:
+					ok = false
+			if battle.hud.place_bar.visible and battle.hud.place_bar.get_global_rect().grow(40.0).has_point(sp):
+				ok = false
+			if ok:
+				return sp
+	return Vector2(300, 250)
+
+
+func _pl_pending() -> int:
+	return battle.orders.pending_count()
+
+
+func _step_pl_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	ConfirmOrders.force = "on"
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_pl_select() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	_pl_u = u_inf
+	_pl_u2 = u_pike
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_type[u] == UT.HEAVY:
+			_pl_u = u
+			break
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.u_type[u] == UT.PIKE:
+			_pl_u2 = u
+			break
+	battle._select(_pl_u)
+	_focus(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024)
+	_check(battle._confirm_on(), "placement: Confirm orders on, units selected, the battle running")
+	_pl_orders = _pl_pending()
+
+
+func _step_pl_tap() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	_pl_target = Vector2(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_tap() -> void:
+	var b := battle
+	_check(b.place_on and b.place_kind == "line", "placement: a tap on the ground places a ghost (%s)" % b.place_kind)
+	_check(_pl_pending() == _pl_orders, "placement: ... and orders nothing (%d pending)" % (_pl_pending() - _pl_orders))
+	_check(b.place_c.distance_to(_pl_target) < 6.0, "placement: ... at the tap")
+	_check(b.selection.size() == 1 and b.hud.place_bar.visible, "placement: ... the selection stays and the toolbar shows")
+	_check(b.overlay.place_on and b.overlay.place_handles.size() == 4, "placement: a line ghost has body, front and two end handles (%d)" % b.overlay.place_handles.size())
+	var sim := b.sim
+	_check(b.place_exact and b.place_len > 0.0 and absi(int((b._place_layout[0] as Dictionary)["files"]) - b.orders.value(_pl_u, "files")) == 0,
+		"placement: the ghost keeps the unit's own frontage")
+	_pl_c0 = b.place_c
+	_pl_len0 = b.place_len
+	_check(sim.phase == BattleSim.PHASE_BATTLE, "placement: in the battle phase")
+
+
+func _step_pl_body_down() -> void:
+	var p := _pl_handle(Overlay.PH_BODY)
+	_touch(0, p, true)
+	_drag(0, p + Vector2(30, 0), Vector2(30, 0))
+	_drag(0, p + Vector2(60, 0), Vector2(30, 0))
+
+
+func _step_pl_body_up() -> void:
+	_touch(0, _pl_handle(Overlay.PH_BODY), false)
+
+
+func _step_pl_check_body() -> void:
+	var b := battle
+	_check(b.place_on and b.place_c.x > _pl_c0.x + 10.0 and absf(b.place_c.y - _pl_c0.y) < 30.0, "placement: the body handle moves the ghost (dx %.0f)" % (b.place_c.x - _pl_c0.x))
+	_check(_pl_pending() == _pl_orders and b.selection.size() == 1, "placement: ... without an order")
+	_check(b.camera.position.is_finite(), "placement: the camera did not pan with the drag")
+
+
+func _step_pl_front_down() -> void:
+	var b := battle
+	_pl_c0 = b.place_c
+	var p := _pl_handle(Overlay.PH_FRONT)
+	_touch(0, p, true)
+	var tgt := _world_to_screen(b.place_c + Vector2.from_angle(deg_to_rad(45.0)) * 220.0)
+	_drag(0, (p + tgt) * 0.5, Vector2.ZERO)
+	_drag(0, tgt, Vector2.ZERO)
+
+
+func _step_pl_front_up() -> void:
+	_touch(0, _world_to_screen(battle.place_c + Vector2.from_angle(deg_to_rad(45.0)) * 220.0), false)
+
+
+func _step_pl_check_front() -> void:
+	var b := battle
+	var d := absi(((b.place_face - 128 + 512) & 1023) - 512)
+	_check(d <= 2, "placement: the front handle turns the ghost, snapped to 15 degrees (face %d, want 128)" % b.place_face)
+	_check(b.place_c.distance_to(_pl_c0) < 2.0 and _pl_pending() == _pl_orders, "placement: ... in place, no order")
+	_check(b.overlay.place_face == b.place_face, "placement: the overlay draws the new facing")
+
+
+func _step_pl_end_down() -> void:
+	var b := battle
+	_pl_len0 = b.place_len
+	var ang := b.place_face * TAU / 1024.0
+	var right := Vector2(-sin(ang), cos(ang))
+	var p := _pl_handle(Overlay.PH_END_B)
+	_touch(0, p, true)
+	var tgt := _world_to_screen(b.place_c + right * (b.place_len * 0.5 + 60.0))
+	_drag(0, (p + tgt) * 0.5, Vector2.ZERO)
+	_drag(0, tgt, Vector2.ZERO)
+	_pl_target = b.place_c + right * (b.place_len * 0.5 + 60.0)
+
+
+func _step_pl_end_up() -> void:
+	_touch(0, _world_to_screen(_pl_target), false)
+
+
+func _step_pl_check_end() -> void:
+	var b := battle
+	_check(b.place_len > _pl_len0 + 10.0 and not b.place_exact, "placement: an end handle widens the line (%.0f -> %.0f px)" % [_pl_len0, b.place_len])
+	_check(b.place_len <= b.overlay.max_line_px() + 1.0, "placement: ... one rank long at most")
+	_check(_pl_pending() == _pl_orders, "placement: ... no order yet")
+
+
+func _step_pl_retap() -> void:
+	_no_double_tap()
+	var spot := _pl_free_spot()   # (clear of every handle of the ghost and of the HUD)
+	_pl_target = battle._screen_to_world(spot)
+	var p := _vp_to_window(spot)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_retap() -> void:
+	var b := battle
+	_check(b.place_on and b.place_c.distance_to(_pl_target) < 6.0 and _pl_pending() == _pl_orders, "placement: a tap elsewhere places the ghost again, no order")
+	_check(b.place_exact, "placement: ... a fresh ghost keeps the frontage again")
+
+
+func _step_pl_run() -> void:
+	_tap_control(battle.hud.place_run)
+
+
+func _step_pl_go() -> void:
+	_check(battle.place_run and battle.hud.place_run.button_pressed, "placement: the Run toggle lights")
+	_pl_face = battle.place_face
+	_pl_orders = _pl_pending()
+	_tap_control(battle.hud.place_go)
+
+
+func _step_pl_check_go() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders + 1, "placement: Go sends exactly one order (%d)" % (_pl_pending() - _pl_orders))
+	_check(b.orders.value(_pl_u, "order") == BattleSim.O_MOVE and b.orders.value(_pl_u, "run") == 1, "placement: ... a move, running")
+	_check(b.orders.value(_pl_u, "dface") == _pl_face, "placement: ... facing as the ghost (%d / %d)" % [b.orders.value(_pl_u, "dface"), _pl_face])
+	_check(b.selection.is_empty() and not b.place_on and not b.hud.place_bar.visible, "placement: ... the selection clears and the ghost goes")
+	_check(b.hud.undo_toast.visible and b.hud.undo_button.visible and b.hud.undo_toast_label.text.contains(": "), "placement: the Undo toast names the order (\"%s\")" % b.hud.undo_toast_label.text)
+	_check(b.hud.undo_toast.get_global_rect().end.y <= b.hud._bottom.get_global_rect().position.y + 1.0, "placement: the toast sits above the card bar")
+	_pl_target = Vector2(b.orders.value(_pl_u, "dx"), b.orders.value(_pl_u, "dy"))
+
+
+func _step_pl_undo() -> void:
+	_tap_control(battle.hud.undo_button)
+
+
+func _step_pl_check_undo() -> void:
+	var b := battle
+	_check(b._undo_stack.is_empty() and not b.hud.undo_toast.visible, "placement: the toast's Undo takes the order back and hides")
+	_check(b.orders.value(_pl_u, "order") != BattleSim.O_MOVE or Vector2(b.orders.value(_pl_u, "dx"), b.orders.value(_pl_u, "dy")) != _pl_target,
+		"placement: ... the unit's destination is restored")
+
+
+func _step_pl_x_setup() -> void:
+	_no_double_tap()
+	_tap_control(battle.hud._cards[_pl_u])
+
+
+func _step_pl_x() -> void:
+	_no_double_tap()
+	_check(battle.selection == [_pl_u], "placement: tapping a card reselects")
+	_pl_orders = _pl_pending()
+	var sim := battle.sim
+	var p := _world_to_screen(Vector2(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024) / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_x() -> void:
+	_check(battle.place_on, "placement: a ghost again after reselecting")
+	_tap_control(battle.hud.place_x)
+
+
+func _step_pl_drag_down() -> void:
+	var b := battle
+	_check(not b.place_on and b.selection.size() == 1 and _pl_pending() == _pl_orders, "placement: X drops the ghost, nothing ordered, the selection stays")
+	_no_double_tap()
+	var sim := b.sim
+	var a := Vector2(sim.u_ax[_pl_u] - 25 * 1024, sim.u_ay[_pl_u] - 35 * 1024) / 1024.0 * Battle.PX_PER_M
+	var c := a + Vector2(25, 0) * Battle.PX_PER_M
+	_pl_target = c
+	var pa := _world_to_screen(a)
+	_touch(0, pa, true)
+	var pc := _world_to_screen(c)
+	_drag(0, (pa + pc) * 0.5, Vector2.ZERO)
+	_drag(0, pc, Vector2.ZERO)
+	_pl_c0 = (a + c) * 0.5
+
+
+func _step_pl_drag_up() -> void:
+	_touch(0, _world_to_screen(_pl_target), false)
+
+
+func _step_pl_check_drag() -> void:
+	var b := battle
+	_check(b.place_on and b.place_kind == "line" and not b.place_exact and _pl_pending() == _pl_orders, "placement: a line drag places a line ghost, no order")
+	_check(b.place_c.distance_to(_pl_c0) < 8.0 and absf(b.place_len - 25.0 * Battle.PX_PER_M) < 12.0, "placement: ... along the drag (%.0f px long)" % b.place_len)
+	_check(b.place_face == 768, "placement: ... left to right faces up (%d)" % b.place_face)
+
+
+func _step_pl_enemy() -> void:
+	_no_double_tap()
+	_pl_orders = _pl_pending()
+	var p := battle.marker_screen(u_enemy)
+	var pw := _vp_to_window(p)
+	_touch(0, pw, true)
+	_touch(0, pw, false)
+
+
+func _step_pl_check_enemy() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders + 1 and b.orders.value(_pl_u, "order") == BattleSim.O_ATTACK, "placement: a tap on an enemy attacks at once (%d)" % (_pl_pending() - _pl_orders))
+	_check(b.selection.size() == 1, "placement: ... and the selection stays after a direct attack")
+	_check(not b.place_on, "placement: ... the ghost is dropped")
+
+
+func _step_pl_double_a() -> void:
+	_no_double_tap()
+	_pl_orders = _pl_pending()
+	var sim := battle.sim
+	_pl_target = Vector2(sim.u_ax[_pl_u] + 10 * 1024, sim.u_ay[_pl_u] - 25 * 1024) / 1024.0 * Battle.PX_PER_M
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_double_b() -> void:
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_double() -> void:
+	var b := battle
+	_check(b.place_on and b.place_run and b.hud.place_run.button_pressed and _pl_pending() == _pl_orders, "placement: a double tap lights the ghost's Run and orders nothing")
+	b._place_clear()
+
+
+func _step_pl_pinch() -> void:
+	var b := battle
+	_no_double_tap()
+	_pl_orders = _pl_pending()
+	var c := _vp_to_window(Vector2(600, 300))
+	_touch(0, c - Vector2(40, 0), true)
+	_touch(1, c + Vector2(40, 0), true)
+	_drag(0, c - Vector2(60, 0), Vector2(-20, 0))
+	_drag(1, c + Vector2(60, 0), Vector2(20, 0))
+	_touch(0, c - Vector2(60, 0), false)
+	_touch(1, c + Vector2(60, 0), false)
+	# A finger down at once after the pinch (the thumb that was still on the glass).
+	b._last_tap_time = -10.0
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_pinch() -> void:
+	_check(not battle.place_on and _pl_pending() == _pl_orders, "guard: a tap within 300 ms after a pinch is dropped")
+	_check(int(battle._input_counts.get("tap_after_gesture_dropped", 0)) >= 1, "guard: ... and counted")
+	_pl_t0 = Time.get_ticks_msec()
+
+
+func _step_pl_after_wait() -> void:
+	if Time.get_ticks_msec() - _pl_t0 < 450:
+		steps.push_front(_step_pl_after_wait)
+		return
+	_no_double_tap()
+	battle._multi_end_ms = -100000   # (the pinch is long over)
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_after() -> void:
+	_check(battle.place_on, "guard: a tap 450 ms after the pinch places the ghost")
+	battle._place_clear()
+
+
+func _step_pl_wp_a() -> void:
+	_no_double_tap()
+	battle._select(_pl_u2)
+	_pl_orders = _pl_pending()
+	var sim := battle.sim
+	_pl_target = Vector2(sim.u_ax[_pl_u2], sim.u_ay[_pl_u2] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
+	_focus(sim.u_ax[_pl_u2], sim.u_ay[_pl_u2] - 30 * 1024)
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_wp_b() -> void:
+	_check(battle.place_on, "waypoint: a ghost to start from")
+	_tap_control(battle.hud.place_wp)
+
+
+func _step_pl_check_wp() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders + 1 and b.waypoint_mode and b.selection.size() == 1 and not b.place_on,
+		"waypoint: the toolbar's Waypoint orders the ghost as a stop, keeps the selection and the tool (%d orders)" % (_pl_pending() - _pl_orders))
+	_check(not b.hud.place_bar.visible, "waypoint: ... the toolbar waits for the next ghost")
+	b._select(-1)
+	_check(not b.waypoint_mode, "waypoint: deselecting ends it")
+
+
+func _step_pl_group() -> void:
+	_no_double_tap()
+	var b := battle
+	b._select(_pl_u)
+	b._toggle_in_selection(_pl_u2)
+	_pl_orders = _pl_pending()
+	var sim := b.sim
+	_focus(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024)
+	_pl_target = Vector2(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_group() -> void:
+	var b := battle
+	_check(b.place_on and b.place_kind == "group" and b.overlay.place_handles.size() == 2 and b._place_layout.size() == 2,
+		"placement: a tap with two units places the group's shape (%s, %d handles)" % [b.place_kind, b.overlay.place_handles.size()])
+	_check(_pl_pending() == _pl_orders, "placement: ... no order")
+	_tap_control(b.hud.place_go)
+	_pl_orders += 0
+
+
+func _step_pl_two_finger() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders + 2 and b.selection.is_empty(), "placement: Go on a group sends one order a unit (%d) and clears" % (_pl_pending() - _pl_orders))
+	_check(b.hud.undo_toast_label.text.begins_with("2 units: "), "placement: ... the toast says \"%s\"" % b.hud.undo_toast_label.text)
+	_no_double_tap()
+	b._select(_pl_u)
+	_pl_orders = _pl_pending()
+	var sim := b.sim
+	_pl_target = Vector2(sim.u_ax[_pl_u], sim.u_ay[_pl_u] - 30 * 1024) / 1024.0 * Battle.PX_PER_M
+	var p := _world_to_screen(_pl_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_two_finger() -> void:
+	_check(battle.place_on, "placement: a ghost before the two-finger tap")
+	_step_two_tap()
+
+
+func _step_pl_off_quick() -> void:
+	var b := battle
+	_check(not b.place_on and b.selection.is_empty(), "placement: a two-finger tap drops the ghost and deselects")
+	ConfirmOrders.force = "off"
+	b._select(_pl_u)
+	b.sim.u_fighting[_pl_u] = 5
+	_no_double_tap()
+	_pl_orders = _pl_pending()
+	var p := _world_to_screen(_pl_target)
+	b._multi_end_ms = -100000
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pl_check_off_quick() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders and not b.place_on, "guard: Confirm off, a quick tap that orders a fighting unit is held back")
+	_check(b._hold_hint_done, "guard: ... with the hint \"Hold to order a fighting unit\"")
+	_no_double_tap()
+	b._multi_end_ms = -100000
+
+
+func _step_pl_off_hold_down() -> void:
+	_pl_t0 = Time.get_ticks_msec()
+	_touch(0, _world_to_screen(_pl_target), true)
+
+
+func _step_pl_off_hold_wait() -> void:
+	if Time.get_ticks_msec() - _pl_t0 < 320:
+		steps.push_front(_step_pl_off_hold_wait)
+
+
+func _step_pl_off_hold_up() -> void:
+	_touch(0, _world_to_screen(_pl_target), false)
+
+
+func _step_pl_check_off_hold() -> void:
+	var b := battle
+	_check(_pl_pending() == _pl_orders + 1 and b.orders.value(_pl_u, "order") == BattleSim.O_MOVE, "guard: ... a held tap (0.25 s) orders it (%d)" % (_pl_pending() - _pl_orders))
+	_check(b.selection.size() == 1, "guard: Confirm off keeps today's rule: the selection stays after the order")
+	b.sim.u_fighting[_pl_u] = 0
+	ConfirmOrders.force = "off"
+
+
+# ----------------------------- attack as the last waypoint ---
+
+var _wa_ok := false
+var _wa_pending := 0
+
+
+func _step_wa_start() -> void:
+	_wa_ok = (BattleSim as GDScript).get_script_constant_map().has("WP_ATTACK")
+	if not _wa_ok:
+		print("SKIP waypoint attack: the sim has no WP_ATTACK yet")
+		return
+	ConfirmOrders.force = "off"
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_wa_tap_ground() -> void:
+	if not _wa_ok:
+		return
+	if not battle.paused:
+		battle._toggle_pause()
+	var sim := battle.sim
+	battle._select(u_inf)
+	battle.hud.waypoints_button.pressed.emit()
+	_focus(sim.u_ax[u_inf], sim.u_ay[u_inf] - 30 * 1024)
+	_no_double_tap()
+	var p := _world_to_screen(Vector2(sim.u_ax[u_inf], sim.u_ay[u_inf] - 30 * 1024) / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_wa_tap_enemy() -> void:
+	if not _wa_ok:
+		return
+	_wa_pending = battle.orders.pending_count()
+	_no_double_tap()
+	var p := _vp_to_window(battle.marker_screen(u_enemy))
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_wa_check() -> void:
+	if not _wa_ok:
+		return
+	var b := battle
+	var ch: Array = b.orders.chain(u_inf)
+	_check(b.orders.pending_count() == _wa_pending + 1 and not ch.is_empty() and int((ch.back() as Dictionary)["attack"]) >= 0,
+		"waypoint attack: a tap on an enemy in the waypoints tool adds the attack as the last point (%d orders)" % (b.orders.pending_count() - _wa_pending))
+	_check(b.waypoint_mode and b.selection.size() == 1, "waypoint attack: the tool stays on")
+	_wa_pending = b.orders.pending_count()
+
+
+func _step_wa_remove() -> void:
+	if not _wa_ok:
+		return
+	_no_double_tap()
+	var ch: Array = battle.orders.chain(u_inf)
+	if ch.is_empty():
+		return
+	var at: Vector2i = (ch.back() as Dictionary)["at"]
+	var p := _world_to_screen(Vector2(at) / 1024.0 * Battle.PX_PER_M)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_wa_check_removed() -> void:
+	if not _wa_ok:
+		return
+	var ch: Array = battle.orders.chain(u_inf)
+	_check(ch.is_empty() or not int((ch.back() as Dictionary)["attack"]) >= 0, "waypoint attack: a tap on the swords dot takes it out")
+
+
+# ----------------------------- the caracole's phase on the card ---
+
+func _step_car_start() -> void:
+	ConfirmOrders.force = "off"
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.scenario_id = "skirmish"
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_car_check() -> void:
+	var sim := battle.sim
+	if not battle.paused:
+		battle._toggle_pause()
+	# (The skirmish has no pistoleers: the phase is set on the cavalry by hand; the card only reads it.)
+	sim.car_on = 1
+	for arr in [sim.u_car, sim.u_crk, sim.u_crt, sim.u_crv]:
+		arr.resize(sim.n_units)
+	var f: Object = battle.hud._faces[u_cav]
+	var cases := [[0, ""], [1, "Firing"], [2, "Wheeling"], [3, "Reloading 20 s"]]
+	for c in cases:
+		sim.u_car[u_cav] = c[0]
+		sim.u_crk[u_cav] = sim.tick - 100
+		battle.hud.update_cards(sim)
+		_check(f.state_text == c[1] and (c[0] == 0 or f.summary.contains(c[1])), "caracole: the card says \"%s\" in phase %d (\"%s\")" % [c[1], c[0], f.state_text])
+	sim.u_car[u_cav] = 3
+	sim.u_crk[u_cav] = sim.tick - 295
+	battle.hud.update_cards(sim)
+	_check(f.state_text == "Reloading 1 s", "caracole: the reload counts down (\"%s\")" % f.state_text)
+	sim.u_car[u_cav] = 0
+	battle.hud.update_cards(sim)
+	battle.overlay.queue_redraw()
+	battle._select(u_cav)
+
+
+func _step_car_double_a() -> void:
+	_no_double_tap()
+	var p := _vp_to_window(battle.marker_screen(u_enemy))
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_car_double_b() -> void:
+	var p := _vp_to_window(battle.marker_screen(u_enemy))
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_car_check_double() -> void:
+	var n := 0
+	var all_charge := true
+	for o in battle.sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_ATTACK and int(o["unit"]) == u_cav:
+			n += 1
+			if int(o.get("charge", 0)) != 1 and int(o.get("run", 0)) == 1:
+				all_charge = false
+	_check(n >= 1 and all_charge, "caracole: a double tap on the enemy sends the attack with the charge flag (%d orders)" % n)

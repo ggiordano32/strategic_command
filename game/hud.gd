@@ -43,6 +43,10 @@ signal card_long_pressed(unit: int)
 signal chip_book_pressed   # the 'Unit book' row of a chip's long-press explanation: battle.gd opens the selected unit's page
 signal deselect_pressed
 signal undo_pressed
+signal place_go_pressed             # the placement tool's toolbar (game/battle.gd "placement tool")
+signal place_run_toggled(on: bool)
+signal place_waypoint_pressed
+signal place_cancel_pressed
 signal controls_pressed
 signal gift_pressed
 signal cards_reordered
@@ -198,6 +202,13 @@ var gift_button: AbilityChip
 var withdraw_all_button: Button
 var add_button: Button
 var deselect_button: Button
+var place_bar: PanelContainer   # the placement tool's toolbar: Go, Run, Waypoint, X
+var place_go: Button
+var place_run: Button
+var place_wp: Button
+var place_x: Button
+var undo_toast: PanelContainer  # the Undo toast: the order's name and the Undo button (undo_button is its child)
+var undo_toast_label: Label
 var undo_button: Button  # the command bar's Undo (battle.gd shows it for a few seconds after each order batch)
 ## Shift / Ctrl / Cmd was held when the last card was clicked.
 var card_mod_add := false
@@ -482,7 +493,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	# The chips, in the bar's fixed order (see _fit_actions: what does not fit goes under More).
 	var ab_tips := {
 		UT.AB_BATTER: ["Target", "Guns that batter. Auto: they shoot men, or what they were ordered at. Hold: stop a battering under way. Use now: tap a wall stretch, a gate (the stretch beside it) or a building to batter it. Torch raiders batter with axes: Use now at a gate or a stretch of palisade, and they go to it and hack until it gives (a stone wall they cannot hurt)."],
-		UT.AB_CARACOLE: ["Caracole", "Horse with firearms. Auto: ride up, fire, wheel back and reload, again. Hold: an attack is a charge. Use now: tap an enemy unit and they caracole at it."],
+		UT.AB_CARACOLE: ["Caracole", "Horse with firearms. Auto: ride up, fire, wheel back and reload, again. Hold: an attack is a charge. Use now: tap an enemy unit and they caracole at it. A double tap on the enemy charges home. The card and the marker say Firing, Wheeling or Reloading (pistols wait 30 s)."],
 		UT.AB_GRENADE: ["Grenades", "Auto: thrown at formed blocks, held houses and shut gates in reach (fire pots: held houses and shut gates only, setting them alight). Hold: never thrown, the unit fights as shock foot. Use now: tap an enemy unit or a shut gate and it is thrown at at once."],
 		UT.AB_PISTOL: ["Pistols", "Auto: a point-blank shot in each man's first rounds of a melee, the spent men changing places to reload. Hold: blades only."],
 		UT.AB_ROLL: ["Countermarch", "Musket lines: rolling fire by ranks. Auto: an opening volley, then one rank fires after another, keeping the enemy shaken; the last volley of every loaded man when an enemy comes within 40 m. Hold: volleys only. Use now: rolling fire at any range."]}
@@ -647,6 +658,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	confirm_cancel.pressed.connect(close_confirm)
 	cbox.add_child(confirm_cancel)
 	_ui_controls.append(confirm_panel)
+	_build_place_ui(root, groups)
 	actions.visible = false
 	actions_box = actions
 	_ui_controls.append(actions)
@@ -2431,6 +2443,11 @@ func update_cards(sim) -> void:
 			summary += " " + carry
 			if word == "":
 				word = carry
+		var car := Traits.caracole_text(sim, u)
+		if car != "":
+			word = car   # (the caracole's phase: the owner took the 30 s pistol reload for a bug)
+			summary += " " + car
+		f.car_phase = car != ""
 		f.state_text = word
 		f.summary = summary + " " + mstate
 		if f.char_icon != "":
@@ -2798,6 +2815,7 @@ class CardFace extends Control:
 	var narrow := false
 	var ammo_text := ""
 	var state_text := ""
+	var car_phase := false   # state_text is the caracole's phase (F / W / R on a narrow card)
 	var summary := ""
 	var alive := 0
 	var count0 := 1
@@ -2919,6 +2937,9 @@ class CardFace extends Control:
 		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - 4, 8), 11, txt)
 		if narrow and state_text != "" and state != ST_OK:
 			draw_rect(Rect2(sz.x - 6, 3, 3, 8), txt)
+		if narrow and car_phase:
+			draw_string(font, Vector2(bx + 2 + font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 3, by + 10), state_text.left(1),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.85, 0.4))
 		if char_icon != "":
 			var cxg := sz.x - (26.0 if foreign else 15.0)
 			Kit.UiIcons.draw_icon(self, char_icon, Rect2(cxg, 2, 12, 12),
@@ -2956,3 +2977,118 @@ class SpeedTicks extends Control:
 	func _notification(what: int) -> void:
 		if what == NOTIFICATION_RESIZED:
 			queue_redraw()
+
+
+# ------------------------------------- the placement toolbar and the Undo toast ---
+# Both float over the field in the HUD's chrome (the popovers' trim box). The toolbar (Go, Run, Waypoint, X) shows while the
+# battle has a ghost placed (battle.gd "placement tool"): beside the ghost on a wide window, docked above the card bar on a
+# phone (`layout_floaters`). The toast is the old Undo button grown: the order's name and Undo, above the bar for UNDO_SHOW_SEC.
+
+func _build_place_ui(root: Control, groups: Control) -> void:
+	place_bar = PanelContainer.new()
+	place_bar.name = "place_bar"
+	place_bar.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 6.0))
+	place_bar.visible = false
+	root.add_child(place_bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(GAP))
+	place_bar.add_child(row)
+	place_go = _button("Go", Vector2(62, BTN_H), "accept")
+	place_go.name = "place_go"
+	Kit.tip(place_go, "Go", "Send the order to the ghost: the men march there, then the selection clears (Undo takes it back).")
+	place_go.pressed.connect(func(): place_go_pressed.emit())
+	place_run = _button("Run", Vector2(62, BTN_H), "run")
+	place_run.name = "place_run"
+	place_run.toggle_mode = true
+	BTheme.plate(place_run, true)
+	Kit.tip(place_run, "Run", "Lit: the order is given at the run (a double tap lights it).")
+	place_run.toggled.connect(func(on: bool): place_run_toggled.emit(on))
+	place_wp = _button("Waypoint", Vector2(0, BTN_H), "move")
+	place_wp.name = "place_waypoint"
+	Kit.tip(place_wp, "Waypoint", "Add the ghost as the next stop after the current move and place the next one.")
+	place_wp.pressed.connect(func(): place_waypoint_pressed.emit())
+	place_x = _button("", Vector2(46, BTN_H), "close")
+	place_x.name = "place_cancel"
+	Kit.tip(place_x, "Drop the ghost", "Take the ghost away; nothing is ordered.")
+	place_x.pressed.connect(func(): place_cancel_pressed.emit())
+	for b in [place_go, place_run, place_wp, place_x]:
+		row.add_child(b)
+	_ui_controls.append(place_bar)
+	undo_toast = PanelContainer.new()
+	undo_toast.name = "undo_toast"
+	undo_toast.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 6.0))
+	undo_toast.visible = false
+	root.add_child(undo_toast)
+	var trow := HBoxContainer.new()
+	trow.add_theme_constant_override("separation", 10)
+	undo_toast.add_child(trow)
+	undo_toast_label = Label.new()
+	undo_toast_label.add_theme_font_size_override("font_size", FONT)
+	undo_toast_label.add_theme_color_override("font_color", Kit.COL_BONE)
+	undo_toast_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	trow.add_child(undo_toast_label)
+	groups.remove_child(undo_button)   # (the button of the bar's group row moves into the toast)
+	trow.add_child(undo_button)
+	_ui_controls.append(undo_toast)
+
+
+## The Undo toast: shown with the order's name, or hidden (the button keeps its name `undo` and its `visible`).
+func set_undo_toast(on: bool, text := "") -> void:
+	if undo_toast == null:
+		return
+	undo_button.visible = on
+	undo_toast.visible = on
+	if on:
+		undo_toast_label.text = text
+	undo_toast.reset_size()
+
+
+## Show or hide the placement toolbar; `run_on`: the ghost's Run; `waypoint_ok`: the Waypoint button is enabled.
+func set_place_bar(on: bool, run_on := false, waypoint_ok := true) -> void:
+	if place_bar == null:
+		return
+	place_bar.visible = on
+	if on:
+		place_run.set_pressed_no_signal(run_on)
+		place_wp.disabled = not waypoint_ok
+		place_bar.reset_size()
+
+
+## Place the floating bars. `anchor`: the ghost's body handle on the screen; `avoid`: the handles' screen points
+## (the toolbar stays 34 px clear of each). Beside the ghost on a wide window with room; else docked above the cards.
+func layout_floaters(anchor: Vector2, avoid: PackedVector2Array) -> void:
+	if place_bar == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var top_y := (_top.get_global_rect().end.y if _top != null else 0.0) + MARGIN
+	var bot_y := (_bottom.get_global_rect().position.y if _bottom != null else vp.y) - GAP
+	var dock_y := bot_y
+	if place_bar.visible:
+		var sz := place_bar.get_combined_minimum_size()
+		place_bar.size = sz
+		var pos := Vector2(-1, -1)
+		var compact := Kit.UiScale.is_touch() or vp.x < 700.0
+		if not compact:
+			var gap := 40.0
+			var cands: Array[Vector2] = [anchor + Vector2(gap + 24.0, -sz.y * 0.5), anchor + Vector2(-gap - 24.0 - sz.x, -sz.y * 0.5),
+				anchor + Vector2(-sz.x * 0.5, -gap - 24.0 - sz.y), anchor + Vector2(-sz.x * 0.5, gap + 24.0)]
+			for c in cands:
+				var r := Rect2(c, sz)
+				if r.position.x < MARGIN or r.end.x > vp.x - MARGIN or r.position.y < top_y or r.end.y > bot_y:
+					continue
+				var clear := true
+				for a in avoid:
+					if r.grow(34.0).has_point(a):
+						clear = false
+						break
+				if clear:
+					pos = c
+					break
+		if pos.x < 0.0:
+			pos = Vector2(clampf((vp.x - sz.x) * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)), bot_y - sz.y)
+			dock_y = pos.y - GAP
+		place_bar.position = pos
+	if undo_toast != null and undo_toast.visible:
+		var tsz := undo_toast.get_combined_minimum_size()
+		undo_toast.size = tsz
+		undo_toast.position = Vector2(clampf((vp.x - tsz.x) * 0.5, MARGIN, maxf(vp.x - tsz.x - MARGIN, MARGIN)), dock_y - tsz.y)

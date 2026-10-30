@@ -478,6 +478,7 @@ func _ready() -> void:
 	hud.undo_pressed.connect(func():
 		_count("undo_button")
 		_undo())
+	_place_connect()
 	hud.deselect_pressed.connect(func():
 		_count("deselect_button")
 		_gm_cancel()
@@ -586,6 +587,20 @@ func _apply_debug_args() -> void:
 		elif a.begins_with("--attack="):
 			# --attack=U:T orders unit U to attack (shoot) unit T.
 			_queue(BattleSim.make_attack_order(0, int(v.get_slice(":", 0)), int(v.get_slice(":", 1)), 0))
+		elif a.begins_with("--demo-place="):
+			# --demo-place=dx_m,dy_m[,deg]: with --select, the placement tool's ghost (Confirm orders on) that far from the
+			# primary unit, turned deg degrees if given, put up a few frames in (after the deployment); for screenshots and
+			# --frame-stats.
+			ConfirmOrders.force = "on"
+			if sim.phase == BattleSim.PHASE_DEPLOY:
+				sim.queue_order({"tick": sim.tick, "type": BattleSim.ORDER_READY, "who": 0})   # (the tool works in the battle phase)
+				for t in 60:
+					sim.step()
+					if sim.phase != BattleSim.PHASE_DEPLOY:
+						break
+			_demo_place = v
+		elif a.begins_with("--confirm-orders="):
+			pass   # (read by ConfirmOrders.pref)
 		elif a.begins_with("--demo-ghost="):
 			# --demo-ghost=deg: the main line (no missiles) picked up as a
 			# group, moved 60 m ahead and turned; for screenshots.
@@ -1048,6 +1063,7 @@ func _process(delta: float) -> void:
 		_undo_t -= delta
 		if _undo_t <= 0.0:
 			_undo_refresh_button()
+	_place_process()
 	if leave_dialog != null and leave_dialog.visible and sim.winner >= 0:
 		leave_dialog.visible = false  # (decided meanwhile: the result shows)
 	if _end_flow and not _result_shown:
@@ -1520,7 +1536,7 @@ func _undo_record(order: Dictionary) -> void:
 	if fresh.is_empty():
 		return
 	if batch.is_empty():
-		batch = {"frame": frame, "recs": []}
+		batch = {"frame": frame, "recs": [], "name": _undo_batch_name(order)}
 		_undo_stack.append(batch)
 		while _undo_stack.size() > UNDO_DEPTH:
 			_undo_stack.pop_front()
@@ -1533,7 +1549,7 @@ func _undo_refresh_button() -> void:
 	var on := _undo_t > 0.0 and not _undo_stack.is_empty()
 	if on and not hud.undo_button.visible:
 		_count("undo_shown")
-	hud.undo_button.visible = on
+	hud.set_undo_toast(on, _undo_toast_text() if on else "")
 
 
 ## Undo the last order batch: each unit gets its recorded order back.
@@ -1701,6 +1717,8 @@ func _selection_changed() -> void:
 		if u != selected:
 			ordered.append(u)
 	overlay.selected_units = ordered
+	if place_on and _place_sel != selection:
+		_place_clear()   # (the ghost belongs to the selection it was placed for)
 	if occupy_mode:
 		_occupy_cancel(false)
 	if ability_armed >= 0:
@@ -2515,6 +2533,8 @@ func _wp_last_run(u: int) -> void:
 				and UT.cls(sim.u_type[u]) != UT.CLS_ART:
 			_queue(BattleSim.make_run_order(0, u, 1))
 		return
+	if (q[q.size() - 1] & BattleSim.WP_ATTACK) != 0:
+		return   # (the last point is an attack: it runs by its own double tap)
 	var nq := q.duplicate()
 	nq[nq.size() - 1] = nq[nq.size() - 1] | BattleSim.WP_RUN
 	_count("wp_run")
@@ -2528,6 +2548,9 @@ func _wp_reissue(u: int, q: PackedInt32Array, drop_current: bool) -> void:
 	if drop_current:
 		if q.is_empty():
 			_queue(BattleSim.make_halt_order(0, u))
+			return
+		if (q[4] & BattleSim.WP_ATTACK) != 0:
+			_queue(BattleSim.make_attack_order(0, u, q[0], 1 if (q[4] & BattleSim.WP_RUN) != 0 else 0))   # (only the attack was left)
 			return
 		var m0 := BattleSim.make_move_order(0, u, q[0], q[1], q[2], q[3], 1 if (q[4] & BattleSim.WP_RUN) != 0 else 0)
 		if (q[4] & BattleSim.WP_BOUND) != 0:
@@ -2549,6 +2572,8 @@ func _wp_requeue(u: int, q: PackedInt32Array) -> void:
 	for i in q.size() / K:
 		var k := i * K
 		var o := BattleSim.make_move_order(0, u, q[k], q[k + 1], q[k + 2], q[k + 3], 1 if (q[k + 4] & BattleSim.WP_RUN) != 0 else 0)
+		if (q[k + 4] & BattleSim.WP_ATTACK) != 0:
+			o = BattleSim.make_attack_order(0, u, q[k], 1 if (q[k + 4] & BattleSim.WP_RUN) != 0 else 0)   # (the attack ending the chain)
 		o["append"] = 1
 		if (q[k + 4] & BattleSim.WP_BOUND) != 0:
 			o["bound"] = 1
@@ -3168,6 +3193,9 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	if waypoint_mode and not _rmb_order:
 		var hit := _wp_dot_at(w)
 		if hit.x >= 0:
+			var hch: Array = orders.chain(hit.x)
+			if double and hit.y < hch.size() and int((hch[hit.y] as Dictionary)["attack"]) >= 0:
+				return   # (the second tap of the double that added the attack: nothing to do)
 			_wp_remove(hit.x, hit.y)
 			return
 	# A tap in a gate's doorway is about the gate: it is tested before the
@@ -3236,14 +3264,27 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 			return
 	if u >= 0:
 		# Enemy: attack (missile troops shoot it; double tap = charge at the run).
+		var as_point := _wp_append()   # (the waypoints tool: the attack is the chain's last point, the selection and the tool stay)
+		if not as_point:
+			_place_clear()   # (a direct order: the ghost, if any, is stale)
 		var carriers := 0
 		for s in selection:
 			if BattleSim.carrying(sim, s) != 0:
 				carriers += 1  # carrying siege equipment: no attacking
 				continue
-			_queue(BattleSim.make_attack_order(0, s, u, 1 if double else orders.value(s, "run")))
+			var ao := BattleSim.make_attack_order(0, s, u, 1 if double else orders.value(s, "run"))
+			if double:
+				ao["charge"] = 1   # (a double tap charges home: a caracole row does not ride a pass at it)
+			if as_point:
+				ao["append"] = 1
+			_queue(ao)
+		if as_point:
+			_count("wp_attack")
+			overlay.flash("Attack added as the last stop", w)
 		if carriers > 0:
 			overlay.flash("Carrying siege equipment: put it down first (Drop) to fight", w)
+		return
+	if _ground_tap_hook(w, double):
 		return
 	var dest := w / PX_PER_M * M
 	if friend_move:
@@ -3456,6 +3497,9 @@ func _finish_line(double_run: bool) -> void:
 	if selection.is_empty() or not overlay.preview_ok:
 		_count("line_too_short")
 		return
+	if _confirm_on():
+		_place_from_line()
+		return
 	_count("line_drag" if selection.size() == 1 else "line_drag_group")
 	for p in overlay.preview_group():
 		var u: int = p["unit"]
@@ -3635,6 +3679,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if mb.device == InputEvent.DEVICE_ID_EMULATION:
 				return
 			if mb.pressed:
+				_last_touch = false
 				_rmb = true
 				_rmb_shift = mb.shift_pressed
 				_rmb_pos = mb.position
@@ -3807,6 +3852,9 @@ func _on_key(e: InputEventKey) -> void:
 			elif _gm or _gm_pending:
 				_count("group_move_cancelled")
 				_gm_cancel()
+			elif place_on:
+				_count("place_cancel")
+				_place_clear()
 			else:
 				_select(-1)
 		"run":
@@ -3844,7 +3892,10 @@ func _on_key(e: InputEventKey) -> void:
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
 		"ready":
-			_deploy_ready()
+			if place_on:
+				_place_go()
+			else:
+				_deploy_ready()
 		"group_rotate_left":
 			_gm_turn(-GM_STEP)
 		"group_rotate_right":
@@ -3894,6 +3945,7 @@ func _keys_held(delta: float) -> void:
 func _on_touch(e: InputEventScreenTouch) -> void:
 	var is_mouse := e.device == InputEvent.DEVICE_ID_EMULATION
 	if e.pressed:
+		_last_touch = not is_mouse
 		if hud.is_over_ui(e.position):
 			_count("touch_on_ui")
 			return
@@ -3919,7 +3971,13 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_gesture_multi = false
 			_field_lp_start = Time.get_ticks_msec() / 1000.0 if not is_mouse else -1.0
 			_press_sec = Time.get_ticks_msec() / 1000.0
+			_stray_press = not is_mouse and Time.get_ticks_msec() - _multi_end_ms < STRAY_TAP_MS
+			_place_drag = _place_press(e.position)   # (on a handle of the ghost)
+			if _place_drag >= 0:
+				_field_lp_start = -1.0
 		elif _touches.size() >= 2:
+			_place_drag = -1
+			overlay.place_hot = -1
 			# Second finger: cancel any one-finger action, start pinch/pan.
 			if not _gesture_multi:
 				_count("pinch")
@@ -3964,12 +4022,16 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 		if _touches.is_empty():
 			_gesture_multi = false
 			_primary = -1
+			_multi_end_ms = Time.get_ticks_msec()
 		return
 	if e.index != _primary:
 		return
 	_primary = -1
 	var now := Time.get_ticks_msec() / 1000.0
 	var double := now - _last_tap_time < DOUBLE_TAP_SEC and e.position.distance_to(_last_tap_pos) < DOUBLE_TAP_DIST
+	if _place_drag >= 0:
+		_place_release(double, now, e.position)
+		return
 	if _dragging:
 		_dragging = false
 		if _works_drag:
@@ -3992,6 +4054,10 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if _field_lp_start < 0.0 and not is_mouse:
 		return  # the long press opened the unit book
 	_field_lp_start = -1.0
+	if _stray_press:
+		_stray_press = false
+		_count("tap_after_gesture_dropped")
+		return   # a finger that landed just after a pinch or a pan: not a tap
 	if is_mouse:
 		_left_click(e.position, double, now - _press_sec >= SELECT_LONG_PRESS_SEC)
 	else:
@@ -4017,6 +4083,9 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		_update_pinch()
 		return
 	if e.index != _primary:
+		return
+	if _place_drag >= 0:
+		_place_drag_to(e.position)
 		return
 	var is_mouse := e.device == InputEvent.DEVICE_ID_EMULATION
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
@@ -4880,3 +4949,450 @@ func _au_land(p: int) -> void:
 	_au_rec.erase(p)
 	var m := _au_mix(r[0], r[1])
 	AudioFx.play("burst" if r[3] > 0 else ("bolt_impact" if r[2] == 1 else "stone_impact"), m.x, m.y, "art")
+
+
+# ----------------------------------------- confirm orders and the placement tool ---
+# View only (docs/design/ui.md "Confirm orders and the placement tool"). The owner's phone report: with units selected any
+# single tap on the board was a move order, so a stray tap behind an engaged line turned it round. With Confirm orders on
+# (game/confirm_orders.gd: auto = while the last input was a touch) a tap on the ground, a line drag or a double tap places a
+# GHOST of the selection (the order preview's footprints and dots, the facing arrow) with three kinds of upright handles:
+# body (move), front (turn, 15 degree steps, soft stops on the facing it had and on facing the nearest enemy), ends (width,
+# one rank at most). The toolbar (HUD): Go sends the order once (a move for each unit, as the tap or the line drag would have)
+# and clears the selection; Run; Waypoint (the ghost becomes the next stop and the tool stays open); X. The ghost is a few
+# fields here and in the overlay: no sim state, no lockstep input until Go. The gesture guards (always): a tap within
+# STRAY_TAP_MS of a pinch or a two-finger pan ending is dropped; with Confirm off a tap that orders a fighting unit must be
+# held HOLD_ORDER_SEC.
+
+const ConfirmOrders := preload("res://game/confirm_orders.gd")
+const STRAY_TAP_MS := 300          # a finger down this soon after a pinch / two-finger pan ended is a stray tap
+const HOLD_ORDER_SEC := 0.25       # Confirm off: a tap that orders a unit in the fight must be held this long
+const PLACE_SNAP_DEG := 15.0       # the front handle turns in steps of this
+const PLACE_DETENT_DEG := 5.0      # ... with a soft stop this close to the old facing and to facing the enemy
+
+var _last_touch: bool = UiScale.is_touch()   # the last input on the field was a finger (Confirm orders: auto)
+var _multi_end_ms := -100000       # when the last pinch / two-finger pan ended
+var _stray_press := false          # the finger now down came soon after one
+var _hold_hint_done := false       # "Hold to order a fighting unit" was said this battle
+var place_on := false
+var place_kind := ""               # "line" | "group"
+var place_c := Vector2.ZERO        # world px: the front rank's middle (a group: the tap point)
+var place_face := 0                # 0..1023
+var place_len := 0.0               # a line: world px
+var place_run := false
+var place_exact := false           # a line that was never widened: the unit's own files
+var place_clamped := false
+var _place_run_touched := false
+var _place_rel: Array = []         # a group: [{unit, rel (sim units), face0, files}]
+var _place_ref := 0                # a group: the facing its relative places were measured at
+var _place_layout: Array = []
+var _place_drag := -1              # the handle held (Overlay.PH_*), -1 none
+var _place_grab := Vector2.ZERO
+var _place_face0 := 0              # the facing when the front handle was taken
+var _place_moved := false
+var _place_tick := -1
+var _place_zoom := 1.0
+var _demo_place := ""              # --demo-place=: the ghost to put up
+var _demo_place_frames := 0
+var _place_sel: Array[int] = []    # the selection the ghost was placed for
+var _order_tag := ""               # the next order batch's name for the Undo toast ("line, 60 m")
+
+
+## Orders are confirmed now: Confirm orders is on (or auto after a touch), units are selected, the battle runs.
+func _confirm_on() -> bool:
+	return interactive and sim.phase == BattleSim.PHASE_BATTLE and _exit_timer <= 0.0 and not selection.is_empty() \
+		and ConfirmOrders.active(_last_touch)
+
+
+func _place_connect() -> void:
+	hud.place_go_pressed.connect(_place_go)
+	hud.place_run_toggled.connect(func(on: bool):
+		place_run = on
+		_place_run_touched = true
+		_count("place_run"))
+	hud.place_waypoint_pressed.connect(_place_waypoint)
+	hud.place_cancel_pressed.connect(func():
+		_count("place_cancel")
+		_place_clear())
+
+
+func _place_clear() -> void:
+	if not place_on and _place_drag < 0:
+		return
+	place_on = false
+	_place_drag = -1
+	_place_layout = []
+	overlay.place_on = false
+	overlay.place_layout = []
+	overlay.place_handles = []
+	overlay.place_hot = -1
+	overlay.place_note = ""
+	hud.set_place_bar(false)
+	overlay.queue_redraw()
+
+
+## Whether every selected unit (guns apart) already runs: the Run toggle's start.
+func _place_run_start() -> bool:
+	var any := false
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY or UT.cls(sim.u_type[u]) == UT.CLS_ART:
+			continue
+		if orders.value(u, "run") == 0:
+			return false
+		any = true
+	return any
+
+
+func _place_open() -> void:
+	if not place_on:
+		place_on = true
+		_place_sel = selection.duplicate()
+		place_run = _place_run_start()
+		_place_run_touched = false
+	_place_refresh()
+
+
+## A tap on the ground (the hook in _tap) with Confirm orders on: place the ghost there, facing the way the men would
+## travel. The second tap of a double lights the ghost's Run instead.
+func _place_from_tap(w: Vector2, double: bool) -> void:
+	if double and place_on:
+		place_run = true
+		_place_run_touched = true
+		_count("place_double")
+		_place_refresh()
+		return
+	_count("place_tap")
+	var app := _wp_append()
+	var dest := w / PX_PER_M * M
+	var at := {}
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY:
+			at[u] = orders.chain_end(u) if app else Vector3i(orders.value(u, "ax"), orders.value(u, "ay"), orders.value(u, "face"))
+	if at.is_empty():
+		return
+	var ids: Array = at.keys()
+	var cx := 0.0
+	var cy := 0.0
+	for u in ids:
+		cx += (at[u] as Vector3i).x
+		cy += (at[u] as Vector3i).y
+	cx /= ids.size()
+	cy /= ids.size()
+	var prim: int = selected if at.has(selected) else int(ids[0])
+	var ref: int = (at[prim] as Vector3i).z
+	var d := dest - Vector2(cx, cy)
+	var turn := 0
+	if d.length_squared() > 4.0 * M * M:
+		var want := int(round(atan2(d.y, d.x) * 1024.0 / TAU)) & 1023
+		turn = ((want - ref + 512) & 1023) - 512
+	place_c = w
+	place_face = (ref + turn) & 1023
+	place_clamped = false
+	if ids.size() == 1:
+		place_kind = "line"
+		place_exact = true
+		place_len = maxf(float(BattleSim.files_to_width(orders.value(prim, "files"), sim.u_type[prim])) / M, MIN_LINE_M) * PX_PER_M
+		place_len = minf(place_len, maxf(overlay.max_line_px(), MIN_LINE_M * PX_PER_M))
+	else:
+		place_kind = "group"
+		_place_ref = ref
+		_place_rel = []
+		for u in ids:
+			var e: Vector3i = at[u]
+			_place_rel.append({"unit": u, "rel": Vector2(e.x - cx, e.y - cy), "face0": e.z, "files": orders.value(u, "files")})
+	_place_open()
+
+
+## A line drag that ended (the hook in _finish_line) with Confirm orders on: the line is the ghost.
+func _place_from_line() -> void:
+	_count("place_line")
+	var d: Vector2 = overlay.preview_b - overlay.preview_a
+	place_kind = "line"
+	place_exact = false
+	place_c = (overlay.preview_a + overlay.preview_b) * 0.5
+	place_len = d.length()
+	place_clamped = overlay.preview_clamped
+	place_face = int(round((atan2(d.y, d.x) - PI * 0.5) * 1024.0 / TAU)) & 1023
+	_place_open()
+
+
+## The ghost's footprints (the sim's own order rules via the overlay's line layout, or the group's shape), the handles, the
+## toolbar; called on every change and now and then (units die, break and shrink).
+func _place_refresh() -> void:
+	if not place_on:
+		return
+	_place_tick = sim.tick
+	_place_zoom = camera.zoom.x
+	var ang := place_face * TAU / 1024.0
+	var fwd := Vector2(cos(ang), sin(ang))
+	var right := Vector2(-fwd.y, fwd.x)
+	_place_layout = []
+	if place_kind == "line":
+		place_len = clampf(place_len, MIN_LINE_M * PX_PER_M, maxf(overlay.max_line_px(), MIN_LINE_M * PX_PER_M))
+		overlay.preview_a = place_c - right * place_len * 0.5
+		overlay.preview_b = place_c + right * place_len * 0.5
+		overlay.preview_ok = true
+		place_clamped = overlay.max_line_px() > 0.0 and place_len >= overlay.max_line_px() - 0.5
+		overlay.zoom = camera.zoom.x
+		for p in overlay.preview_group():
+			var q: Dictionary = (p as Dictionary).duplicate()
+			q["facing"] = place_face
+			if place_exact and overlay.selected_units.size() == 1:
+				var pu: int = q["unit"]
+				q["files"] = orders.value(pu, "files")
+				q["width"] = BattleSim.files_to_width(int(q["files"]), sim.u_type[pu])
+			_place_layout.append(q)
+	else:
+		var turn := ((place_face - _place_ref + 512) & 1023) - 512
+		var rot := turn * TAU / 1024.0
+		for r in _place_rel:
+			var u: int = r["unit"]
+			if sim.u_state[u] != BattleSim.U_READY:
+				continue
+			var pos: Vector2 = place_c + (r["rel"] as Vector2).rotated(rot) / M * PX_PER_M
+			_place_layout.append({"unit": u, "centre": pos, "facing": (int(r["face0"]) + turn) & 1023,
+				"width": BattleSim.files_to_width(int(r["files"]), sim.u_type[u]), "files": int(r["files"])})
+	if _place_layout.is_empty():
+		_place_clear()
+		return
+	var hr := Overlay.PLACE_R / camera.zoom.x
+	var handles: Array = [{"id": Overlay.PH_BODY, "pos": place_c}]
+	var reach := 0.0
+	for p in _place_layout:
+		reach = maxf(reach, ((p["centre"] as Vector2) - place_c).dot(fwd))
+	handles.append({"id": Overlay.PH_FRONT, "pos": place_c + fwd * (reach + hr * 3.4)})
+	if place_kind == "line":
+		handles.append({"id": Overlay.PH_END_A, "pos": place_c - right * place_len * 0.5})
+		handles.append({"id": Overlay.PH_END_B, "pos": place_c + right * place_len * 0.5})
+	overlay.place_on = true
+	overlay.place_kind = place_kind
+	overlay.place_layout = _place_layout
+	overlay.place_handles = handles
+	overlay.place_face = place_face
+	overlay.place_clamped = place_clamped
+	overlay.queue_redraw()
+	hud.set_place_bar(true, place_run, true)
+
+
+## Which handle (Overlay.PH_*) is under screen point sp, or -1. The small ones win over the body.
+func _place_hit(sp: Vector2) -> int:
+	if not place_on:
+		return -1
+	var r := Overlay.PLACE_R * (1.8 if _last_touch else 1.3)
+	var best := -1
+	var best_d := 1e9
+	for h in overlay.place_handles:
+		var id: int = h["id"]
+		var d := world_to_screen(h["pos"]).distance_to(sp)
+		if d > r:
+			continue
+		if d < best_d:   # (the nearest handle's centre wins where the circles overlap)
+			best_d = d
+			best = id
+	return best
+
+
+func _place_press(sp: Vector2) -> int:
+	if not place_on or not _confirm_on():
+		return -1
+	var id := _place_hit(sp)
+	_place_moved = false
+	if id < 0:
+		return -1
+	_place_grab = place_c - _screen_to_world(sp)
+	_place_face0 = place_face
+	overlay.place_hot = id
+	overlay.queue_redraw()
+	return id
+
+
+func _place_drag_to(sp: Vector2) -> void:
+	var w := _screen_to_world(sp)
+	_place_moved = true
+	var ang := place_face * TAU / 1024.0
+	var fwd := Vector2(cos(ang), sin(ang))
+	var right := Vector2(-fwd.y, fwd.x)
+	match _place_drag:
+		Overlay.PH_BODY:
+			place_c = (w + _place_grab).clamp(Vector2.ZERO, BoardView.field_px)
+			_count("place_move")
+		Overlay.PH_FRONT:
+			var v := w - place_c
+			if v.length() > 3.0:
+				place_face = _place_snap(rad_to_deg(atan2(v.y, v.x)))
+			_count("place_turn")
+		Overlay.PH_END_A, Overlay.PH_END_B:
+			var sgn := 1.0 if _place_drag == Overlay.PH_END_B else -1.0
+			var other := place_c - right * sgn * place_len * 0.5
+			var nl := clampf(sgn * (w - other).dot(right), MIN_LINE_M * PX_PER_M, maxf(overlay.max_line_px(), MIN_LINE_M * PX_PER_M))
+			place_len = nl
+			place_c = other + right * sgn * nl * 0.5
+			place_exact = false
+			_count("place_width")
+	_place_refresh()
+
+
+## Degrees (the finger's direction) to a facing: a stop at the facing the ghost had and at facing the nearest enemy
+## (within PLACE_DETENT_DEG), else the nearest PLACE_SNAP_DEG step.
+func _place_snap(deg: float) -> int:
+	var cands: Array = [[rad_to_deg(_place_face0 * TAU / 1024.0), "as it stood"]]
+	var best := -1
+	var best_d := 0.0
+	for u in sim.n_units:
+		if sim.u_side[u] == player_side or sim.u_state[u] >= BattleSim.U_DESTROYED or sim.hidden_from(u, player_side):
+			continue
+		var d := (Vector2(sim.u_cx[u], sim.u_cy[u]) / M * PX_PER_M).distance_squared_to(place_c)
+		if best < 0 or d < best_d:
+			best = u
+			best_d = d
+	if best >= 0:
+		var ev := Vector2(sim.u_cx[best], sim.u_cy[best]) / M * PX_PER_M - place_c
+		cands.append([rad_to_deg(atan2(ev.y, ev.x)), "facing the enemy"])
+	overlay.place_note = ""
+	var out := deg
+	var stopped := false
+	for c in cands:
+		if absf(wrapf(deg - float(c[0]), -180.0, 180.0)) <= PLACE_DETENT_DEG:
+			out = float(c[0])
+			overlay.place_note = str(c[1])
+			stopped = true
+			break
+	if not stopped:
+		out = roundf(deg / PLACE_SNAP_DEG) * PLACE_SNAP_DEG
+	return int(round(out * 1024.0 / 360.0)) & 1023
+
+
+## The finger lifted from a handle: a drag ends; a still tap on it is a tap on the ghost (the second of a double lights Run).
+func _place_release(double: bool, now: float, pos: Vector2) -> void:
+	_place_drag = -1
+	overlay.place_hot = -1
+	overlay.place_note = ""
+	overlay.queue_redraw()
+	if _place_moved:
+		return
+	if double:
+		_last_tap_time = -10.0
+		if place_on:
+			place_run = true
+			_place_run_touched = true
+			_place_refresh()
+	else:
+		_last_tap_time = now
+		_last_tap_pos = pos
+
+
+## Go: one move order for each unit of the ghost (a waypoint when the chain tool is on), then the selection clears.
+func _place_go() -> void:
+	if not place_on or _place_layout.is_empty():
+		return
+	_count("place_go")
+	_place_send(false)
+	_place_clear()
+	_select(-1)   # (also ends the waypoint tool: it goes off when the selection changes)
+
+
+## Waypoint: the ghost becomes the next stop after the current move; the tool stays open for the next one.
+func _place_waypoint() -> void:
+	if not place_on or _place_layout.is_empty():
+		return
+	_count("place_waypoint")
+	if not waypoint_mode:
+		waypoint_mode = true
+		_wp_sel = selection.duplicate()
+		_count("wp_on")
+	_place_send(true)
+	_place_clear()
+	_refresh_actions()
+
+
+func _place_send(as_stop: bool) -> void:
+	_order_tag = "line, %d m" % int(round(place_len / PX_PER_M)) if place_kind == "line" and not place_exact else "move"
+	for p in _place_layout:
+		var u: int = p["unit"]
+		var c: Vector2 = p["centre"] / PX_PER_M * M
+		var why: String = orders.wall_refusal(u, int(c.x), int(c.y))
+		if why != "":
+			_count("wall_refused")
+			overlay.flash(why, p["centre"])
+			continue
+		var run := 1 if place_run else (0 if _place_run_touched else orders.value(u, "run"))
+		var mo := BattleSim.make_move_order(0, u, int(c.x), int(c.y), p["facing"], p["width"], run)
+		if as_stop or _wp_append():
+			_wp_queue_append(mo, p["centre"])
+		else:
+			_queue(mo)
+	_order_tag = ""
+
+
+## The hook in _tap for a tap on the ground: Confirm on places the ghost (returns true); Confirm off holds a fighting
+## unit's order back until the tap is held (true: nothing is ordered).
+func _ground_tap_hook(w: Vector2, double: bool) -> bool:
+	if _confirm_on():
+		_place_from_tap(w, double)
+		return true
+	if _rmb_order or not _last_touch or sim.phase != BattleSim.PHASE_BATTLE:
+		return false
+	var fighting := false
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and sim.u_fighting[u] > 0:
+			fighting = true
+	if not fighting or Time.get_ticks_msec() / 1000.0 - _press_sec >= HOLD_ORDER_SEC:
+		return false
+	_count("hold_to_order")
+	if not _hold_hint_done:
+		_hold_hint_done = true
+		overlay.flash("Hold to order a fighting unit", w)
+	return true
+
+
+func _place_process() -> void:
+	if _demo_place != "":
+		_demo_place_frames += 1
+		if _demo_place_frames > 6 and sim.phase == BattleSim.PHASE_BATTLE and selected >= 0:
+			var pf := _demo_place.split(",")
+			_demo_place = ""
+			_place_from_tap(Vector2(sim.u_cx[selected], sim.u_cy[selected]) / M * PX_PER_M + Vector2(float(pf[0]), float(pf[1])) * PX_PER_M, false)
+			if pf.size() > 2:
+				place_face = int(round(float(pf[2]) * 1024.0 / 360.0)) & 1023
+				_place_refresh()
+	if place_on:
+		if not _confirm_on():
+			_place_clear()
+		elif (sim.tick != _place_tick and sim.tick % 5 == 0 and _place_drag < 0) or camera.zoom.x != _place_zoom:
+			_place_refresh()
+	var toast: bool = hud.undo_toast != null and hud.undo_toast.visible
+	if place_on or toast:
+		var avoid := PackedVector2Array()
+		for h in overlay.place_handles:
+			avoid.append(world_to_screen(h["pos"]))
+		hud.layout_floaters(world_to_screen(place_c), avoid)
+
+
+## The Undo toast's words: "Pike 4: line, 60 m", "3 units: move".
+func _undo_toast_text() -> String:
+	if _undo_stack.is_empty():
+		return ""
+	var batch: Dictionary = _undo_stack.back()
+	var recs: Array = batch["recs"]
+	if recs.is_empty():
+		return "Undo"
+	var kind := str(batch.get("name", "order"))
+	if recs.size() > 1:
+		return "%d units: %s" % [recs.size(), kind]
+	var u := int(recs[0]["u"])
+	var short := str(UT.TYPES[sim.u_type[u]]["short"])
+	var n := 0
+	var idx := 0
+	for k in sim.n_units:
+		if sim.u_side[k] == sim.u_side[u] and sim.u_otype[k] == sim.u_otype[u]:
+			n += 1
+			if k <= u:
+				idx = n
+	return "%s%s: %s" % [short, (" %d" % idx) if n > 1 else "", kind]
+
+
+func _undo_batch_name(order: Dictionary) -> String:
+	if _order_tag != "":
+		return _order_tag
+	var t := int(order["type"])
+	var nm := str(ORDER_NAMES.get(t, "order"))
+	return {"run": "run or walk", "withdraw_all": "withdraw", "skirmish": "skirmish", "stance": "stance"}.get(nm, nm)

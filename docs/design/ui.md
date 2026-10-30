@@ -1249,3 +1249,113 @@ door; the War lodge), `hunting` (a bow drawn back on a nocked, feathered arrow; 
 a hanging scale; the Trading post). The Palisade is the existing `palisade` glyph (stakes on a bank) and the
 Milpa / Gardens the `farm` ear. They sit after `walls` in `UiIcons.NAMES`; no `_w` twins (the natives' only).
 The build popup rows read "Unlocks: ..." / "Effect: ..." under each chain (docs/design/campaign_rules.md).
+
+### Confirm orders and the placement tool (as built, 2026-10-30)
+
+**The owner's report (phone play):** "The phone version has lots of accidental clicks or movements of the armies ...
+Right now accidental clicks mid battle result in troops turning around in battle and getting wrecked." The cause:
+with units selected any single tap on the board was a move order (keep frontage), so a stray tap behind an engaged
+line turned it round, the selection never cleared, and stray taps come from pinch / pan gestures that end with one
+finger still down and from palm and thumb contacts. View only: nothing under `sim/` or `campaign/` changed; the orders
+are still `make_move_order` through `_queue`, issued later and once.
+
+**The setting.** `[ui] confirm_orders` = auto | on | off (`game/confirm_orders.gd`; `--confirm-orders=` overrides it, tests
+set `ConfirmOrders.force`), default auto. Auto is on while the last input on the field was a finger (`Battle._last_touch`:
+set by every non-emulated touch press, cleared by a mouse click or a right press; it starts as `UiScale.is_touch()`), off
+for the mouse. Options has the capsule Auto / On / Off beside UI size (same row, as Battle view shares Battle look's:
+the page keeps its height, `menu_test` checks it at 1024 x 576). The Controls page has two rows (battle section): the
+Placement tool and Stray touches; the touch cells of Move, Run, Line and Undo say what changes. The tool works in the
+battle phase only: the deployment's placing is already instant and free.
+
+**The tool** (`game/battle.gd`, section "confirm orders and the placement tool"; drawing in `game/overlay.gd`
+`_draw_place`; the toolbar and the toast in `game/hud.gd`). With confirm on and units selected, a tap on the ground
+(also on one's own footprint away from a marker, and the second tap of a double) or a line drag places a ghost and orders
+nothing. One unit: a line ghost, its own frontage at the tap, facing the way it would travel (exactly the files it has
+until an end handle is used); a line drag: a line ghost along the drag (one rank at most); two or more units from a tap:
+the group's shape (`_group_move`'s offsets), moved and turned as a whole. The ghost is the order preview's: the footprint of
+each unit (cyan-gold), the line, the dots of the men (woods green, walls red), the town routes and the facing arrow
+(`_draw_preview` is reused for a line ghost through `preview_a` / `preview_b`; the sim's order rules do the predicting).
+Handles, drawn upright in the oblique view like the markers (`_up`): **body** (a cross; drag to move), **front** (a
+triangle ahead of the line; drag to turn, 15 degree steps, a soft stop within 5 degrees of the facing it had and of facing the
+nearest enemy, with a word beside it), **ends** (a line only; drag to widen or narrow, the far end fixed, one rank long
+at most). The nearest handle's centre wins where circles overlap (27 px on touch, 20 px with a mouse). The ghost is world
+state in the view (it survives pan and zoom, the handles keep their screen size); a new selection, a two-finger tap, X, Esc
+or a direct attack drops it. Re-tapping the ground elsewhere places it again.
+
+**The toolbar** (HUD chrome: the popovers' trim box): **Go** (one move order for each unit, the run if lit; then the
+selection clears, `_select(-1)`: tapping a card or symbol reselects; Enter too), **Run** (starts lit when every selected
+unit runs; a double tap lights it; unlit by hand it sends walks), **Waypoint** (the ghost goes out as the next stop after
+the current move, the waypoint tool stays on and the selection stays; the next ghost is the next stop, Go the last),
+**X**. Beside the ghost on a wide window (first of right, left, above, below that fits between the bars and clear of the
+handles), docked above the card bar on a phone or a touch device (`Hud.layout_floaters`). Attacks and shots (a tap on an
+enemy or its symbol), the chips, Withdraw, the gate / building / wall / ability taps stay direct orders and keep the
+selection, as with confirm off.
+
+**Gesture guards (always, whatever the setting).** A finger down within 300 ms of a pinch or two-finger pan ending is a
+stray: its tap is dropped (`tap_after_gesture_dropped`; a drag from it is a normal drag). A finger that moved past the pan
+threshold (18 px) was never a tap (as before: with a selection it draws the line, without it pans). With confirm off, a tap
+that would move a selection containing a unit in the fight (`u_fighting[u] > 0`, read only) must be held 0.25 s; a quick
+one orders nothing and says "Hold to order a fighting unit" once a battle (`hold_to_order`). Only touch taps: a right click
+and the tests' direct `_tap` calls are never held back.
+
+**The Undo toast.** The Undo button is now inside a toast above the card bar (docked above the toolbar when both
+show) with the order's words: "Pike 4: line, 60 m", "Heavy: move", "3 units: attack" (one unit: its short type name and,
+when there are several of that type, its number; a batch of several: the count and the first order's kind; a drag ghost
+sent by Go: "line, N m"). It shows `UNDO_SHOW_SEC` (6 s), the batches and the key (Ctrl+Z) are unchanged;
+`hud.undo_button` is the same Button (name `undo`, in the toast), `Hud.set_undo_toast` shows and hides it.
+
+| Input (touch) | Confirm off (today) | Confirm on |
+|---|---|---|
+| Tap the ground | move, keep frontage (a fighting unit: held 0.25 s) | ghost at the tap |
+| Double tap the ground | move running | the ghost's Run lit |
+| Drag with a selection | line order | line ghost |
+| Tap an enemy / its symbol | attack | attack (the ghost drops) |
+| Handles, toolbar | - | move / turn / widen; Go, Run, Waypoint, X |
+| Tap within 300 ms after a pinch or pan | dropped | dropped |
+| Two-finger tap | deselect | drops the ghost and deselects |
+| Chips, Withdraw, gates, buildings | direct | direct |
+
+**Attack as the last waypoint (the owner's addition, view built against the sim contract).** "Waypoints are working well,
+can we add attacking as a point?" In the waypoints tool (the lit Waypoints chip, the toolbar's Waypoint flow, Shift + right
+click) a tap on an enemy unit or its symbol no longer attacks at once: it queues `make_attack_order` with `"append": 1`, which
+the sim appends as the final waypoint (a record whose flags carry `WP_ATTACK`, x the target unit; nothing can follow it; an
+ordinary attack when no move is under way). The sim's `chain_from` entries carry `"attack"` (-1 for a stop); the final attack entry is
+at the enemy's place now (it follows the enemy each frame), `chain_end` skips it (the men's last place to stand is the stop
+before), `Overlay._draw_chain` draws crossed swords in a red ring with the dashed link from the last stop, a tap on the dot
+removes it like a numbered one (`_wp_remove` re-issues the rest, the attack as an appended attack order; the second tap of a
+double that added it is ignored), and the tool stays on until the selection changes. Test: `_step_wa_*` in `tests/input_test.gd` .
+
+**The caracole's phase (the owner's second addition, view only).** The owner saw pistoleers close, stand back at skirmish range and
+"not seem to attack" and took the 30 s pistol reload for a bug. `Traits.caracole_text` reads `sim.car_on`, `u_car`, `u_crk`:
+"Firing" (1), "Wheeling" (2), "Reloading 18 s" counting down from `CAR_RELOAD` for pistol riders (range <= `CAR_PISTOL_R`; muskets
+"Reloading"), nothing at 0. It is the card's state word (`Hud.update_cards`; a narrow card shows F / W / R beside the count; the
+tip's summary has the words), and a small label under the floating marker (`Overlay._draw_markers`). The Caracole chip's tip says "A double
+tap on the enemy charges home" and the How to play battle line says what the drill does and that Hold or a double tap is a charge.
+Finding: the double tap did NOT set the sim's `charge` key (only `run`), so a double tap on a caracole row's own target was ignored
+in phases 2 and 3 (`_apply_unit`) and did not end the drill (`_car_order`); the view now sets `"charge": 1` on the attack orders of a
+double tap (a key the sim already reads; no sim change). Test: `_step_car_*` in `tests/input_test.gd`.
+
+**What differs from the brief, and why.**
+- A tap with several units selected places the group's shape (as `_group_move` did) with a body and a front handle but no
+  end handles; only a single unit or a drag has a width to change. A group dragged as a line is a line ghost with the end
+  handles (the units share the length by their men, as the line order does).
+- Tap-and-hold, three-finger group moves (`three_finger_move`, Alt+drag) and the box select are untouched: the three-finger
+  move already shows its own ghost and places on lifting a finger.
+- The mouse with Auto is off, so a right click orders as before; with On the right click and right drag place the ghost and
+  the left button drags the handles.
+- The deployment phase is not covered (placing there is instant and free).
+- The Undo toast replaces the bar's button: the bar loses a 58 px item.
+- `--demo-place=dx_m,dy_m[,deg]` (with `--select=`) puts a ghost up for screenshots and `--frame-stats`.
+
+**Tests.** `tests/input_test.gd` runs its old steps with `ConfirmOrders.force = "off"` and a block of placement steps with it
+on (a ghost by tap, by drag, moved by the body handle, turned by the front handle, widened by an end handle, re-placed, the
+Run toggle, Go sends exactly one order and clears the selection, the toast names it and its Undo takes it back, X, a tap on
+an enemy attacks, a double tap lights Run, a group's Go, the Waypoint button, a two-finger tap drops it; the guards: a tap right
+after a pinch is dropped and one 450 ms later is not, the quick and the held tap on a fighting unit with confirm off).
+`tests/menu_test.gd`: the Options capsule beside UI size, its stored value, the Controls page rows.
+
+**Open.** The handles are small at the widest zoom-out (they keep their screen size, so a very small ghost has overlapping
+handles: zoom in); the front handle has no "snap off" key for the mouse (hold nothing: 15 degree steps always); a ghost does
+not follow units that stand on a wall walk; the toolbar's Run does not know the guns (they never run); the group tap ignores
+a unit that cannot stand on the spot (the sim's refusal shows after Go as ever); the hold guard is touch only and does not
+cover line drags; a short phone playtest should decide whether 300 ms and 0.25 s are right.

@@ -416,9 +416,7 @@ func route_from_fields(u: int, d: Dictionary) -> Dictionary:
 # town maps (straight elsewhere).
 
 ## Unit u's predicted waypoint queue (pending orders included): WP_K values a
-## waypoint (x, y, facing, width, flags), raw as ordered. A final attack
-## (ORDER_ATTACK "append" 1): flags has BattleSim.WP_ATTACK, x the target
-## unit, y / facing / width 0; always the last.
+## waypoint (x, y, facing, width, flags), raw as ordered.
 func wp_of(u: int) -> PackedInt32Array:
 	if _view.has(u):
 		return (_view[u] as Dictionary)["wp"]
@@ -429,9 +427,7 @@ func wp_of(u: int) -> PackedInt32Array:
 ## entry a stop, the first the current move's destination: {"at": Vector2i
 ## (where its front centre forms up), "face", "files", "run", "pts" (the leg
 ## from the stop before, sim x, y pairs; empty for the first), "blocked"
-## (no way found for that leg), "attack": the target unit of a final attack
-## (its "at" the target's centre, its face towards it; "blocked" if the
-## target is gone or the order rule refuses it), else -1}.
+## (no way found for that leg)}.
 func chain(u: int) -> Array:
 	if sim.u_state[u] != BattleSim.U_READY:
 		return []
@@ -455,8 +451,7 @@ func chain_from(u: int, d: Dictionary) -> Array:
 		f["ax"] = prev.x
 		f["ay"] = prev.y
 		if (q[k + 4] & BattleSim.WP_ATTACK) != 0:
-			# The final attack, through the order rule as the sim gives it
-			# when it pops (_wp_pass).
+			# The final attack, through the order rule as the sim gives it when it pops (_wp_pass).
 			var t := q[k]
 			var oa := BattleSim.make_attack_order(0, u, t, 1 if (q[k + 4] & BattleSim.WP_RUN) != 0 else 0)
 			BattleSim.apply_order_rule(sim, u, f, oa)
@@ -482,12 +477,10 @@ func chain_from(u: int, d: Dictionary) -> Array:
 
 ## Where unit u ends up under its predicted order and waypoints: (x, y,
 ## facing) of the last stop, the move's destination, or where it stands.
-## A final attack is left out: the next appended order replaces it, so the
-## chain goes on from the stop before it.
 func chain_end(u: int) -> Vector3i:
 	var ch := chain(u)
 	if not ch.is_empty() and int((ch.back() as Dictionary)["attack"]) >= 0:
-		ch.pop_back()
+		ch.pop_back()   # (a final attack is not a place to stand: the next append goes on from the stop before it)
 	if not ch.is_empty():
 		var e: Dictionary = ch.back()
 		return Vector3i((e["at"] as Vector2i).x, (e["at"] as Vector2i).y, int(e["face"]))

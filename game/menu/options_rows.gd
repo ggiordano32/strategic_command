@@ -20,6 +20,7 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
+const ConfirmOrders := preload("res://game/confirm_orders.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
@@ -46,10 +47,15 @@ func build(parent: Control, o: Dictionary) -> void:
 	_building = true
 	var title: bool = bool(o.get("title", false))
 	_section(parent, "Display", false)
-	_choice(parent, "ui_size", "UI size", "Size of the buttons and text.", [["S", "S"], ["M", "M"], ["L", "L"]], UiScale.size_name(),
+	_choice(parent, "ui_size", "UI size", "Size of the buttons and text. The second capsule, Confirm orders: Go before a tap orders.", [["S", "S"], ["M", "M"], ["L", "L"]], UiScale.size_name(),
 		"UI size", "Small, Medium or Large buttons and text. Large is easier on a phone or a tablet.", func(v):
 			UiScale.set_size_name(_win(), str(v))
 			_call("on_size"))
+	# Confirm orders beside UI size, on the same row (the placement tool, game/confirm_orders.gd).
+	_beside("ui_size", "confirm_orders", [["Auto", "auto"], ["On", "on"], ["Off", "off"]], ConfirmOrders.pref(), "Confirm orders",
+		"On: with units selected a tap on the ground or a line drag places a ghost (move it, turn it, widen it) and Go sends the order; " \
+		+ "the selection clears after Go. Off: a tap orders at once. Auto: On while you play by touch, Off with the mouse. " \
+		+ "Attacks, the chips and Withdraw always order at once.", func(v): ConfirmOrders.save_pref(str(v)))
 	_choice(parent, "quality", "Graphics", "How much detail to draw.", [["Auto", "auto"], ["High", "high"], ["Low", "low"]], Quality.load_pref(),
 		"Graphics", "Auto picks Low on devices that need the compatible soldiers path or run a battle slowly, else High. Low: a plainer ground, " \
 		+ "no grass or scrub, a still sea. Takes effect at the next battle; the map on the next open.", func(v):
@@ -316,6 +322,7 @@ func refresh() -> void:
 		if seg.has(key):
 			(seg[key] as Kit.Segmented).set_value(v)
 	put.call("ui_size", UiScale.size_name())
+	put.call("confirm_orders", ConfirmOrders.pref())
 	put.call("quality", Quality.load_pref())
 	put.call("soldiers", SoldierLayer.load_pref())
 	put.call("fullscreen", 1 if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else 0)

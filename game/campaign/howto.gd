@@ -31,7 +31,7 @@ const T := {
 	# 6. Battles and the chips
 	"battle_1": "In a battle you place your companies in the blue zone, press Start battle, then give orders by tapping: the ground to move, an enemy to attack.",
 	"battle_2": "The buttons along the bottom are chips: Fire at will, Halt, Withdraw and more. Hold your finger or the mouse on a chip to read what it does.",
-	"battle_3": "Halt keeps a company where it stands, and Withdraw pulls a hurt one out of the fight. The battle ends when one side is beaten or the time is up.",
+	"battle_3": "Halt keeps a company where it stands, and Withdraw pulls a hurt one out of the fight. The battle ends when one side is beaten or the time is up. Horse with pistols caracole: they ride up, fire, wheel back and reload (the card says Firing, Wheeling, Reloading; pistols wait 30 s), and set the Caracole chip to Hold or double tap the enemy to charge home instead.",
 	# 7. The sea
 	"sea_1": "A fleet carries armies over the water. Walk an army to a lit beach beside your fleet, or into a port, and it boards.",
 	"sea_2": "Select the fleet and tap the sea to sail: the shaded water is how far it gets this turn, and the wind matters. Tap a lit beach to land the troops aboard.",
@@ -89,7 +89,7 @@ const T := {
 	# The battle tutorial (lesson 6's battle): six steps and two small cards between them
 	"step_1": "Place your line: drag a company into the blue zone to set where it stands.",
 	"step_1b": "Happy with the line? Press Start battle.",
-	"step_2": "Move it forward: select your companies and tap the ground ahead of them.",
+	"step_2": "Move it forward: select your companies and tap the ground ahead of them. On a touch screen the tap places a ghost: drag its handles to turn or widen it, then press Go.",
 	"step_3": "Fire at will: your musketeers were told to hold fire. Select them, open the Fire chip and choose At will, and they shoot any enemy in range by themselves. Hold the chip to read what it does.",
 	"step_4": "Charge with the horse: select the horse and tap an enemy company.",
 	"step_5": "Hold: select a company and press Halt to stop it where it stands.",

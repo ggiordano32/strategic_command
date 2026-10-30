@@ -15,6 +15,7 @@ const LastSeen := preload("res://game/last_seen.gd")
 const Marks := preload("res://game/tabletop_marks.gd")
 const CData := preload("res://campaign/cdata.gd")
 const BoardView := preload("res://game/board_view.gd")
+const Traits := preload("res://game/unit_traits.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -739,6 +740,8 @@ func _draw() -> void:
 		_draw_stretch(_stretch_flash, lw, 0.9)
 	if preview_on:
 		_draw_preview(lw)
+	if place_on:
+		_draw_place(lw)
 	if sim.phase == BattleSim.PHASE_DEPLOY and sim.fw_on != 0:
 		_draw_works_pending(lw)
 	for g in ghosts:
@@ -1057,6 +1060,15 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.8), lw)
 		if selected_units.has(u):
 			draw_arc(c, r * 1.6, 0, TAU, 20, Color.WHITE, lw)
+		if sim.car_on != 0 and sim.u_car[u] != 0:
+			# The caracole's phase under the marker (Firing / Wheeling / Reloading 18 s).
+			var ctx := Traits.caracole_text(sim, u)
+			if ctx != "":
+				var cfs := _font_size(11.0)
+				var ctw := ThemeDB.fallback_font.get_string_size(ctx, HORIZONTAL_ALIGNMENT_LEFT, -1, cfs).x
+				var cat := c + Vector2(-ctw * 0.5, r * 2.5)
+				draw_rect(Rect2(cat + Vector2(-3, -cfs), Vector2(ctw + 6, cfs + 4)), Color(0, 0, 0, 0.6))
+				_dstr(cat, ctx, HORIZONTAL_ALIGNMENT_LEFT, -1, cfs, Color(1.0, 0.88, 0.5))
 		if vis and tick - sim.u_revt[u] < REVEAL_FX:
 			# Seen after hiding (it shot or broke cover): a ring that
 			# spreads and fades from the marker.
@@ -1726,6 +1738,8 @@ func _draw_chain(u: int, ch: Array, lw: float, primary: bool) -> void:
 		elif pts.size() == 4:
 			_dash_outlined(to_px(pts[0], pts[1]), to_px(pts[2], pts[3]), col, lw, 8.0 / zoom)
 	var last: Dictionary = ch.back()
+	if int(last["attack"]) >= 0 and ch.size() > 1:
+		last = ch[ch.size() - 2]   # (the footprint is where the men stand before the attack)
 	_draw_footprint(u, to_px((last["at"] as Vector2i).x, (last["at"] as Vector2i).y), int(last["face"]),
 		mini(int(last["files"]), sim.u_alive[u]), sim.u_alive[u], Color(COL_CHAIN, a), Color(COL_CHAIN, 0.1), lw)
 	var dr := chain_dot_r()
@@ -1736,6 +1750,16 @@ func _draw_chain(u: int, ch: Array, lw: float, primary: bool) -> void:
 		var ring := Color(1.0, 0.85, 0.35, 0.95) if int((ch[i] as Dictionary)["run"]) != 0 else Color(COL_CHAIN, 0.95)
 		draw_circle(c, dr * 1.25, Color(0, 0, 0, 0.55))
 		draw_circle(c, dr, Color(0.08, 0.14, 0.08, 0.85))
+		if int((ch[i] as Dictionary)["attack"]) >= 0:
+			# The attack as the last point: crossed swords in a red ring, on the enemy.
+			var rr := Color(1.0, 0.4, 0.3, 0.98)
+			_da(c, dr, 0, TAU, 18, rr, lw * 1.3)
+			var q := dr * 0.55
+			draw_line(c + Vector2(-q, -q), c + Vector2(q, q), Color(1, 0.92, 0.85), lw * 1.6)
+			draw_line(c + Vector2(-q, q), c + Vector2(q, -q), Color(1, 0.92, 0.85), lw * 1.6)
+			draw_line(c + Vector2(-q * 1.2, q * 0.5), c + Vector2(-q * 0.5, q * 1.2), rr, lw * 1.4)
+			draw_line(c + Vector2(q * 1.2, q * 0.5), c + Vector2(q * 0.5, q * 1.2), rr, lw * 1.4)
+			continue
 		_da(c, dr, 0, TAU, 18, ring, lw)
 		var txt := str(i + 1)
 		var tw := ThemeDB.fallback_font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
@@ -2491,3 +2515,88 @@ func _draw_works_pending(lw: float) -> void:
 			var fs := _font_size(13.0)
 			_dstr(mid + n * px_per_m * 3.5, "STAKES FACE THIS WAY",
 				HORIZONTAL_ALIGNMENT_CENTER, -1, fs, Color(1.0, 0.9, 0.6))
+
+
+# ------------------------------------------------- the placement tool (view only) ---
+# Confirm orders (game/confirm_orders.gd): a tap or a line drag with units selected places a ghost of the selection instead
+# of ordering; game/battle.gd keeps the ghost's state and sets these fields, this draws it: the line and the men's dots as
+# the drag preview does (a line ghost reuses preview_a / preview_b / _draw_preview), a cyan footprint per unit, and the
+# handles upright in the oblique view like the markers (body: move; front: turn; ends: width). Nothing reaches the sim.
+const PLACE_R := 16.0          # a handle's drawn radius, screen px
+const PH_BODY := 0
+const PH_FRONT := 1
+const PH_END_A := 2
+const PH_END_B := 3
+var place_on := false
+var place_kind := ""           # "line" (a, b = preview_a / preview_b) | "group" (the selection's shape)
+var place_layout: Array = []   # [{unit, centre (world px), facing, width, files}]
+var place_handles: Array = []  # [{id, pos (world px)}]
+var place_hot := -1            # the handle being dragged
+var place_note := ""           # a word by the front handle ("facing the enemy")
+var place_clamped := false     # the line is one rank long
+
+
+func _draw_place(lw: float) -> void:
+	var edge := Color(1.0, 0.92, 0.55, 0.95)
+	var fill := Color(1.0, 0.92, 0.55, 0.14)
+	if place_kind == "line":
+		var ok := preview_ok
+		var cl := preview_clamped
+		preview_ok = true
+		preview_clamped = place_clamped
+		_draw_preview(lw)
+		preview_ok = ok
+		preview_clamped = cl
+	for p in place_layout:
+		var u: int = p["unit"]
+		if u < sim.n_units:
+			_draw_footprint(u, p["centre"], p["facing"], p["files"], sim.u_alive[u], edge, fill, lw)
+	var hr := PLACE_R / zoom
+	for h in place_handles:
+		var id: int = h["id"]
+		var pos: Vector2 = h["pos"]
+		var hot := id == place_hot
+		_up(pos)
+		var rr := hr * (1.2 if hot else 1.0)
+		draw_circle(pos, rr * 1.12, Color(0, 0, 0, 0.45))
+		draw_circle(pos, rr, Color(0.16, 0.12, 0.05, 0.88))
+		draw_arc(pos, rr, 0.0, TAU, 24, Color(1.0, 0.85, 0.35) if hot else edge, lw * 1.6)
+		var g := Color(1.0, 0.93, 0.6)
+		var k := rr * 0.5
+		if id == PH_BODY:
+			draw_line(pos + Vector2(-k, 0), pos + Vector2(k, 0), g, lw * 1.6)
+			draw_line(pos + Vector2(0, -k), pos + Vector2(0, k), g, lw * 1.6)
+			for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+				var t: Vector2 = pos + d * k
+				var n := Vector2(-d.y, d.x) * k * 0.4
+				draw_colored_polygon(PackedVector2Array([t + d * k * 0.3, t - d * k * 0.15 + n, t - d * k * 0.15 - n]), g)
+		elif id == PH_FRONT:
+			var ang := place_face_angle()
+			var fd := Vector2(cos(ang), sin(ang))
+			if BoardView.oblique:
+				fd = Vector2(fd.x, fd.y * BoardView.OBLIQUE_COS).normalized()
+			var side := Vector2(-fd.y, fd.x)
+			draw_colored_polygon(PackedVector2Array([pos + fd * k * 1.15, pos - fd * k * 0.6 + side * k * 0.8,
+				pos - fd * k * 0.6 - side * k * 0.8]), g)
+		else:
+			var ang2 := place_face_angle() + PI * 0.5
+			var ed := Vector2(cos(ang2), sin(ang2))
+			if BoardView.oblique:
+				ed = Vector2(ed.x, ed.y * BoardView.OBLIQUE_COS).normalized()
+			if id == PH_END_A:
+				ed = -ed
+			var sd := Vector2(-ed.y, ed.x)
+			draw_line(pos - ed * k * 0.2, pos + ed * k * 0.9, g, lw * 1.6)
+			draw_line(pos + ed * k * 0.9 - sd * k * 0.5, pos + ed * k * 0.9 + sd * k * 0.5, g, lw * 1.6)
+			draw_line(pos - ed * k * 0.2, pos - ed * k * 0.9, g, lw * 1.6)
+		if id == PH_FRONT and place_note != "":
+			var fs := _font_size(12.0)
+			_dstr(pos + Vector2(rr * 1.5, -rr * 0.2), place_note, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1.0, 0.9, 0.5))
+		_flat()
+
+
+var place_face := 0   # the ghost's facing (0..1023), set by the battle
+
+
+func place_face_angle() -> float:
+	return place_face * TAU / 1024.0

@@ -383,3 +383,19 @@ static func char_text(ty: int) -> String:
 	if UT.stat(ty, "fall_r") > 0:
 		out += ". If he falls, units near him lose heart"
 	return out + "."
+
+
+## The caracole's phase for the card and the floating marker (read only from the sim): "" when the unit is not caracoling,
+## "Firing" (closing to fire), "Wheeling" (riding back), "Reloading 18 s" (pistol riders count the wait down; muskets: "Reloading").
+static func caracole_text(sim, u: int) -> String:
+	if sim.car_on == 0 or sim.u_car[u] == 0 or sim.u_state[u] != sim.U_READY:
+		return ""
+	match int(sim.u_car[u]):
+		1:
+			return "Firing"
+		2:
+			return "Wheeling"
+	if int(sim.t_m_range[sim.u_type[u]]) <= sim.CAR_PISTOL_R:
+		var left: int = maxi(sim.CAR_RELOAD - (sim.tick - sim.u_crk[u]), 0)
+		return "Reloading %d s" % ((left + sim.TICKS_PER_SECOND - 1) / sim.TICKS_PER_SECOND)
+	return "Reloading"
