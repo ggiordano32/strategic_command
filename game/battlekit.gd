@@ -863,13 +863,14 @@ func _make_nodes() -> void:
 	_low_node = null
 	_shadow = null
 	shadow_ms = 0.0
-	if not (lay.get("pieces", []) as Array).is_empty():
-		# The town plan's landmark pieces (block 2): over the streets' ground, under the walls and houses.
+	if not (lay.get("pieces", []) as Array).is_empty() and not (BoardView.oblique and KitOb.ok() and not low):
+		# The town plan's landmark pieces (block 2): over the streets' ground, under the walls and houses. (The oblique
+		# view with the kit sheet stands them up in the sorted MultiMesh instead: _ob_landmarks.)
 		var pn := _PieceDraw.new()
 		pn.kit = self
 		add_child(pn)
 		BoardView.lift_node(pn)
-	if i_piece.is_empty():
+	if i_piece.is_empty() and (lay.get("pieces", []) as Array).is_empty():
 		return
 	if BoardView.oblique:
 		_ob_sort()
@@ -951,6 +952,8 @@ func _make_nodes() -> void:
 ## The draw order (nearness, farther first) of the pieces and the wall rows; the wall rows built here.
 func _ob_sort() -> void:
 	_ob_walls()
+	if KitOb.ok() and not low:
+		_ob_landmarks()
 	var items: Array = []
 	for i in i_piece.size():
 		items.append([BoardView.near_px(_ob_ground(i)), 0, i])
@@ -969,9 +972,38 @@ func _ob_sort() -> void:
 ## The ground point (world px) a piece stands on: the oblique kit's anchor is the footprint's centre; the stand-in's
 ## quad centre (the top-down image's) is stood up there.
 func _ob_ground(i: int) -> Vector2:
-	if KitOb.ok():
+	if _ob_sprite(i) >= 0:
 		return i_pos[i] * k
 	return _xform(i, i_piece[i]).origin
+
+
+## Instance i's sprite in the oblique kit sheet (-1: none, the stand-in): its piece at yaw 0, or the 180 degree render
+## when the hash flip (or the footprint's turn) has its outer face toward the camera (its image right pointing west).
+func _ob_sprite(i: int) -> int:
+	if low and KitOb.low == null:
+		return -1
+	return KitOb.index(Atlas.NAMES[i_piece[i]], i_e[i].x < 0.0)
+
+
+## The town plan's landmark pieces (block 2) as wall-like rows of the sorted MultiMesh (the oblique kit sheet's sprites
+## at their footprint's centre, the plan's scale), with their sort keys.
+func _ob_landmarks() -> void:
+	for pc in lay.get("pieces", []):
+		var a: Array = pc
+		var nm := MapGen.tp_kit_name(MapGen.tp_name(int(a[0])))
+		var yaw := float(int(a[3]) - 768) * TAU / 1024.0
+		var q := KitOb.index(nm, cos(yaw) < 0.0)
+		if q < 0:
+			continue
+		var sc := float(int(a[4])) / 1000.0
+		var e := Vector2(cos(yaw), sin(yaw))
+		var dn := Vector2(-e.y, e.x)
+		var c := Vector2(float(int(a[1])), float(int(a[2])))
+		var f := piece_foot(nm)
+		if not f.is_empty():
+			c += (e * (float(f["x0"]) + float(f["x1"])) * 0.5 + dn * (float(f["y0"]) + float(f["y1"])) * 0.5) * sc
+		_ob_row(c * k, Vector2(sc, 0.0), Vector2(0.0, sc), Color(KitOb.BASE + q, 0.0, float(culture), 0.0),
+			BoardView.near_px(c * k))
 
 
 ## The extruded walls: per wall ring, per stretch of at most WALL_SEG metres (none in a gate's opening) a front face
@@ -1049,7 +1081,7 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 	BoardView.apply(mat)
 	mat.set_shader_parameter("ob_ppm", k)
 	mat.set_shader_parameter("ob_timber", 1.0 if _timber else 0.0)
-	KitOb.apply(mat)
+	KitOb.apply(mat, k)
 	ob_mat = mat
 	_rubble_node = _RubbleDraw.new()
 	_rubble_node.kit = self
@@ -1082,10 +1114,13 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 
 ## The oblique kit (game/kit_ob.gd): a piece's row carries its footprint's centre and scale, not the top-down quad.
 func _ob_fix(buf: PackedFloat32Array, i: int, o: int) -> void:
-	if not KitOb.ok() or fallen(i):
+	var q := _ob_sprite(i)
+	if q < 0 or fallen(i):
 		return
-	var sc := (i_sx[i] + i_sy[i]) * 0.5
+	# (The sprite is the piece at its own size: scaled by the instance's scale along the piece's x, its width.)
+	var sc := i_sx[i]
 	var c := i_pos[i] * k
+	buf[o + 8] = float(KitOb.BASE + q)
 	buf[o] = sc
 	buf[o + 1] = 0.0
 	buf[o + 3] = c.x
@@ -1324,6 +1359,17 @@ class _LowDraw extends Node2D:
 			if kit.fallen(i):
 				continue
 			var p: int = kit.i_piece[i]
+			var q: int = kit._ob_sprite(i)
+			if q >= 0:
+				# The oblique kit sheet's pre-lit pass (4 px/m: the rect halved), its anchor at the footprint's centre.
+				var r2: Array = kit.KitOb.px(q)
+				var sc2: float = kit.i_sx[i] * float(kit.k) / kit.KitOb.ppm
+				var cu2: int = kit.i_cul[i]
+				var t2: Vector3 = kit.STONE_TINT[cu2]
+				draw_set_transform_matrix(Transform2D(0.0, Vector2(sc2, sc2), 0.0, kit.BoardView.to_board(kit.i_pos[i] * float(kit.k))))
+				draw_texture_rect_region(kit.KitOb.low, Rect2(-float(r2[4]), -float(r2[5]), float(r2[2]), float(r2[3])),
+					Rect2(float(r2[0]) * 0.5, float(r2[1]) * 0.5, float(r2[2]) * 0.5, float(r2[3]) * 0.5), Color(t2.x, t2.y, t2.z))
+				continue
 			var an: Array = kit.Atlas.ANCHOR[p]
 			var r: Array = kit.Atlas.RECT[p]
 			var e: Vector2 = kit.i_e[i]

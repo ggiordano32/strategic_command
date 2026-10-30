@@ -21,6 +21,7 @@ const Atlas := preload("res://game/battlekit_atlas.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const CData := preload("res://campaign/cdata.gd")
 const BoardView := preload("res://game/board_view.gd")
+const KitOb := preload("res://game/kit_ob.gd")
 
 const KINDS := 8               # atlas cells: 0 broadleaf, 1 pine, 2 olive / scrub, 3 cypress,
 							   # 4 grass tuft, 5 reeds, 6 willow, 7 bush
@@ -54,6 +55,7 @@ var _rng := 1
 var use_kit := true      # battle kit trees (--no-kit: the drawn canopies)
 var viewer_side := -1    # line of sight: the enemy's hidden units do not thin the canopy (they would show)
 var _kit_mat: ShaderMaterial
+var _ob_sheet := false   # the oblique view draws the kit sheet's trees (assets/battlekit_ob)
 var _n_inner := 0   # instances before the orchard rows (gameplay woods)
 
 
@@ -268,7 +270,7 @@ func _build() -> void:
 func apply_quality() -> void:
 	var low := Quality.is_low()
 	if _kit_mat != null:
-		_kit_textures(_kit_mat, low)
+		_kit_textures(_kit_mat, low, _ob_sheet)
 	if _cover_mmi != null:
 		_cover_mmi.visible = not low
 	if _mmi != null:
@@ -630,18 +632,47 @@ func _kit_material(mat: ShaderMaterial) -> void:
 			float(r[3]) / Atlas.ATLAS_H)
 		var an: Array = Atlas.ANCHOR[p]
 		anch[p] = Vector4(an[0], an[1], an[2], an[3])
+	var palm_lo := float(idx["tree_palm_a"])
+	var palm_hi := float(idx["tree_palm_b"])
+	_ob_sheet = BoardView.oblique and KitOb.ok()
+	if _ob_sheet:
+		# The oblique view with the kit sheet (assets/battlekit_ob): the trees' 40 degree sprites (yaw 0), in a compact
+		# table (the palms first, so the palm test stays a range): rects the sheet's uv, anch its size and anchor px.
+		var names: Array = ["tree_palm_a", "tree_palm_b"]
+		for kd in 8:
+			for sh in 4:
+				if not names.has(rows[kd][sh]):
+					names.append(rows[kd][sh])
+		rects.fill(Vector4.ZERO)
+		anch.fill(Vector4.ZERO)
+		for q in names.size():
+			var sp := KitOb.index(str(names[q]), false)
+			if sp >= 0:
+				rects[q] = KitOb.rects[sp]
+				anch[q] = KitOb.anch[sp]
+		for q in pidx.size():
+			pidx[q] = float(names.find(rows[q / 4][q % 4]))
+		palm_lo = 0.0
+		palm_hi = 1.0
+	mat.set_shader_parameter("ob_tree", 1.0 if _ob_sheet else 0.0)
 	mat.set_shader_parameter("pidx", pidx)
 	mat.set_shader_parameter("rects", rects)
 	mat.set_shader_parameter("anch", anch)
-	mat.set_shader_parameter("palm_lo", float(idx["tree_palm_a"]))
-	mat.set_shader_parameter("palm_hi", float(idx["tree_palm_b"]))
+	mat.set_shader_parameter("palm_lo", palm_lo)
+	mat.set_shader_parameter("palm_hi", palm_hi)
 	mat.set_shader_parameter("tint_k", 0.6 if not tropic else 0.45)
 	BattleLook.apply(mat)
-	_kit_textures(mat, Quality.is_low())
+	_kit_textures(mat, Quality.is_low(), _ob_sheet)
 
 
-static func _kit_textures(mat: ShaderMaterial, low: bool) -> void:
+static func _kit_textures(mat: ShaderMaterial, low: bool, ob := false) -> void:
 	mat.set_shader_parameter("is_low", low)
+	if ob:
+		# (The oblique kit sheet's passes: the same channels; its Low pass is the atlas halved, the uv the same.)
+		mat.set_shader_parameter("low_tex", KitOb.low if low else null)
+		mat.set_shader_parameter("albedo_tex", null if low else KitOb.alb)
+		mat.set_shader_parameter("nrm_tex", null if low else KitOb.nrm)
+		return
 	if low:
 		mat.set_shader_parameter("low_tex", load("res://assets/battlekit/atlas_low.png"))
 		mat.set_shader_parameter("albedo_tex", null)

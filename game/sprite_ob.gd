@@ -51,12 +51,11 @@ static func ensure() -> bool:
 	cells.fill(Vector4.ZERO)
 	if _load_ob():
 		source = "sprites_ob"
+	elif _load_standin():
+		source = "standin"
+		print("oblique view: no assets/sprites_ob: the stand-in figures (tools/sprites/iso)")
 	else:
-		push_warning("oblique view: assets/sprites_ob not found; stand-in figures (tools/sprites/iso iso_heavy_swords) for every unit")
-		if _load_standin():
-			source = "standin"
-		else:
-			push_warning("oblique view: no stand-in sheet either; the figures are drawn flat")
+		print("oblique view: no assets/sprites_ob (the web export leaves it out): the figures are drawn flat")
 	return source != ""
 
 
@@ -139,6 +138,7 @@ static func _load_ob() -> bool:
 	elevation = float(man.get("elevation_deg", 40.0))
 	if absf(elevation - 40.0) > 0.5:
 		push_warning("oblique view: assets/sprites_ob is rendered at %.1f degrees, the board at 40" % elevation)
+	var mirror := bool(man.get("mirror", false))
 	var units: Dictionary = man.get("units", {})
 	var entries := {}
 	for si in SpriteAtlas.SETS.size():
@@ -156,7 +156,8 @@ static func _load_ob() -> bool:
 			for d in 8:
 				var dn: String = DIRS[d]
 				var src := dn
-				var flip := false
+				# A mirrored sheet lists SE, E, NE with the SW, W, NW frames, to be drawn flipped about the anchor.
+				var flip := mirror and dn in ["SE", "E", "NE"]
 				if not (frames as Dictionary).has(dn):
 					# Mirrored sheets ("mirror": true): E, NE, SE are W, NW, SW flipped.
 					var m := {"E": "W", "NE": "NW", "SE": "SW"}

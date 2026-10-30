@@ -904,3 +904,39 @@ changes in `battle.gd`, `overlay.gd`, `soldier_layer.gd` + `soldiers.gdshaderinc
   arrays read in the CPU path's vertex stage (the kit trees already do so) and the per-pixel ground inversion; smoke, fire and the
   effects still lie flat on the board; pass 2's tufts want upright blades; the standards and tokens float with the marker but ignore a
   wall walk's height; long overlay lines across a hill follow the ground only at their ends; the CPU path's coarser order.
+
+#### The real sheets (2026-10-29)
+
+The view switched from the stand-ins to the art pass's sheets (above). View only; `sim/` and `campaign/` untouched.
+
+- **Figures.** `game/sprite_ob.gd` reads `assets/sprites_ob` (the manifest's header: `elevation_deg` 40 above the horizon, the 50 degree
+  tilt the board's constants already use; `px_per_m` 24, the board scaling it by px_per_m / 24): every one of the 45 sets has its
+  8 directions; `"mirror": true` is honoured (SE, E, NE list the SW, W, NW frames and are drawn flipped about the anchor: before, the
+  loader flipped only a direction that was missing). Texture first (`ResourceLoader.exists`), then the stand-in, then flat; the web
+  export leaves the folder out, so it prints one notice and falls back (stand-in on desktop runs from the project, flat on the web).
+  The engine sets (bolt, stone, scorpion, cannon, mortar, naval gun) stand up too now; the dead lie as the death's last frame.
+- **The kit.** `game/kit_ob.gd` now reads **`assets/battlekit_ob`** (the battle's own kit: albedo / world-normal / low passes, `<piece>__y0`
+  and `__y4`, the anchor at the footprint's centre, 8 px/m): every piece the battle draws is in it (the 62 block 1 pieces, walls to trees and
+  rocks, and the 32 landmark and civic pieces), so **`assets/kit_ob` (the structures kit, the overworld's minis) is not used by the
+  battle**: no battle piece maps to a `p_` key only. A piece's row carries code 100 + its sprite (a table of up to 192 in
+  `battlekit.gdshader`), its footprint's centre and its x scale; the shader lights it from its own normal pass exactly as the top-down kit
+  (the normal is the world's, so no turn), culture tint, rim, outline, the look's saturation and contrast. **y0 or y4:** the 180 degree
+  render when the instance's image right points west (`i_e.x < 0`: the hash flip, or a footprint turned past 90 degrees), else y0. A
+  piece turned near 90 degrees shows its yaw 0 / 180 sprite (only two renders): its width is then the piece's, not the footprint's.
+  The town plan's landmarks (`lay.pieces`) join the sorted MultiMesh as sprites (no longer drawn flat by `_PieceDraw`). The walls stay
+  extruded. Graphics Low draws the sheet's pre-lit pass (rects halved). The trees (`tree_layer.gd`) draw the sheet's tree sprites
+  (yaw 0) at their feet with the same lighting; the stand-in trunk is gone.
+- **The sweep.** `tests/oblique_sets_shot.gd` (windowed, `-- --out=DIR`): every set on flat ground, a unit's men in a row facing S, SW, W,
+  NW, N, NE, E, SE, a set a row at zoom 2, nine frames put together into `p3b_sets.png`. Feet on the ground for all 45 (the contact
+  shadow under each); horses, camels and the elephant stand taller than the men by the sheets' true heights (the elephant's howdah
+  about twice a man); the mirrored E, NE, SE are lit from the upper right and carry the weapon in the other hand (the art pass's
+  accepted cost); pikes and lances read at full length.
+- **Checked:** scripts clean; `battle_screen_test` RESULT PASS (both views, 148); `input_test` RESULT PASS in both views (393 each);
+  `soldier_facing_test` RESULT PASS (top; with `--battle-view=oblique` a standing line 0 px differ, moving men 36 to 873 px of 18,000 to
+  37,000: the CPU path's per-unit order); `lockstep_test` RESULT PASS.
+- **Cost.** The machine was shared during this round (load 12 to 21 from other processes), so the frames are noisy: bench_4000_hills at
+  the default fit, interleaved, best of 10 each: top 6.22 ms, oblique 6.32 ms (+0.10; the clean round above: top 7.00, oblique 7.07);
+  the sort 104 to 217 us a tick, as before. The bigger atlas (4096 x 5248, no mipmaps) shows nothing measurable
+  on the desktop; a phone's texture limit (4096 on many) and memory are the open questions (the sheets are not shipped on the web).
+- **Open.** A phone build of the sheets (size, the 4096 limit, mipmaps), the owner's eye on the kit's yaw choice for turned houses and on
+  the baked top-down shadow under the upright houses, the CPU path's order.

@@ -7,7 +7,9 @@ shader_type canvas_item;
 // the same side; the culture palette tints stone and fills the masked parts.
 // Instance custom data: x = piece index, y = rotation (rad), z = culture, w = flash (0..1).
 // The oblique view (tabletop pass 3, game/battlekit.gd "the oblique view"): a piece stands upright at its ground point
-// (the oblique kit sheet's frame with its anchor there, else the top-down piece stood up with its lower edge there);
+// (the oblique kit sheet's sprite, assets/battlekit_ob through game/kit_ob.gd: piece code 100 + its index, the row's origin
+// the footprint's centre, its x scale the piece's; drawn from its own albedo and world-normal passes and lit here as the
+// top-down kit is; else the top-down piece stood up with its lower edge there);
 // the wall rows (pieces 62 front face, 63 top) arrive already on the board, custom (piece, nearness at the stretch's
 // two ends, culture + 8 x height dm) and are shaded here. `ob_depth`: the occluder pass (game/kit_occluder.gd) writes
 // each opaque pixel's nearness (16 bits in R, G) instead of the colour.
@@ -18,10 +20,11 @@ uniform vec2 ob_near_r = vec2(0.0, 1.0);
 uniform float ob_ppm = 10.0;
 uniform float ob_timber = 0.0;
 uniform float ob_kit = 0.0;
-uniform sampler2D ob_ktex : filter_linear_mipmap, repeat_disable;
-uniform vec4 ob_krect[64];
-uniform vec4 ob_kanch[64];
-uniform float ob_kk = 0.4166667;
+uniform sampler2D ob_kalb : filter_linear, repeat_disable;
+uniform sampler2D ob_knrm : filter_linear, repeat_disable;
+uniform vec4 ob_krect[192];
+uniform vec4 ob_kanch[192];   // size px, anchor px (the footprint's centre on the ground)
+uniform float ob_kk = 1.25;   // board px per sheet px
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -54,7 +57,7 @@ void vertex() {
 	v_wall = vec4(0.0);
 	v_near = 0.0;
 	vec4 r = rects[clamp(pi, 0, 63)];
-	if (ob_on > 0.5 && pi >= 62) {
+	if (ob_on > 0.5 && pi >= 62 && pi < 100) {
 		// A wall row: already on the board.
 		float hdm = floor(cd.w / 8.0);
 		float hm = hdm * 0.1;
@@ -70,12 +73,13 @@ void vertex() {
 	} else {
 		if (ob_on > 0.5) {
 			vec2 o = MODEL_MATRIX[3].xy;
-			vec4 ka = ob_kanch[clamp(pi, 0, 63)];
-			if (ob_kit > 0.5 && ka.x > 0.0) {
-				// The oblique kit: the frame at the footprint's centre, scaled by the instance (its row's x scale).
+			if (ob_kit > 0.5 && pi >= 100) {
+				// The oblique kit: the sprite at the footprint's centre, scaled by the row's x scale.
+				int q = clamp(pi - 100, 0, 191);
+				vec4 ka = ob_kanch[q];
 				float sc = MODEL_MATRIX[0].x * ob_kk;
 				w = ob_board(o) + (UV * ka.xy - ka.zw) * sc;
-				r = ob_krect[clamp(pi, 0, 63)];
+				r = ob_krect[q];
 				v_wall.x = 3.0;
 			} else {
 				// The stand-in: the top-down piece stood up, its lower edge at the ground point.
@@ -86,7 +90,7 @@ void vertex() {
 		}
 		VERTEX = w;
 		UV = r.xy + UV * r.zw;
-		rot_cs = vec2(cos(cd.y), sin(cd.y));
+		rot_cs = v_wall.x > 2.5 ? vec2(1.0, 0.0) : vec2(cos(cd.y), sin(cd.y));   // (the sheet's normals are the world's)
 		culture = cd.z;
 		flash = cd.w;
 	}
@@ -143,22 +147,27 @@ vec4 ob_wall_col() {
 void fragment() {
 	if (v_wall.x > 0.5 && v_wall.x < 2.5) {
 		COLOR = ob_depth > 0.5 ? ob_near_col(1.0) : ob_wall_col();
-	} else if (v_wall.x > 2.5) {
-		// The oblique kit piece: its own lighting baked in; the culture tint on the stone.
-		vec4 ka = texture(ob_ktex, UV);
-		if (ka.a < (ob_depth > 0.5 ? 0.5 : 0.01)) {
-			discard;
-		}
-		int ci = clamp(int(culture + 0.5), 0, 7);
-		vec3 col = ka.rgb * stone_tint[ci];
-		col = mix(col, vec3(1.0, 0.62, 0.25), flash * 0.45);
-		COLOR = ob_depth > 0.5 ? ob_near_col(1.0) : vec4(clamp(col, 0.0, 1.0), ka.a);
 	} else {
-	vec4 a = texture(albedo_tex, UV);
+	// The top-down atlases, or the oblique kit sheet's passes (the same channels).
+	vec4 a;
+	vec4 n;
+	float hn;
+	if (v_wall.x > 2.5) {
+		a = texture(ob_kalb, UV);
+		n = texture(ob_knrm, UV);
+		vec2 tx = 1.5 / vec2(textureSize(ob_knrm, 0));
+		hn = (texture(ob_knrm, UV + vec2(tx.x, 0.0)).b + texture(ob_knrm, UV - vec2(tx.x, 0.0)).b
+			+ texture(ob_knrm, UV + vec2(0.0, tx.y)).b + texture(ob_knrm, UV - vec2(0.0, tx.y)).b) * 0.25;
+	} else {
+		a = texture(albedo_tex, UV);
+		n = texture(nrm_tex, UV);
+		vec2 tx = 1.5 / vec2(textureSize(nrm_tex, 0));
+		hn = (texture(nrm_tex, UV + vec2(tx.x, 0.0)).b + texture(nrm_tex, UV - vec2(tx.x, 0.0)).b
+			+ texture(nrm_tex, UV + vec2(0.0, tx.y)).b + texture(nrm_tex, UV - vec2(0.0, tx.y)).b) * 0.25;
+	}
 	if (a.a < 0.01) {
 		discard;
 	}
-	vec4 n = texture(nrm_tex, UV);
 	vec2 nxy = n.rg * 2.0 - 1.0;
 	float nz = sqrt(max(1.0 - dot(nxy, nxy), 0.0));
 	// Piece space (x right, y up = its outer side) to the screen: right -> (c, s), up -> (s, -c).
@@ -180,10 +189,6 @@ void fragment() {
 	col *= lf;
 	// Rim: pixels higher than their surroundings catch the light; outline on the silhouette.
 	float hgt = n.b;
-	float hn = (texture(nrm_tex, UV + vec2(1.5, 0.0) / vec2(textureSize(nrm_tex, 0))).b
-		+ texture(nrm_tex, UV - vec2(1.5, 0.0) / vec2(textureSize(nrm_tex, 0))).b
-		+ texture(nrm_tex, UV + vec2(0.0, 1.5) / vec2(textureSize(nrm_tex, 0))).b
-		+ texture(nrm_tex, UV - vec2(0.0, 1.5) / vec2(textureSize(nrm_tex, 0))).b) * 0.25;
 	col += rim * clamp((hgt - hn) * 28.0, 0.0, 1.0) * vec3(1.0, 0.95, 0.8);
 	col *= 1.0 - outline * (1.0 - smoothstep(0.55, 0.98, a.a));
 	float lum = dot(col, vec3(0.3, 0.59, 0.11));

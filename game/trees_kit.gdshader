@@ -36,6 +36,7 @@ uniform float sat = 1.22;
 uniform float contrast = 1.12;
 uniform float palm_lo = 100.0;
 uniform float palm_hi = -1.0;
+uniform float ob_tree = 0.0;   // the oblique view with the kit sheet: rects / anch are its sprites (anch: size px, anchor px)
 
 varying vec2 world;
 varying vec2 q;
@@ -73,7 +74,17 @@ void vertex() {
 	vec2 so = vec2(0.8, 1.0) * cd.z * 0.6;
 	qoff = vec2(so.x * rcs.x + so.y * rcs.y, -so.x * rcs.y + so.y * rcs.x) / size;
 	v_trunk = vec3(0.0);
-	if (ob_on > 0.5) {
+	if (ob_on > 0.5 && ob_tree > 0.5) {
+		// The kit sheet's tree at its foot: the sprite scaled so its width is the crown's (as the top-down piece's).
+		vec2 q01 = (q - 0.5) / M + 0.5;   // (VERTEX is already placed here: the quad's corner from q)
+		float f = cd.z * 2.16 / max(an.x, 1.0);
+		vec2 off2 = (q01 * an.xy - an.zw) * f;
+		VERTEX = ob_board(cd.xy) + off2;
+		q = q01;
+		rcs = vec2(1.0, 0.0);
+		qoff = vec2(0.0);
+		world = cd.xy + vec2(off2.x, min(off2.y, 0.0) / OB_COS);
+	} else if (ob_on > 0.5) {
 		// Upright: the crown's centre 1.15 radii above the foot, unturned; the trunk from it down to the foot.
 		float rise = cd.z * 1.15;
 		rcs = vec2(1.0, 0.0);
