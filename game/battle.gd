@@ -282,11 +282,13 @@ const PAN_SPEED := 900.0      # screen px per second for keyboard panning
 
 
 func _ready() -> void:
-	# The web's oblique sheets are a separate pack (game/oblique_pack.gd): start the fetch if the menu has not, and
-	# hold the battle's start while it runs so the first oblique battle already draws the real sheets.
-	var obp := ObliquePack.ensure()
+	# The web's oblique sheets are a separate pack (game/oblique_pack.gd): start the fetch if the menu has not (or ask
+	# once more after a cancel), and hold the battle's start while it runs so the first oblique battle already draws the
+	# real sheets. Cancelled or failed: this battle is drawn from the top (BoardView.web_top).
+	var obp := ObliquePack.ensure(false, true)
 	if obp != null:
 		await obp.wait()
+	BoardView.web_top = OS.has_feature("web") and not ObliquePack.sheets_present()
 	sim = BattleSim.new()
 	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
 	if terrain_kind >= 0 and scn.has("terrain"):
@@ -562,6 +564,25 @@ func _apply_debug_args() -> void:
 			for t in 80:
 				sim.step()
 			soldiers.upload()
+		elif a.begins_with("--move-unit="):
+			# --move-unit=U:x_m,y_m[,w_m]: unit U marched to (x, y) metres (front w, default 20 m) and the sim run until it
+			# is there (at most 900 ticks); for screenshots of men inside walls (the oblique view's ghosts).
+			var mu := int(v.get_slice(":", 0))
+			var mxy := v.get_slice(":", 1).split(",")
+			var mw := float(mxy[2]) if mxy.size() > 2 else 20.0
+			var mai: int = sim.ai_sides[sim.u_side[mu]]
+			sim.ai_sides[sim.u_side[mu]] = 0   # (its side's AI held while it marches, as --ai-both sets it)
+			sim.queue_order(BattleSim.make_move_order(sim.tick, mu, int(float(mxy[0]) * M), int(float(mxy[1]) * M),
+				sim.u_face[mu], int(mw * M), 0))
+			for t in 900:
+				sim.step()
+				if t > 20 and sim.u_order[mu] == BattleSim.O_NONE:
+					break
+			sim.ai_sides[sim.u_side[mu]] = mai
+			print("move-unit %d at %.0f,%.0f tick %d" % [mu, sim.u_cx[mu] / M, sim.u_cy[mu] / M, sim.tick])
+			soldiers.upload()
+			soldiers.set_alpha(1.0)
+			_view_tick()
 		elif a.begins_with("--attack="):
 			# --attack=U:T orders unit U to attack (shoot) unit T.
 			_queue(BattleSim.make_attack_order(0, int(v.get_slice(":", 0)), int(v.get_slice(":", 1)), 0))
@@ -1053,6 +1074,10 @@ func _process(delta: float) -> void:
 		AudioFx.fire_level(0.0)
 	if coop == null:
 		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
+	if BoardView.oblique and city != null and city.kit != null:
+		# The oblique view: a wall stretch hiding men close behind it fades while the camera is close (view only).
+		var vr := get_viewport_rect().size / camera.zoom
+		city.kit.ob_fade_update(camera.zoom.x, Rect2(camera.position - vr * 0.5, vr), player_side)
 	_keys_held(delta)
 	orders.refresh()  # drop orders the sim has applied
 	if paths_on and city != null and (_paths_t < PATHS_FADE_SEC or (city.paths_node != null and city.paths_node.visible)):

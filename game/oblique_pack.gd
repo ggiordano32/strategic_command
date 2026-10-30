@@ -4,10 +4,13 @@ extends Node
 ## them as build/web/oblique.pck. When the Battle view is Oblique on the web and the sheets are absent, `ensure` fetches
 ## that file from the page's own origin (an HTTPRequest, written to user://), mounts it with ProjectSettings.load_resource_pack,
 ## and tells the loaders (SpriteOb, KitOb) to look again; the next battle then finds the real sheets. A small bar on
-## its own canvas layer shows the progress with a Cancel button. A failed or cancelled fetch leaves the top view
-## standing for this session's battles (the loaders fall back to flat figures with their one notice) and the next
-## `ensure` (a new Oblique pick, the next boot) tries again. Once mounted the pack stays for the session. Native
-## builds never fetch (the files are in the main pack). View only: nothing here touches the sim.
+## its own canvas layer shows the progress with a Cancel button. Oblique is the default view (2026-10-30), so a first-time
+## player meets this at the start screen (the boot's `ensure`) or at the first battle (the battle waits for it). A
+## battle whose sheets are not mounted is drawn from the top (BoardView.web_top). Cancel: that battle from the top; the
+## next battle's start asks once more (never the boot or the menu by itself: no prompt loop). A failure: one notice
+## for the session ("the battles use the top view"), no automatic retry; picking Oblique in Options tries again
+## (`should_start`). Once mounted the pack stays for the session. Native builds never fetch (the files are in the
+## main pack). View only: nothing here touches the sim.
 
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const KitOb := preload("res://game/kit_ob.gd")
@@ -26,6 +29,7 @@ const PROBE_FILES: Array[String] = ["res://assets/sprites_ob/manifest.json", "re
 const LOCAL := "user://oblique.pck"
 
 static var inst: Node = null
+static var told_failed := false     # the failure notice is shown once a session
 
 var state: int = State.ABSENT
 var url := ""
@@ -77,11 +81,25 @@ static func pack_url(base: String, stamp: String) -> String:
 	return b + PACK_NAME + (("?v=" + v) if v != "" else "")
 
 
-## The shared instance (on the root, so it outlives scene changes), started when `wanted()`. Returns it while a
-## download runs (to `wait()` on), else null.
-static func ensure() -> Node:
+## Whether an `ensure` starts a fetch after the last attempt ended in `st`: always for the player's own Oblique pick
+## (`user`); never while one runs or once loaded; after a cancel only at a battle's start (`battle`: that battle was
+## drawn from the top, the next one asks once more); after a failure only for the player's pick (said once).
+static func should_start(st: int, user: bool, battle: bool) -> bool:
+	if st == State.DOWNLOADING or st == State.LOADED:
+		return false
+	if user or st == State.ABSENT:
+		return true
+	if st == State.CANCELLED:
+		return battle
+	return false
+
+
+## The shared instance (on the root, so it outlives scene changes), started when `wanted()` (and `should_start`).
+## Returns it while a download runs (to `wait()` on), else null. `user`: the player picked Oblique in Options;
+## `battle`: a battle is starting.
+static func ensure(user := false, battle := false) -> Node:
 	if inst != null and is_instance_valid(inst):
-		if inst.state != State.DOWNLOADING and wanted():
+		if wanted() and should_start(inst.state, user, battle):
 			inst.start()
 		return inst if (inst.state == State.DOWNLOADING) else null
 	if not wanted():
@@ -202,7 +220,32 @@ func _end(s: int) -> void:
 		_req = null
 	_hide_bar()
 	_set_state(s)
+	if s == State.FAILED and not told_failed:
+		told_failed = true
+		_notice("Could not download the oblique figures: battles use the top view. Pick Oblique in Options to try again.")
 	finished.emit(s == State.LOADED)
+
+
+## A one-line notice on the bar's layer for a few seconds (the failure, once a session).
+func _notice(text: String) -> void:
+	print("oblique pack: ", text)
+	if not _ui:
+		return
+	var cl := CanvasLayer.new()
+	cl.layer = 120
+	add_child(cl)
+	var pc := PanelContainer.new()
+	pc.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 16)
+	cl.add_child(pc)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.12, 0.10, 0.94)
+	sb.set_corner_radius_all(8)
+	sb.set_content_margin_all(10)
+	pc.add_theme_stylebox_override("panel", sb)
+	var l := Label.new()
+	l.text = text
+	pc.add_child(l)
+	get_tree().create_timer(6.0).timeout.connect(cl.queue_free)
 
 
 ## Waits for the running attempt (the battle's start calls this so it never draws the top view for a download that is

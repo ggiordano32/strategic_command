@@ -67,11 +67,12 @@ func build(parent: Control, o: Dictionary) -> void:
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
 	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
 	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"]], BoardView.pref(), "Battle view",
-		"Top: the battle map from straight above, as before. Oblique: the tabletop seen from its southern edge at 40 degrees, " \
-		+ "the hills rising, the figures and the town standing upright (a first build: stand-in figures). Takes effect at the next battle.", func(v):
+		"Oblique (the default): the tabletop seen from its southern edge at 40 degrees, the hills rising, the figures, walls " \
+		+ "and town standing upright; men behind a wall or a house show as ghosts. Top: the battle map from straight above, " \
+		+ "the lighter of the two. On the web Oblique downloads its figures once (12 MB). Takes effect at the next battle.", func(v):
 			BoardView.save_pref(str(v))
 			if str(v) == "oblique":
-				ObliquePack.ensure())
+				ObliquePack.ensure(true))
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",

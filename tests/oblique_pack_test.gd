@@ -3,7 +3,8 @@ extends SceneTree
 ##   godot --headless --script res://tests/oblique_pack_test.gd
 ## absent -> downloading -> loaded (the loaders told to look again), a cancel, a failed fetch (HTTP 404, a network
 ## error, a pack that will not mount, a pack that mounts without the sheets), a retry after a failure, wait(), and the
-## URL (page directory, ?v= the stamp's ob: token). Exits 0 on success, 1 on failure.
+## URL (page directory, ?v= the stamp's ob: token), the default view's flow (`should_start`: a cancel asks again only at the
+## next battle, a failure only on the player's Oblique pick; its notice once). Exits 0 on success, 1 on failure.
 
 const ObliquePack := preload("res://game/oblique_pack.gd")
 const SpriteOb := preload("res://game/sprite_ob.gd")
@@ -157,6 +158,31 @@ func _init() -> void:
 	f._begin("u")
 	last.request_completed.emit(HTTPRequest.RESULT_SUCCESS, 200, PackedStringArray(), BODY)
 	_check(f.state == ObliquePack.State.LOADED, "retry after failure loads")
+
+	# the default view's flow (oblique by default, 2026-10-30): who may start a fetch after an attempt ended
+	var St := ObliquePack.State
+	_check(ObliquePack.should_start(St.ABSENT, false, false), "absent: the boot's ensure starts the fetch")
+	_check(not ObliquePack.should_start(St.DOWNLOADING, true, true), "never a second fetch while one runs")
+	_check(not ObliquePack.should_start(St.LOADED, true, true), "never once loaded")
+	_check(not ObliquePack.should_start(St.CANCELLED, false, false), "cancelled: the menu does not ask again by itself")
+	_check(ObliquePack.should_start(St.CANCELLED, false, true), "cancelled: the next battle's start asks once more")
+	_check(ObliquePack.should_start(St.CANCELLED, true, false), "cancelled: the player's Oblique pick asks again")
+	_check(not ObliquePack.should_start(St.FAILED, false, false), "failed: no retry at the menu")
+	_check(not ObliquePack.should_start(St.FAILED, false, true), "failed: no retry at a battle (said once)")
+	_check(ObliquePack.should_start(St.FAILED, true, false), "failed: the player's Oblique pick retries")
+	# the failure notice: once a session
+	ObliquePack.told_failed = false
+	var n1 := _make()
+	n1._begin("u")
+	last.request_completed.emit(HTTPRequest.RESULT_SUCCESS, 404, PackedStringArray(), BODY)
+	_check(ObliquePack.told_failed, "a failure sets the notice")
+	n1._begin("u")
+	last.request_completed.emit(HTTPRequest.RESULT_SUCCESS, 404, PackedStringArray(), BODY)
+	_check(n1.state == St.FAILED and ObliquePack.told_failed, "a second failure: no second notice (still told)")
+	var n2 := _make()
+	n2._begin("u")
+	n2.cancel()
+	_check(n2.state == St.CANCELLED, "a cancel is not a failure")
 
 	# wait(): returns at once when idle, after the end when downloading
 	sheets = false

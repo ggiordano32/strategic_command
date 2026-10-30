@@ -37,13 +37,27 @@ const KitOb := preload("res://game/kit_ob.gd")
 ## The oblique view (tabletop pass 3, game/board_view.gd): every piece stands upright at its place (the oblique kit
 ## sheet, game/kit_ob.gd, when present: each piece rendered once at 40 degrees, its anchor on the ground at the
 ## footprint's centre; else the top-down piece stood up with its lower edge at the footprint's centre), the walls of
-## the strip rings extruded (a front face and a top per stretch of at most WALL_SEG metres, shaded in the shader,
-## cut at the gates), and all of it in one MultiMesh sorted by nearness (farther first), so a nearer house hides a
-## farther one. The soldiers behind a piece are hidden by the kit's nearness (game/kit_occluder.gd).
-const WALL_FACE := 62           # oblique wall instances: a front face, a top (piece slots the atlases do not use)
-const WALL_TOP := 63
+## the strip rings built as geometry from the ring's mitred outline (_ob_walls: per stretch of at most WALL_SEG metres
+## the outer face with its merlons, the walk, the merlons' tops and inner faces, the step down to the inner rampart, the
+## rampart's top and inner face, end caps where the ring is cut by a gate, a tower or a breach; every row exactly its
+## edge, mitred at the corners), and all of it in one MultiMesh sorted by nearness (farther first; within a stretch the
+## faces turned away, then the tops lowest first, then the faces toward the camera), so a nearer house hides a farther
+## one. The soldiers behind a piece are drawn as ghosts (game/kit_occluder.gd, soldiers.gdshaderinc); a stretch
+## that hides men close behind it fades when the camera is close (ob_fade_update).
+const WALL_ROW := 400           # a wall row's custom.x: WALL_ROW + kind + 8 x height (dm), above the kit sheet's codes (KitOb.BASE
+                                # + KitOb.MAX) and exact in the half floats the compatibility renderer keeps a MultiMesh's custom
+                                # data in (below 2048); the culture is the kit's
 const WALL_SEG := 8.0
 const MITRE_MAX := 2.5          # a mitre longer than this many wall thicknesses is bevelled instead
+const MERLON_H := 1.2           # the merlons above the walk (tools/battlekit b_wall_sim); a palisade's stake tips: STAKE_TIP
+const STAKE_TIP := 0.8
+const RAMP_DROP := 1.1          # the inner rampart below the walk
+const WALK_W := 4.0             # MapGen.WALK_W
+## Wall row kinds (battlekit.gdshader): faces (a vertical quad on a ground edge) then tops (a quad between two lines).
+enum {WK_OUT, WK_MERLON, WK_STEP, WK_IN, WK_CAP, WK_WALK, WK_MTOP, WK_RAMP}
+const FADE_ZOOM := 1.5          # the camera's zoom past which a stretch hiding men behind it fades
+const FADE_BEHIND := 10.0       # metres behind the wall
+const FADE_FRAMES := 6
 ## Loaded when needed (the script checkers' scratch project has no assets/).
 var TEX_ALB: Texture2D
 var TEX_NRM: Texture2D
@@ -136,8 +150,18 @@ var s_step := PackedFloat32Array()
 var _rings: Array = []              # [polygon (PackedInt32Array, m), thickness m, height m] per wall ring
 var _ob_slot := PackedInt32Array()  # instance -> its slot in the sorted MultiMesh (-1: none)
 var _ob_order: Array = []           # the draw order: [kind (0 piece, 1 wall row), index] (the Low path)
-var _ob_wall := PackedFloat32Array() # wall rows, 12 floats each (board px transform, custom)
+var _ob_wall := PackedFloat32Array() # rows, 12 floats each (the walls' first, then the landmarks'), the MultiMesh layout
 var _ob_wkey := PackedFloat32Array() # their sort keys
+var _ob_nwall := 0                  # wall rows (the first _ob_nwall rows)
+var _ob_wseg := PackedInt32Array()  # wall row -> its stretch
+var _ob_wslot := PackedInt32Array() # wall row -> its slot in the sorted MultiMesh
+var _ob_seg: Array = []             # per stretch: [centre line start, end (m), outward normal, thickness m, first row, rows]
+var _seg_fade := PackedFloat32Array() # per stretch: its fade now (0 solid .. 1 faded)
+var _seg_want := PackedByteArray()    # per stretch: 1 fading in
+var _fade_live := PackedInt32Array()  # the stretches whose fade is moving
+var _fade_frame := 0
+var _fade_ms := 0
+var _no_fade := "--no-wall-fade" in OS.get_cmdline_user_args()   # (testing: the ghosts alone)
 var ob_mm: MultiMesh                # the sorted MultiMesh (game/kit_occluder.gd draws it again)
 var ob_mat: ShaderMaterial          # its material (the occluder duplicates it)
 
@@ -153,7 +177,7 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 		if str(a).begins_with("--kit-culture="):
 			culture = clampi(int(str(a).get_slice("=", 1)), 0, 7)
 			cul_override = culture
-	_timber = int(lay.get("palisade", 0)) != 0
+	_timber = int(lay.get("palisade", 0)) != 0 or "--kit-palisade" in OS.get_cmdline_user_args()   # (testing: a timber ring)
 	if int(lay.get("west", 0)) != 0:
 		tropic = true
 		_build_west()
@@ -955,17 +979,31 @@ func _ob_sort() -> void:
 	if KitOb.ok() and not low:
 		_ob_landmarks()
 	var items: Array = []
+	var tw := 0.0
+	if not _rings.is_empty():
+		tw = float(_rings[0][1])
 	for i in i_piece.size():
-		items.append([BoardView.near_px(_ob_ground(i)), 0, i])
+		# A tower or a gate stands out of the wall's line: sorted by its front (its nearest point), so the wall beside it
+		# draws first and the wall in front of it after.
+		var nm: String = Atlas.NAMES[i_piece[i]]
+		var bump := 0.0
+		if nm.begins_with("tower"):
+			bump = i_sx[i] * 6.2 * 0.8 * k * BoardView.OBLIQUE_SIN
+		elif i_gate[i] >= 0:
+			bump = tw * 0.5 * k * BoardView.OBLIQUE_SIN
+		items.append([BoardView.near_px(_ob_ground(i)) + bump, 0, i])
 	for w in _ob_wkey.size():
 		items.append([float(_ob_wkey[w]), 1, w])
 	items.sort_custom(func(p, q): return float(p[0]) < float(q[0]) or (float(p[0]) == float(q[0]) and int(p[2]) < int(q[2])))
 	_ob_order.clear()
 	_ob_slot.resize(i_piece.size())
 	_ob_slot.fill(-1)
+	_ob_wslot.resize(_ob_nwall)
 	for it in items:
 		if int(it[1]) == 0:
 			_ob_slot[int(it[2])] = _ob_order.size()
+		elif int(it[2]) < _ob_nwall:
+			_ob_wslot[int(it[2])] = _ob_order.size()
 		_ob_order.append([int(it[1]), int(it[2])])
 
 
@@ -977,12 +1015,13 @@ func _ob_ground(i: int) -> Vector2:
 	return _xform(i, i_piece[i]).origin
 
 
-## Instance i's sprite in the oblique kit sheet (-1: none, the stand-in): its piece at yaw 0, or the 180 degree render
-## when the hash flip (or the footprint's turn) has its outer face toward the camera (its image right pointing west).
+## Instance i's sprite in the oblique kit sheet (-1: none, the stand-in): the render of its piece whose yaw is nearest
+## the instance's (0 / 180, and 90 / 270 for a piece whose footprint is not square: KitOb.index_yaw).
 func _ob_sprite(i: int) -> int:
 	if low and KitOb.low == null:
 		return -1
-	return KitOb.index(Atlas.NAMES[i_piece[i]], i_e[i].x < 0.0)
+	var yaw := rad_to_deg(atan2(-i_e[i].y, i_e[i].x))   # (i_e: the image right on the screen, y down)
+	return KitOb.index_yaw(Atlas.NAMES[i_piece[i]], yaw)
 
 
 ## The town plan's landmark pieces (block 2) as wall-like rows of the sorted MultiMesh (the oblique kit sheet's sprites
@@ -1006,69 +1045,214 @@ func _ob_landmarks() -> void:
 			BoardView.near_px(c * k))
 
 
-## The extruded walls: per wall ring, per stretch of at most WALL_SEG metres (none in a gate's opening) a front face
-## (the side facing the camera) and a top, as MultiMesh rows already on the board (the lift at the stretch's middle).
+## The walls as geometry (the oblique view): per wall ring its outline offset to four lines (+ inward from the centre
+## line: the outer face, the merlons' inner edge, the walk's inner edge, the inner face), mitred at every vertex as the
+## top view's strip is (_wall_ring; a mitre longer than MITRE_MAX thicknesses bevelled, the wedge filled), cut where a
+## gate's opening, a tower or a breach (rubble cells) is, and every standing stretch of at most WALL_SEG metres
+## emitted as rows (_ob_wseg_rows): each face exactly its edge between two lines' points, so adjacent faces meet with
+## no gap and no overlap. The cross-section is the battle kit's (tools/battlekit b_wall_sim): the body to the walk's
+## height, merlons MERLON_H above it on the outer edge, a 4 m walk, the inner rampart RAMP_DROP lower; a palisade the
+## same with stakes for merlons. Rows carry world px and metres; battlekit.gdshader puts them on the board.
 func _ob_walls() -> void:
 	_ob_wall.clear()
 	_ob_wkey.clear()
+	_ob_seg.clear()
+	_ob_wseg.clear()
+	_ob_nwall = 0
 	var gates: Array = lay.get("gates", [])
+	var towers: Array = lay.get("towers", [])
+	var pp := clampf(float(int(lay.get("pp", 2))), 1.0, 4.0)
+	var rub: PackedByteArray = sim.obs if sim != null and sim.rub_n > 0 else PackedByteArray()
 	for ring in _rings:
-		var poly: PackedInt32Array = ring[0]
 		var t: float = ring[1]
 		var hm: float = ring[2]
-		var p := PackedVector2Array()
-		for e in poly.size() / 2:
-			var q := Vector2(poly[e * 2], poly[e * 2 + 1])
-			if p.is_empty() or p[p.size() - 1].distance_to(q) >= 0.5:
-				p.append(q)
-		while p.size() > 1 and p[0].distance_to(p[p.size() - 1]) < 0.5:
-			p.remove_at(p.size() - 1)
+		var p := _ring_pts(ring[0])
 		var nv := p.size()
-		if nv < 2:
+		if nv < 3:
 			continue
-		var hs_px := hm * k * BoardView.OBLIQUE_SIN
+		var offs := PackedFloat32Array([-t * 0.5, -t * 0.5 + pp, minf(-t * 0.5 + pp + WALK_W, t * 0.5 - 0.5), t * 0.5])
+		var nl := offs.size()
+		var dirs := PackedVector2Array()
+		var nrms := PackedVector2Array()
 		for e in nv:
-			var a := p[e]
-			var b := p[(e + 1) % nv]
-			var l := a.distance_to(b)
+			var dd := (p[(e + 1) % nv] - p[e]).normalized()
+			dirs.append(dd)
+			nrms.append(Vector2(-dd.y, dd.x))   # inward
+		# Per vertex and line: the end of the edge before it (pe), the start of the edge after it (ps); equal unless bevelled.
+		var pe := PackedVector2Array()
+		var ps := PackedVector2Array()
+		pe.resize(nv * nl)
+		ps.resize(nv * nl)
+		var bev := PackedByteArray()
+		bev.resize(nv)
+		for e in nv:
+			var n0: Vector2 = nrms[(e + nv - 1) % nv]
+			var n1: Vector2 = nrms[e]
+			var den := 1.0 + n0.dot(n1)
+			var m := (n0 + n1) / maxf(den, 0.0001)
+			for li in nl:
+				var v := offs[li]
+				if den < 0.05 or m.length() * absf(v) > MITRE_MAX * t:
+					pe[e * nl + li] = p[e] + n0 * v
+					ps[e * nl + li] = p[e] + n1 * v
+					bev[e] = 1
+				else:
+					pe[e * nl + li] = p[e] + m * v
+					ps[e * nl + li] = p[e] + m * v
+		for e in nv:
+			var e2 := (e + 1) % nv
+			var l := p[e].distance_to(p[e2])
 			if l < 0.3:
 				continue
-			var d := (b - a) / l
-			var nf := Vector2(-d.y, d.x)
-			if nf.y < 0.0 or (absf(nf.y) < 0.001 and nf.x > 0.0):
-				nf = -nf   # (the face the camera sees: toward the south; a north-south stretch: its west side)
-			var ns := maxi(ceili(l / WALL_SEG), 1)
-			for q in ns:
-				var a1 := a + d * (l * q / ns)
-				var b1 := a + d * (l * (q + 1) / ns)
-				var mid := (a1 + b1) * 0.5
-				var in_gate := false
-				for gd in gates:
-					var gp := Vector2(float(gd["x"]), float(gd["y"]))
-					if mid.distance_to(gp) < float(int(gd.get("hw", 4))) + 1.5:
-						in_gate = true
-				if in_gate:
+			var d: Vector2 = dirs[e]
+			var n: Vector2 = nrms[e]
+			# The cuts along the centre line: a gate's opening, a tower's body, a breach's rubble.
+			var cuts: Array = []
+			for gd in gates:
+				var rg := Vector2(float(gd["x"]), float(gd["y"])) - p[e]
+				var sg := rg.dot(d)
+				var hw := float(int(gd.get("hw", 4)))
+				if absf(rg.dot(n)) < t * 0.5 + 1.0 and sg > -hw and sg < l + hw:
+					cuts.append([sg - hw, sg + hw])
+			for tw in towers:
+				var rt := Vector2(float(tw[0]), float(tw[1])) - p[e]
+				var r := float(tw[2]) * 0.8
+				var off := rt.dot(n)
+				if absf(off) < r:
+					var hc := sqrt(r * r - off * off)
+					var st := rt.dot(d)
+					if st + hc > 0.0 and st - hc < l:
+						cuts.append([st - hc, st + hc])
+			if not rub.is_empty():
+				var sq := 0.5
+				var c0 := -1.0
+				while sq < l:
+					var w := p[e] + d * sq
+					var cx := int(w.x / 2.0)
+					var cy := int(w.y / 2.0)
+					var isr: bool = cx >= 0 and cy >= 0 and cx < sim.ob_w and cy * sim.ob_w + cx < rub.size() \
+						and rub[cy * sim.ob_w + cx] == MapGen.C_RUBBLE
+					if isr and c0 < 0.0:
+						c0 = sq - 0.5
+					elif not isr and c0 >= 0.0:
+						cuts.append([c0, sq - 0.5])
+						c0 = -1.0
+					sq += 1.0
+				if c0 >= 0.0:
+					cuts.append([c0, l + 1.0])
+			cuts.sort_custom(func(x, y): return float(x[0]) < float(y[0]))
+			var stand: Array = []
+			var s0 := 0.0
+			for c in cuts:
+				if float(c[0]) > s0 + 0.3:
+					stand.append([s0, minf(float(c[0]), l)])
+				s0 = maxf(s0, float(c[1]))
+			if s0 < l - 0.3:
+				stand.append([s0, l])
+			for iv in stand:
+				var a0: float = iv[0]
+				var a1: float = iv[1]
+				if a1 - a0 < 0.3:
 					continue
-				var lm := BoardView.lift_px(mid * k)
-				var p0 := (a1 + nf * t * 0.5) * k
-				var p1 := (b1 + nf * t * 0.5) * k
-				var k0 := (a1 - nf * t * 0.5) * k
-				var k1 := (b1 - nf * t * 0.5) * k
-				var cos_t := BoardView.OBLIQUE_COS
-				var b0 := Vector2(p0.x, p0.y * cos_t - lm)
-				var bb1 := Vector2(p1.x, p1.y * cos_t - lm)
-				var bk0 := Vector2(k0.x, k0.y * cos_t - lm) - Vector2(0, hs_px)
-				var bk1 := Vector2(k1.x, k1.y * cos_t - lm) - Vector2(0, hs_px)
-				var cul := float(culture + 8 * clampi(roundi(hm * 10.0), 0, 2000))
-				var key := BoardView.near_px((p0 + p1) * 0.5)
-				# The front face: x along the stretch, y from its top (UV 0) down to the ground.
-				_ob_row(Vector2(b0 + bb1) * 0.5 - Vector2(0, hs_px * 0.5), bb1 - b0, Vector2(0, hs_px),
-					Color(WALL_FACE, BoardView.near_px(p0), BoardView.near_px(p1), cul), key)
-				# The top: x along, y from the back edge (UV 0) to the front edge.
-				var f0 := b0 - Vector2(0, hs_px)
-				var f1 := bb1 - Vector2(0, hs_px)
-				_ob_row((f0 + f1 + bk0 + bk1) * 0.25, f1 - f0, f0 - bk0,
-					Color(WALL_TOP, BoardView.near_px(a1 * k, hm), BoardView.near_px(b1 * k, hm), cul), key + 0.01)
+				var ns := maxi(ceili((a1 - a0) / WALL_SEG), 1)
+				for q in ns:
+					var sa := a0 + (a1 - a0) * q / ns
+					var sb := a0 + (a1 - a0) * (q + 1) / ns
+					var pa: Array = []
+					var pb: Array = []
+					for li in nl:
+						pa.append(ps[e * nl + li].lerp(pe[e2 * nl + li], sa / l))
+						pb.append(ps[e * nl + li].lerp(pe[e2 * nl + li], sb / l))
+					_ob_wseg_rows(pa, pb, t, hm, q == 0 and a0 > 0.01, q == ns - 1 and a1 < l - 0.01)
+			# The bevel's wedge at the vertex e2 (when the wall stands on both sides of it).
+			if bev[e2] != 0 and not stand.is_empty() and float(stand[stand.size() - 1][1]) >= l - 0.01:
+				var wa: Array = []
+				var wb: Array = []
+				for li in nl:
+					wa.append(pe[e2 * nl + li])
+					wb.append(ps[e2 * nl + li])
+				_ob_wseg_rows(wa, wb, t, hm, false, false)
+	_ob_nwall = _ob_wkey.size()
+	_seg_fade.resize(_ob_seg.size())
+	_seg_fade.fill(0.0)
+	_seg_want.resize(_ob_seg.size())
+	_seg_want.fill(0)
+	_fade_live.clear()
+
+
+## A wall ring's vertices (metres): close points merged, counter-clockwise (area > 0: the inside on the left), as
+## _wall_ring takes them.
+static func _ring_pts(poly: PackedInt32Array) -> PackedVector2Array:
+	var p := PackedVector2Array()
+	for e in poly.size() / 2:
+		var q := Vector2(poly[e * 2], poly[e * 2 + 1])
+		if p.is_empty() or p[p.size() - 1].distance_to(q) >= 0.5:
+			p.append(q)
+	while p.size() > 1 and p[0].distance_to(p[p.size() - 1]) < 0.5:
+		p.remove_at(p.size() - 1)
+	var area := 0.0
+	for e in p.size():
+		var e2 := (e + 1) % p.size()
+		area += p[e].x * p[e2].y - p[e2].x * p[e].y
+	if area <= 0.0:
+		p.reverse()
+	return p
+
+
+## One stretch's rows: `a` and `b` the four lines' points at its start and end (metres; outer, merlons' inner edge,
+## walk's inner edge, inner), caps where the wall is cut at its start (cs) or end (ce). Its sort keys: the stretch's
+## nearness, the faces turned away first, then the tops lowest first, then the faces toward the camera.
+func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool) -> void:
+	var w0 := _ob_wkey.size()
+	var ca: Vector2 = (a[0] + a[3]) * 0.5
+	var cb: Vector2 = (b[0] + b[3]) * 0.5
+	var base := BoardView.near_px((ca + cb) * 0.5 * k)
+	var zt := hm + (STAKE_TIP if _timber else MERLON_H)
+	var zr := maxf(hm - RAMP_DROP, 0.5)
+	_ob_face(a[0], b[0], 0.0, zt, WK_OUT, base)
+	_ob_face(b[1], a[1], hm, zt, WK_MERLON, base)
+	_ob_face(b[2], a[2], zr, hm, WK_STEP, base)
+	_ob_face(b[3], a[3], 0.0, zr, WK_IN, base)
+	if cs:   # (facing back along the wall: A to B outward)
+		_ob_face(a[2], a[0], 0.0, hm, WK_CAP, base)
+		_ob_face(a[3], a[2], 0.0, zr, WK_CAP, base)
+		_ob_face(a[1], a[0], hm, zt, WK_CAP, base)
+	if ce:
+		_ob_face(b[0], b[2], 0.0, hm, WK_CAP, base)
+		_ob_face(b[2], b[3], 0.0, zr, WK_CAP, base)
+		_ob_face(b[0], b[1], hm, zt, WK_CAP, base)
+	_ob_top(a[2], b[2], a[3], b[3], zr, WK_RAMP, base)
+	_ob_top(a[0], b[0], a[2], b[2], hm, WK_WALK, base)
+	if not _timber:
+		_ob_top(a[0], b[0], a[1], b[1], zt, WK_MTOP, base)
+	var outw: Vector2 = (b[0] - a[0]).normalized()
+	outw = Vector2(outw.y, -outw.x)
+	var si := _ob_seg.size()
+	_ob_seg.append([ca, cb, outw, t, w0, _ob_wkey.size() - w0])
+	for w in _ob_wkey.size() - w0:
+		_ob_wseg.append(si)
+
+
+## A face row: the vertical quad on the ground edge A -> B (metres) from z0 to z1 metres up, its normal A -> B turned
+## to the right (outward for the outer face). Faces turned toward the camera (south) draw over the stretch's tops.
+func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: float) -> void:
+	if pa.distance_squared_to(pb) < 0.0004 or z1 <= z0:
+		return
+	var dd := (pb - pa).normalized()
+	var rank := 0.02 if -dd.x > 0.0 else 0.0   # (the normal (dd.y, -dd.x) has a southward part)
+	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z0 * 10.0), 0, 200))
+	_ob_wall.append_array(PackedFloat32Array([pa.x * k, pb.x * k, 0.0, 0.0, pa.y * k, pb.y * k, 0.0, z1,
+		code, 0.0, 0.0, 0.0]))
+	_ob_wkey.append(base + rank)
+
+
+## A top row: the quad between the lines A0 -> B0 and A1 -> B1 (metres) z metres up (B1 as its offset from B0: the
+## custom data is kept in half floats).
+func _ob_top(a0: Vector2, b0: Vector2, a1: Vector2, b1: Vector2, z: float, kind: int, base: float) -> void:
+	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z * 10.0), 0, 200))
+	_ob_wall.append_array(PackedFloat32Array([a0.x * k, b0.x * k, 0.0, a1.x * k, a0.y * k, b0.y * k, 0.0, a1.y * k,
+		code, (b1.x - b0.x) * k, (b1.y - b0.y) * k, 0.0]))
+	_ob_wkey.append(base + 0.004 + z * 0.0005)
 
 
 func _ob_row(o: Vector2, ex: Vector2, ey: Vector2, cd: Color, key: float) -> void:
@@ -1081,6 +1265,7 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 	BoardView.apply(mat)
 	mat.set_shader_parameter("ob_ppm", k)
 	mat.set_shader_parameter("ob_timber", 1.0 if _timber else 0.0)
+	mat.set_shader_parameter("ob_wall_cul", float(culture))
 	KitOb.apply(mat, k)
 	ob_mat = mat
 	_rubble_node = _RubbleDraw.new()
@@ -1091,7 +1276,19 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 	mm.transform_format = MultiMesh.TRANSFORM_2D
 	mm.use_custom_data = true
 	mm.mesh = _make_quad()
-	mm.instance_count = _ob_order.size()
+	ob_mm = mm
+	_ob_fill()
+	var up := BoardView.lift_max + 60.0 * k
+	mm.custom_aabb = AABB(Vector3(-50, -50 - up, -1), Vector3(sim.field_w / 1024.0 * k + 100, sim.field_h / 1024.0 * k + 100 + up, 2))
+	_mmi = MultiMeshInstance2D.new()
+	_mmi.multimesh = mm
+	_mmi.material = mat
+	add_child(_mmi)
+
+
+## The sorted MultiMesh's rows from _ob_order (the pieces from their instances, the walls and landmarks from _ob_wall).
+func _ob_fill() -> void:
+	ob_mm.instance_count = _ob_order.size()
 	var buf := PackedFloat32Array()
 	buf.resize(_ob_order.size() * 12)
 	for s2 in _ob_order.size():
@@ -1102,14 +1299,80 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 		else:
 			for f in 12:
 				buf[s2 * 12 + f] = _ob_wall[int(it[1]) * 12 + f]
-	mm.buffer = buf
-	var up := BoardView.lift_max + 60.0 * k
-	mm.custom_aabb = AABB(Vector3(-50, -50 - up, -1), Vector3(sim.field_w / 1024.0 * k + 100, sim.field_h / 1024.0 * k + 100 + up, 2))
-	ob_mm = mm
-	_mmi = MultiMeshInstance2D.new()
-	_mmi.multimesh = mm
-	_mmi.material = mat
-	add_child(_mmi)
+	if not buf.is_empty():
+		ob_mm.buffer = buf
+
+
+## Seeing inside (the oblique view, High): a wall stretch whose face toward the camera hides men within FADE_BEHIND
+## metres behind it fades to 55 % alpha (over 0.3 s) while the camera is zoomed past FADE_ZOOM; the targets are looked
+## at every FADE_FRAMES frames, a moving fade written into the stretch's rows every frame (custom.w; the occluder pass
+## shares the MultiMesh, so the men behind see the fade too). `view` the board rect on the screen (px), `side` the
+## viewer's (a unit hidden from it does not count). Called every frame by the battle.
+func ob_fade_update(zoom: float, view: Rect2, side: int) -> void:
+	if ob_mm == null or _ob_seg.is_empty():
+		return
+	var ms := Time.get_ticks_msec()
+	var dt := clampf(float(ms - _fade_ms) / 1000.0, 0.0, 0.1) if _fade_ms != 0 else 0.0
+	_fade_ms = ms
+	_fade_frame += 1
+	if _fade_frame >= FADE_FRAMES:
+		_fade_frame = 0
+		var on := zoom > FADE_ZOOM and not _no_fade
+		var boxes: Array = []
+		if on:
+			for u in sim.n_units:
+				if sim.u_alive[u] <= 0 or sim.u_wall[u] > 0 or sim.hidden_from(u, side):
+					continue
+				boxes.append(Rect2(Vector2(sim.u_minx[u], sim.u_miny[u]) / 1024.0,
+					Vector2(sim.u_maxx[u] - sim.u_minx[u], sim.u_maxy[u] - sim.u_miny[u]) / 1024.0))
+		var vw := view.grow(30.0 * k)
+		for si in _ob_seg.size():
+			var want := 0
+			if on and not boxes.is_empty():
+				var sg: Array = _ob_seg[si]
+				var a: Vector2 = sg[0]
+				var b: Vector2 = sg[1]
+				var outw: Vector2 = sg[2]
+				if absf(outw.y) > 0.3 and vw.has_point(BoardView.to_board((a + b) * 0.5 * k)):
+					want = 1 if _seg_hides(a, b, -outw if outw.y > 0.0 else outw, float(sg[3]), boxes) else 0
+			if want != _seg_want[si]:
+				_seg_want[si] = want
+				if not _fade_live.has(si):
+					_fade_live.append(si)
+	var q := _fade_live.size() - 1
+	while q >= 0:
+		var si := _fade_live[q]
+		var f := move_toward(_seg_fade[si], float(_seg_want[si]), dt / 0.3)
+		_seg_fade[si] = f
+		var sg: Array = _ob_seg[si]
+		for w in range(int(sg[4]), int(sg[4]) + int(sg[5])):
+			ob_mm.set_instance_custom_data(_ob_wslot[w], Color(_ob_wall[w * 12 + 8], _ob_wall[w * 12 + 9],
+				_ob_wall[w * 12 + 10], f))
+		if f == float(_seg_want[si]):
+			_fade_live.remove_at(q)
+		q -= 1
+
+
+## Whether a unit box (metres) reaches the ground behind the stretch a -> b (`behind` the unit normal away from the
+## camera's face, thickness t): along the stretch (2 m beyond its ends), from the far face to FADE_BEHIND past it.
+func _seg_hides(a: Vector2, b: Vector2, behind: Vector2, t: float, boxes: Array) -> bool:
+	var l := a.distance_to(b)
+	if l < 0.1:
+		return false
+	var d := (b - a) / l
+	var reach := Rect2(a, Vector2.ZERO).expand(b).expand(a + behind * (t * 0.5 + FADE_BEHIND)).expand(
+		b + behind * (t * 0.5 + FADE_BEHIND)).grow(2.0)
+	for bx: Rect2 in boxes:
+		if not reach.intersects(bx):
+			continue
+		for j in 3:
+			for i in 3:
+				var q := bx.position + bx.size * Vector2(i * 0.5, j * 0.5) - a
+				var s := q.dot(d)
+				var dp := q.dot(behind)
+				if s > -2.0 and s < l + 2.0 and dp > t * 0.5 - 1.0 and dp < t * 0.5 + FADE_BEHIND:
+					return true
+	return false
 
 
 ## The oblique kit (game/kit_ob.gd): a piece's row carries its footprint's centre and scale, not the top-down quad.
@@ -1250,6 +1513,11 @@ func _rubble_changed() -> void:
 	_rubble_cells = CityDraw.rubble_cells(sim)
 	if _rubble_node != null:
 		_rubble_node.queue_redraw()
+	if BoardView.oblique and not _rings.is_empty() and (ob_mm != null or _low_node != null):
+		# The oblique walls are cut at the breach (end caps), the rubble lying in the gap: the rows again.
+		_ob_sort()
+		if ob_mm != null:
+			_ob_fill()
 	var box := Rect2()
 	var have := false
 	for i in i_piece.size():
@@ -1345,15 +1613,9 @@ class _LowDraw extends Node2D:
 		var sc := Color(0.62 * stone.x, 0.58 * stone.y, 0.52 * stone.z) if not kit._timber else Color(0.45, 0.33, 0.22)
 		for it in kit._ob_order:
 			if int(it[0]) == 1:
-				var o := int(it[1]) * 12
-				var wb: PackedFloat32Array = kit._ob_wall
-				var ex := Vector2(wb[o], wb[o + 4])
-				var ey := Vector2(wb[o + 1], wb[o + 5])
-				var c0 := Vector2(wb[o + 3], wb[o + 7])
-				draw_set_transform_matrix(Transform2D.IDENTITY)
-				var top: bool = int(wb[o + 8]) == int(kit.WALL_TOP)
-				draw_colored_polygon(PackedVector2Array([c0 - ex * 0.5 - ey * 0.5, c0 + ex * 0.5 - ey * 0.5,
-					c0 + ex * 0.5 + ey * 0.5, c0 - ex * 0.5 + ey * 0.5]), sc * (1.05 if top else 0.7))
+				if int(it[1]) < kit._ob_nwall:
+					draw_set_transform_matrix(Transform2D.IDENTITY)
+					_wall_row(int(it[1]) * 12, sc)
 				continue
 			var i := int(it[1])
 			if kit.fallen(i):
@@ -1388,3 +1650,45 @@ class _LowDraw extends Node2D:
 			draw_texture_rect_region(kit.TEX_LOW, Rect2(-w * 0.5, -h * 0.5, w, h),
 				Rect2(float(r[0]) * lowk, float(r[1]) * lowk, float(r[2]) * lowk, float(r[3]) * lowk), c)
 		draw_set_transform_matrix(Transform2D.IDENTITY)
+
+	## A wall row flat-shaded (the same geometry as the High path's: game/battlekit.gdshader), the merlons a solid band.
+	func _wall_row(o: int, sc: Color) -> void:
+		var wb: PackedFloat32Array = kit._ob_wall
+		var c := int(wb[o + 8]) - int(kit.WALL_ROW)
+		var z := float(c / 8) * 0.1
+		var kind := c % 8
+		var pa := Vector2(wb[o], wb[o + 4])
+		var pb := Vector2(wb[o + 1], wb[o + 5])
+		var bv = kit.BoardView
+		var col := sc
+		var poly: PackedVector2Array
+		if kind <= kit.WK_CAP:
+			var z1: float = wb[o + 7]
+			poly = PackedVector2Array([bv.to_board(pa, z1), bv.to_board(pb, z1), bv.to_board(pb, z), bv.to_board(pa, z)])
+			var dd := (pb - pa).normalized()
+			# (the face's normal (dd.y, -dd.x) against the key light from the north-west)
+			col = sc * (0.78 + 0.32 * (0.5 + 0.5 * (dd.y * -0.74 - dd.x * -0.67)))
+			if kind == kit.WK_IN or kind == kit.WK_STEP:
+				col = col.darkened(0.12)
+		else:
+			var pa2 := Vector2(wb[o + 3], wb[o + 7])
+			var pb2 := pb + Vector2(wb[o + 9], wb[o + 10])
+			poly = PackedVector2Array([bv.to_board(pa, z), bv.to_board(pb, z), bv.to_board(pb2, z), bv.to_board(pa2, z)])
+			col = sc * (0.72 if kind == kit.WK_WALK else (0.62 if kind == kit.WK_RAMP else 1.05))
+		col.a = 1.0
+		# (An edge-on face or a bevel's corner has no area: the triangulation would fail.)
+		var q := PackedVector2Array()
+		for v in poly:
+			if q.is_empty() or q[q.size() - 1].distance_squared_to(v) > 0.0001:
+				q.append(v)
+		if q.size() > 2 and q[0].distance_squared_to(q[q.size() - 1]) <= 0.0001:
+			q.remove_at(q.size() - 1)
+		if q.size() < 3:
+			return
+		var area := 0.0
+		for v in q.size():
+			var v2 := (v + 1) % q.size()
+			area += q[v].x * q[v2].y - q[v2].x * q[v].y
+		if absf(area) < 0.5:
+			return
+		draw_colored_polygon(q, col)

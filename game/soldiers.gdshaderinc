@@ -74,8 +74,9 @@
 // stage) by his drawn heading against the camera (8 directions, S facing it), mirrored where the sheet says; an
 // action without upright frames (the stand-in's death) is the top-down sprite lying on the board. The texture path
 // draws its instances through a per-tick order (block 9: the men sorted by ground y, nearer over farther); the CPU-fed
-// buffer is reordered by soldier_layer.gd. A fragment behind a nearer kit piece (the kit's nearness, `ob_occ`,
-// a screen texture: game/kit_occluder.gd) is dropped.
+// buffer is reordered by soldier_layer.gd. A man behind a nearer kit piece (the kit's nearness, `ob_occ`, a screen
+// texture: game/kit_occluder.gd) is drawn as a ghost: flat in his faction's colour at 40 % with a 1 px lighter
+// outline (his base is not drawn); behind a wall stretch that is fading he shows through it.
 #include "res://game/sprite_frames.gdshaderinc"
 #ifdef OBLIQUE
 #include "res://game/board_view.gdshaderinc"
@@ -582,15 +583,35 @@ vec3 recolour(vec4 s, vec4 m, int row, float k, vec3 add) {
 	return s.rgb * (rest + team) * k + add;
 }
 
+#ifdef OBLIQUE
+// The ghost of a man behind a nearer kit piece: his figure flat in his faction's colour (the palette's primary) at 40 %,
+// a 1 px lighter outline where a neighbour pixel is outside the figure (`edge`); `a` the figure's coverage.
+vec4 ob_ghost(float a, float edge) {
+	vec3 fc = mix(texelFetch(pal_tex, ivec2(0, int(v_look.y + 0.5)), 0).rgb, vec3(0.85), 0.15);
+	return vec4(mix(fc, mix(fc, vec3(1.0), 0.6), edge), step(0.35, a) * mix(0.4, 0.8, edge) * v_color.a);
+}
+#endif
+
 void fragment() {
 #ifdef OBLIQUE
-	// Behind a nearer kit piece (a house, a wall, a tower, a rock): not drawn.
-	float occ_keep = 1.0;
+	// Behind a nearer kit piece (a house, a wall, a tower, a rock): a ghost (his corpse: not drawn); behind a wall
+	// stretch that is fading (the camera close, game/battlekit.gd ob_fade_update) he shows through it, as its fade.
+	float occ = 0.0;
+	float ofade = 0.0;
 	if (ob_occ_on > 0.5) {
 		vec4 o = texture(ob_occ, SCREEN_UV);
 		float on = (floor(o.r * 255.0 + 0.5) * 256.0 + floor(o.g * 255.0 + 0.5)) / 65535.0 * ob_near_r.y + ob_near_r.x;
-		occ_keep = (o.a > 0.5 && on > v_near + 2.0) ? 0.0 : 1.0;
+		if (o.a > 0.5 && on > v_near + 2.0) {
+			occ = 1.0;
+			ofade = o.b;
+		}
 	}
+#ifdef CPU_FED
+	bool corpses = layer_pass < 0.5;
+#else
+	bool corpses = layer_pass == 0;
+#endif
+	float spx = max(length(dFdx(v_ob.xy)), length(dFdy(v_ob.xy)));   // sheet px per screen px
 	if (v_ob.z >= 0.0) {
 		ivec2 tc = ivec2(int(v_ob.z + 0.5), int(v_ob.w + 0.5));
 		vec4 fr = texelFetch(ob_tab, tc, 0);                  // x0, y0, w, h
@@ -604,7 +625,23 @@ void fragment() {
 		vec2 uvo = (fr.xy + clamp(fp, vec2(0.0), fr.zw)) / ob_sheet;
 		vec4 so = texture(ob_shade, uvo);
 		vec4 mo = texture(ob_mask, uvo);
-		COLOR = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb), so.a * v_color.a * inside * occ_keep);
+		COLOR = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb), so.a * v_color.a * inside);
+		if (occ > 0.5) {
+			if (corpses) {
+				COLOR.a *= ofade * 0.6;
+			} else {
+				float edge = 0.0;
+				for (int q = 0; q < 4; q++) {
+					vec2 off = (q == 0 ? vec2(1.0, 0.0) : (q == 1 ? vec2(-1.0, 0.0) : (q == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)))) * spx;
+					vec2 fq = fp + off;
+					float iq = step(0.0, fq.x) * step(0.0, fq.y) * step(fq.x, fr.z) * step(fq.y, fr.w);
+					float aq = iq * textureLod(ob_shade, (fr.xy + clamp(fq, vec2(0.0), fr.zw)) / ob_sheet, 0.0).a;
+					edge = max(edge, 1.0 - step(0.35, aq));
+				}
+				vec4 g = ob_ghost(so.a * inside, edge);
+				COLOR = mix(g, vec4(COLOR.rgb, COLOR.a * 0.6), ofade);
+			}
+		}
 	} else {
 #endif
 	// Every sampler is read unconditionally (implicit derivatives stay
@@ -624,7 +661,11 @@ void fragment() {
 		COLOR = proc;
 	}
 #ifdef OBLIQUE
-	COLOR.a *= occ_keep;
+	if (occ > 0.5) {
+		// (a flat figure: the ghost without its outline)
+		COLOR = corpses ? vec4(COLOR.rgb, COLOR.a * ofade * 0.6) : mix(v_look.x > 0.5 ? ob_ghost(COLOR.a, 0.0)
+			: vec4(COLOR.rgb, step(0.35, COLOR.a) * 0.4), vec4(COLOR.rgb, COLOR.a * 0.6), ofade);
+	}
 	}
 #endif
 }

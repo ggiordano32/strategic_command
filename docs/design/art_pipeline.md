@@ -962,6 +962,124 @@ View only; `sim/` and `campaign/` untouched, the native builds unchanged (the fi
 - **Tests.** `tests/oblique_pack_test.gd` (the state machine against a stubbed request: absent, downloading, loaded, cancel, HTTP and
   network failures, an unmountable pack, a pack without the sheets, retry, `wait()`, the URL); `server/cmd/webcheck -oblique`.
 
+#### Walls as a mesh, the ghost and the default (2026-10-30)
+
+The owner's look at the oblique view: "oblique as default and keep working on it; the walls need some sorting to look
+right; and we need to work out how we are going to see inside the walls". View only: `sim/` and `campaign/` untouched
+(`git diff --stat sim/ campaign/` empty), no hash, no lockstep input. Code: `game/battlekit.gd` (`_ob_walls`,
+`_ob_wseg_rows`, `_ob_face`, `_ob_top`, `_ob_fill`, `ob_fade_update`, the Low path's `_wall_row`), `battlekit.gdshader`,
+`kit_occluder.gd`, `soldiers.gdshaderinc`, `soldier_bases.gdshaderinc`, `board_view.gd`, `oblique_pack.gd`,
+`menu/options_rows.gd`, `battle.gd`; `tests/oblique_pack_test.gd`.
+
+- **Walls as one mitred geometry per ring.** The per-8 m slabs (a front face and a full-thickness top each, unmitred, so
+  they overlapped and fanned at every bastion and corner: "a pile of paper cards") are gone. Each ring's outline (the
+  sim's polygon, merged and counter-clockwise as `_wall_ring` takes it) is offset to four lines across the sim's
+  thickness t: the outer face, the merlons' inner edge (+ pp, the sim's parapet), the walk's inner edge (+ 4 m,
+  `MapGen.WALK_W`) and the inner face, each **mitred at every vertex** exactly as the top view's strip is (a mitre longer
+  than `MITRE_MAX` thicknesses bevelled, the wedge filled with its own rows). The cross-section is the battle kit's own
+  (`tools/battlekit/build.py` `b_wall_sim`): the body to the walk's height h, merlons 1.2 m above it on the outer edge
+  (1.1 m wide every 2 m, as the strips), the 4 m walk, the inner rampart 1.1 m lower. Per standing stretch of at most
+  8 m (`WALL_SEG`, kept only for the sort's locality: subdividing a mitred band along both its lines is exact) the rows
+  are: the outer face (0 to h + 1.2, the gaps between the merlons cut out), the merlons' inner face, the step down from
+  the walk, the rampart's inner face, the walk's top (outer edge to the walk's inner edge), the merlons' tops, the
+  rampart's top, and **end caps** where the ring is cut. Every face is exactly its edge between two lines' points, so
+  adjacent faces meet with no gap and no overlap. **Cuts:** a gate's opening (the gate piece stands in it), a tower's body
+  (0.8 of its radius: the wall ends inside the tower sprite) and a **breach** (the sim's `C_RUBBLE` cells sampled every
+  metre along the centre line): the walls are rebuilt when `sim.rub_n` changes, so a breached stretch is a gap with
+  capped ends and the rubble lying in it. A palisade is the same geometry with pointed stakes (0.46 m) for merlons, a
+  plank walk and an earth bank (`--kit-palisade` draws any ring as timber, a testing aid: no scenario has a palisade).
+- **The rows.** Still rows of the one nearness-sorted kit MultiMesh (no separate ArrayMesh: a canvas has no depth buffer,
+  so only one sorted draw lets a nearer tower or house cover a wall and a nearer wall cover a house). A row carries
+  world px in its transform (a face: its ground edge A, B and its top; a top: three corners) and small numbers in its
+  custom data: **the compatibility renderer keeps a MultiMesh's custom data in half floats** (found here: a code of
+  1000 + 128 x height decoded to nonsense), so the code is 400 + kind + 8 x height dm (exact below 2048, above the kit
+  sheet's 100 + 288), the top's fourth corner an offset from the third, the culture a uniform. The shader puts every
+  vertex on the board through the shared lift grid (per corner, so a wall follows the ground) and computes its
+  nearness per vertex for the occluder. **Sort keys:** the stretch's centre's nearness, then within it the faces turned
+  away, the tops lowest first (rampart, walk, merlons: the merlons stand on the walk's outer edge and must cover it),
+  then the faces toward the camera. A tower sorts by its front (centre + 0.8 r toward the camera) and a gate by the
+  wall's half thickness, so the wall beside a tower draws under it and the wall in front of it over it.
+- **Shading.** Dressed stone in 0.55 m courses (the old pattern), each face lit by its own ground normal against the
+  kit's key light (upper left; half-Lambert so a face toward the camera sits in half shade), a darker foot, a lit lip
+  along the top of the solid part (the crenel bed in the gaps, the merlons' tops); the merlons' tops lighter, the walk
+  darker than the faces (worn flags, a lit lip at its inner edge) and the rampart darker still, so the wall reads thick
+  but walkable; the look's saturation and contrast as the kit's. **Graphics Low** draws the same rows flat-shaded (by
+  the same face direction) as polygons in the sorted order (merlons as a solid band); edge-on faces and bevel corners
+  are skipped (no "Invalid polygon" from the walls).
+- **Seeing inside: the ghost** (the main session's decision, built as given). A man whose pixel is behind a nearer kit
+  piece or wall (the occluder's nearness, as before) is no longer dropped: he is drawn as a **ghost**, his figure flat in
+  his unit's faction colour (the palette's primary, the standard's colour, lifted 15 % toward grey so a black faction
+  still shows) at 40 % with a 1 px lighter outline (a neighbour pixel one screen pixel away outside the figure: four
+  extra fetches, only on ghosted pixels), in both data paths (`soldiers.gdshaderinc`, so `soldiers_ob.gdshader` and
+  `soldiers_ob_cpu.gdshader`); a flat figure (no sheet) ghosts without the outline; his base is not drawn; a corpse
+  behind a piece is not drawn either (a field of grey dead read as noise). Only the part of a man that is behind the
+  piece ghosts, so a man half behind a parapet shows his head and shoulders and his legs as a ghost.
+- **Seeing inside: the fading face.** Past camera zoom 1.5 (`FADE_ZOOM`), every 6 frames, each on-screen stretch whose
+  face toward the camera (|normal.y| > 0.3) has a unit box (its living men's bounding box, 9 sample points; not on a
+  wall; not hidden from the viewer) from its far face to 10 m beyond it (`FADE_BEHIND`) fades; a fading value moves
+  over 0.3 s, written into the stretch's rows' custom data every frame while it moves (a clock in the shader would
+  need seconds in a half float). **Decision beyond the plan: the whole stretch fades, not only the face.** Seen from
+  40 degrees the face of a 6 to 9 m wall covers only the wall's own body on the screen; what hides the ground behind
+  it is the walk and rampart tops (the top of a 7 m wall covers about 8 m behind its inner face), so fading the face
+  alone showed nothing; towers and houses never fade. The faded stretch draws at 55 % alpha; the occluder writes the
+  fade in its B channel, and a man behind a fading stretch is drawn in full colour at 60 % alpha mixed from his ghost
+  by the fade, his base too: he shows through the wall. `--no-wall-fade` turns it off (screenshots of the ghost alone).
+- **The kit's turned houses (pass 4's renders).** `KitOb.MAX` and the shader's `ob_krect` / `ob_kanch` grew to 288;
+  `_ob_sprite` picks the render whose yaw is nearest the instance's (`KitOb.index_yaw`, the yaw from the image right
+  `i_e` with y negated), so a house turned near 90 degrees shows its y2 / y6 render at the footprint's width; pieces
+  with only y0 / y4 draw as before. (The landmark pieces still use `KitOb.index`.)
+- **Oblique as the default.** `[video] battle_view` defaults to **oblique** (no setting, or anything but "top"); the
+  Options capsule still offers Top (its tip now says Oblique is the default, the ghosts, and the web's one download);
+  `--battle-view=top` still works. **The web flow for a first-time player** (`game/oblique_pack.gd`): the start screen
+  starts the fetch of `oblique.pck` (12 MB) with the progress bar and Cancel; a battle started meanwhile waits for it.
+  A battle whose sheets are not mounted is drawn **from the top** (`BoardView.web_top`, set by the battle after the
+  wait), never as flat oblique figures. After **Cancel**: that battle from the top; the menu does not ask again by
+  itself; the next battle's start asks once more (one bar per battle, no loop). After a **failure**: one notice for the
+  session ("Could not download the oblique figures: battles use the top view. Pick Oblique in Options to try again."),
+  no automatic retry; picking Oblique in Options retries (`ObliquePack.should_start(state, user, battle)`, tested).
+  The headless determinism, lockstep and campaign tests do not read the view (`git grep` finds no `battle_view` /
+  `BoardView` in them); `battle_screen_test` pins top then oblique (`BoardView.force`); `menu_test` restores the
+  settings file; `input_test` and `soldier_facing_test` follow the default unless `--battle-view=` is given (both views
+  run below).
+- **Testing aids.** `--move-unit=U:x,y[,w]` (battle.gd: unit U marched there, its side's AI held for the march, the sim
+  run until it arrives, at most 900 ticks; it cannot get a unit through a closed gate), `--no-wall-fade`,
+  `--kit-palisade`; `--seed=N` makes shots repeatable.
+- **Cost** (desktop RTX 3070, 1280 x 720, vsync off, `--quality=high --seed=7`, 8 s of `--frame-stats` after tick 600,
+  mean frame ms, 3 runs each interleaved with HEAD before this pass (a `git archive` copy); the machine was shared and
+  rounds 2 and 3 overlapped the windowed tests, so the spread between runs is 0.1 to 1.5 ms and the deltas are noise):
+
+  | scenario, zoom, view | before | after | delta |
+  |---|---|---|---|
+  | bench_4000_hills, default fit, top | 7.89 | 7.97 | +0.08 |
+  | bench_4000_hills, default fit, oblique | 8.22 | 8.13 | -0.09 |
+  | bench_4000_hills, zoom 2, top | 7.36 | 7.47 | +0.11 |
+  | bench_4000_hills, zoom 2, oblique | 8.38 | 8.30 | -0.08 |
+  | west_town, default fit, top | 4.56 | 4.67 | +0.11 |
+  | west_town, default fit, oblique | 4.76 | 4.78 | +0.02 |
+  | west_town, zoom 2, top | 4.27 | 4.28 | +0.01 |
+  | west_town, zoom 2, oblique | 4.61 | 4.51 | -0.10 |
+
+  Within the +0.3 ms allowed on west_town zoom 2 (the harbour fort's walls are 418 rows, drawn twice with the
+  occluder; the fade's look every 6 frames is a few unit boxes against the on-screen stretches; the
+  ghost's outline fetches run only on ghosted pixels). The top view does not draw any of it.
+- **Checked:** scripts clean (warnings as errors); `battle_screen_test` RESULT PASS (148, both views); `lockstep_test`
+  RESULT PASS; `input_test` RESULT PASS by default (oblique, 393) and with `-- --battle-view=top` (393);
+  `soldier_facing_test` RESULT PASS by default (oblique: a standing line and every set 0 px differ; the four moving cases
+  36 to 870 px of 18,000 to 37,000 differ, now allowed up to 4 % in the oblique view, the CPU path's known per-unit
+  order) and with `-- --battle-view=top` (all exact); `menu_test` RESULT PASS; `oblique_pack_test` RESULT PASS (39);
+  `git diff --stat sim/ campaign/` empty. Shots (1280 x 720, `--seed=7`): the harbour fort at zoom 1.8 and 1.0, every
+  wall culture at the default fit (siege_city, siege_castrum, siege_polis, siege_oppidum, west_town, west_fort_storm),
+  a Rome gate and towers at zoom 2, a breach (`--demo-breach`), a palisade (`--kit-palisade`), Graphics Low, both soldier
+  paths, the ghosts (men in the fort's bastions after the storm, cavalry behind the Rome south wall, men behind houses)
+  with and without the fade, the town's turned houses.
+- **Open.** The owner's eye on the walk's darkness and the ghost's strength (a white faction's ghosts read brighter
+  than a dark one's); a ghost crowd behind a long wall is a grey mass at the default fit (the fade only acts past zoom
+  1.5); men climbing a ladder or stepping onto the walk ghost for a moment where the sim puts their feet inside the
+  wall; the stairs (`over_node`) still lie flat as lifted drawings (they read as light ramps on the inner face); the
+  gatehouse sprite's dark passage under it; the baked top-down kit shadow under the walls; the landmark pieces' yaw
+  (still y0 / y4); the Tab S7 and the phone GPU cost of the occluder pass with more rows; the web flow above wants a
+  real first-visit check on the phone (webcheck `-oblique` covers the fetch, not the Cancel path).
+
 ### Pass 4, painted figures (as built, 2026-10-30)
 
 Art half (`tools/`, the two sheet sets, one loader in `game/kit_ob.gd`); `sim/` and `campaign/` untouched, the generated tables did not change.

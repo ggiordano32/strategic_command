@@ -144,7 +144,7 @@ void fragment() {
 		vec4 o = texture(ob_occ, SCREEN_UV);
 		float on = (floor(o.r * 255.0 + 0.5) * 256.0 + floor(o.g * 255.0 + 0.5)) / 65535.0 * ob_near_r.y + ob_near_r.x;
 		if (o.a > 0.5 && on > v_near + 2.0) {
-			COLOR.a = 0.0;
+			COLOR.a *= o.b * 0.6;   // (the man is a ghost: no base; behind a fading wall, as its fade)
 		}
 	}
 #endif

@@ -15,7 +15,7 @@ extends RefCounted
 const Atlas := preload("res://game/battlekit_atlas.gd")
 const DIR := "res://assets/battlekit_ob/"
 const BASE := 100            # a MultiMesh row's piece code: BASE + the sprite's index (battlekit.gdshader)
-const MAX := 192             # sprites the shader's tables hold
+const MAX := 288             # sprites the shader's tables hold
 
 static var _done := false
 static var _ok := false

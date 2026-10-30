@@ -78,7 +78,10 @@ func _diff(a: Image, c: Image) -> int:
 	return n
 
 
-func _both(label: String, c: Vector2, ppm: float) -> void:
+## `moving`: men stepping or marching. In the oblique view (the default since 2026-10-30) the CPU path orders its buffer a
+## unit at a time and the texture path man by man (docs/design/art_pipeline.md "The sort"), so moving men may overlap
+## the other way round: up to 4 % of the drawn pixels may differ there; a standing line must still match exactly.
+func _both(label: String, c: Vector2, ppm: float, moving := false) -> void:
 	b.soldiers.set_cpu_fed(false)
 	b.soldiers.set_alpha(0.5)
 	await _frames(2)
@@ -93,7 +96,9 @@ func _both(label: String, c: Vector2, ppm: float) -> void:
 		if da[i] > 64:
 			drawn += 1
 	var d := _diff(g, p)
-	_check(drawn > 1500 and d == 0, "%s: texture and CPU paths draw the same pixels (%d px drawn, %d differ)" % [label, drawn, d])
+	var allow := drawn * 4 / 100 if (moving and b.BoardView.oblique) else 0
+	_check(drawn > 1500 and d <= allow, "%s: texture and CPU paths draw the same pixels (%d px drawn, %d differ%s)" % [label, drawn, d,
+		", the oblique view's per-unit order allows %d" % allow if allow > 0 else ""])
 	b.soldiers.set_cpu_fed(false)
 	b.soldiers.set_alpha(0.5)
 	await _frames(2)
@@ -145,7 +150,7 @@ func _run() -> void:
 		if absf(fposmod(b.soldiers.drawn_yaw(i) - float(face) + 512.0, 1024.0) - 512.0) > 60.0:
 			turned += 1
 	_check(turned * 10 >= sim.u_alive[u] * 8, "marching obliquely: %d of %d men are drawn off the unit's ordered facing" % [turned, sim.u_alive[u]])
-	await _both("a column marching obliquely", c, 12.0)
+	await _both("a column marching obliquely", c, 12.0, true)
 	await _shot("march_oblique")
 	# Heavy swords (own sidestep / backstep frames; the cavalry above keep the
 	# walk): a line dressing 5 m sideways, then a back step of 4 m.
@@ -170,7 +175,7 @@ func _run() -> void:
 		if SoldierLayer.step_action(v, b.soldiers.drawn_yaw(i)).action == 4:
 			act_n += 1
 	_check(act_n > 0, "heavy swords dressing sideways: %d of %d men sidestep" % [act_n, sim.u_alive[h]])
-	await _both("heavy swords mid-sidestep", c, 12.0)
+	await _both("heavy swords mid-sidestep", c, 12.0, true)
 	_look(c, 3.5)
 	await _shot("sidestep")
 	_step(60)
@@ -179,7 +184,7 @@ func _run() -> void:
 	sim.queue_order(BattleSim.make_move_order(sim.tick, h, ox + int((fy * 5.0 + fx * FRONT) * 1024.0), oy + int((-fx * 5.0 + fy * FRONT) * 1024.0), face, 0, 0))
 	_step(12)
 	c = Vector2(sim.u_cx[h], sim.u_cy[h]) / 1024.0
-	await _both("heavy swords mid-sidestep to the other side", c, 12.0)
+	await _both("heavy swords mid-sidestep to the other side", c, 12.0, true)
 	_look(c, 3.5)
 	await _shot("sidestep_other")
 	_step(60)
@@ -198,7 +203,7 @@ func _run() -> void:
 		if SoldierLayer.step_action(v, b.soldiers.drawn_yaw(i)).action == 5:
 			act_n += 1
 	_check(act_n > 0, "heavy swords backing up: %d of %d men backstep" % [act_n, sim.u_alive[h]])
-	await _both("heavy swords mid-backstep", c, 12.0)
+	await _both("heavy swords mid-backstep", c, 12.0, true)
 	_look(c, 3.5)
 	await _shot("backstep")
 	# A line dressing: an 8 m step sideways, the facing kept.

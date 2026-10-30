@@ -1,7 +1,8 @@
 extends RefCounted
 ## The battle view's board transform (tabletop pass 3, docs/design/art_pipeline.md "Pass 3, the oblique view").
 ## A view preference in user://settings.cfg [video] battle_view = top | oblique ("--battle-view=top|oblique" overrides
-## it for the session; default top). View only: it reads the sim's heights once per battle and never writes the sim.
+## it for the session; default oblique since 2026-10-30, the owner's call). On the web a battle whose oblique sheets
+## are not mounted (game/oblique_pack.gd: the download cancelled or failed) is drawn in the top view (`web_top`). View only: it reads the sim's heights once per battle and never writes the sim.
 ##
 ## Top: the board is the world (world pixels, the map seen from straight above), as before.
 ## Oblique: the table seen from the south, the camera 40 degrees above the horizon (50 degrees from the vertical, the
@@ -31,6 +32,7 @@ const UP_K := 0.999
 ## The view of the battle being set up (set by `begin`; tests set `force` first).
 static var oblique := false
 static var force := ""               # tests: "top" / "oblique" (overrides the setting and the command line)
+static var web_top := false          # set by the battle: the web without the oblique sheets draws this battle from the top
 static var px_per_m := 10.0
 static var field_px := Vector2(1000.0, 1000.0)
 static var cell_px := 200.0
@@ -57,8 +59,8 @@ static func pref() -> String:
 			return "oblique"
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) != OK:
-		return "top"
-	return "oblique" if str(cf.get_value("video", "battle_view", "top")) == "oblique" else "top"
+		return "oblique"
+	return "top" if str(cf.get_value("video", "battle_view", "oblique")) == "top" else "oblique"
 
 
 static func save_pref(v: String) -> void:
@@ -70,7 +72,7 @@ static func save_pref(v: String) -> void:
 
 ## Set up the view for a new battle on `sim` (before the layers are built).
 static func begin(sim, p_px_per_m: float) -> void:
-	oblique = pref() == "oblique"
+	oblique = pref() == "oblique" and not web_top
 	px_per_m = p_px_per_m
 	field_px = Vector2(sim.field_w, sim.field_h) / 1024.0 * px_per_m
 	var fw_m: float = sim.field_w / 1024.0

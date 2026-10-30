@@ -3,8 +3,9 @@ extends Node
 ## soldiers are drawn after the kit, so a man in front of a house covers it; a man behind one must not. This draws the
 ## kit's sorted MultiMeshes (game/battlekit.gd ob_mm) a second time, every frame, into a screen-sized SubViewport of its
 ## own world with the main view's canvas transform, each opaque pixel coloured with its nearness (16 bits in R, G;
-## battlekit.gdshader ob_depth): the nearest piece's, since the MultiMesh is sorted farther first. The soldier and
-## base shaders read it at SCREEN_UV and drop a fragment where a nearer piece is (soldiers.gdshaderinc). View only.
+## battlekit.gdshader ob_depth) and a wall's fade (B): the nearest piece's, since the MultiMesh is sorted farther
+## first. The soldier and base shaders read it at SCREEN_UV: a man behind a nearer piece is drawn as a ghost, his base
+## not at all; behind a fading wall he shows through it (soldiers.gdshaderinc). View only.
 ## Not on Graphics Low (the kit has no MultiMesh there: the men draw over it).
 
 const BoardView := preload("res://game/board_view.gd")
