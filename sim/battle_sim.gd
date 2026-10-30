@@ -152,10 +152,32 @@ static var CHASE_RUN_ON := 1     # its anchor running after routers, its men
                                  # run with their places (not walk 3 m behind)
 static var CHASE_REFORM_ON := 1  # a new move / attack to a unit strung out
                                  # first sets its anchor on its men
-static var CHASE_TOWN_ON := 0    # the rules on settlement maps (city_on) too: off
-                                 # (measured, docs/AI.md 46: in the town battles
-                                 # they gave the attackers 47 -> 60 % at Rome's
-                                 # walls 1-3; the owner's report is a field chase)
+static var CHASE_TOWN := 1       # on settlement maps (city_on): 0 none of the
+                                 # rules (the 2026-10-30 build: town-wide they gave
+                                 # the attackers 47 -> 60 % at Rome's walls 1-3,
+                                 # docs/AI.md 46); 1 the town rules (docs/AI.md 47):
+                                 # pace and push only after routers, the push's stop
+                                 # never in a gate, on a wall or at a held building's
+                                 # door step, re-form only for a player's order (not
+                                 # the AI's), the leash and the run as in the field;
+                                 # 2 every rule as in the field
+static var CHASE_TOWN_LEASH := 1 # with CHASE_TOWN 1: the rear leash in towns (0 off;
+                                 # tests/chase_probe.gd's town case kills more
+                                 # without it and without the run, the town
+                                 # plans hold either way: docs/AI.md 47)
+static var CHASE_TOWN_RUN := 1   # with CHASE_TOWN 1: the men run with their places in towns (0 off)
+static var CHASE_FULL_RUN_ON := 1  # the pursuit bonus (docs/AI.md 47): an anchor
+                                 # after a routing target at its men's full run,
+                                 # not 7/8 of it (routers keep 7/8: a unit closes
+                                 # on routers of its own type)
+static var CHASE_FULL_RUN_TOWN := 0  # ... on settlement maps too (0: field only; with
+                                 # it San Juan and Granada moved beyond their
+                                 # intervals in west_walls, docs/AI.md 47)
+static var SKIRM_RESUME_ON := 1  # a skirmisher that falls back from a threat
+                                 # keeps its attack order pending (u_ptarget) and
+                                 # takes it up again once the threat is past
+const SKIRM_RESUME_PCT := 150    # ... if its target is within this % of its range
+                                 # and not coming for it (then it fires at will)
 const CHASE_DT := 10             # the centres' movement is sampled this often
 const CHASE_AWAY_MIN := M / 2    # ... a target whose centre went this far away
                                  # (from the attacker's anchor) in CHASE_DT
@@ -1311,6 +1333,7 @@ var u_vx := PackedInt32Array()       # its centre's movement over the last CHASE
 var u_vy := PackedInt32Array()
 var u_chase := PackedInt32Array()    # this tick: pursuing (1 a target moving away, 2 routing; 0 not)
 var u_rft := PackedInt32Array()      # tick of its last re-form on its men (CHASE_REFORM_ON)
+var u_ptarget := PackedInt32Array()  # a skirmisher's attack target kept while it falls back (-1 none; SKIRM_RESUME_ON)
 var u_stuck := PackedInt32Array()    # ticks it has wanted to get on (an order, a climb, men short of their places) and got nowhere
 var u_srx := PackedInt32Array()      # ... its men's middle when it last got on (STUCK_DIST)
 var u_sry := PackedInt32Array()
@@ -1801,6 +1824,7 @@ var stat_sea_exit: int = 0        # defenders who left a coast map along the sho
 var stat_cit_siege: int = 0       # defender unit-seconds of morale lost with the town lost
 var stat_regroup: int = 0         # units that regrouped where their cut-off men were
 var stat_reform: int = 0          # orders that re-formed a strung-out unit on its men (CHASE_REFORM_ON)
+var stat_skirm_resume: int = 0    # skirmishers that took up their attack order again after falling back (SKIRM_RESUME_ON)
 var stat_chase_back: int = 0      # man-ticks a fighting man let his man go, left behind his place (CHASE_BACK_ON)
 ## View only (not state, never read by the sim): ring of recent stone
 ## impacts for the impact marks: x, y, flight direction (Q12), tick.
@@ -2189,6 +2213,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.resize(n_units)
 		arr.fill(0)
 	u_rft.fill(-REFORM_QUIET)
+	u_ptarget.fill(-1)
 	# (The Rome rows only, unless a West row fights: Rome battles hash as before.)
 	kty_n = UT.ROME_N
 	for ud in units:
@@ -2627,7 +2652,7 @@ func _unit_arrays() -> Array:
 		u_shelled_t, u_shelled_by, u_emove, u_h, u_refill, u_rprog, u_reserve, u_blk, u_dodge,
 		u_kills, u_otype, u_eg, u_oammo, u_sk, u_akind, u_burn, u_forage, u_racc, u_rptr,
 		u_scare, u_amok, u_calm, u_kill, u_awe, u_led, u_cmdgone,
-		u_hx, u_hy, u_vx, u_vy, u_chase, u_rft]
+		u_hx, u_hy, u_vx, u_vy, u_chase, u_rft, u_ptarget]
 
 
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
@@ -8069,6 +8094,9 @@ func _apply_unit(u: int, o: Dictionary, keep_wp := false) -> void:
 	var o0 := u_order[u]  # (the order it had: an attack after an attack keeps its way)
 	var wq0: PackedInt32Array = d["wp"]
 	var rf0 := reform_anchor(self, u, d, o) if CHASE_REFORM_ON != 0 else Vector3i.ZERO
+	var otyp := int(o["type"])
+	if otyp == ORDER_MOVE or otyp == ORDER_ATTACK or otyp == ORDER_HALT or otyp == ORDER_WITHDRAW:
+		u_ptarget[u] = -1  # (a new order: the skirmisher's pending attack is forgotten)
 	apply_order_rule(self, u, d, o)
 	if rf0.z != 0 and int(d["ax"]) == rf0.x and int(d["ay"]) == rf0.y:
 		u_rft[u] = tick  # (re-formed on its men: no lag regroup for REFORM_QUIET)
@@ -8707,11 +8735,13 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 ## middle (among obstacles off its ground: the man nearest their middle).
 ## Its places are then laid from there, so no man walks back to a place far
 ## behind him. d: the unit's order fields as they stand (order_fields).
-## Returns (x, y, 1), or z 0: as it is (also on a settlement map unless
-## CHASE_TOWN_ON).
+## Returns (x, y, 1), or z 0: as it is (also on a settlement map for the
+## AI's orders, CHASE_TOWN 1: it re-targets its storming units often, and
+## for every order with CHASE_TOWN 0).
 static func reform_anchor(sim, u: int, d: Dictionary, o: Dictionary) -> Vector3i:
 	var no := Vector3i(0, 0, 0)
-	if CHASE_REFORM_ON == 0 or (sim.city_on != 0 and CHASE_TOWN_ON == 0) or sim.phase == PHASE_DEPLOY or sim.u_state[u] != U_READY or sim.u_alive[u] <= 0:
+	if CHASE_REFORM_ON == 0 or (sim.city_on != 0 and (CHASE_TOWN == 0 \
+			or (CHASE_TOWN == 1 and int(o.get("player", 0)) >= BattleAI.AI_PLAYER_BASE))) or sim.phase == PHASE_DEPLOY or sim.u_state[u] != U_READY or sim.u_alive[u] <= 0:
 		return no
 	var typ := int(o["type"])
 	var ty: int = sim.u_type[u]
@@ -9467,10 +9497,12 @@ func _occ_probe(u: int, ox: int, oy: int, x: int, y: int, rx: int, ry: int, t: i
 ## away from u's anchor over the last CHASE_DT ticks, fewer than a quarter
 ## of its men fighting); 0 when t stands or comes on.
 func _chase_mode(u: int, t: int) -> int:
-	if city_on != 0 and CHASE_TOWN_ON == 0:
+	if city_on != 0 and CHASE_TOWN == 0:
 		return 0
 	if u_state[t] == U_ROUTING:
 		return 2
+	if city_on != 0 and CHASE_TOWN == 1:
+		return 0  # (in a town only routers are pursued: a defender falling back is not, docs/AI.md 47)
 	if u_fighting[t] * 4 >= u_alive[t]:
 		return 0
 	var dx := u_cx[t] - u_ax[u]
@@ -9479,6 +9511,28 @@ func _chase_mode(u: int, t: int) -> int:
 	if d <= 0:
 		return 0
 	return 1 if (u_vx[t] * dx + u_vy[t] * dy) / d >= CHASE_AWAY_MIN else 0
+
+
+## Pursuit in towns (CHASE_TOWN 1, docs/AI.md 47): may pursuer u's anchor
+## stop 1 m from its target's centre ((dx, dy) from the anchor, length d)?
+## In the field yes; on a settlement map not where that stop lies in a
+## gate, on a wall's footprint (its body, walk, towers, stairs, a breach's
+## rubble), in a house or within OCC_DOOR_R of a held building's door step
+## (the gate and occupation rules keep those): there it stops short as before.
+func _push_stop_ok(u: int, dx: int, dy: int, d: int) -> bool:
+	if city_on == 0 or CHASE_TOWN != 1 or obs_on == 0 or d <= M:
+		return true
+	var px := u_ax[u] + dx * (d - M) / d
+	var py := u_ay[u] + dy * (d - M) / d
+	var k := obs_kind(px, py)
+	if k != MapGen.C_OPEN and k != MapGen.C_DITCH:
+		return false  # (gate, wall, walk, tower, stair, rubble, a house)
+	if occ_on != 0:
+		for v in n_units:
+			if u_occ[v] > 0 and u_state[v] < U_DESTROYED \
+					and FM.approx_len(ob_dx[u_occ[v] - 1] - px, ob_dy[u_occ[v] - 1] - py) <= OCC_DOOR_R:
+				return false
+	return true
 
 
 ## Unit u's anchor steps from (ox, oy) toward (nx, ny) (t: the unit it
@@ -10067,11 +10121,14 @@ func _update_units() -> void:
 					u_chase[u] = chm
 					if u_state[t] == U_ROUTING and u_run[u] == 0 and not (sg_on != 0 and u_carry[u] >= 0):
 						aspeed = aspeed * t_run[ty] / maxi(t_walk[ty], 1)
+					if CHASE_FULL_RUN_ON != 0 and u_state[t] == U_ROUTING and (city_on == 0 or CHASE_FULL_RUN_TOWN != 0) \
+							and not (sg_on != 0 and u_carry[u] >= 0):
+						aspeed = aspeed * 8 / 7  # (the pursuit bonus: its full run; routers go at 7/8 of theirs)
 					var hw := (u_maxx[t] - u_minx[t]) >> 1
 					var hh := (u_maxy[t] - u_miny[t]) >> 1
 					var ext := (absi(dx) * hw + absi(dy) * hh) / d
 					var stop := ext + M
-					if t_chase[ty] != 0 or (CHASE_PUSH_ON != 0 and chm != 0):
+					if t_chase[ty] != 0 or (CHASE_PUSH_ON != 0 and chm != 0 and _push_stop_ok(u, dx, dy, d)):
 						stop = M  # a pack: into the middle of its quarry (scattered routers too); any pursuer (CHASE_PUSH_ON)
 					if occ_t:
 						stop = M / 2  # (onto the door step)
@@ -10610,8 +10667,8 @@ func _missile_think(u: int) -> void:
 	var ty := u_type[u]
 	var order := u_order[u]
 	# Skirmish mode: fall back from approaching infantry or cavalry.
+	var threat := -1
 	if u_skirm[u] != 0 and order != O_WITHDRAW and u_fighting[u] * 4 < u_alive[u]:
-		var threat := -1
 		var best := 0
 		for o in n_units:
 			if u_side[o] == u_side[u] or u_state[o] != U_READY:
@@ -10632,6 +10689,8 @@ func _missile_think(u: int) -> void:
 			var tx := clampi(u_ax[u] + ex * SKIRM_BACK / d, 5 * M, field_w - 5 * M)
 			var ty2 := clampi(u_ay[u] + ey * SKIRM_BACK / d, 5 * M, field_h - 5 * M)
 			if FM.approx_len(tx - u_ax[u], ty2 - u_ay[u]) > 4 * M:
+				if SKIRM_RESUME_ON != 0 and order == O_ATTACK and u_target[u] >= 0:
+					u_ptarget[u] = u_target[u]  # (its attack order kept while it falls back)
 				u_order[u] = O_MOVE
 				u_target[u] = -1
 				if u_bound[u] != 0:
@@ -10644,6 +10703,24 @@ func _missile_think(u: int) -> void:
 				u_settled[u] = 0
 				u_ftarget[u] = -1
 				return
+	if u_ptarget[u] >= 0 and order == O_NONE and threat < 0 and u_fighting[u] * 4 < u_alive[u]:
+		# The fall-back done and no threat near (SKIRM_RESUME_ON, docs/AI.md
+		# 47): its attack order again if its target lives, is within
+		# SKIRM_RESUME_PCT of its range and is not attacking it (walking at
+		# a target that comes on loses the duel: tests/matchups.gd javelins
+		# vs light 100 -> 80 % wins); else it fires at will.
+		var pt := u_ptarget[u]
+		u_ptarget[u] = -1
+		if u_state[pt] < U_DESTROYED and u_alive[pt] > 0 and u_ammo[u] > 0 \
+				and not (u_order[pt] == O_ATTACK and u_target[pt] == u) \
+				and FM.approx_len(u_cx[pt] - u_cx[u], u_cy[pt] - u_cy[u]) <= mrange(u) * SKIRM_RESUME_PCT / 100:
+			u_order[u] = O_ATTACK
+			u_target[u] = pt
+			u_gtarget[u] = -1
+			u_run[u] = 0
+			u_settled[u] = 0
+			order = O_ATTACK
+			stat_skirm_resume += 1
 	if u_refill[u] != 0 or u_rprog[u] > 0 or u_forage[u] != 0:
 		u_ftarget[u] = -1  # refilling at a wagon or foraging: no shooting
 		return
@@ -11088,7 +11165,8 @@ func _update_soldiers() -> void:
 		var ax := u_ax[u]
 		var ay := u_ay[u]
 		var spd_formed := run if u_run[u] != 0 else walk
-		if CHASE_RUN_ON != 0 and u_chase[u] == 2 and not (sg_on != 0 and u_carry[u] >= 0):
+		if CHASE_RUN_ON != 0 and u_chase[u] == 2 and (city_on == 0 or CHASE_TOWN != 1 or CHASE_TOWN_RUN != 0) \
+				and not (sg_on != 0 and u_carry[u] >= 0):
 			spd_formed = run  # (its anchor runs after routers: its men run with their places)
 		var moved := 0
 		var withdrawing := u_order[u] == O_WITHDRAW
@@ -11358,7 +11436,7 @@ func _update_soldiers() -> void:
 		# behind his place lets his man go and makes for it; he looks for a
 		# man again within PLACE_LEAD of it. Not on a wall or a stair, in a
 		# building, carrying, a pack, a formed pike block or a charge.
-		var back_on := CHASE_BACK_ON != 0 and (city_on == 0 or CHASE_TOWN_ON != 0) and lead_cap and (u_moved[u] > 0 or u_chase[u] != 0) \
+		var back_on := CHASE_BACK_ON != 0 and (city_on == 0 or (CHASE_TOWN != 0 and (CHASE_TOWN != 1 or CHASE_TOWN_LEASH != 0))) and lead_cap and (u_moved[u] > 0 or u_chase[u] != 0) \
 			and t_chase[ty] == 0 and not (sg_on != 0 and u_carry[u] >= 0) and not (occ_on != 0 and u_occ[u] > 0)
 		var reach_in := reach + INREACH_EXTRA
 		var counted := 0

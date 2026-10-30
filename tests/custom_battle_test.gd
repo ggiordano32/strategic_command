@@ -515,7 +515,11 @@ func _check_light_missile() -> void:
 			# HEAD of 2026-10-30 two of eight neighbouring seeds; with pursuit
 			# as a unit, docs/AI.md 46, the AI's foot chasing the other
 			# skirmishers, this seed). Such a row is tried alone against the
-			# AI's light foot: it must shoot there.)
+			# AI's light foot: it must shoot there. Since 2026-10-30 (docs/AI.md
+			# 47) a skirmisher that falls back keeps its attack order and takes
+			# it up again; seeds +0..+7 still leave one row without a shot at
+			# three of them, before and after: horse javelins (40 m) fall back
+			# from foot within 30 m before they close to range.)
 			var alone := _light_missile_alone(k, int(b["seed"]))
 			out.append("%s 0 (alone %d)" % [k, alone])
 			if alone <= 0:

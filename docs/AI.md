@@ -4040,3 +4040,109 @@ the man step's rear leash). Probe: `tests/chase_probe.gd`.
    "acting weird" among obstacles (REGROUP) is not reproduced in the open probe, and with the rules off in towns
    it is as before; equal-speed pursuers never close on routers (an anchor at 7/8 of the run; the owner may want a
    pursuit bonus); field battles are not in the harness plans (the matchups above are the field check).
+
+## 47. Pursuit in towns, the pursuit bonus, the skirmisher's order (2026-10-30)
+
+Three follow-ups to 46, agreed with the owner; sim only. Code: `sim/battle_sim.gd` (`CHASE_TOWN`,
+`CHASE_TOWN_LEASH`, `CHASE_TOWN_RUN`, `_chase_mode`, `_push_stop_ok`, `reform_anchor`; `CHASE_FULL_RUN_ON`,
+`CHASE_FULL_RUN_TOWN`; `SKIRM_RESUME_ON`, `u_ptarget`, `_missile_think`). Probe: `tests/chase_probe.gd` (new case
+*town*, switches `--town=0|1|2`, `--off=...,bonus,resume,tbonus,tleash,trun`).
+
+1. **Pursuit in towns** (`CHASE_TOWN`, replaces `CHASE_TOWN_ON`: 0 none of the rules on a settlement map, the 46
+   build; **1 the town rules**, the default; 2 every rule as in the field). With 1, on a settlement map:
+   - *Pace and push only after routers*: `_chase_mode` returns 2 for a routing target and 0 for everything else
+     (a defender falling back or withdrawing is not "moving away" there), so "wait for my men" and the box-edge
+     stop hold against it as before 46.
+   - *The push's stop* (`_push_stop_ok`): after routers the anchor stops 1 m from their centre only where that
+     point is open ground (or ditch); in a gate, on any wall cell (body, walk, tower, stair), on rubble, in a
+     house, or within `OCC_DOOR_R` of a held building's door step it stops 1 m short of the box edge as before
+     (and a target holding a building is still fought at its door, the occupation rule).
+   - *Re-form only for a player's order*: `reform_anchor` reads the order's own `player` (AI orders carry
+     `BattleAI.AI_PLAYER_BASE + side`, `sim/battle_ai.gd` `_order`, also used by `siege_ai.gd` and `plays.gd`); an
+     order from player >= 100 never re-forms in a town. The hash depends on nothing but the order (the preview and
+     scripted orders count as a player's). In the field the AI's orders re-form as in 46.
+   - *Leash and run* on as in the field (`CHASE_TOWN_LEASH`, `CHASE_TOWN_RUN`, both 1; switches kept for the
+     alternative below).
+2. **The pursuit bonus** (`CHASE_FULL_RUN_ON`): an anchor after a routing target closes at 8/7 of its old pace, its
+   men's full run (with the woods, slope and carry rules as before); routers keep 7/8 of theirs, so a unit now
+   gains on routers of its own type. **Field only** (`CHASE_FULL_RUN_TOWN` 0): with it in towns too the town
+   plans' pooled rows held but two West towns moved beyond their intervals as a whole (San Juan 25 -> 50 % *,
+   Granada 25 -> 48 % *) and `open_town` read 67 -> 79 %; field-only, no town's whole column is flagged.
+3. **The skirmisher's order** (`SKIRM_RESUME_ON`, `u_ptarget`: per unit, hashed, in snapshots): a missile unit in
+   skirmish mode that falls back from a threat while under an attack order keeps the target as pending; on a later
+   think with no order, no threat within `SKIRM_INF` / `SKIRM_CAV` and fewer than a quarter of its men fighting it
+   takes the attack order up again (walk) if the target lives, it has ammunition and the target is within
+   `SKIRM_RESUME_PCT` 150 % of its range, **and the target is not attacking it**; else it fires at will. Any new
+   move, attack, halt or withdraw order clears the pending target. `stat_skirm_resume`.
+
+**What differs from the brief, and why.**
+- *The hunt exception (3)*: built as briefed, `tests/matchups.gd` "javelins 150 vs light 100 attacking them" went
+  100 % -> 80 % wins (20 % draws, decided 113 -> 162 s) and the equal-cost grid moved (spear vs javelins 40 -> 90 %,
+  javelins vs spear 90 -> 70 %): javelins that resumed walked back at the unit hunting them. Not resuming against a
+  target that attacks them restores every one of those rows exactly.
+- *The bonus is field-only (2)*, see above.
+- *The town probe disagrees with the leash and the run in towns (1d)*, see 4; the harness does not, so they are
+  on as briefed, with switches.
+- *The light missile crowd still fails at three seeds of eight (3)*, see 5.
+
+4. **Numbers: probe** (8 seeds; kills of the target in 60 s, and the other columns as in 46.3; HEAD = this build
+   with `--off=bonus --town=0`, which reproduces 46's table exactly):
+
+   | Case | spread m | from place m | in reach | strikes/s | kills 60 s | reform s / step m / within 2 m |
+   |---|---|---|---|---|---|---|
+   | brk | 6.3 -> 6.2 | 0.9 -> 1.5 | 10.7 -> 17.8 | 4.2 -> 6.7 | 18.6 -> 50.1 | 16 / 0.31 / 100 % as before |
+   | rout | 5.1 -> 5.0 | 1.0 -> 1.3 | 10.0 -> 13.4 | 3.6 -> 5.3 | 31.5 -> 48.8 | as before |
+   | walk | 4.3 -> 5.5 | 0.6 -> 1.5 | 2.7 -> 2.7 | 1.4 -> 1.4 | 25.1 -> 25.1 | 16 / 0.31 -> 1.00 (a re-form; the target routs at ~12 s and the heavy cannot catch light routers) |
+   | cav | 10.0 -> 10.0 | 1.7 -> 1.9 | 5.8 -> 7.0 | 3.0 -> 3.3 | 42.6 -> 45.8 | as before |
+   | skirm | 5.5 -> 5.5 | 1.2 -> 1.2 | 7.2 -> 7.3 | 2.2 -> 2.2 | 41.0 -> 40.1 | 13 / 0.60 -> 0.47 |
+   | town | 36.8 -> 43.2 | 7.7 -> 8.2 | 7.0 -> 5.0 | 4.6 -> 3.1 | 43.9 -> 28.0 | 18.7 (7/8) -> 18.6 (5/8) / 25.8 -> 34.5 / 95 -> 73 % |
+
+   *town*: a Rome town (walls 1, flat, town seed = battle seed 11..88), 60 heavy defenders in the main gate's
+   opening (open), routing into the town, 100 light storming from 8 m outside; no AI. The men of the bonus are 0.3-0.6
+   m further from their places (their anchor at their own full run, they cannot gain on it) but in reach of nearly
+   twice as many routers: heavy now catches heavy routers (*brk*). Town variants (kills / within 2 m at 30 s of the
+   reposition): HEAD (`--town=0`) 43.9 / 95 %; the town rules 28.0 / 73 %; leash off 38.1 / 93 %; leash and run off
+   46.5 / 82 %; with the bonus in towns 37.8 / 76 %; every rule as in the field (`--town=2`) 28.5 / 77 %; push off
+   27.5 / 76 %; re-form off 28.0 / 73 %. **The rear leash costs the town chase most**: a unit through a gate is a
+   column 40 m long with its men 8 m from their places (`TOWN_PLACE_LEAD` 10 m lets them run ahead), and a fighting
+   man 3 m behind his place lets his man go. The reposition's 34.5 m step is the re-form on the men (9.1 m with it
+   off), the unit deep in the streets after the chase.
+5. **Light missile crowd** (`tests/custom_battle_test.gd`'s battle at its seed +0..+7): a row that never shot in
+   2,400 ticks at 3 of 8 seeds without the resume rule (the Tarentines at +0, +3, +4) and at 3 of 8 with it (the
+   Tarentines at +1 and +4, the javelin horse at +3); with the retry-alone fallback 0 of 8 in both (every such row
+   shoots alone). The rule works (1-5 resumes a battle) but does not cure the crowd: horse javelins reach 40 m and
+   fall back from foot within 30 m (`SKIRM_INF`), closing only to 34 m (17/20 of range), so in a crowd the foot
+   coming on is inside 30 m before the javelins are in range, and they do not shoot while falling back; after a
+   35 m fall-back the target is usually beyond 1.5 x 40 m (250 % was tried: 6 seeds of 8 fail). The test keeps its
+   fallback (comment updated).
+6. **Harness** (before: HEAD `7a43b72c88`, the town plans equal to it line for line, 46.4; after: this build).
+   Pooled attacker wins: `rome_walls` 47 -> 50 % (walls 1 / 2 / 3: 70 -> 74, 40 -> 40, 32 -> 36; no cell flagged);
+   `west_walls` 38 -> 41 % (walls 0 / 1 / 2: 52 -> 56, 34 -> 38, 27 -> 28; three single cells of 48 flagged, havana
+   w0 75 -> 44, santo_domingo w1 50 -> 81, new_orleans w0 6 -> 31, no town's whole column); `open_town` 67 -> 71 %
+   (88 -> 100, 88 -> 75, 25 -> 38, each inside). Single flagged cells move from build to build (the other variants
+   below flag other towns): the town battles are chaotic at 16 seeds. Variants measured: the brief's build (bonus
+   in towns, no hunt exception) rome 48 % (74 / 41 / 29), west 40 % (48 / 42 / 29; san_juan and granada flagged
+   as a whole, santiago_de_cuba w0), open_town 79 %; leash and run off in towns (bonus field-only) rome 48 % (76 /
+   36 / 30), west 38 % (54 / 33 / 25; five single cells flagged), open_town 79 %. Every pooled cell of every
+   variant is inside its interval.
+7. **Field** (`tests/matchups.gd`, 20 seeds, against HEAD): every winner and decision time of the set pieces as
+   before, and the equal-cost grid and the javelin duel identical; kills after the break up: pike 120 from the flank
+   95.0 -> 102.0, heavy vs heavy control 56.9 -> 60.4, with its general behind 69.7 -> 77.2, rear charge into
+   spears 78.3 -> 79.3 (pike from the rear 104.9 -> 103.3, horse into archers 75.8 -> 74.9). `bench_2000` AI vs AI
+   (10 seeds) decided after 6.7 -> 6.1 min, wins 5 / 5 -> 3 / 7; hill-terrain AI battles 5.6-7.8 min (rolling 5.0
+   -> 5.6, valley 7.0 -> 7.8). The flat goldens skirmish and bench_2000 move with the bonus only (the town rules and
+   the resume leave them; re-recorded).
+8. **Pins and checks.** The campaign pins of all four sets (rome, rome10, west, west10) are unchanged (auto-resolved
+   battles). `tests/pathing_probe.gd` seeds 7-10, before -> after: fight jitter (town / near obstacles, the worse)
+   1.8 / 2.0 / 1.9 / 2.2 % -> 1.8 / 1.7 / 1.7 / 1.7 %; stuck runs over 30 s 2 / 1 / 1 / 1 -> 1 / 1 / 4 / 1 (seed 9:
+   siege_town two units 38 s, siege_oppidum one 30 s, west_hill_village one as before; the longest still 38 s);
+   rout jitter and stationary routers within their limits. Stuck runs move with any change in towns: at the brief's
+   build west_city seed 10 held one unit 84 s and siege_town seed 7 two, and either went with any one town piece
+   switched off. `tests/determinism_test.gd`: `siege_punic@ai` (seed 12345) no longer exercises `gate_art`: the storm
+   now takes the town by its breach before the batteries turn on the gate (winner 0 at 6500 ticks, alive 316 / 199;
+   before 357 / 174 undecided; battle seed 3 the same in this build); dropped from that run's list, `gate_ops` keeps
+   it. (With the bonus in towns it was `siege_city@ai`'s `wall_cover` instead: these counters follow the battle.)
+9. **Open.** The leash and the run in towns (the probe's town chase kills 28 with them, 47 without, HEAD 44; the
+   harness holds both ways: `CHASE_TOWN_LEASH` / `CHASE_TOWN_RUN` 0 is the alternative, the owner's call after a
+   town playtest); horse javelins in a crowd (range against `SKIRM_INF`, no shot while falling back: a skirmish
+   rule of its own); the reposition after a town chase (73 % of the men within 2 m at 30 s, HEAD 95 %).

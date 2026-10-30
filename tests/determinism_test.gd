@@ -199,8 +199,11 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## missile units out of ammunition leave; skirmish, bench_2000 and
 ## test_stone_line changed, test_cav_art did not), and for pursuit as a
 ## unit (2026-10-30, docs/AI.md 46: skirmish and bench_2000 changed, were
-## d618e20340501cfa and 5a0aadfb296bd646).
-const GOLDEN := {"skirmish": "01925b7dfad9e615", "bench_2000": "946a33359bd5a466",
+## d618e20340501cfa and 5a0aadfb296bd646), and for the pursuit bonus
+## (2026-10-30, docs/AI.md 47, CHASE_FULL_RUN_ON: skirmish and bench_2000
+## changed, were 01925b7dfad9e615 and 946a33359bd5a466; the town rules and
+## the skirmisher's kept order leave them as they were).
+const GOLDEN := {"skirmish": "285d5b282a11d4ec", "bench_2000": "a06150d9b42a8231",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "b9d3025690cd28ba"}
 
 var _ok := true
@@ -1174,7 +1177,11 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# tower and the gate fell instead; now a stretch the storm can use
 			# is breached and the town falls by it with the gate still shut.
 			# gate_broken: gate_ops, cit_ops.)
-			need = ["paths", "breaches", "gate_art"]
+			# (No gate_art since pursuit in towns, 2026-10-30, docs/AI.md 47:
+			# at this seed the storm now takes the town by its breach before
+			# the batteries turn on the gate (winner 0 at 6500 ticks; battle
+			# seed 3 the same); gate_art is gate_ops'.)
+			need = ["paths", "breaches"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
 			# (Destruction AI: the stones breach the wall by the gate first.)

@@ -2110,7 +2110,8 @@ within 3 m of their places (`CATCH_UP_DIST`), so the whole unit trailed
 `_anchor_step0`, `_update_soldiers`, `_apply_unit`, `apply_order_rule`).
 Each rule has its switch (static, 1 on): `CHASE_BACK_ON`,
 `CHASE_PUSH_ON`, `CHASE_PACE_ON`, `CHASE_RUN_ON`, `CHASE_REFORM_ON`.
-**Not on settlement maps** (`CHASE_TOWN_ON` 0): built on every map they
+**Not on settlement maps** (`CHASE_TOWN_ON` 0; since docs/AI.md 47 the
+town rules of `CHASE_TOWN` 1, below): built on every map they
 moved the town battles beyond their intervals (Rome walls 1-3 attackers
 47 -> 60 %, docs/AI.md 46), so there the battles play as before; on
 field maps (open, woods, landforms, hamlets) they apply.
@@ -2168,6 +2169,26 @@ field maps (open, woods, landforms, hamlets) they apply.
   docs/AI.md 46.5).
 - **Measured.** docs/AI.md 46 (the probe per rule, the harness, the
   pins).
+- **Towns, the pursuit bonus, the skirmisher's order (2026-10-30,
+  docs/AI.md 47).** `CHASE_TOWN` replaces `CHASE_TOWN_ON` (0 none of the
+  rules on a settlement map, 1 the town rules, 2 the field's). The town
+  rules: pace and push only after routers (`_chase_mode` gives 0 for a
+  target merely moving away); the push's stop not in a gate, on a wall
+  cell or rubble, in a house or within `OCC_DOOR_R` of a held building's
+  door step (`_push_stop_ok`: there the stop short of the box edge, as
+  before); re-form only for an order whose `player` is below
+  `BattleAI.AI_PLAYER_BASE` (the AI's orders never re-form in a town);
+  the leash and the run as in the field (`CHASE_TOWN_LEASH`,
+  `CHASE_TOWN_RUN`, 1). The pursuit bonus (`CHASE_FULL_RUN_ON`): an anchor
+  after routers at its men's full run (8/7 of the old pace), routers at
+  7/8 of theirs, so a unit gains on routers of its own type; field only
+  (`CHASE_FULL_RUN_TOWN` 0). The skirmisher's order (`SKIRM_RESUME_ON`,
+  `u_ptarget` hashed, in snapshots): a skirmisher falling back under an
+  attack order keeps the target; with the fall-back done and no threat
+  near it takes the order up again if the target lives, is within 150 %
+  of its range and is not attacking it, else it fires at will; a new
+  move / attack / halt / withdraw clears it. The flat goldens skirmish and
+  bench_2000 moved with the bonus.
 
 ## The Caribbean roster, batch 1 (plan, agreed 2026-10-23)
 

@@ -9,6 +9,10 @@ extends SceneTree
 ##   cav    a cavalry unit attacks 100 light that rout, 40 m ahead
 ##   skirm  (West) 100 native warriors (at the run) attack 80 native bowmen
 ##          in skirmish mode that fall back
+##   town   (docs/AI.md 47) a Rome town (walls 1, flat, the town seed varies
+##          with the seed): 60 heavy defenders in its main gate's opening
+##          (open), routing into the town; 100 light storming it from 8 m
+##          outside attack them (no AI)
 ## Each runs PHASE1 s (60) from the order; then the attacker is moved 40 m to
 ## its flank (same facing, at the run) and runs PHASE2 s (30): the reposition.
 ## Per second (--verbose, first seed): the attacker's spread along its facing
@@ -21,8 +25,12 @@ extends SceneTree
 ## within 2 m of their places, the largest anchor step in one tick (m: a
 ## jump if above the run's 0.45 m) and the share within 2 m at its end.
 ## Rules can be switched off by their static flags (builds that have them):
-##   --off=back,push,pace,run,reform   (CHASE_BACK_ON, CHASE_PUSH_ON,
-##   CHASE_PACE_ON, CHASE_RUN_ON, CHASE_REFORM_ON; "all"); --cases=rout,walk
+##   --off=back,push,pace,run,reform,bonus,resume   (CHASE_BACK_ON,
+##   CHASE_PUSH_ON, CHASE_PACE_ON, CHASE_RUN_ON, CHASE_REFORM_ON,
+##   CHASE_FULL_RUN_ON, SKIRM_RESUME_ON; tbonus, tleash, trun: the bonus,
+##   the leash and the run in towns, CHASE_FULL_RUN_TOWN, CHASE_TOWN_LEASH,
+##   CHASE_TOWN_RUN; "all"); --town=0|1|2 (CHASE_TOWN:
+##   none in towns, the town rules, the field's); --cases=rout,walk
 ##   --seeds=4 --verbose
 ##   godot --headless --script res://tests/chase_probe.gd [-- ...]
 
@@ -37,7 +45,8 @@ const PHASE2 := 300
 const BRK_T := 150
 
 const FLAGS := {"back": "CHASE_BACK_ON", "push": "CHASE_PUSH_ON", "pace": "CHASE_PACE_ON", "run": "CHASE_RUN_ON",
-	"reform": "CHASE_REFORM_ON"}
+	"reform": "CHASE_REFORM_ON", "bonus": "CHASE_FULL_RUN_ON", "resume": "SKIRM_RESUME_ON",
+	"tbonus": "CHASE_FULL_RUN_TOWN", "tleash": "CHASE_TOWN_LEASH", "trun": "CHASE_TOWN_RUN"}
 
 
 static func _sc(kind: String) -> Dictionary:
@@ -65,6 +74,50 @@ static func _sc(kind: String) -> Dictionary:
 		a = Scenarios.unit(0, UT.index_of("native_warriors"), 100, 200, 760, Scenarios.FACE_UP)
 	return {"width_m": 400, "height_m": 1000, "ai_sides": [], "orders": [], "units": [a, t],
 		"terrain": {"kind": Terrain.K_FLAT}}
+
+
+## The town case: the scenario, the gate its defenders stand in.
+static func _town_sc(sd: int) -> Array:
+	var sc: Dictionary = Scenarios.siege_test(sd, 1, 1, 0, Terrain.K_FLAT)
+	for k in ["deploy_zones", "equip", "mantlets"]:
+		sc.erase(k)
+	sc["ai_sides"] = []
+	sc["orders"] = []
+	var probe := BattleSim.new()
+	probe.setup(sc, sd)
+	# The main gate: the outer gate nearest the attackers' middle.
+	var ax := 0
+	var ay := 0
+	var na := 0
+	for u in probe.n_units:
+		if probe.u_side[u] != probe.city_def:
+			ax += probe.u_ax[u]
+			ay += probe.u_ay[u]
+			na += 1
+	ax /= maxi(na, 1)
+	ay /= maxi(na, 1)
+	var g := -1
+	var bd := 1 << 40
+	for k in probe.n_gates:
+		if probe.g_cit[k] != 0:
+			continue
+		var dd: int = (probe.g_x[k] - ax) ** 2 / 1024 + (probe.g_y[k] - ay) ** 2 / 1024
+		if dd < bd:
+			bd = dd
+			g = k
+	var c := FM.cos_a(probe.g_dir[g])
+	var s := FM.sin_a(probe.g_dir[g])
+	var gx: int = probe.g_x[g]
+	var gy: int = probe.g_y[g]
+	var into := probe.wall_t / 2 + 3 * M  # (just inside the opening)
+	var out := probe.wall_t / 2 + 8 * M
+	var fin := (probe.g_dir[g] + 512) & FM.ANGLE_MASK  # (facing into the town)
+	var t := Scenarios.unit(probe.city_def, UT.index_of("heavy"), 60, (gx - c * into / FM.TRIG_ONE) / M,
+		(gy - s * into / FM.TRIG_ONE) / M, fin)
+	var a := Scenarios.unit(1 - probe.city_def, UT.index_of("light"), 100, (gx + c * out / FM.TRIG_ONE) / M,
+		(gy + s * out / FM.TRIG_ONE) / M, fin)
+	sc["units"] = [a, t]
+	return [sc, g]
 
 
 static func _place(sim, u: int, s: int) -> Vector2i:
@@ -101,11 +154,22 @@ static func _shape(sim, u: int) -> Array:
 
 func _run(kind: String, sd: int, verbose: bool) -> Dictionary:
 	var sim := BattleSim.new()
-	sim.setup(_sc(kind), sd)
+	var tg := -1
+	if kind == "town":
+		var ts := _town_sc(sd)
+		tg = int(ts[1])
+		sim.setup(ts[0], sd)
+	else:
+		sim.setup(_sc(kind), sd)
 	var ta := 0
 	var tt := 1
 	if kind == "brk":
 		pass
+	elif kind == "town":
+		sim.g_state[tg] = BattleSim.GATE_OPEN
+		sim._gate_cells(tg)
+		sim._start_rout(tt)
+		sim.u_routs[tt] = BattleSim.MAX_ROUTS + 1  # (no rally)
 	elif kind == "rout" or kind == "cav":
 		sim._start_rout(tt)
 		sim.u_routs[tt] = BattleSim.MAX_ROUTS + 1  # (no rally)
@@ -114,7 +178,8 @@ func _run(kind: String, sd: int, verbose: bool) -> Dictionary:
 			BattleSim.files_to_width(sim.u_files[tt], sim.u_type[tt]), 0))
 	else:
 		sim.queue_order(BattleSim.make_skirmish_order(0, tt, 1))
-	sim.queue_order(BattleSim.make_attack_order(0, ta, tt, 0 if kind == "rout" or kind == "cav" or kind == "brk" else 1))
+	sim.queue_order(BattleSim.make_attack_order(0, ta, tt, 0 if kind == "rout" or kind == "cav" or kind == "brk" \
+		or kind == "town" else 1))
 	var men_t: Array = []
 	var bt: int = sim.u_slot_base[tt]
 	for k in sim.u_alive[tt]:
@@ -188,8 +253,9 @@ func _run(kind: String, sd: int, verbose: bool) -> Dictionary:
 func _init() -> void:
 	var seeds := 4
 	var verbose := false
-	var cases := ["brk", "rout", "walk", "cav", "skirm"]
+	var cases := ["brk", "rout", "walk", "cav", "skirm", "town"]
 	var off: Array = []
+	var town := -1
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--seeds="):
 			seeds = int(a.get_slice("=", 1))
@@ -199,11 +265,16 @@ func _init() -> void:
 			cases = a.get_slice("=", 1).split(",")
 		elif a.begins_with("--off="):
 			off = Array(a.get_slice("=", 1).split(","))
+		elif a.begins_with("--town="):
+			town = int(a.get_slice("=", 1))
 	var probe := BattleSim.new()
 	for k in FLAGS:
-		if probe.get(FLAGS[k]) != null:
-			probe.set(FLAGS[k], 0 if k in off or "all" in off else 1)
-	print("rules off: %s" % (",".join(off) if not off.is_empty() else "none"))
+		if probe.get(FLAGS[k]) != null and (k in off or "all" in off):
+			probe.set(FLAGS[k], 0)  # (the others as built: CHASE_FULL_RUN_TOWN is 0)
+	if town >= 0 and probe.get("CHASE_TOWN") != null:
+		probe.set("CHASE_TOWN", town)
+	print("rules off: %s%s" % [",".join(off) if not off.is_empty() else "none",
+		"" if town < 0 else "; CHASE_TOWN %d" % town])
 	print("case    spread m  from place m  in reach  strikes/s  kills 60s  reform s  max anchor step m  within 2 m at 30 s")
 	for kind in cases:
 		var tot := {"spread": 0.0, "pdist": 0.0, "inreach": 0.0, "strikes": 0.0, "kills": 0.0, "rep": 0.0,
