@@ -103,6 +103,7 @@ const PS_K := 14
 const R_HIDE := 4               # hidden in the main wood
 const R_BAIT := 5               # the bait (out in front, or falling back)
 const R_FLANK := 6              # hidden in the flank wood (AMBUSH_FLANK)
+const R_SKIRM := 7              # missile foot once sprung: the woods' skirmishers (no chase, no melt; hidden again in a new cycle)
 const AS_HIDE := 0              # hiding (the bait: standing out)
 const AS_FIGHT := 1             # sprung (the bait: falling back)
 const AS_MELT := 2              # melting back to its hiding post
@@ -554,9 +555,10 @@ static func _closing(sim, o: int, u: int, r: int) -> bool:
 # to its hiding post at the walk. An enemy unit within AMBUSH_SPRING_R of a
 # hidden unit (box to box), one that has seen a hidden unit, or one
 # AMB_PASSED past the woods' front: every hidden unit and the bait attack at
-# once (the sim's ambush strike rewards the first volley or contact). A
-# sprung unit that has fought AMBUSH_FIGHT_T, is out of a melee and is not winning melts back to
-# its post; with every unit home again a new bait goes out. Skilled
+# once (the sim's ambush strike rewards the first volley or contact); sprung
+# missile foot stay in the woods as skirmishers (R_SKIRM). A sprung melee
+# unit that has fought AMBUSH_FIGHT_T, is out of a melee and is not winning
+# melts back to its post; with every unit home again a new bait goes out. Skilled
 # (AMBUSH_FLANK): half the hidden units take a second wood on the enemy's
 # flank. Dropped when its trigger has been gone PLAY_DROP_T, at once when no
 # foot is left to hide, and when a cycle has waited AMB_WAIT_T for a spring.
@@ -615,7 +617,8 @@ static func _amb_army(sim, side: int, kn: PackedInt32Array, plan: Dictionary) ->
 		_psset(sim, side, PS_AMB_SEEN, sim.tick)
 	var hiders := 0
 	for u in sim.n_units:
-		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _pm(sim, u, PU_ROLE) >= R_HIDE:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _pm(sim, u, PU_ROLE) >= R_HIDE \
+				and _pm(sim, u, PU_ROLE) != R_SKIRM:
 			hiders += 1
 	if hiders == 0 or (not trig and sim.tick - _ps(sim, side, PS_AMB_SEEN) >= PLAY_DROP_T):
 		_amb_drop(sim, side)
@@ -652,6 +655,10 @@ static func _amb_army(sim, side: int, kn: PackedInt32Array, plan: Dictionary) ->
 
 ## A new cycle: lying in wait with a new bait out.
 static func _amb_cycle(sim, side: int, kn: PackedInt32Array) -> void:
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and _pm(sim, u, PU_ROLE) == R_SKIRM \
+				and _d(sim.u_ax[u] - _pm(sim, u, PU_X), sim.u_ay[u] - _pm(sim, u, PU_Y)) <= AMB_RUN_R:
+			_pmset(sim, u, PU_ROLE, R_HIDE)  # (hidden again for the new cycle)
 	_psset(sim, side, PS_AMB_PH, AP_WAIT)
 	_psset(sim, side, PS_AMB_T, sim.tick)
 	_amb_bait(sim, side, kn)
@@ -726,16 +733,25 @@ static func _amb_spring(sim, side: int) -> void:
 			continue
 		if _pm(sim, u, PU_ROLE) == R_BAIT:
 			_pmset(sim, u, PU_ROLE, R_HIDE)
-		elif _pm(sim, u, PU_STATE) != AS_HIDE:
+		elif _pm(sim, u, PU_STATE) != AS_HIDE or _pm(sim, u, PU_ROLE) == R_SKIRM:
 			continue
 		_amb_go(sim, u)
 
 
 ## Unit u springs: the nearest enemy it sees (else the nearest), a charge for
-## melee foot; missile foot fire at will, and close only with no target in
-## range.
+## melee foot; missile foot fire at will and become the woods' skirmishers
+## (R_SKIRM, _amb_skirm: they never close, melt or spring again; chasing
+## and the melt-spring cycle got bow and sling bands ridden down in the
+## open, docs/AI.md 44.5).
 static func _amb_go(sim, u: int) -> void:
 	var side: int = sim.u_side[u]
+	if sim.u_cls[u] == UT.CLS_MISSILE:
+		# (missile foot: the woods' skirmishers from now on, R_SKIRM)
+		_pmset(sim, u, PU_ROLE, R_SKIRM)
+		_pmset(sim, u, PU_STATE, AS_HIDE)
+		_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
+		return
 	_pmset(sim, u, PU_STATE, AS_FIGHT)
 	_pmset(sim, u, PU_T, sim.tick)
 	_pmset(sim, u, PU_OF, sim.u_alive[u])
@@ -908,6 +924,8 @@ static func _amb_unit(sim, u: int, r: int) -> bool:
 	var face := _ps(sim, side, PS_AMB_FACE)
 	var hx := _pm(sim, u, PU_X)
 	var hy := _pm(sim, u, PU_Y)
+	if r == R_SKIRM:
+		return _amb_skirm(sim, u, kn, hx, hy, face)
 	if st == AS_FIGHT and r != R_BAIT:
 		# Sprung: the ordinary rules fight; after AMBUSH_FIGHT_T, out of a
 		# melee and not winning: melt.
@@ -967,6 +985,27 @@ static func _amb_unit(sim, u: int, r: int) -> bool:
 	if dh >= AMB_HOME_R:
 		_move(sim, u, hx, hy, face, _width(sim, u), 1 if dh > AMB_RUN_R else 0, 3)
 	_hold(sim, u)
+	return true
+
+
+## A sprung missile foot unit (R_SKIRM): a skirmisher about its post, skirmish
+## on (the sim's loose order, fall-back and woods drift) and fire at will at
+## what comes in range; it never closes on a target, melts or springs again.
+## With an enemy it sees within AMBUSH_PULL_R it is left where its fall-back
+## took it; with none, back to its post (run when over AMB_RUN_R away), and
+## at its post when a new cycle begins it hides in the line again (R_HIDE).
+## Caught in a melee: the ordinary rules.
+static func _amb_skirm(sim, u: int, kn: PackedInt32Array, hx: int, hy: int, face: int) -> bool:
+	if sim.u_fighting[u] > 0:
+		return false
+	if sim.u_skirm[u] == 0:
+		_order(sim, u, {"type": ORDER_SKIRMISH, "on": 1}, 20)
+	if sim.u_fire[u] == 0:
+		_order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+	if not _enemy_within(sim, u, kn[AP.AMBUSH_PULL_R]):
+		var dh := _d(sim.u_ax[u] - hx, sim.u_ay[u] - hy)
+		if dh >= AMB_HOME_R:
+			_move(sim, u, hx, hy, face, _width(sim, u), 1 if dh > AMB_RUN_R else 0, 3)
 	return true
 
 

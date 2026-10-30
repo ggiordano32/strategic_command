@@ -3417,7 +3417,7 @@ the others unchanged). Code: `sim/plays.gd` (the ambush section), hooks in
 `_issue_line` leaves the play's units out of its orders, `Plays.amb_slots`;
 `_unit_think` reaches it through `Plays.unit_think`), knobs and counters in
 `sim/ai_profile.gd`, scenario `ambush_field` in `sim/scenarios.gd`, probe
-flag `--plays1=` in `tests/asym_probe.gd`, test `determinism_test.gd
+flags `--plays1=` and `--trace-amb` in `tests/asym_probe.gd`, test `determinism_test.gd
 --only=plays` (`_check_ambush`).
 
 - **Trigger** (`ambush_trigger`, each army think): no settlement, no town
@@ -3458,10 +3458,19 @@ flag `--plays1=` in `tests/asym_probe.gd`, test `determinism_test.gd
   unit fights it alone: a hidden unit attacked springs on its own). Every
   hidden unit and the bait attack at once (`_amb_go`): the nearest enemy
   the side sees (else the nearest), a charge for melee foot; missile foot
-  fire at will and close only with no target in range. The sim's ambush
+  fire at will and become the woods' skirmishers (below). The sim's ambush
   strike (`u_amb`: hidden 5 s, then seen) does the rest. The side's and the
   enemy's men are noted.
-- **Fight, melt.** A sprung unit is the ordinary rules' (`u_ai` A_ATTACK)
+- **Missile foot after the spring** (2026-10-29, the `asym_woods2` fix):
+  a sprung bow, sling, dart or gun band takes the part `R_SKIRM`
+  (`_amb_skirm`): skirmish on (the sim's loose order, fall-back and woods
+  drift), fire at will, no attack order (it never closes on a target), no
+  melt and no spring again. With an enemy it sees within `AMBUSH_PULL_R` it
+  stays where its fall-back took it; with none it goes back to its post, and
+  one at its post (within `AMB_RUN_R`) when a new cycle begins hides in the
+  line again (`R_HIDE`). It does not count as a hider: a side whose melee
+  foot are all gone drops the play. Caught in a melee, the ordinary rules.
+- **Fight, melt.** A sprung melee unit is the ordinary rules' (`u_ai` A_ATTACK)
   until it has fought `AMBUSH_FIGHT_T` since it sprang; then, out of a melee
   and **not winning**, it melts: runs back to its post, fire held, hides.
   Winning: a unit that has lost no man since it sprang while enemy foot is
@@ -3483,7 +3492,7 @@ flag `--plays1=` in `tests/asym_probe.gd`, test `determinism_test.gd
 - **Memory** (the plays' tail of `ai_mem`, hashed and snapshotted as
   before; its layout grew: `PU_K` 4 -> 6, `PS_K` 4 -> 14, so every battle
   with the plays' memory hashes differently, none pinned): per unit the
-  part (`R_HIDE` 4, `R_BAIT` 5, `R_FLANK` 6; the tercio's are 1-3), the men
+  part (`R_HIDE` 4, `R_BAIT` 5, `R_FLANK` 6, `R_SKIRM` 7; the tercio's are 1-3), the men
   when it sprang, the state (`AS_HIDE`, `AS_FIGHT`, `AS_MELT`), the tick it
   sprang / got home, its post; per side the ambush's state, phase
   (`AP_WAIT`, `AP_PULL`, `AP_SPRUNG`), the cycle's start, the trigger's last
@@ -3518,11 +3527,14 @@ y 210-390 m, at 4 warrior bands of 100 and 2 bow bands of 80 beyond them,
 |---|---|---|---|---|---|---|---|
 | asym_woods off | 0 / 47 / 1 | 258 | 263 | 430 | 28.4 | 12.5 | |
 | asym_woods on | 0 / 48 / 0 | 168 | 281 | 320 | 26.8 | 10.0 | 2.1 / 1.8 |
+| asym_woods on, missile foot fix | 0 / 47 / 1 | 110 | 249 | 239 | 19.8 | 7.7 | 1.6 / 0.8 |
 | asym_woods2 off | 2 / 44 / 2 | 280 | 264 | 492 | 32.4 | 15.9 | |
 | asym_woods2 on | 13 / 35 / 0 | 395 | 311 | 522 | 37.0 | 11.2 | 9.7 / 10.6 |
+| asym_woods2 on, missile foot fix | 3 / 44 / 1 | 289 | 289 | 430 | 32.6 | 9.9 | 2.5 / 1.6 |
 | asym_field off = on | 42 / 6 / 0 | 471 | | 319 | 0 | 0 | never laid (no woods): every battle identical |
 | ambush_field off | 42 / 6 / 0 | 277 | 189 | 301 | 2.3 | 0.06 | |
 | ambush_field on | 35 / 13 / 0 | 314 | 228 | 387 | 14.5 | 5.4 | 10.0 / 10.2 |
+| ambush_field on, missile foot fix | 29 / 16 / 3 | 301 | 245 | 401 | 13.9 | 4.3 | 6.4 / 6.2 |
 
 Skilled natives in `ambush_field` (12 seeds, the Spanish Average): 0 of 12
 on and off; the flank wood is taken in all 12; in most of them the column
@@ -3551,7 +3563,7 @@ battles are 25 % shorter. In `ambush_field` the natives' wins double (6 ->
 13) and the Spanish keep 35 of 48 (the floor was 12); the natives lose more
 men a battle (277 -> 314) because they now fight it out instead of breaking
 on the open lane, and the Spanish lose a fifth more. `asym_woods2` (the
-mounted arquebusiers and the slingers) is a regression: 44 -> 35 wins. Its
+mounted arquebusiers and the slingers) was a regression: 44 -> 35 wins (fixed below: 44). Its
 counts: springs and melts near 10 a battle (2 in `asym_woods`), reveals up
 32 -> 37, strikes down 16 -> 11: the line springs, fights piecemeal, melts
 and springs again, and the ambush strikes fewer than the ordinary rules'
@@ -3568,9 +3580,46 @@ target, so the build is as before: the riders are not what costs
 line's countermarch was not what beat it: in `asym_woods2` the Spanish lose
 more men with the play on (264 -> 311).
 
-**Open.** `asym_woods2` (above): not the riders (tried); left to look at:
-the slingers and atlatl darts in the hidden line (the batch-2 natives'
-difference from `asym_woods`) and the spring-melt cycle near 10 a battle; the Skilled flank never won a
+**The `asym_woods2` fix (2026-10-29, third round).** A per-unit trace in
+the probe (`--trace-amb`: every 10 s each native unit's part, state, metres
+from its post, hidden flag, target and losses, each Spanish unit's place;
+at the end a table per type: men lost by the part's state, kills, springs,
+melts, and the Spanish kills by the killed men's type) found it was not the
+slingers and darts as such but every missile band in the line. The
+natives' extra losses (280 off -> 395 on a battle) fell on the sprung
+missile foot: bowmen 7 -> 68, canoe raiders 19 -> 40, slingers 7 -> 19 (59,
+34 and 18 of them lost in the fight state), and the Spanish lancers did it
+(their kills of bowmen 3 -> 36 a battle, slingers 1 -> 16, canoe raiders 7
+-> 20; the lancers' own losses 56 -> 38). The spring's attack order sent a
+missile band with no target in range toward the nearest enemy, often the
+lancers riding on the bait, out of the woods; it melted and sprang again
+(each band 1-3 springs and melts a battle) instead of skirmishing from
+cover as the ordinary rules do (the play off: bowmen lose 7). The warriors
+also chased the lancers into the open, where the rodeleros' kills of them
+rose 27 -> 69. Between springs the Spanish foot stood 40-80 m out in the
+open shooting at the slingers' bait and whatever it revealed.
+
+Three variants (48 seeds, the play on; natives' wins, natives' losses a battle):
+
+| Variant | asym_woods2 | asym_woods | ambush_field |
+|---|---|---|---|
+| as built (before) | 35 (395) | 48 (168) | 13 (314) |
+| 1. missile foot never hide: skirmishers 24 m inside the woods, fire at will, never spring or melt; baits from them too | 45 (240) | 48 (94) | 6 (303) |
+| 2. ... their fire held until the line springs (or they are seen) | 42 (331) | 48 (98) | 4 (305) |
+| **3. kept**: missile foot hide in the line and spring with it (the first volley), then the woods' skirmishers (`R_SKIRM`) | **44 (289)** | **47 (110)** | **16 (301)** |
+
+Kept variant 3, the only one inside the bounds (`asym_woods2` 42 or better,
+`asym_woods` 46, `ambush_field` 10): Spanish / natives / draws 3 / 44 / 1,
+0 / 47 / 1 and 29 / 16 / 3 (the measured table above). In `ambush_field`
+the bows' hidden first volley is what variants 1 and 2 lost (the warriors'
+kills 133 -> 92 a battle without it). Not built: a respring delay
+(`AMBUSH_RESPRING_T`, ids 326-329 stay gaps), a spring needing two hidden
+units near, the melt's "winning" read over the whole side; the cycle fell
+from near 10 springs a battle to 2.5 without them.
+
+**Open.** `asym_woods2` natives' losses stay a little above the play off
+(289 against 280; the warriors still chase riders into the open: a sprung
+unit's target is the nearest enemy seen, riders too); the Skilled flank never won a
 battle in `ambush_field` (the Spanish Average column does not come in); a
 spring has no chronicle line (no view element, as the tercio).
 

@@ -8716,7 +8716,8 @@ func _check_plays() -> void:
 ## hidden at wooded posts with fire held; the bait falls back when the
 ## company is within AMBUSH_PULL_R of it; the spring comes with the company
 ## within AMBUSH_SPRING_R (box to box) of a hidden unit and not before, every
-## hidden unit sprung. ambush_field: some sprung unit melts and gets home
+## hidden unit sprung (the bow band as the woods' skirmishers, R_SKIRM).
+## ambush_field: some sprung unit melts and gets home
 ## hidden again; with the natives' bit off no ambush; identical on repeat and
 ## across snapshot / restore mid-play.
 func _check_ambush() -> void:
@@ -8763,7 +8764,12 @@ func _check_ambush() -> void:
 			if gap > kn[AIP.AMBUSH_SPRING_R] + 2 * M:
 				bad.append("sprung with the company %d m off" % (gap / M))
 			for u in range(1, 4):
-				if Plays.state(sim, u) != Plays.AS_FIGHT:
+				# (melee foot charge, AS_FIGHT; missile foot become the
+				# woods' skirmishers, R_SKIRM)
+				if sim.u_cls[u] == UT.CLS_MISSILE:
+					if Plays.role(sim, u) != Plays.R_SKIRM:
+						bad.append("missile unit %d not a skirmisher after the spring" % u)
+				elif Plays.state(sim, u) != Plays.AS_FIGHT:
 					bad.append("unit %d not sprung" % u)
 			break
 		if sprung < 0 and pulled >= 0 and gap < kn[AIP.AMBUSH_SPRING_R] - 4 * M:

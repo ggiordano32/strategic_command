@@ -14,10 +14,18 @@ extends SceneTree
 ## ambush_field (the Spanish column between two woods). Each battle prints
 ## the ambush's counters (laid, springs, melts) and the sim's ambush strikes;
 ## the summary the natives' losses and the battle's length (means) too.
+## --trace-amb: every 10 s a line per native unit (type, part, state, metres
+## from its post, hidden from the Spanish, fire, target, men lost) and per
+## Spanish unit (type, metres ahead of the woods' front, order, men lost);
+## at the end a table per native type over all seeds (men lost, kills,
+## springs, melts, seconds hidden / fighting / melting).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const AP := preload("res://sim/ai_profile.gd")
+const Plays := preload("res://sim/plays.gd")
+const UT := preload("res://sim/unit_types.gd")
+const FM := preload("res://sim/fixed_math.gd")
 
 
 func _init() -> void:
@@ -26,6 +34,7 @@ func _init() -> void:
 	var seed0 := 0
 	var plays := -2  # (-2: the scenario's own; else side 0's ai_plays)
 	var plays1 := -2  # (... side 1's)
+	var trace := false
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--scen="):
 			scen = a.substr(7)
@@ -37,6 +46,8 @@ func _init() -> void:
 			plays = int(a.substr(8))
 		elif a.begins_with("--plays1="):
 			plays1 = int(a.substr(9))
+		elif a == "--trace-amb":
+			trace = true
 	var w := [0, 0, 0]
 	var rv := 0
 	var hd := 0
@@ -44,6 +55,7 @@ func _init() -> void:
 	var nl := 0
 	var ln := 0
 	var amb := [0, 0, 0, 0]
+	var agg := {}  # native type key -> [lost, kills, springs, melts, t_hide, t_fight, t_melt, units]
 	for k in seeds:
 		var sd := 5000 + seed0 + k
 		var sim := BattleSim.new()
@@ -53,11 +65,37 @@ func _init() -> void:
 			sc["ai_plays"] = [plays if plays != -2 else pl[0], plays1 if plays1 != -2 else pl[1]]
 		sim.setup(sc, sd)
 		var n1_0 := 0
+		var n0_0 := 0
 		for u in sim.n_units:
 			if sim.u_side[u] == 1:
 				n1_0 += sim.u_alive[u]
+			else:
+				n0_0 += sim.u_alive[u]
+		var pst := {}
+		var n0 := {}
+		for u in sim.n_units:
+			n0[u] = sim.u_alive[u]
 		while sim.tick < 12000 and sim.winner < 0:
 			sim.step()
+			if trace:
+				_trace_tick(sim, sd, pst, n0, agg)
+		if trace:
+			for u in sim.n_units:
+				if sim.u_side[u] == 1:
+					var a: Array = _agg_row(agg, UT.key_of(sim.u_otype[u]))
+					a[0] += int(n0[u]) - sim.u_alive[u]
+					a[1] += sim.u_kills[u]
+					a[7] += 1
+				else:
+					var kk: Array = _agg_row(agg, "S:" + UT.key_of(sim.u_otype[u]))
+					kk[7] += 1
+					kk[1] += sim.u_kills[u]
+					kk[0] += int(n0[u]) - sim.u_alive[u]
+					for t in sim.kty_n:
+						var c: int = sim.u_kills_ty[u * sim.kty_n + t]
+						if c > 0:
+							var kx: Array = _agg_row(agg, "K:" + UT.key_of(sim.u_otype[u]) + ">" + UT.key_of(t))
+							kx[1] += c
 		var r: int = sim.winner if sim.winner == 0 or sim.winner == 1 else 2
 		w[r] += 1
 		print("BATTLE %s seed %d winner %d tick %d alive %d/%d pistols %d car %d drift %d parley %d/%d pris %d,%d" % [scen, sd, r, sim.tick,
@@ -67,9 +105,9 @@ func _init() -> void:
 		var lin: int = sim.get("stat_lingers") if "stat_lingers" in sim else 0
 		var na := AP.N_COUNTERS
 		var lost1: int = n1_0 - sim.alive_count(1)
-		print("  tercio %d reveals %d hidden %d lingers %d ambush %d springs %d melts %d strikes %d natives_lost %d" % [
+		print("  tercio %d reveals %d hidden %d lingers %d ambush %d springs %d melts %d strikes %d natives_lost %d spanish_lost %d" % [
 			sim.stat_aic[AP.C_PLAY_TERCIO], sim.stat_reveals, sim.stat_hidden, lin, sim.stat_aic[na + AP.C_PLAY_AMBUSH],
-			sim.stat_aic[na + AP.C_AMB_SPRING], sim.stat_aic[na + AP.C_AMB_MELT], sim.stat_ambush, lost1])
+			sim.stat_aic[na + AP.C_AMB_SPRING], sim.stat_aic[na + AP.C_AMB_MELT], sim.stat_ambush, lost1, n0_0 - sim.alive_count(0)])
 		amb[0] += sim.stat_aic[na + AP.C_PLAY_AMBUSH]
 		amb[1] += sim.stat_aic[na + AP.C_AMB_SPRING]
 		amb[2] += sim.stat_aic[na + AP.C_AMB_MELT]
@@ -84,4 +122,74 @@ func _init() -> void:
 	var sn := float(maxi(seeds, 1))
 	print("AMBUSH %s natives_lost/battle %.1f length_s %.1f laid %d springs/battle %.2f melts/battle %.2f strikes/battle %.2f" % [scen,
 		nl / sn, ln / sn / 10.0, amb[0], amb[1] / sn, amb[2] / sn, amb[3] / sn])
+	if trace:
+		print("TYPE natives: type units lost kills springs melts s_hide s_fight s_melt (sums over seeds)")
+		for k in agg.keys():
+			var a: Array = agg[k]
+			print("TYPE %-16s %3d lost %5d kills %5d springs %4d melts %4d hide %6d fight %6d melt %6d lostin hide %5d fight %5d melt %5d bait %5d free %5d" % [k, a[7], a[0], a[1], a[2], a[3], a[4] / 10, a[5] / 10, a[6] / 10, a[8], a[9], a[10], a[11], a[12]])
 	quit()
+
+
+static func _agg_row(agg: Dictionary, k: String) -> Array:
+	if not agg.has(k):
+		agg[k] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+	return agg[k]
+
+
+## --trace-amb: the per-tick tallies and the 10 s lines.
+static func _trace_tick(sim, sd: int, pst: Dictionary, n0: Dictionary, agg: Dictionary) -> void:
+	var on := Plays.has_mem(sim) and Plays.ambush_on(sim, 1)
+	for u in sim.n_units:
+		if sim.u_side[u] == 1:
+			var pa: int = pst.get(u + 100000, int(n0[u]))
+			var dl: int = pa - sim.u_alive[u]
+			pst[u + 100000] = sim.u_alive[u]
+			if dl > 0:
+				var ar: Array = _agg_row(agg, UT.key_of(sim.u_otype[u]))
+				var r0 := Plays._pm(sim, u, Plays.PU_ROLE) if on else 0
+				if r0 < Plays.R_HIDE:
+					ar[12] += dl
+				elif r0 == Plays.R_BAIT:
+					ar[11] += dl
+				else:
+					ar[8 + Plays._pm(sim, u, Plays.PU_STATE)] += dl
+	for u in sim.n_units:
+		if sim.u_side[u] != 1 or sim.u_state[u] != 0 or not on:
+			continue
+		var r := Plays._pm(sim, u, Plays.PU_ROLE)
+		if r < Plays.R_HIDE:
+			continue
+		var st := Plays._pm(sim, u, Plays.PU_STATE)
+		var a: Array = _agg_row(agg, UT.key_of(sim.u_otype[u]))
+		var ps: int = pst.get(u, -1)
+		if r != Plays.R_BAIT:
+			if st == Plays.AS_FIGHT and ps != Plays.AS_FIGHT:
+				a[2] += 1
+			if st == Plays.AS_MELT and ps != Plays.AS_MELT:
+				a[3] += 1
+		pst[u] = st if r != Plays.R_BAIT else -1
+		a[4 + (st if r != Plays.R_BAIT else 0)] += 1
+	if sim.tick % 100 != 0:
+		return
+	var face := Plays._ps(sim, 1, Plays.PS_AMB_FACE) if Plays.has_mem(sim) else 0
+	var fx := FM.cos_a(face)
+	var fy := FM.sin_a(face)
+	var wx := Plays._ps(sim, 1, Plays.PS_AMB_X) if Plays.has_mem(sim) else 0
+	var wy := Plays._ps(sim, 1, Plays.PS_AMB_Y) if Plays.has_mem(sim) else 0
+	var ph := Plays._ps(sim, 1, Plays.PS_AMB_PH) if Plays.has_mem(sim) else 0
+	print("TR %d t=%ds amb=%d ph=%d men %d/%d" % [sd, sim.tick / 10, Plays._ps(sim, 1, Plays.PS_AMB) if Plays.has_mem(sim) else 0, ph,
+		sim.alive_count(0), sim.alive_count(1)])
+	for u in sim.n_units:
+		if sim.u_state[u] >= 2:
+			continue
+		var ahead: int = ((sim.u_cx[u] - wx) * fx + (sim.u_cy[u] - wy) * fy) / FM.TRIG_ONE / 1024
+		var tg: int = sim.u_target[u] if sim.u_order[u] == 2 else sim.u_ftarget[u]
+		if sim.u_side[u] == 1:
+			var r := Plays._pm(sim, u, Plays.PU_ROLE) if Plays.has_mem(sim) else 0
+			var st := Plays._pm(sim, u, Plays.PU_STATE) if Plays.has_mem(sim) else 0
+			var dp: int = Plays._d(sim.u_ax[u] - Plays._pm(sim, u, Plays.PU_X), sim.u_ay[u] - Plays._pm(sim, u, Plays.PU_Y)) / 1024 if r >= Plays.R_HIDE else -1
+			print("  N%-2d %-14s r%d s%d st%d post%4dm ahead%4dm hid%d fire%d ord%d tgt%3d lost%3d kills%3d" % [u, UT.key_of(sim.u_otype[u]), r, st,
+				sim.u_state[u], dp, -ahead, 1 if sim.hidden_from(u, 0) else 0, sim.u_fire[u], sim.u_order[u], tg, int(n0[u]) - sim.u_alive[u], sim.u_kills[u]])
+		else:
+			print("  S%-2d %-14s ahead%4dm st%d ord%d tgt%3d lost%3d kills%3d ai%d" % [u, UT.key_of(sim.u_otype[u]), -ahead, sim.u_state[u],
+				sim.u_order[u], tg, int(n0[u]) - sim.u_alive[u], sim.u_kills[u], sim.u_ai[u]])
