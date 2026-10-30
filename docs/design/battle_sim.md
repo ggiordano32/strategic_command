@@ -2160,6 +2160,12 @@ field maps (open, woods, landforms, hamlets) they apply.
   in `_unit_arrays`: hashed everywhere, in snapshots). With every switch
   0 the battles play as before the change (the probe's numbers equal
   HEAD's) but the state hash differs by the new arrays.
+- **Missile units.** None of the rules changes a missile unit's own
+  conduct (with ammunition it takes the shooting branch, never pursues;
+  checked by switch after `tests/custom_battle_test.gd` "light missile"
+  failed at its seed: the AI's foot pursuing fallen-back skirmishers left
+  one row with nothing in range; the test now tries such a row alone,
+  docs/AI.md 46.5).
 - **Measured.** docs/AI.md 46 (the probe per rule, the harness, the
   pins).
 

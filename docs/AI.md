@@ -4022,7 +4022,20 @@ the man step's rear leash). Probe: `tests/chase_probe.gd`.
    spear vs javelins 20 -> 40 %, javelins vs light 70 -> 10 % (light infantry's own card says "skirmishers they can
    run down"); spear vs pike 0 -> 10 %, pike vs spear 100 -> 90 %. `bench_2000` AI vs AI (10 seeds) decided after 7.4
    -> 6.7 min, wins 5 / 5 as before; the hill-terrain AI battles 4.5-9.7 min as before (rolling 5.6 -> 5.0).
-5. **Open.** Pursuit in towns (the rules are built and switchable: `CHASE_TOWN_ON` 1 is the ungated build; a town
+5. **The light missile check (2026-10-30, after the merge).** `tests/custom_battle_test.gd` "light missile" (nine
+   skirmishing rows of ours with attack orders against the AI's four foot units) failed: "tarentines never shot in
+   2400 ticks". By switch: back off or push off passes, pace / run / reform off still fail. No rule touches a missile
+   unit's own conduct: the Tarentines never pursue (`u_chase` 0 throughout; a missile unit with ammunition takes the
+   shooting branch, not the closing one), and with the enemy standing (no AI) every row's shots are the same with all
+   switches on or off. What changed is the AI's foot: they now run after the skirmishers that fall back (pace), and
+   at this seed the Tarentines, whose attack order ends when they fall back (`_missile_think`, as before), were left
+   with nothing within 40 m past their friends for the rest of the run. The check was fragile before the change too:
+   at HEAD with seeds +1..+7 it failed at two of eight (the Tarentines at +5 and +7), with the rules at three. Fixed
+   in the test, not the sim: a row that has not shot in the crowd is tried alone against the AI's 100 light foot
+   and must shoot there (it does, every seed tried, both builds). No sim change, so the probe (the kills table in 3),
+   the goldens, the pins and the harness are unchanged. Open: a skirmisher that fell back forgets its attack order
+   and stands; horse javelins in a crowd often have no clear line (`_clear_line`) to a target at 36 m.
+6. **Open.** Pursuit in towns (the rules are built and switchable: `CHASE_TOWN_ON` 1 is the ungated build; a town
    version needs its own design, perhaps pace only for routers and no re-form for AI orders); the reposition
    "acting weird" among obstacles (REGROUP) is not reproduced in the open probe, and with the rules off in towns
    it is as before; equal-speed pursuers never close on routers (an anchor at 7/8 of the run; the owner may want a
