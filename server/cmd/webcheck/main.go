@@ -15,6 +15,9 @@
 //	    the relay, then B leaves and joins again mid-battle (snapshot)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers [-shots DIR]
 //	    only the soldier check (works against tools/serve_web.py too)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -oblique [-shots DIR]
+//	    only the oblique pack check: a battle opened with ?battle-view=oblique fetches oblique.pck, mounts it and
+//	    finds the real sheets (see checkOblique; works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio [-audio-autoplay] [-audio-query '&audio-exp=master']
 //	    only the sound check (see audio.go; works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio-loop
@@ -133,6 +136,7 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "print every console line")
 	live := flag.Bool("live", false, "check a live co-op battle instead of the turn flow")
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
+	obliqueOnly := flag.Bool("oblique", false, "only check the on-demand oblique sheets pack in a battle")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
 	audioLoop := flag.Bool("audio-loop", false, "only check that the ambient bed loops without a gap (plays bed_map for 54 s)")
@@ -217,6 +221,15 @@ func main() {
 	front(ctxA)
 	if *live {
 		os.Exit(runLive(ctxA, ca, newBrowser, front, phone, *url, inv, check, &fails))
+	}
+	if *obliqueOnly {
+		checkOblique(ctxA, ca, phone, *url, *shots, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
 	}
 	if *soldiersOnly {
 		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
@@ -424,4 +437,38 @@ func idx(m []string, i int) string {
 		return "?"
 	}
 	return m[i]
+}
+
+// checkOblique: the oblique Battle view on the web (game/oblique_pack.gd). A battle opened with
+// ?battle-view=oblique must download oblique.pck, mount it ("oblique pack: loaded ... sheets found"), draw
+// its soldiers (SOLDIER_PROBE) and print neither loader's fallback notice (game/sprite_ob.gd, game/kit_ob.gd).
+func checkOblique(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
+	c.reset()
+	t0 := time.Now()
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&battle-view=oblique")); err != nil {
+		check(false, "oblique: navigate: "+err.Error())
+		return
+	}
+	dl := c.wait(regexp.MustCompile(`oblique pack: downloading (\S+)`), 90*time.Second)
+	check(dl != nil, fmt.Sprintf("the pack download starts: %v", idx(dl, 1)))
+	ld := c.wait(regexp.MustCompile(`oblique pack: loaded \((\d+) bytes\), the oblique sheets found`), 120*time.Second)
+	check(ld != nil, fmt.Sprintf("the pack mounts and the sheets are found: %v bytes (%.1f s)", idx(ld, 1), time.Since(t0).Seconds()))
+	m := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=(\w+)`), 90*time.Second)
+	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the oblique battle draws its soldiers: %v pixels, %v men, %v path", idx(m, 1), idx(m, 2), idx(m, 3)))
+	time.Sleep(2 * time.Second)
+	for _, l := range c.all {
+		if strings.Contains(l, "oblique view: no assets/") || strings.Contains(l, "oblique pack: fetch failed") {
+			check(false, "a loader fell back: "+strings.TrimSpace(l))
+		}
+		if strings.Contains(l, "oblique") && strings.Contains(l, "pack") {
+			fmt.Println("  console:", strings.TrimSpace(l))
+		}
+	}
+	if shots != "" && m != nil {
+		if png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
+			p := filepath.Join(shots, "web_oblique.png")
+			os.WriteFile(p, png, 0o644)
+			fmt.Println("  screenshot", p)
+		}
+	}
 }

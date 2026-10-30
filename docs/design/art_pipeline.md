@@ -940,3 +940,24 @@ The view switched from the stand-ins to the art pass's sheets (above). View only
   on the desktop; a phone's texture limit (4096 on many) and memory are the open questions (the sheets are not shipped on the web).
 - **Open.** A phone build of the sheets (size, the 4096 limit, mipmaps), the owner's eye on the kit's yaw choice for turned houses and on
   the baked top-down shadow under the upright houses, the CPU path's order.
+
+#### The on-demand pack for the web (2026-10-29)
+
+The web export keeps `assets/sprites_ob` and `assets/battlekit_ob` out of `index.pck` (the "Web" preset's `exclude_filter`, unchanged; the
+main pack's size does not move) and `tools/export_web.sh` now also writes **`build/web/oblique.pck`** with the "Web oblique pack" preset
+(`--export-pack`: the five atlas PNGs with their imports plus the two manifests; `assets/kit_ob` stays out, the battle does not use it).
+View only; `sim/` and `campaign/` untouched, the native builds unchanged (the files are in their pack).
+
+- **Fetch.** `game/oblique_pack.gd` (a node on the root, so it outlives scene changes): on the web, with the Battle view Oblique and
+  `res://assets/*_ob/manifest.json` absent, `ObliquePack.ensure()` downloads `<page directory>/oblique.pck?v=<ob token>` with an
+  HTTPRequest (the body written to `user://oblique.pck`; the web build does not honour `download_file`), mounts it with `ProjectSettings.load_resource_pack` and calls `SpriteOb.reset()` /
+  `KitOb.reset()` (they forget a failed decision) so the next `ensure` finds the real sheets. Triggers: the start screen (`main.gd`, deferred),
+  the Battle view row picking Oblique, and the battle's `_ready` (which also waits for a running download, so the first oblique battle
+  already draws the real sheets). A bar on its own canvas layer shows "Downloading the oblique sheets, 15 MB  42%" with a Cancel button.
+  A failed or cancelled fetch (HTTP error, network, a pack that will not mount or lacks the sheets) leaves the loaders' one notice and the
+  flat figures; the next `ensure` (another Oblique pick, the next boot) tries again. Once mounted it stays for the session.
+- **Cache.** The server answers every file `Cache-Control: no-cache` with an ETag (a 304 after the first time); `build_stamp.txt` gains an
+  `ob:<sha1 of the sheets>` token, used as `?v=` so a URL changes only when the sheets do. No server change: `web.go` serves any file of
+  `build/web`, `.pck` as `application/octet-stream`, compressed on request.
+- **Tests.** `tests/oblique_pack_test.gd` (the state machine against a stubbed request: absent, downloading, loaded, cancel, HTTP and
+  network failures, an unmountable pack, a pack without the sheets, retry, `wait()`, the URL); `server/cmd/webcheck -oblique`.

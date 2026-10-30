@@ -26,6 +26,12 @@ static var _idx := {}                       # "<piece>__y0" / "__y4" -> sprite i
 static var _px := []                        # per sprite: [x, y, w, h, ax, ay] px (the Low path)
 
 
+## Forgets a failed decision so the next `ok` looks again (game/oblique_pack.gd mounted the pack).
+static func reset() -> void:
+	if not _ok:
+		_done = false
+
+
 static func ok() -> bool:
 	if not _done:
 		_done = true

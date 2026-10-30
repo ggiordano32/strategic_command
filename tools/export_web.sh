@@ -14,9 +14,15 @@ touch build/.gdignore  # keep Godot from importing the exported files
 src=$(cat project.godot sim/*.gd campaign/*.gd campaign/data/*.gd game/*.gd game/campaign/*.gd game/net/*.gd game/*.gdshader game/*.gdshaderinc | sha1sum | cut -c1-8)
 simh=$(cat sim/*.gd | sha1sum | cut -c1-8)
 rules=$(ls campaign/*.gd campaign/data/*.gd sim/*.gd | sort | xargs cat | sha1sum | cut -c1-8)
-echo "$(date -u +%Y%m%dT%H%M%SZ) src:$src sim:$simh rules:$rules" > build_stamp.txt
+# ob: content hash of the oblique sheets, the version in the oblique pack's URL (a new build refetches it only
+# when the sheets changed; game/oblique_pack.gd reads it from the stamp).
+ob=$(cat assets/sprites_ob/manifest.json assets/battlekit_ob/manifest.json assets/sprites_ob/*.png assets/battlekit_ob/*.png | sha1sum | cut -c1-8)
+echo "$(date -u +%Y%m%dT%H%M%SZ) src:$src sim:$simh rules:$rules ob:$ob" > build_stamp.txt
 godot --headless --export-release "Web" build/web/index.html
+# The second pack, fetched on demand by the oblique Battle view (only the oblique sheets and their imports).
+godot --headless --export-pack "Web oblique pack" build/web/oblique.pck
 # Install support: manifest + icons (no service worker, so never a stale build).
 godot --headless --script res://tools/make_web_icons.gd
 cp build_stamp.txt build/web/build_stamp.txt
+echo "Packs: index.pck $(wc -c < build/web/index.pck) bytes, oblique.pck $(wc -c < build/web/oblique.pck) bytes"
 echo "Exported to build/web ($(cat build_stamp.txt)). Serve with: tools/run_server.sh (or python3 tools/serve_web.py)"

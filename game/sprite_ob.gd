@@ -42,6 +42,13 @@ static var elevation := 40.0
 static var sheet := Vector2(1.0, 1.0)
 
 
+## Forgets a failed decision so the next `ensure` looks again (game/oblique_pack.gd mounted the pack).
+static func reset() -> void:
+	if source != "sprites_ob":
+		_done = false
+		source = ""
+
+
 ## Loads the sheets once per session; true when upright figures are available.
 static func ensure() -> bool:
 	if _done:

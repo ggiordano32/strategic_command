@@ -3,6 +3,7 @@ extends Control
 
 const AudioFx := preload("res://game/audio.gd")
 const Quality := preload("res://game/quality.gd")
+const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -164,6 +165,7 @@ func _ready() -> void:
 	show_page("home")
 	_activate_bg.call_deferred()
 	_first_launch_offer.call_deferred()
+	ObliquePack.ensure.call_deferred()  # web, Battle view Oblique, sheets absent: fetch oblique.pck now
 	book = UnitBook.new()
 	add_child(book)
 	controls = Controls.new()

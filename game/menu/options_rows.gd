@@ -17,6 +17,7 @@ const AudioFx := preload("res://game/audio.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const Quality := preload("res://game/quality.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
+const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
@@ -67,7 +68,10 @@ func build(parent: Control, o: Dictionary) -> void:
 	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
 	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"]], BoardView.pref(), "Battle view",
 		"Top: the battle map from straight above, as before. Oblique: the tabletop seen from its southern edge at 40 degrees, " \
-		+ "the hills rising, the figures and the town standing upright (a first build: stand-in figures). Takes effect at the next battle.", func(v): BoardView.save_pref(str(v)))
+		+ "the hills rising, the figures and the town standing upright (a first build: stand-in figures). Takes effect at the next battle.", func(v):
+			BoardView.save_pref(str(v))
+			if str(v) == "oblique":
+				ObliquePack.ensure())
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",

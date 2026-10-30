@@ -21,6 +21,7 @@ const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
+const ObliquePack := preload("res://game/oblique_pack.gd")
 const KitOccluder := preload("res://game/kit_occluder.gd")
 const BoardLayer := preload("res://game/board_layer.gd")
 const BattleDof := preload("res://game/battle_dof.gd")
@@ -281,6 +282,11 @@ const PAN_SPEED := 900.0      # screen px per second for keyboard panning
 
 
 func _ready() -> void:
+	# The web's oblique sheets are a separate pack (game/oblique_pack.gd): start the fetch if the menu has not, and
+	# hold the battle's start while it runs so the first oblique battle already draws the real sheets.
+	var obp := ObliquePack.ensure()
+	if obp != null:
+		await obp.wait()
 	sim = BattleSim.new()
 	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
 	if terrain_kind >= 0 and scn.has("terrain"):

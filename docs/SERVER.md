@@ -519,6 +519,10 @@ docker run -d --name sc --restart unless-stopped -p 8060:8060 -v sc-data:/data \
 A new web build needs a new image, or mount it read-only over `/srv/web`
 (commented line in the compose file).
 
+`tools/export_web.sh` writes two packs beside each other in `build/web`: `index.pck` (the game) and `oblique.pck` (about 15 MB: the
+oblique Battle view's sheets, fetched by the browser only when a player picks Oblique; `?v=` is the `ob:` token of `build_stamp.txt`).
+The static handler serves it like any file (no allowlist), so deploy the whole folder.
+
 **Standalone game server for other people** (API and live relay, no web
 build): `server/README.md` has the one-command run, compose profiles
 (`server/deploy/selfhost/`: plain HTTP, or Caddy with a domain), the
