@@ -319,16 +319,53 @@ func _make_water() -> void:
 ## two-pass 1-D squared-distance transform (exact, so the contours around an island are circles), then two
 ## running-sum box blurs a side (7 cells; about a Gaussian of 2.8 cells) to round the Voronoi creases between
 ## islands. Linear filtering in the shaders. Once per pack.
-static var _chart_cache: ImageTexture = null
+static var _chart_cache: Texture2D = null
 static var _chart_gen := -1
 static var chart_build_ms := 0.0   # the last build's time (tests / notes)
 
 
-static func _chart_tex() -> ImageTexture:
+static func _chart_tex() -> Texture2D:
 	_sync_gen()
 	if _chart_cache != null and _chart_gen == Geo.gen:
 		return _chart_cache
 	var t0 := Time.get_ticks_usec()
+	var baked := _chart_baked("d")
+	if baked != null:
+		_chart_cache = baked
+		_chart_gen = Geo.gen
+		chart_build_ms = float(Time.get_ticks_usec() - t0) / 1000.0
+		return _chart_cache
+	var b := chart_build_d()
+	_chart_cache = ImageTexture.create_from_image(Image.create_from_data(b.w, b.h, false, Image.FORMAT_L8, b.bytes))
+	_chart_gen = Geo.gen
+	chart_build_ms = float(Time.get_ticks_usec() - t0) / 1000.0
+	return _chart_cache
+
+
+## The baked chart fields (2026-10-29): assets/chart/<pack>_chart_d.png / _z.png, written by tools/bake_chart.gd, with
+## a sidecar <pack>_chart.json holding the key (chart_key(): a hash of LANDS, CHART, the coast field and the grid) and
+## the sizes. Missing, or a stale key / size: null, and the runtime build below runs as before.
+static func chart_key() -> String:
+	return "%s:%d:%d:%d:%d:%d:%s" % [GeoFields.pack_key, hash(Geo.LANDS), hash(Geo.CHART), hash(GeoFields.coast()),
+			GeoFields.fine_width() * 4096 + GeoFields.fine_height(), int(GeoFields.sample_px() * 100.0), str(Geo.SIZE)]
+
+
+static func _chart_baked(which: String) -> Texture2D:
+	var base := "res://assets/chart/%s_chart" % GeoFields.pack_key
+	if not FileAccess.file_exists(base + ".json"):
+		return null
+	var side = JSON.parse_string(FileAccess.get_file_as_string(base + ".json"))
+	if not (side is Dictionary) or str(side.get("key", "")) != chart_key() or not ResourceLoader.exists("%s_%s.png" % [base, which]):
+		return null
+	var tex := load("%s_%s.png" % [base, which]) as Texture2D
+	var sz = side.get(which, [])
+	if tex == null or not (sz is Array) or sz.size() != 2 or tex.get_width() != int(sz[0]) or tex.get_height() != int(sz[1]):
+		return null
+	return tex
+
+
+## The runtime build of the distance field: {w, h, bytes} (L8). tools/bake_chart.gd calls it too.
+static func chart_build_d() -> Dictionary:
 	var coast := GeoFields.coast()
 	var fw := GeoFields.fine_width()
 	var fh := GeoFields.fine_height()
@@ -368,23 +405,32 @@ static func _chart_tex() -> ImageTexture:
 	bytes.resize(cw * ch)
 	for i in cw * ch:
 		bytes[i] = clampi(int(f[i] / 3.0 + 0.5), 0, 255)
-	_chart_cache = ImageTexture.create_from_image(Image.create_from_data(cw, ch, false, Image.FORMAT_L8, bytes))
-	_chart_gen = Geo.gen
-	chart_build_ms = float(Time.get_ticks_usec() - t0) / 1000.0
-	return _chart_cache
+	return {"w": cw, "h": ch, "bytes": bytes}
 
 
 ## The hand-authored chart zone (Geo.CHART: polygons in [lon, lat], open ocean the chart should cover): the signed
 ## distance to the nearest polygon edge (inside positive), in map px clamped to +-150, L8 as (d + 150) / 300, on a grid
 ## of 24 map px cells (two EDTs, then two small box blurs). The shaders take chart = max(land rule, smoothstep(-75, 75, d)).
-static var _zone_cache: ImageTexture = null
+static var _zone_cache: Texture2D = null
 static var _zone_gen := -1
 
 
-static func _chart_zone_tex() -> ImageTexture:
+static func _chart_zone_tex() -> Texture2D:
 	_sync_gen()
 	if _zone_cache != null and _zone_gen == Geo.gen:
 		return _zone_cache
+	var baked := _chart_baked("z")
+	if baked != null:
+		_zone_cache = baked
+	else:
+		var b := chart_build_z()
+		_zone_cache = ImageTexture.create_from_image(Image.create_from_data(b.w, b.h, false, Image.FORMAT_L8, b.bytes))
+	_zone_gen = Geo.gen
+	return _zone_cache
+
+
+## The runtime build of the zone field: {w, h, bytes} (L8).
+static func chart_build_z() -> Dictionary:
 	var cell := 24.0
 	var cw := int(ceil(Geo.SIZE.x / cell))
 	var ch := int(ceil(Geo.SIZE.y / cell))
@@ -430,9 +476,7 @@ static func _chart_zone_tex() -> ImageTexture:
 	bytes.resize(cw * ch)
 	for i in cw * ch:
 		bytes[i] = clampi(int((d[i] + 150.0) / 300.0 * 255.0 + 0.5), 0, 255)
-	_zone_cache = ImageTexture.create_from_image(Image.create_from_data(cw, ch, false, Image.FORMAT_L8, bytes))
-	_zone_gen = Geo.gen
-	return _zone_cache
+	return {"w": cw, "h": ch, "bytes": bytes}
 
 
 ## Squared Euclidean distance (in cells) from every cell to the nearest source cell (value 0.0; any other value is
