@@ -11,7 +11,7 @@ the structure lies inside the crop. Writes game/minis_atlas.gd (generated):
 SETS {set: {sprite name: [x, y, w, h, anchor_x, anchor_y, px_per_metre]}}.
 Recolour in the game's minis shader (game/campaign/minis.gdshader).
 """
-import json, os, sys
+import json, math, os, sys
 import numpy as np
 import compose as C
 
@@ -27,7 +27,83 @@ def arg(n, d):
     return a[a.index(n) + 1] if n in a else d
 
 
+def main_oblique():
+    """Pass 3 (tabletop): pack the oblique kit (build.py --oblique, 40 degrees
+    elevation, 8 px / m) into assets/kit_ob/: atlas_shade.png + atlas_mask.png
+    (the same two passes as the minis atlases) and manifest.json. Each piece
+    keeps its top-down key (p_<piece>__y0 and, where it has one, __y4, the 180
+    degree flip); anchor = the footprint's centre on the ground, in px from the
+    sprite's top-left; footprint_m = the footprint rectangle in metres relative
+    to the anchor (x east, y north; at yaw 0 the front is south, -y)."""
+    frames = os.path.join(arg("--frames", os.path.join(HERE, "_frames_ob")), "D")
+    out = arg("--out", os.path.join(ROOT, "assets", "kit_ob"))
+    os.makedirs(out, exist_ok=True)
+    names = sorted({f.rsplit("_", 2)[0] for f in os.listdir(frames) if f.endswith("_shade.png")})
+    elev = 40.0
+    sprites = []
+    for key in names:
+        base = os.path.join(frames, "%s_256" % key)
+        sh = C.load(base + "_shade.png"); mk = C.load(base + "_mask.png")
+        info = json.load(open(base + ".json"))
+        ys, xs = np.where(sh[..., 3] > 0.03)
+        if len(xs) == 0:
+            continue
+        x0, x1, y0, y1 = xs.min(), xs.max() + 1, ys.min(), ys.max() + 1
+        sh_c = sh[y0:y1, x0:x1].copy(); mk_c = mk[y0:y1, x0:x1].copy()
+        mk_c[..., 3] = 1.0
+        sh_c[..., :3] *= (sh_c[..., 3:4] > 0.0)
+        ppm = info["ppm"]
+        ox, oy = info["origin_px"]
+        fp = info.get("footprint_m")
+        if fp is None:
+            g = info["ground_m"] / 2.0
+            fp = [-g, -g, g, g]
+        cx, cy = (fp[0] + fp[2]) / 2.0, (fp[1] + fp[3]) / 2.0
+        # ground (x, y) -> screen: right = x, down = -y * sin(elevation)
+        ax = ox + cx * ppm - x0
+        ay = oy - cy * math.sin(math.radians(elev)) * ppm - y0
+        rel = [round(fp[0] - cx, 3), round(fp[1] - cy, 3), round(fp[2] - cx, 3), round(fp[3] - cy, 3)]
+        sprites.append((key, sh_c, mk_c, ax, ay, ppm, rel, info.get("height_m", 0.0)))
+    wsh = np.ones((8, 8, 4), np.float32)
+    wmk = np.zeros((8, 8, 4), np.float32)
+    wmk[..., 0] = 1.0; wmk[..., 3] = 1.0
+    sprites.append(("white", wsh, wmk, 4.0, 4.0, 1.0, [0, 0, 0, 0], 0.0))
+    order = sorted(sprites, key=lambda s: -s[1].shape[0])
+    x = y = rowh = 0
+    place = []
+    for s in order:
+        h, w = s[1].shape[:2]
+        if x + w + GUT > W:
+            x, y, rowh = 0, y + rowh + GUT, 0
+        place.append((s, x, y))
+        x += w + GUT
+        rowh = max(rowh, h)
+    H = 64 * ((y + rowh + GUT + 63) // 64)
+    shade = np.zeros((H, W, 4), np.float32)
+    mask = np.zeros((H, W, 4), np.float32)
+    mask[..., 3] = 1.0
+    pieces = {}
+    for (key, sh_c, mk_c, ax, ay, ppm, rel, hm), px, py in place:
+        h, w = sh_c.shape[:2]
+        shade[py:py + h, px:px + w] = sh_c
+        mask[py:py + h, px:px + w] = mk_c
+        pieces[key] = {"rect": [px, py, w, h], "anchor": [round(float(ax), 2), round(float(ay), 2)],
+                       "px_per_m": round(float(ppm), 4), "footprint_m": rel,
+                       "size_m": [round(rel[2] - rel[0], 3), round(rel[3] - rel[1], 3)],
+                       "height_m": hm}
+    C.save(os.path.join(out, "atlas_shade.png"), shade)
+    C.save(os.path.join(out, "atlas_mask.png"), mask[..., :3])
+    man = {"version": 1, "view": "oblique", "elevation_deg": 40, "px_per_m": 8,
+           "doc": "Kit pieces at 40 degrees elevation (camera looking north from the south), upright, true heights. Keys as the top-down kit (p_<piece>__y0, and __y4 = the 180 degree flip where the piece has one). rect: [x, y, w, h] px in atlas_shade.png / atlas_mask.png (mask: R primary, G secondary, B accent, A 255); anchor: px from the rect's top-left to the footprint's centre on the ground; footprint_m: [x0, y0, x1, y1] metres relative to the anchor (x east, y north); the ground plane's vertical scale on screen is sin(elevation) x px_per_m. Recolour as the minis shader.",
+           "shade": "atlas_shade.png", "mask": "atlas_mask.png", "size": [W, H], "pieces": pieces}
+    with open(os.path.join(out, "manifest.json"), "w") as f:
+        json.dump(man, f, indent=1)
+    print("kit_ob", len(pieces), "sprites", W, "x", H)
+
+
 def main():
+    if "--oblique" in sys.argv:
+        return main_oblique()
     frames = os.path.join(arg("--frames", os.path.join(HERE, "_frames")), "D")
     out = arg("--out", os.path.join(ROOT, "assets", "minis"))
     os.makedirs(out, exist_ok=True)

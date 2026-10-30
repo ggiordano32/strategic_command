@@ -235,7 +235,7 @@ def pack_rows(rows, out_dir, name):
     return entries, [W, H]
 
 
-def pack_atlas(strips, out_dir, align, gutter, oc):
+def pack_atlas(strips, out_dir, align, gutter, oc, min_w=512):
     """One shade + one mask atlas for every unit's actions (the game's).
     A strip = one action's frames side by side; strips go on shelves,
     tallest first. Every frame starts on a multiple of `align` px with at
@@ -243,7 +243,7 @@ def pack_atlas(strips, out_dir, align, gutter, oc):
     never mix two frames. -> ({(uid, act): rects, anchor, step}, [W, H])."""
     def up(v):
         return (v + align - 1) // align * align
-    W = 512
+    W = min_w
     while True:
         order = sorted(range(len(strips)), key=lambda i: (-strips[i][2][0][0].h, i))
         pos = {}
@@ -317,6 +317,8 @@ def load_action(d, prefix, n, oc):
 
 
 def main():
+    if "--oblique" in sys.argv:
+        return main_oblique(sys.argv[1:])
     args = sys.argv[1:]
     frames_dir = os.path.join(HERE, "_frames")
     out_dir = os.path.join(ROOT, "assets", "sprites")
@@ -456,6 +458,245 @@ def main():
     print("assets/sprites total: %.1f KB" % (total / 1024.0))
     if contact:
         write_contact(man, out_dir, contact, only_units=c_units, only_pals=c_pals)
+
+
+# ---------------------------------------------------------------- oblique (pass 3)
+
+OB_DIRS = ["S", "SW", "W", "NW", "N", "NE", "E", "SE"]   # sprite direction 0..7 (build.py OB_DIRS)
+OB_MIRROR = {"SE": "SW", "E": "W", "NE": "NW"}            # --mirror: rendered 5, the rest drawn flipped
+
+
+def _ob_action(job):
+    """One action of one unit: load its frames in every rendered direction,
+    crop to the union box of all of them (+1 px), finish them. Run in a pool.
+    -> (uid, act, {dir: [(shade, mask)]}, anchor in the crop)"""
+    uid, act, d, nframes, dirs, oc = job
+    raw = {}
+    box = None
+    for dn in dirs:
+        k = OB_DIRS.index(dn)
+        lst = []
+        for i in range(nframes):
+            base = os.path.join(d, "%s_d%d_%d_" % (act, k, i))
+            sh, mk, pt = (Img.load(base + p + ".png") for p in ("shade", "mask", "pat"))
+            lst.append((sh, mk, pt))
+            b = alpha_box(sh)
+            if b:
+                box = b if box is None else (min(box[0], b[0]), min(box[1], b[1]),
+                                             max(box[2], b[2]), max(box[3], b[3]))
+        raw[dn] = lst
+    info = json.load(open(os.path.join(d, "info.json")))
+    ax, ay = int(info["anchor"][0]), int(info["anchor"][1])
+    if box is None:
+        box = (ax, ay, ax, ay)
+    # the anchor (the feet) is always inside the frame, even for a model that floats above its origin
+    box = (min(box[0], ax), min(box[1], ay), max(box[2], ax), max(box[3], ay))
+    x0, y0 = box[0] - 1, box[1] - 1
+    w, h = box[2] - box[0] + 3, box[3] - box[1] + 3
+    out = {}
+    for dn, lst in raw.items():
+        out[dn] = [finish_frame(sh.crop(x0, y0, w, h), mk.crop(x0, y0, w, h), pt.crop(x0, y0, w, h), oc)
+                   for sh, mk, pt in lst]
+    return uid, act, out, (info["anchor"][0] - x0, info["anchor"][1] - y0)
+
+
+def main_oblique(args):
+    """python3 tools/sprites/pack.py --oblique [--frames tools/sprites/_frames_ob]
+    [--out assets/sprites_ob] [--mirror] [--jobs 8]
+
+    Packs the oblique frames (build.py --oblique) into assets/sprites_ob/:
+    atlas_shade.png, atlas_mask.png, manifest.json (frames per direction, one
+    anchor per action: every direction of an action shares one crop) and the
+    generated game/sprite_atlas_ob.gd and game/sprite_frames_ob.gdshaderinc.
+    --mirror keeps only S, SW, W, NW, N rendered: SE, E, NE list the frames of
+    SW, W, NW and the manifest says "mirror": true (the view draws them flipped)."""
+    import multiprocessing
+    frames_dir = os.path.join(HERE, "_frames_ob")
+    out_dir = os.path.join(ROOT, "assets", "sprites_ob")
+    mirror = False
+    keep_steps = False
+    only = None
+    jobs_n = 8
+    i = 0
+    while i < len(args):
+        if args[i] == "--frames":
+            frames_dir = os.path.abspath(args[i + 1]); i += 1
+        elif args[i] == "--out":
+            out_dir = os.path.abspath(args[i + 1]); i += 1
+        elif args[i] == "--mirror":
+            mirror = True
+        elif args[i] == "--steps":      # keep sidestep / backstep as their own frames (default: they play the walk)
+            keep_steps = True
+        elif args[i] == "--units":      # a subset (a test pack: the tables are then partial)
+            only = args[i + 1].split(","); i += 1
+        elif args[i] == "--jobs":
+            jobs_n = int(args[i + 1]); i += 1
+        i += 1
+    os.makedirs(out_dir, exist_ok=True)
+    oc = tuple(int(round(c * 255)) for c in SPEC["outline"])
+    ppm = SPEC["px_per_m"]
+    atl = SPEC["atlas"]
+    ob = SPEC["oblique"]
+    rendered = [d for d in OB_DIRS if not (mirror and d in OB_MIRROR)]
+    jobs = []
+    for uid in atl["sets"] + atl.get("props", []):
+        if only and uid not in only:
+            continue
+        d = os.path.join(frames_dir, uid)
+        if not os.path.isdir(d):
+            sys.exit("not rendered: " + uid + " (run build.py --oblique)")
+        for act, a in SPEC["actions"].items():
+            if _has(act, uid) and (keep_steps or act not in ("sidestep", "backstep")):
+                jobs.append((uid, act, d, a["frames"], rendered, oc))
+    with multiprocessing.Pool(jobs_n) as pool:
+        res = pool.map(_ob_action, jobs, chunksize=1)
+    strips = []
+    keyed = {}
+    for uid, act, byd, anchor in res:
+        keyed[(uid, act)] = anchor
+        for dn in rendered:
+            strips.append((uid, (act, dn), byd[dn], anchor))
+    placed, size = pack_atlas(strips, out_dir, atl["align"], atl["gutter"], oc, min_w=4096)
+    man = {
+        "version": 1,
+        "view": "oblique",
+        "elevation_deg": ob["elevation_deg"],
+        "px_per_m": ppm,
+        "m_per_px": round(1.0 / ppm, 6),
+        "directions": OB_DIRS,
+        "mirror": mirror,
+        "doc": "Oblique sheets (tabletop pass 3): the camera looks north from the south at elevation_deg, orthographic, px_per_m on the ground plane (the ground's vertical scale on screen is sin(elevation)). Each action lists its frames per direction of the unit's facing: S = facing the camera, then clockwise on the compass as seen on screen: SW, W, NW, N, NE, E, SE. Frames: [x, y, w, h] px in the atlas; anchor: px from a frame's top-left to the unit's origin (the man's feet on the ground); every direction of an action shares one frame size and anchor. mirror true: only S, SW, W, NW, N are rendered and SE, E, NE list the frames of SW, W, NW, to be drawn flipped horizontally. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. atlas.table: per sprite set (1 = sets[0]), per action, per direction (the order of `directions`) two vec4: (x0, y0, w, h) of frame 0 and (anchor x, anchor y, step, frames); frame k is at x0 + k * step.",
+        "outline": SPEC["outline"],
+        "palettes": SPEC["palettes"],
+        "units": {},
+    }
+    table = []
+    def entry(uid, act):
+        a = SPEC["actions"][act]
+        src = act if (uid, (act, rendered[0])) in placed else "walk"   # not rendered / packed: the walk
+        frames = {}
+        for dn in OB_DIRS:
+            p = placed[(uid, (src, OB_MIRROR.get(dn, dn) if mirror else dn))]
+            frames[dn] = p["rects"]
+        p0 = placed[(uid, (src, rendered[0]))]
+        return {"frames": frames, "anchor": p0["anchor"], "fps": a["fps"], "loop": a["loop"],
+                "step": p0["step"]}, src
+    props = atl.get("props", [])
+    prop_tab = {}
+    for uid in atl["sets"] + props:
+        if only and uid not in only:
+            continue
+        acts = {}
+        rows = []
+        for act in SPEC["actions"]:
+            e, src = entry(uid, act)
+            acts[act] = e
+            for dn in OB_DIRS:
+                r0 = e["frames"][dn][0]
+                rows.append([r0[0], r0[1], r0[2], r0[3]])
+                rows.append([e["anchor"][0], e["anchor"][1], e["step"], len(e["frames"][dn])])
+        if uid in props:
+            prop_tab[uid] = rows
+            man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "oblique", "set": 0, "prop": 1,
+                                 "shade": "atlas_shade.png", "mask": "atlas_mask.png",
+                                 "sheet_size": size, "actions": acts}
+        else:
+            table += rows
+            man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "oblique",
+                                 "set": atl["sets"].index(uid) + 1,
+                                 "shade": "atlas_shade.png", "mask": "atlas_mask.png",
+                                 "sheet_size": size, "actions": acts}
+    man["atlas"] = {"shade": "atlas_shade.png", "mask": "atlas_mask.png", "size": size,
+                    "sets": atl["sets"], "props": props, "actions": list(SPEC["actions"].keys()),
+                    "fps": [a["fps"] for a in SPEC["actions"].values()],
+                    "palettes": list(SPEC["palettes"].keys()), "directions": OB_DIRS,
+                    "table": table, "prop_table": prop_tab}
+    # a table of this size makes the manifest large: keep it, the tools read it; the game reads the .gd
+    with open(os.path.join(out_dir, "manifest.json"), "w") as f:
+        json.dump(man, f, indent=1)
+    write_game_tables_ob(man["atlas"], SPEC["palettes"], mirror)
+    total = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir) if not f.endswith(".import"))
+    print("atlas_ob %dx%d: %d sets + %d props x %d actions x %d directions (%d rendered)" % (
+        size[0], size[1], len(atl["sets"]), len(props), len(SPEC["actions"]), len(OB_DIRS), len(rendered)))
+    print("assets/sprites_ob total: %.1f KB" % (total / 1024.0))
+
+
+def write_game_tables_ob(atlas, palettes, mirror):
+    """game/sprite_atlas_ob.gd and game/sprite_frames_ob.gdshaderinc: the oblique
+    twins of the two generated top-down files (never touching them). Entry k =
+    (((set - 1) * ACTIONS + action) * 8 + direction) * 2 + j."""
+    tab = atlas["table"]
+    W, H = atlas["size"]
+    na = len(atlas["fps"])
+    g = ["extends RefCounted",
+         "## GENERATED by tools/sprites/pack.py --oblique from tools/sprites/spec.json: do not edit.",
+         "## The oblique soldier atlas (assets/sprites_ob/atlas_*.png, 40 degrees elevation): per sprite set s (1..%d)," % len(atlas["sets"]),
+         "## action a (0 idle, 1 walk, 2 attack, 3 death, 4 sidestep, 5 backstep) and direction d",
+         "## (0 S facing the camera, 1 SW, 2 W, 3 NW, 4 N, 5 NE, 6 E, 7 SE: clockwise on screen) two entries at",
+         "## (((s - 1) * %d + a) * 8 + d) * 2: (x0, y0, w, h) of frame 0 in px, (anchor x, anchor y, step, frames);" % na,
+         "## frame k is at x0 + k * step. MIRRORED: true when SE, E, NE repeat SW, W, NW and must be drawn flipped.",
+         "",
+         "const SIZE := Vector2i(%d, %d)" % (W, H),
+         "const MIRRORED := %s" % ("true" if mirror else "false"),
+         "const DIRS := 8",
+         "const ACTIONS := %d" % na,
+         "const ELEVATION_DEG := 40",
+         "const SETS: Array[String] = [%s]" % ", ".join('"%s"' % k for k in atlas["sets"]),
+         "const FPS: Array[int] = [%s]" % ", ".join(str(v) for v in atlas["fps"]),
+         "const TABLE: Array[Vector4] = ["]
+    for r in tab:
+        g.append("\tVector4(%s)," % ", ".join(_f(v) for v in r))
+    g.append("]")
+    g.append("## Props (cart, wagon, draft horse): per action per direction the same two entries as TABLE.")
+    g.append("const PROPS: Dictionary = {")
+    for k, rows in atlas.get("prop_table", {}).items():
+        g.append("\t\"%s\": [%s]," % (k, ", ".join("Vector4(%s)" % ", ".join(_f(v) for v in r) for r in rows)))
+    g.append("}")
+    g.append("const PALETTE_KEYS: Array[String] = [%s]" % ", ".join('"%s"' % k for k in atlas["palettes"]))
+    g.append("## Per palette: primary, secondary, accent, pattern colour (sRGB), pattern_k.")
+    g.append("const PALETTES: Array = [")
+    for k in atlas["palettes"]:
+        p = palettes[k]
+        cols = ", ".join("Color(%s)" % ", ".join(_f(c) for c in p[n]) for n in ("primary", "secondary", "accent", "pattern"))
+        g.append("\t[%s, %d],  # %s" % (cols, p["pattern_k"], p["name"]))
+    g.append("]")
+    open(os.path.join(ROOT, "game", "sprite_atlas_ob.gd"), "w").write("\n".join(g) + "\n")
+    n = len(tab)
+    per = 2 * na * 8
+    h = ["// GENERATED by tools/sprites/pack.py --oblique from tools/sprites/spec.json: do not edit.",
+         "// The oblique soldier atlas frame table (see game/sprite_atlas_ob.gd): entry k =",
+         "// (((set - 1) * %d + action) * 8 + direction) * 2 + j; j 0: (x0, y0, w, h), 1: (anchor x," % na,
+         "// anchor y, step, frames). Names end in _ob so a shader may include both tables.",
+         "const vec2 ATLAS_SIZE_OB = vec2(%s, %s);" % (_f(W), _f(H)),
+         "const int ATLAS_ENTRIES_OB = %d;" % n,
+         "const int ACTIONS_OB = %d;" % na,
+         "const int DIRS_OB = 8;",
+         "const bool MIRRORED_OB = %s;" % ("true" if mirror else "false"),
+         "",
+         "#ifdef CPU_FED",
+         "vec4 frame_entry_ob(int k) {"]
+    nsets = n // per
+    for si in range(nsets):
+        h.append("\tif (k < %d) {" % ((si + 1) * per))
+        for j in range(per):
+            k = si * per + j
+            vals = ", ".join(_f(v) for v in tab[k])
+            if j < per - 1:
+                h.append("\t\tif (k == %d) { return vec4(%s); }" % (k, vals))
+            else:
+                h.append("\t\treturn vec4(%s);" % vals)
+        h.append("\t}")
+    h.append("\treturn vec4(0.0);")
+    h.append("}")
+    h.append("#else")
+    h.append("uniform vec4 frame_tab_ob[%d];" % n)
+    h.append("")
+    h.append("vec4 frame_entry_ob(int k) {")
+    h.append("\treturn frame_tab_ob[k];")
+    h.append("}")
+    h.append("#endif")
+    open(os.path.join(ROOT, "game", "sprite_frames_ob.gdshaderinc"), "w").write("\n".join(h) + "\n")
+    print("wrote game/sprite_atlas_ob.gd, game/sprite_frames_ob.gdshaderinc")
 
 
 # ---------------------------------------------------------------- game tables

@@ -710,3 +710,70 @@ tracks, flock-square fields), `game/battle_dof.gd` (the lamp, vignette and tilt-
   as a darker floor rather than a sheet at the default fit (the crowns cover it), its cut edge shows from about zoom 0.3; rivers were checked
   on the sea only (no battle map with a river crossing was shot); the bed tint scales with the water mask's ramp (4 m texels on the sea,
   2 m on a river); the Tab S7 for the extra shader work; pass 3 (the oblique camera) will want the tufts redrawn as upright blades.
+
+### Pass 3, the oblique sheets (contract, 2026-10-29)
+
+The agreed interface between the art build (`tools/sprites`, `tools/structures`) and the view (`game/`): both are built against it.
+
+Oblique sheets live beside the top-down ones and never replace them. **Units:** `assets/sprites_ob/atlas_shade.png`, `atlas_mask.png`,
+`manifest.json` with the same unit keys, actions, fps, loop and palettes as the top-down manifest, each action's frames listed per
+direction: `"frames": {"S": [[x, y, w, h], ...], "SW": ..., "W": ..., "NW": ..., "N": ..., "NE": ..., "E": ..., "SE": ...}` with 8
+compass directions of the unit's facing (S = facing the camera, the camera looking north from the south as the kit does; sprite
+direction 0 = S and clockwise through SW, W, NW, N, NE, E, SE), the anchor per action at the figure's feet in sheet pixels, the
+elevation in the manifest header (`"elevation_deg": 40`), the same `px_per_m` 24 on the ground plane (so a man's feet-to-feet spacing
+matches the top-down sheet; a figure's height on the sheet is sin-stretched by the camera), the mask semantics unchanged. **The kit:**
+`assets/kit_ob/atlas.png` (+ the shade / mask passes the kit uses today) and `manifest.json` with the same piece keys as the
+top-down kit, each piece rendered once at the same yaw convention as today plus the 180-degree flip the kit's hash uses, at 40
+degrees elevation, with the piece's footprint rectangle on the ground plane (in metres, the same as the top-down manifest) and the
+anchor at the footprint's centre on the ground, so the view places it by footprint and draws it upright. **Generated GDScript
+tables:** `game/sprite_atlas_ob.gd` and `game/sprite_frames_ob.gdshaderinc` beside the existing ones (same shape, the frames per
+direction), never touching the existing two files.
+
+### Pass 3, the oblique sheets (as built, 2026-10-29)
+
+Art half only (no `game/` or `sim/` change besides the two generated tables); built against the contract above.
+
+- **Units.** `build.py --oblique` (or `--oblique-only`; `--units a,b`, `--out-ob DIR`) renders every unit of spec.json (45 sets, 3 props)
+  in all 8 directions for every action into `tools/sprites/_frames_ob/<unit>/<action>_d<k>_<i>_<pass>.png` (git-ignored): same meshes,
+  poses, three passes, camera-space key light, 24 px/m on the ground, `spec.json` `"oblique": {"elevation_deg": 40, "directions": 8}`.
+  Direction k = armature yaw -90 - 45k degrees (k 0 = S, facing the camera). The camera box per unit is its top-down `render_box`'s
+  radius by the highest mesh point over all frames (`ob_extent`); `info.json` holds the feet anchor. Cost: 48 units, 46 CPU-minutes
+  serial; in 5 parallel Blender processes (units split by index mod 5, see "Run") **583 s wall** on the RTX 3070 (a foot set with
+  sidestep / backstep about 45 s, a horse 18 s). Run:
+  `~/.local/bin/blender -b --factory-startup -P tools/sprites/build.py -- --oblique-only --units a,b,c` (several in parallel, disjoint units).
+- **Pack.** `python3 tools/sprites/pack.py --oblique [--mirror] [--steps] [--units a,b] [--jobs 8]` (about 55 s with `--mirror`, 2 min
+  without; atlas 4096 wide, since the 8-direction set is 25000 rows tall at 2048) writes `assets/sprites_ob/{atlas_shade,atlas_mask}.png`,
+  `manifest.json` (header: `elevation_deg` 40, `px_per_m` 24, `directions`, `mirror`; per unit per action `frames` per direction,
+  one `anchor` and one frame size per action for all directions: the crop is the union over the directions and frames, and always
+  holds the anchor, the scorpion floats above its origin), and the generated `game/sprite_atlas_ob.gd` and
+  `game/sprite_frames_ob.gdshaderinc` (entry `(((set - 1) * 6 + action) * 8 + direction) * 2 + j`, j 0 rect of frame 0, j 1 anchor, step,
+  frames; shader names end in `_ob`). The top-down pack is unchanged (`git diff --stat assets/sprites game/sprite_atlas.gd
+  game/sprite_frames.gdshaderinc` empty; a re-render shifted 24 noise pixels in gastraphetes, crew and atlatl, the committed atlas was kept).
+- **What differs from the contract.** (1) **Mirrored by default: `"mirror": true`**, only S, SW, W, NW, N rendered; SE, E, NE list the
+  frames of SW, W, NW and the view draws them flipped horizontally about the anchor. Size: 8 directions would be 16.2 MB of PNG
+  (shade 11, mask 5), the mirrored set is 8.9 MB (shade 6.2, mask 2.7), still over the 4 MB guide. The key light is fixed in camera space
+  from the top left, so a flipped E, NE, SE figure is lit from the top right and its weapon hand is swapped; accepted at this size.
+  More levers, measured: 5-bit shade and 3-bit mask posterising 5.5 MB; a per-direction crop (one anchor per direction) about -15 %
+  (the 5.6 m pikes make their sets the biggest, 20 % of the atlas); a 4-frame walk. (2) sidestep and backstep are not packed for the
+  three foot sets (they play the walk, as the other sets already do; `--steps` keeps them). (3) The kit is the **structures kit**
+  (`p_<piece>` minis pieces: houses, walls, towers, gates, trees, rocks); the battle's own kit is the next bullet. (4) Kit files are `atlas_shade.png` and `atlas_mask.png`, not `atlas.png`.
+- **Kit.** `build.py --oblique` (structures; `--ppm`, `--zex` options) renders each `p_<piece>__y0` and, where the top-down kit
+  has one, `__y4` (the 180 degree flip) at tilt 50 from vertical (elevation 40; the overworld's own is 52, 38 degrees) and **8 px/m,
+  true heights (zex 1.0, the overworld exaggerates up to 1.7)**: 160 sprites in 71 s into `tools/structures/_frames_ob/`;
+  `python3 tools/structures/pack.py --oblique` writes `assets/kit_ob/` (2048 x 1280, 1.8 MB: shade 1.5, mask 0.3): per key `rect`, `anchor`
+  (the footprint's centre on the ground, px from the rect's top-left), `footprint_m` [x0, y0, x1, y1] relative to the anchor (x east, y
+  north, front south), `size_m`, `height_m`, `px_per_m`. The footprint is the bounds of the standing parts on the ground; the
+  ground's vertical screen scale is sin(40) x px_per_m. The kit is 8 px/m against the men's 24: draw it scaled by the metres.
+- **The battle kit (`tools/battlekit`), 2026-10-29.** `blender -b --factory-startup -P tools/battlekit/build.py -- --oblique` renders every piece
+  (94 of the atlases' pieces: walls, palisades, towers, gates, bastion, houses, church, temple, stalls, trees, rocks, cliffs, the West
+  town pieces, the magazine, the `lm_*` landmarks and `cv_*` civic forts; 106 built) at yaw 0 and yaw 180 into `tools/battlekit/_frames_ob/`: the same
+  four G-buffer passes (albedo, world normal, height / 20 m, mask) from the 40-degree camera, 8 px/m, a canvas that is the piece's
+  own projected bounds (47 s for 212 renders), the piece turned about its origin (y0 = outer face +y, away from the camera, as today; y4 = outer
+  face to the camera). `python3 tools/battlekit/pack.py --oblique` (10 s) writes `assets/battlekit_ob/` (2048 x 1920, 188 sprites): albedo
+  4.3 MB, nrm 0.9 MB, low (pre-lit, 4 px/m, no AO: the height field is a top-down map) 1.3 MB, manifest 52 KB; 6.4 MB in all, not shipped on
+  the web. The normal pass is the world normal, so the yawed piece is lit right with the same shader maths. Footprint = the bounds of the geometry
+  up to 1 m high. The top-down battlekit atlases re-pack pixel-identical (checked). The strips (`ws_*`, `ps_*`) are not rendered: the view
+  builds the walls from the mitred strip mesh, which an oblique pass will want redone as upright sprites or a raised mesh.
+- **Preview and test.** `python3 tools/sprites/preview/ob_contact.py OUT.png [--scale 2]` (units in 8 directions on a metre cell with
+  the anchor dot, kit pieces at the same world scale with their footprint rectangle). `tests/oblique_sheets_test.gd` (the three manifests
+  against the top-down ones, the rects, anchors, table length; PASS, 32631 checks).

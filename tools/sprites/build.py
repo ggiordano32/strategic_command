@@ -60,8 +60,8 @@ def action_for(act, uid):
 
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    a = {"units": list(SPEC["units"].keys()), "iso": True,
-         "out": os.path.join(HERE, "_frames")}
+    a = {"units": list(SPEC["units"].keys()), "iso": True, "ob": False,
+         "out": os.path.join(HERE, "_frames"), "out_ob": os.path.join(HERE, "_frames_ob")}
     i = 0
     while i < len(argv):
         k = argv[i]
@@ -73,6 +73,13 @@ def parse_args():
             a["units"] = []
         elif k == "--out":
             a["out"] = os.path.abspath(argv[i + 1]); i += 1
+        elif k == "--oblique":
+            a["ob"] = True              # pass 3: also render the oblique sheets
+        elif k == "--oblique-only":
+            a["ob"] = True              # ... and nothing else (no top-down, no iso)
+            a["only_ob"] = True
+        elif k == "--out-ob":
+            a["out_ob"] = os.path.abspath(argv[i + 1]); i += 1
         i += 1
     return a
 
@@ -1168,13 +1175,20 @@ def setup_camera_light(sc, kind, box, elev_deg=90.0):
         cam.location = ((x0 + x1) / 2, (y0 + y1) / 2, 30.0)
         cam.rotation_euler = (0, 0, 0)
     else:
-        w, h = box
         e = math.radians(elev_deg)
         tgt = Vector((0, 0, 0.8))
+        if kind != "ob":
+            w, h = box
+        else:
+            # oblique: box = [w, h, v] metres, v = the image centre's height
+            # along the view's up axis (0 = the ground origin's row)
+            w, h, v = box
+            tgt = Vector((0, v * math.sin(e), v * math.cos(e)))
         d = Vector((0, math.cos(e), -math.sin(e)))  # view direction
         cam.location = tgt - d * 30.0
         cam.rotation_euler = (math.pi / 2 - e, 0, 0)
     cd.ortho_scale = max(w, h)
+    cd.shift_x = cd.shift_y = 0.0
     cd.clip_start = 0.1
     cd.clip_end = 100.0
     sc.render.resolution_x = int(round(w * PPM))
@@ -1260,15 +1274,102 @@ def render_iso(out):
     return dt
 
 
+# ---------------------------------------------------------------- oblique (pass 3)
+
+OB = SPEC.get("oblique", {"elevation_deg": 40, "directions": 8})
+# Compass names of the 8 directions of the unit's facing, as the manifest
+# lists them: sprite direction 0 = S (facing the camera, which looks north),
+# then clockwise through SW, W, NW, N, NE, E, SE. Unit forward is +X, so the
+# armature's yaw for direction k is -90 - 45 k degrees.
+OB_DIRS = ["S", "SW", "W", "NW", "N", "NE", "E", "SE"]
+
+
+def ob_yaw(k):
+    return math.radians(-90.0 - 45.0 * k)
+
+
+def ob_extent(arm, uid):
+    """Highest point (m) of any mesh in any frame of any action of the unit,
+    so the oblique camera box is sure to hold it."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    zmax = 0.0
+    for act, info in SPEC["actions"].items():
+        if not action_for(act, uid):
+            continue
+        for i in range(info["frames"]):
+            bpy.context.scene.frame_set(ACT_START[act] + i)
+            update_dynamic(act, i)
+            dg = bpy.context.evaluated_depsgraph_get()
+            for ob in bpy.context.scene.objects:
+                if ob.type != "MESH" or ob.hide_render:
+                    continue
+                oe = ob.evaluated_get(dg)
+                mw = oe.matrix_world
+                for c in oe.bound_box:
+                    zmax = max(zmax, (mw @ Vector(c)).z)
+    return zmax
+
+
+def render_oblique(uid, out):
+    """Every action of one unit in 8 directions at OB elevation, same meshes,
+    poses, light (fixed in camera space, top left) and 24 px/m on the ground
+    as the top-down pass. Frames: <out>/<uid>/<action>_d<k>_<i>_<pass>.png."""
+    from bpy_extras.object_utils import world_to_camera_view
+    t0 = time.time()
+    sc = reset_scene()
+    arm = build_unit(uid)
+    mats = {"mask": mask_material(), "pat": pattern_material()}
+    box = SPEC["units"][uid]["render_box"]
+    e = math.radians(OB["elevation_deg"])
+    R = max(math.hypot(x, y) for x in box[0:2] for y in box[2:4])
+    R = math.ceil(R * 4.0) / 4.0
+    zmax = math.ceil((ob_extent(arm, uid) + 0.25) * 4.0) / 4.0
+    vmax = R * math.sin(e) + zmax * math.cos(e)
+    vmin = -R * math.sin(e)
+    W = int(round(2.0 * R * PPM))
+    H = int(math.ceil((vmax - vmin) * PPM))
+    vc = (vmax + vmin) / 2.0
+    cam = setup_camera_light(sc, "ob", [W / PPM, H / PPM, vc], OB["elevation_deg"])
+    d = os.path.join(out, uid)
+    os.makedirs(d, exist_ok=True)
+    count = 0
+    for act, info in SPEC["actions"].items():
+        if not action_for(act, uid):
+            continue
+        for k in range(OB["directions"]):
+            arm.rotation_euler = (0, 0, ob_yaw(k))
+            for i in range(info["frames"]):
+                sc.frame_set(ACT_START[act] + i)
+                update_dynamic(act, i)
+                render_passes(sc, os.path.join(d, "%s_d%d_%d" % (act, k, i)), mats)
+                count += 1
+    arm.rotation_euler = (0, 0, 0)
+    bpy.context.view_layer.update()
+    p = world_to_camera_view(sc, cam, Vector((0, 0, 0)))
+    info = {"view": "oblique", "elevation_deg": OB["elevation_deg"], "directions": OB_DIRS,
+            "px_per_m": PPM, "size": [W, H], "ground_radius_m": R, "max_height_m": zmax,
+            "anchor": [p.x * W, (1.0 - p.y) * H]}
+    json.dump(info, open(os.path.join(d, "info.json"), "w"), indent=1)
+    dt = time.time() - t0
+    print("SPRITES oblique %s: %d frames x 3 passes in %.1f s (%dx%d px)" % (uid, count, dt, W, H))
+    return dt
+
+
 def main():
     a = parse_args()
     os.makedirs(a["out"], exist_ok=True)
     open(os.path.join(a["out"], ".gdignore"), "w").close()
     times = {}
-    for uid in a["units"]:
-        times[uid] = render_unit(uid, a["out"])
-    if a["iso"]:
-        times["iso"] = render_iso(a["out"])
+    if not a.get("only_ob"):
+        for uid in a["units"]:
+            times[uid] = render_unit(uid, a["out"])
+        if a["iso"]:
+            times["iso"] = render_iso(a["out"])
+    if a["ob"]:
+        os.makedirs(a["out_ob"], exist_ok=True)
+        open(os.path.join(a["out_ob"], ".gdignore"), "w").close()
+        for uid in a["units"]:
+            times["ob_" + uid] = render_oblique(uid, a["out_ob"])
     print("SPRITES done:", json.dumps({k: round(v, 1) for k, v in times.items()}))
 
 

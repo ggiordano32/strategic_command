@@ -72,7 +72,7 @@ def bleed(rgb, a, n):
     return rgb
 
 
-def prelit(alb, nrm, hgt, msk, zmax, ppm):
+def prelit(alb, nrm, hgt, msk, zmax, ppm, ao_on=True):
     a = alb[..., 3:4]
     c = alb[..., :3]
     m = msk[..., :3] * (msk[..., 3:4] > 0.5)
@@ -88,13 +88,119 @@ def prelit(alb, nrm, hgt, msk, zmax, ppm):
     hemi = 0.5 + 0.5 * n[..., 2]
     lf = (AMB * (0.7 + 0.3 * hemi) + KEY * (0.5 * diff + 0.5 * 0.6)) / (AMB + KEY * L[2] * 0.5 + KEY * 0.3)
     h = hgt[..., 0] * zmax
-    ao = kitlib.ambient_occ(h, ppm)
+    ao = kitlib.ambient_occ(h, ppm) if ao_on else np.zeros_like(h)   # the height field is a top-down map: no AO from an oblique image
     col = c * lf[..., None] * (1 - 0.35 * ao[..., None])
     return np.clip(col, 0, 1), a
 
 
+def main_oblique(args):
+    """Pass 3 (tabletop): pack the oblique kit (build.py --oblique: 40 degrees elevation, yaw 0 and the 180 degree
+    flip y4, 8 px/m) into assets/battlekit_ob/: atlas_albedo.png, atlas_nrm.png (the same channels as the top-down
+    atlas; the normal is the world normal, so a yawed piece is already lit right; B = world height / 20 m),
+    atlas_low.png (pre-lit at 4 px/m, no AO) and manifest.json: per `<piece>__y0` / `__y4` the rect (px, halve for
+    low), the anchor (px from the rect's top-left to the footprint's centre on the ground), footprint_m (x0, y0, x1, y1
+    metres relative to the anchor, x east, y north), size_m, height_m, px_per_m."""
+    def opt(k, d):
+        return args[args.index(k) + 1] if k in args else d
+    frames = os.path.abspath(opt("--frames", os.path.join(HERE, "_frames_ob")))
+    out = os.path.abspath(opt("--out", os.path.join(ROOT, "assets", "battlekit_ob")))
+    elev = 40.0
+    sinE = math.sin(math.radians(elev))
+    os.makedirs(out, exist_ok=True)
+    items = []
+    for name in PIECES + PIECES2:
+        for yk in (0, 4):
+            key = "%s__y%d" % (name, yk)
+            jp = os.path.join(frames, key + ".json")
+            if not os.path.exists(jp):
+                continue
+            meta = json.load(open(jp))
+            alb = kitlib.load_png(os.path.join(frames, key + "_albedo.png"))
+            nrm = kitlib.load_png(os.path.join(frames, key + "_normal.png"))
+            hgt = kitlib.load_png(os.path.join(frames, key + "_height.png"), 16)
+            msk = kitlib.load_png(os.path.join(frames, key + "_mask.png"))
+            ys, xs = np.nonzero(alb[..., 3] > 0.02)
+            x0, x1 = int(xs.min()) - 1, int(xs.max()) + 2
+            y0, y1 = int(ys.min()) - 1, int(ys.max()) + 2
+            x0 -= x0 % 2
+            y0 -= y0 % 2
+            x1 += x1 % 2
+            y1 += y1 % 2
+            sl = (slice(max(y0, 0), y1), slice(max(x0, 0), x1))
+            x0, y0 = max(x0, 0), max(y0, 0)
+            lit, a = prelit(alb, nrm, hgt, msk, meta["zmax"], meta["ppm"], False)
+            m = msk[..., :3] * (msk[..., 3:4] > 0.5)
+            mcls = np.where(m[..., 0] > 0.5, 0.7, np.where(m[..., 1] > 0.5, 0.4, np.where(m[..., 2] > 0.5, 0.1, 1.0)))
+            fp = meta["footprint_m"]
+            cx, cy = (fp[0] + fp[2]) / 2.0, (fp[1] + fp[3]) / 2.0
+            ox, oy = meta["origin_px"]
+            ppm = meta["ppm"]
+            items.append({"key": key, "meta": meta, "alb": alb[sl], "nrm": nrm[sl], "hgt": hgt[..., 0][sl],
+                          "mcls": mcls[sl].astype(np.float32), "lit": np.concatenate([lit, a], -1)[sl],
+                          "w": x1 - x0, "h": y1 - y0,
+                          "anchor": [round(ox + cx * ppm - x0, 2), round(oy - cy * sinE * ppm - y0, 2)],
+                          "rel": [round(fp[0] - cx, 3), round(fp[1] - cy, 3), round(fp[2] - cx, 3), round(fp[3] - cy, 3)]})
+    order = sorted(items, key=lambda it: -it["h"])
+    W = 2048
+    x = y = rowh = 0
+    for it in order:
+        w, h = it["w"] + GUTTER * 2, it["h"] + GUTTER * 2
+        if x + w > W:
+            x, y, rowh = 0, y + rowh, 0
+        it["px"], it["py"] = x + GUTTER, y + GUTTER
+        x += w
+        rowh = max(rowh, h)
+    H = 64
+    while H < y + rowh:
+        H += 64
+    H += H % 2
+    ALB = np.zeros((H, W, 4), np.float32)
+    NRM = np.zeros((H, W, 4), np.float32)
+    NRM[..., :2] = 0.5
+    NRM[..., 3] = 1.0
+    LOW = np.zeros((H // 2, W // 2, 4), np.float32)
+    for it in items:
+        px, py, w, h = it["px"], it["py"], it["w"], it["h"]
+        ALB[py:py + h, px:px + w] = it["alb"]
+        NRM[py:py + h, px:px + w, 0:2] = it["nrm"][..., 0:2]
+        NRM[py:py + h, px:px + w, 2] = it["hgt"]
+        NRM[py:py + h, px:px + w, 3] = it["mcls"]
+        a = it["alb"][..., 3] < 0.02
+        sub = NRM[py:py + h, px:px + w]
+        sub[a, 0:2] = 0.5
+        sub[a, 2] = 0.0
+        sub[a, 3] = 1.0
+        lit = it["lit"]
+        pl = lit[..., :3] * lit[..., 3:4]
+        pl = pl.reshape(h // 2, 2, w // 2, 2, 3).mean((1, 3))
+        pa = lit[..., 3].reshape(h // 2, 2, w // 2, 2).mean((1, 3))
+        LOW[py // 2:py // 2 + h // 2, px // 2:px // 2 + w // 2] = np.concatenate(
+            [pl / np.maximum(pa[..., None], 1e-4), pa[..., None]], -1)
+    ALB[..., :3] = bleed(ALB[..., :3], ALB[..., 3], GUTTER)
+    LOW[..., :3] = bleed(LOW[..., :3], LOW[..., 3], 2)
+    kitlib.save_png(os.path.join(out, "atlas_albedo.png"), ALB)
+    kitlib.save_png(os.path.join(out, "atlas_nrm.png"), NRM)
+    kitlib.save_png(os.path.join(out, "atlas_low.png"), LOW)
+    pieces = {}
+    for it in items:
+        pieces[it["key"]] = {"rect": [it["px"], it["py"], it["w"], it["h"]], "anchor": it["anchor"], "px_per_m": 8.0,
+                             "footprint_m": it["rel"],
+                             "size_m": [round(it["rel"][2] - it["rel"][0], 3), round(it["rel"][3] - it["rel"][1], 3)],
+                             "height_m": it["meta"]["height_m"]}
+    man = {"version": 1, "view": "oblique", "elevation_deg": 40, "px_per_m": 8, "size": [W, H], "low_size": [W // 2, H // 2],
+           "albedo": "atlas_albedo.png", "nrm": "atlas_nrm.png", "low": "atlas_low.png",
+           "doc": "The battle kit (tools/battlekit) at 40 degrees elevation, camera looking north from the south, upright. Keys: <piece>__y0 (the piece as the top-down kit: its outer face +y, away from the camera) and <piece>__y4 (turned 180 degrees: the flip the kit's hash uses, outer face to the camera). rect: [x, y, w, h] px in atlas_albedo / atlas_nrm (halve for atlas_low, 4 px/m, pre-lit, no AO); channels as the top-down atlases (nrm: R,G world normal x,y * 0.5 + 0.5, B world height / 20 m, A mask class 1.0 none / 0.7 roof / 0.4 plaster / 0.1 accent); anchor: px from the rect's top-left to the footprint's centre on the ground; footprint_m: [x0, y0, x1, y1] metres relative to the anchor (x east, y north), the bounds of the geometry up to 1 m high; the ground's vertical screen scale is sin(elevation) x px_per_m.",
+           "pieces": pieces}
+    with open(os.path.join(out, "manifest.json"), "w") as f:
+        json.dump(man, f, indent=1)
+    tot = sum(os.path.getsize(os.path.join(out, n)) for n in os.listdir(out) if not n.endswith(".import"))
+    print("battlekit_ob %dx%d, %d sprites, %.0f KB" % (W, H, len(pieces), tot / 1024.0))
+
+
 def main():
     args = sys.argv[1:]
+    if "--oblique" in args:
+        return main_oblique(args)
 
     def opt(k, d):
         return args[args.index(k) + 1] if k in args else d

@@ -42,7 +42,8 @@ FILL_TO = Vector((0.25, -0.60, 0.76)).normalized()
 def parse_args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     a = {"structs": list(SPEC["structures"].keys()), "styles": ["D"],
-         "sizes": [256, 96], "tilt": 52.0, "out": os.path.join(HERE, "_frames")}
+         "sizes": [256, 96], "tilt": 52.0, "out": os.path.join(HERE, "_frames"),
+         "ppm": 0.0, "zex": None, "oblique": False}
     i = 0
     while i < len(argv):
         k = argv[i]
@@ -51,8 +52,40 @@ def parse_args():
         elif k == "--sizes": a["sizes"] = [int(x) for x in argv[i + 1].split(",")]; i += 1
         elif k == "--tilt": a["tilt"] = float(argv[i + 1]); i += 1
         elif k == "--out": a["out"] = os.path.abspath(argv[i + 1]); i += 1
+        elif k == "--ppm": a["ppm"] = float(argv[i + 1]); i += 1       # fixed px / m for "auto" pieces (overrides --sizes' scale)
+        elif k == "--zex": a["zex"] = float(argv[i + 1]); i += 1       # force the height exaggeration (1.0 = true heights)
+        elif k == "--oblique":
+            # pass 3 (tabletop): the kit pieces at 40 degrees elevation (tilt 50 from
+            # vertical), true heights, yaw 0 and its 180 degree flip (y4), 8 px / m,
+            # into <out>/D/ with a footprint in each .json; pack.py --oblique packs them
+            a["oblique"] = True; a["tilt"] = 90.0 - OB_ELEV; a["ppm"] = a["ppm"] or OB_PPM
+            if a["zex"] is None: a["zex"] = 1.0
+            a["out"] = os.path.join(HERE, "_frames_ob"); a["oblique_pieces"] = True; a["sizes"] = [256]
         i += 1
+    if a.get("oblique_pieces") and "--structs" not in argv:
+        a["structs"] = ob_structs()
+    if a["oblique"] and "--out" in argv:
+        a["out"] = os.path.abspath(argv[argv.index("--out") + 1])
     return a
+
+
+OB_ELEV = 40.0       # elevation above the horizon, degrees (tilt from vertical = 90 - this)
+OB_PPM = 8.0         # px per metre on the ground plane (the battle kit's scale)
+
+
+def ob_structs():
+    """The kit pieces the oblique pass renders: every `p_<piece>` of pieces.json at
+    yaw 0 (front towards the south) and, where the piece has one, yaw 4 (the 180
+    degree flip the battle kit's hash uses)."""
+    pieces = json.load(open(os.path.join(HERE, "pieces.json")))["pieces"]
+    out = []
+    for name, yaws in pieces:
+        ys = list(range(yaws)) if isinstance(yaws, int) else yaws
+        for y in (0, 4):
+            k = "p_%s__y%d" % (name, y)
+            if y in ys and k in SPEC["structures"]:
+                out.append(k)
+    return out
 
 
 # ---------------------------------------------------------------- spec expansion
@@ -522,7 +555,7 @@ def _is_ground_paint(p, mp):
     return p["s"] == "poly" and p.get("z1", 0.0) <= 0.3
 
 
-def build_structure(key, style, sizepx, tilt):
+def build_structure(key, style, sizepx, tilt, ppm_fixed=0.0, zex_force=None):
     """Returns (scene, objs, outline_objs) and the projected bounds."""
     st = SPEC["structures"][key]
     sc = reset_scene()
@@ -537,7 +570,9 @@ def build_structure(key, style, sizepx, tilt):
     # frame, then set the solidify thickness.
     allv = []
     d_tile = style == "D"
-    zex = st.get("zex", 1.0)
+    zex = st.get("zex", 1.0) if zex_force is None else zex_force
+    foot = None        # ground-plane bounds of the standing parts (not the base slabs)
+    zhi = 0.0
     for p, M, mp in flat:
         if d_tile and _is_ground_paint(p, mp):
             continue   # no bases: the overworld paints the settlement's ground itself (game/campaign/footprint.gd)
@@ -561,6 +596,11 @@ def build_structure(key, style, sizepx, tilt):
             bm = build_part_mesh(pp, M)
             for v in bm.verts:
                 allv.append(v.co.copy())
+                if not pp.get("ground"):
+                    if foot is None:
+                        foot = [v.co.x, v.co.y, v.co.x, v.co.y]
+                    foot = [min(foot[0], v.co.x), min(foot[1], v.co.y), max(foot[2], v.co.x), max(foot[3], v.co.y)]
+                    zhi = max(zhi, v.co.z)
             me = bpy.data.meshes.new("m")
             bm.to_mesh(me)
             bm.free()
@@ -593,7 +633,7 @@ def build_structure(key, style, sizepx, tilt):
     if st.get("frame") == "auto":
         # A single piece (tools/structures/gen_spec.py pieces): the scale is fixed like a frame's, the box is its own bounds.
         pad = 0.8
-        ppm = PPM_256 * sizepx / 256.0
+        ppm = ppm_fixed or PPM_256 * sizepx / 256.0
         rx = int(math.ceil((x1 - x0 + 2 * pad) * ppm)) + 4
         ry = int(math.ceil((y1 - y0 + 2 * pad) * ppm)) + 4
         x0, x1, y0, y1 = x0 - pad, x1 + pad, y0 - pad, y1 + pad
@@ -663,12 +703,15 @@ def build_structure(key, style, sizepx, tilt):
     info = {"w": rx, "h": ry, "ppm": ppm, "m_per_px": 1.0 / ppm, "tilt": tilt,
             "origin_px": [(0 - cx) * ppm + rx / 2, ry / 2 - (0 * math.cos(t) - cy) * ppm],
             "name": st.get("name", key), "ground_m": st.get("ground_m", w)}
+    if foot is not None:
+        info["footprint_m"] = [round(v, 3) for v in foot]    # x0, y0, x1, y1 on the ground, the piece's own frame (x east, y north)
+        info["height_m"] = round(zhi, 3)
     return sc, outlines, info
 
 
-def render_structure(key, style, sizepx, tilt, outdir):
+def render_structure(key, style, sizepx, tilt, outdir, ppm_fixed=0.0, zex_force=None):
     t0 = time.time()
-    sc, outlines, info = build_structure(key, style, sizepx, tilt)
+    sc, outlines, info = build_structure(key, style, sizepx, tilt, ppm_fixed, zex_force)
     os.makedirs(outdir, exist_ok=True)
     base = os.path.join(outdir, "%s_%d" % (key, sizepx))
     vl = bpy.context.view_layer
@@ -689,7 +732,7 @@ def main():
         for key in a["structs"]:
             tm = []
             for size in a["sizes"]:
-                tm.append(render_structure(key, style, size, a["tilt"], os.path.join(a["out"], style)))
+                tm.append(render_structure(key, style, size, a["tilt"], os.path.join(a["out"], style), a["ppm"], a["zex"]))
             print("TIME %s %s %s" % (style, key, " ".join("%d:%.2fs" % (s, t) for s, t in zip(a["sizes"], tm))))
 
 

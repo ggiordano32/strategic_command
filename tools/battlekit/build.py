@@ -1282,6 +1282,68 @@ def render(name, ppm, tilt, out):
     _add_trace(name, base + ".json")
 
 
+OB_ELEV = 40.0       # pass 3 (tabletop): elevation above the horizon; the camera tilt from vertical is 90 - this
+
+
+def render_ob(name, ppm, yaw_deg, out):
+    """Pass 3: the same G-buffer passes from the oblique camera (looking north from the south at OB_ELEV),
+    the piece turned yaw_deg about its origin (0 = as the top-down kit, outer face +y, away from the camera;
+    180 = the flip the kit's hash uses, outer face to the camera). The canvas is the piece's own projected
+    bounds (+0.5 m), not a square. <out>/<name>__y<k>_{albedo,normal,height,mask}.png and .json with the
+    origin's pixel, the footprint (bounds of the vertices up to 1 m high, metres, the piece frame turned by
+    yaw) and the height. No fort trace (that is the top-down json's)."""
+    S, fn = PIECES[name] if name in PIECES else (PIECES_W[name] if name in PIECES_W else PIECES_L[name])
+    sc = reset()
+    P = Piece()
+    P.info = None
+    S = fn(P) or S
+    objs = P.finish(sc)
+    for ob in objs:
+        ob.rotation_euler = (0, 0, math.radians(yaw_deg))
+    bpy.context.view_layer.update()
+    pts = []
+    for ob in objs:
+        mw = ob.matrix_world
+        pts += [mw @ v.co for v in ob.data.vertices]
+    t = math.radians(90.0 - OB_ELEV)
+    ct, st = math.cos(t), math.sin(t)
+    xs = [p.x for p in pts]
+    vs = [p.y * ct + p.z * st for p in pts]
+    pad = 0.5
+    x0, x1, v0, v1 = min(xs) - pad, max(xs) + pad, min(vs) - pad, max(vs) + pad
+    w = int(math.ceil((x1 - x0) * ppm))
+    h = int(math.ceil((v1 - v0) * ppm))
+    sc.render.resolution_x, sc.render.resolution_y = w, h
+    cam = bpy.data.cameras.new("cam")
+    cam.type = "ORTHO"
+    cam.ortho_scale = max(w, h) / ppm
+    cam.clip_start = 0.1
+    cam.clip_end = 600
+    co = bpy.data.objects.new("cam", cam)
+    sc.collection.objects.link(co)
+    sc.camera = co
+    co.rotation_euler = (t, 0, 0)
+    cx, cv = (x0 + x1) / 2, (v0 + v1) / 2
+    up = Vector((0, ct, st))
+    co.location = Vector((cx, 0, 0)) + up * cv + Vector((0, -st, ct)) * 300.0
+    vl = bpy.context.view_layer
+    os.makedirs(out, exist_ok=True)
+    base = os.path.join(out, "%s__y%d" % (name, int(yaw_deg) // 45))
+    vl.material_override = None
+    sc.render.filepath = base + "_albedo.png"
+    bpy.ops.render.render(write_still=True)
+    for kind in ("normal", "height", "mask"):
+        vl.material_override = pass_material(kind)
+        sc.render.filepath = "%s_%s.png" % (base, kind)
+        bpy.ops.render.render(write_still=True)
+    low = [p for p in pts if p.z <= 1.0] or pts
+    foot = [min(p.x for p in low), min(p.y for p in low), max(p.x for p in low), max(p.y for p in low)]
+    json.dump({"name": name, "yaw": yaw_deg, "ppm": ppm, "px": [w, h], "zmax": ZMAX, "elevation_deg": OB_ELEV,
+               "origin_px": [(0 - cx) * ppm + w / 2, h / 2 - (0 * ct - cv) * ppm],
+               "footprint_m": [round(v, 3) for v in foot], "height_m": round(max(p.z for p in pts), 3)},
+              open(base + ".json", "w"))
+
+
 def _add_trace(name, path):
     """A landmark fort piece's trace (the outer line of its rampart) into its .json: tools/battlekit/fort_trace.py
     (also generates sim/fort_traces.gd when run on its own)."""
@@ -1294,7 +1356,8 @@ def _add_trace(name, path):
 
 def main():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
-    a = {"pieces": list(PIECES) + list(PIECES_W), "ppm": 8.0, "tilt": 0.0, "out": os.path.join(HERE, "_frames")}
+    a = {"pieces": list(PIECES) + list(PIECES_W), "ppm": 8.0, "tilt": 0.0, "out": os.path.join(HERE, "_frames"),
+         "oblique": False}
     i = 0
     while i < len(argv):
         k = argv[i]
@@ -1302,9 +1365,19 @@ def main():
         elif k == "--ppm": a["ppm"] = float(argv[i + 1]); i += 1
         elif k == "--tilt": a["tilt"] = float(argv[i + 1]); i += 1
         elif k == "--out": a["out"] = os.path.abspath(argv[i + 1]); i += 1
+        elif k == "--oblique":
+            a["oblique"] = True    # pass 3: every piece at 40 degrees elevation, yaw 0 and 180, into _frames_ob
+            if "--pieces" not in argv:
+                a["pieces"] = list(PIECES) + list(PIECES_W) + list(PIECES_L)
+            if "--out" not in argv:
+                a["out"] = os.path.join(HERE, "_frames_ob")
         i += 1
     for n in a["pieces"]:
-        render(n, a["ppm"], a["tilt"], a["out"])
+        if a["oblique"]:
+            for yaw in (0, 180):
+                render_ob(n, a["ppm"], yaw, a["out"])
+        else:
+            render(n, a["ppm"], a["tilt"], a["out"])
         print("DONE", n)
 
 
