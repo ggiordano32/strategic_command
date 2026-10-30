@@ -3968,7 +3968,7 @@ func show_export() -> void:
 	s.save()
 	var text := Saves.export_text(s.data)
 	var box := Kit.vbox(8)
-	box.add_child(Kit.label("Copy this text and send it to the other player; they paste it under Campaign > Import on the main menu. It holds the whole campaign, including plans not yet ended.", Kit.FONT_SMALL, Color.WHITE, true))
+	box.add_child(Kit.label("Copy this text and send it to the other player; they paste it under Story Campaign > Import on the main menu. It holds the whole campaign, including plans not yet ended.", Kit.FONT_SMALL, Color.WHITE, true))
 	var te := TextEdit.new()
 	te.text = text
 	te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY

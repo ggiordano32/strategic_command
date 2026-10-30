@@ -23,6 +23,7 @@ const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
 const Quality := preload("res://game/quality.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const CStory := preload("res://campaign/cstory.gd")
 const Accounts := preload("res://game/net/accounts.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
@@ -249,6 +250,9 @@ func _save(nm: String, sd: int, pack: String, turn: int) -> void:
 
 
 func _continue() -> void:
+	var sst := CStory.new_story("Tale", 10, {}, "brethren", false)
+	Saves.save(Saves.slot_for("Tale", 10), {"state": sst, "session": {"subs": [], "plans": {}, "seen": {}}})
+	PackView.use_pack("rome")
 	_save("Older", 11, "rome", 3)
 	await create_timer(1.1).timeout   # (saved_at is in seconds)
 	_save("Newest", 12, "west", 6)
@@ -271,6 +275,18 @@ func _continue() -> void:
 
 # ----------------------------------------------------------- campaign ---
 
+## Every descendant of the two Story Campaign cards lies inside its card's rect (the tutorial card once sprawled out).
+func _cards_inside(tag: String) -> void:
+	for nm in ["card_tutorial", "card_story"]:
+		var card := _btn(nm)
+		var r := card.get_global_rect().grow(0.5)
+		var bad := 0
+		for c in card.find_children("*", "Control", true, false):
+			if (c as Control).is_visible_in_tree() and not r.encloses((c as Control).get_global_rect()):
+				bad += 1
+		_check(bad == 0, "%s: everything in %s lies inside its card (%d outside)" % [tag, nm, bad])
+
+
 func _campaign_page() -> void:
 	m.show_page("campaign")
 	await _frames(3)
@@ -278,13 +294,19 @@ func _campaign_page() -> void:
 	for c in m._continue_box.get_children():
 		if c is HBoxContainer:
 			rows += 1
-	_check(rows == 2, "Your campaigns lists both local saves (%d)" % rows)
+	_check(rows == 1, "Your story campaigns lists only the story save (%d)" % rows)
+	var story_txt := ""
+	for c in m._continue_box.find_children("*", "Button", true, false):
+		story_txt += (c as Button).text
+	_check(story_txt.contains("Tale") and not story_txt.contains("Older") and not story_txt.contains("Newest"), "... a story save on the Story Campaign page and no Grand Campaign save (%s)" % story_txt)
+	_check(m._entries.size() > 0 and str(_btn("home_campaign").text) == "Story Campaign", "the title entry reads Story Campaign (%s)" % _btn("home_campaign").text)
 	var ncards := 0
 	for c in m._pages["campaign"].find_children("card_*", "Button", true, false):
 		ncards += 1
 	_check(ncards == 2 and _btn("card_story") != null and _btn("card_tutorial") != null, "the Campaign page has two cards, Your first command and the story (%d)" % ncards)
 	_check(_btn("card_west") == null and _btn("card_rome") == null, "... no setting cards (Rome is the Grand Campaign's)")
 	_check(_btn("home_Import") != null, "Import is on the Campaign page")
+	_cards_inside("story page")
 	await _shot("campaign_page")
 	await _press("card_story")
 	var nc: Control = m._new_campaign
@@ -325,8 +347,18 @@ func _grand_page() -> void:
 	_check(m._pages["grand"].is_ancestor_of(m._net_line), "the server line is on the Grand Campaign page")
 	for nm in ["home_Online_co-op", "grand_join", "grand_join_code", "grand_join_paste", "home_server", "host_pack_west", "host_pack_rome"]:
 		_check(_btn(nm) != null and _btn(nm).is_visible_in_tree() or (nm == "grand_join_code" and m._gj_edit.is_visible_in_tree()), "%s is on the Grand Campaign page" % nm)
-	_check(m._grand_cards.get_child_count() == 3 and not m._grand_cards.vertical, "the Host and Join cards sit side by side")
-	_check(m.find_child("online_empty", true, false) != null or net == null, "no campaigns: the empty line shows (the Host card is the call to action)")
+	_check(m._grand_cards.get_child_count() == 2 and not m._grand_cards.vertical, "the Host and Join panels sit side by side")
+	_check(m.find_child("offline_card", true, false) == null and _btn("offline_pack_west") == null and _btn("home_offline") != null and m.find_child("host_card", true, false).is_ancestor_of(_btn("home_offline")), "Play offline is a button inside the Host panel (one pack row)")
+	_check(_btn("home_offline").get_global_rect().position.y > _btn("home_Online_co-op").get_global_rect().end.y - 1.0 and absf(_btn("home_offline").size.x - _btn("home_Online_co-op").size.x) < 2.0, "... under Host, the same width")
+	var grand_rows := 0
+	var grand_txt := ""
+	for c in m._grand_saves_box.get_children():
+		if c is HBoxContainer:
+			grand_rows += 1
+	for c in m._grand_saves_box.find_children("*", "Button", true, false):
+		grand_txt += (c as Button).text
+	_check(grand_rows == 2 and grand_txt.contains("Older") and grand_txt.contains("Newest") and not grand_txt.contains("Tale"), "Your Grand Campaigns lists the two offline saves and not the story save (%d: %s)" % [grand_rows, grand_txt])
+	_check(m.find_child("online_empty", true, false) == null, "offline saves present: no 'none yet' line")
 	_check(m._net_line.text.begins_with("Server: "), "the server line reads 'Server: <host> - state' (%s)" % m._net_line.text)
 	for k in 60:
 		if net == null or m._net_line.text.contains("not reachable"):
@@ -354,6 +386,17 @@ func _grand_page() -> void:
 		_check(CData.pack == pk and hn.find_child("row_" + ("brethren" if pk == "west" else "rome"), true, false) != null, "... on the %s setting, with its faction rows" % pk)
 		_check(hn.find_child("pack_west", true, false) == null and not hn.story_only, "... without the Setting row, not the story setup")
 		_check((hn.find_child("story_brethren_online", true, false) != null) == (pk == "west"), "... the online story card only on the West setting")
+		var hfold := hn.find_child("settings_fold", true, false) as Button
+		_check(hfold != null and hfold.text.contains("Campaign Settings") and not hn.find_child("settings_body", true, false).visible, "... the Campaign Settings section is folded by default (%s)" % (hfold.text if hfold != null else "none"))
+		_check(hfold.text.contains("AI") and hfold.text.contains("min battles") and hfold.text.contains("fog"), "... its header summarises the choices")
+		_check((hn.find_child("campaign_name", true, false) as Control).is_visible_in_tree() and (hn.find_child("campaign_seed", true, false) as Control).is_visible_in_tree(), "... Name and Seed stay visible above the fold")
+		_check(not (hn.find_child("time_limit", true, false) as Control).is_visible_in_tree(), "... the other settings are hidden")
+		hfold.pressed.emit()
+		await _frames(2)
+		_check((hn.find_child("time_limit", true, false) as Control).is_visible_in_tree() and hfold.text.begins_with("v"), "... the chevron opens it")
+		hfold.pressed.emit()
+		await _frames(2)
+		_check(not hn.find_child("settings_body", true, false).visible, "... and folds it again")
 		# Hosting: two humans picked, the state the Host path creates (the server call itself needs a server).
 		var f1 := CData.faction_index("rome" if pk == "rome" else "england")
 		var f2 := CData.faction_index("carthage" if pk == "rome" else "france")
@@ -369,23 +412,57 @@ func _grand_page() -> void:
 		m._new_campaign.back.emit()
 		await _frames(3)
 		_check(m.page == "grand" and m._menu.visible, "... and Back returns to Grand Campaign")
-	# Play offline card: the faction page, offline, local save.
-	_check(m._grand_cards.get_child_count() == 3 and m.find_child("offline_card", true, false) != null, "the Grand page has the Play offline card")
-	for pk in ["rome", "west"]:
-		await _press("offline_pack_" + pk)
-		_check(m._gh_pack == pk and bool(_btn("offline_pack_" + pk).get_meta("on")) and bool(_btn("host_pack_" + pk).get_meta("on")), "the offline %s mini-card is lit (shared pick)" % pk)
+	# Play offline: the faction page, offline, local save; the one pack pick serves it as it does Host.
+	for pk in ["rome", "west", "rome"]:
+		await _press("host_pack_" + pk)
+		_check(m._gh_pack == pk and bool(_btn("host_pack_" + pk).get_meta("on")), "the %s mini-card is lit before Play offline" % pk)
 		await _press("home_offline")
 		var on_: Control = m._new_campaign
 		_check(on_ != null and not on_.online and not on_.story_only and on_.pack_pick == pk, "Play offline opens the offline faction page for %s" % pk)
-		_check(on_.find_child("row_" + ("brethren" if pk == "west" else "rome"), true, false) != null and on_.find_child("online_panel", true, false) == null, "... with faction rows and no online fields")
+		_check(on_.find_child("row_" + ("brethren" if pk == "west" else "rome"), true, false) != null and on_.find_child("online_panel", true, false) == null, "... with faction rows (%s's) and no online fields" % pk)
+		_check(on_.find_child("row_" + ("rome" if pk == "west" else "brethren"), true, false) == null, "... and none of the other setting's")
 		var of1 := CData.faction_index("rome" if pk == "rome" else "england")
 		on_._pick(of1)
 		await _frames(2)
 		_check(not (on_.find_child("start_campaign", true, false) as Button).disabled, "... one human enables Start")
 		var ost: Dictionary = on_.build_state("OfflineTest", 7)
-		_check(CData.pack == pk and str(ost.get("pack", "rome")) == pk and (ost["humans"] as Array).has(of1), "... build_state gives a %s state" % pk)
+		_check(CData.pack == pk and str(ost.get("pack", "rome")) == pk and (ost["humans"] as Array).has(of1), "... build_state gives a %s state (CData.pack %s)" % [pk, CData.pack])
+		_check(on_.find_child("settings_fold", true, false) != null and not on_.find_child("settings_body", true, false).visible, "... the Campaign Settings section is folded (%s)" % pk)
 		on_.back.emit()
 		await _frames(3)
+	# The title's background as the live table, then Rome (the owner's report: Rome showed the Western armies).
+	m._bg.switch_to("diorama_west")
+	await _frames(3)
+	m.show_page("grand")
+	for how in ["host", "offline"]:
+		await _press("host_pack_rome")
+		await _press("home_Online_co-op" if how == "host" else "home_offline")
+		var lt: Control = m._new_campaign
+		_check(lt != null and lt.pack_pick == "rome" and CData.pack == "rome" and lt.find_child("row_rome", true, false) != null and lt.find_child("row_brethren", true, false) == null, "live table background, %s: Rome's rows and CData.pack rome" % how)
+		lt._pick(CData.faction_index("rome"))
+		_check(str(lt.build_state("LiveTest", 5).get("pack", "rome")) == "rome", "... build_state carries the rome pack (%s)" % how)
+		lt.back.emit()
+		await _frames(3)
+	_check(m._bg.diorama == null or CData.pack == "west" or CData.pack == "rome", "the live table leaves a known pack set")
+	m._bg.switch_to("art_rome")   # (the live table sets the global pack while it builds; drop it for the steps below)
+	await _frames(3)
+	PackView.use_pack("rome")
+	# Back from a West campaign (the last pack is west), then Rome.
+	m.show_page("home")
+	_save("WestRun", 21, "west", 2)
+	m._recent = m._find_recent()
+	_check(m._last_pack() == "west", "after a West save the menu's last pack is west (%s)" % m._last_pack())
+	m.show_page("grand")
+	for how in ["host", "offline"]:
+		await _press("host_pack_rome")
+		await _press("home_Online_co-op" if how == "host" else "home_offline")
+		var wl: Control = m._new_campaign
+		_check(wl != null and CData.pack == "rome" and wl.find_child("row_rome", true, false) != null and wl.find_child("row_brethren", true, false) == null, "after a West campaign, Rome picked, %s: Rome's rows" % how)
+		wl._pick(CData.faction_index("rome"))
+		_check(str(wl.build_state("WestThenRome", 6).get("pack", "rome")) == "rome", "... build_state carries the rome pack (%s)" % how)
+		wl.back.emit()
+		await _frames(3)
+	_check(CData.pack == "rome", "listing saves (a West one among them) leaves the global pack alone (%s)" % CData.pack)
 	await _press("home_server")
 	_check(m.page == "server", "Game server opens its page")
 	m._back_btn.pressed.emit()
@@ -1002,11 +1079,12 @@ func _phone() -> void:
 	await _shot_title("title_phone")
 	m.show_page("campaign")
 	await _frames(3)
+	_cards_inside("phone story page")
 	await _shot("campaign_phone")
 	m.show_page("grand")
 	await _frames(3)
-	_check(m._grand_cards.vertical, "phone: the Host and Join cards stack")
-	_check(m.find_child("offline_card", true, false) != null and (m.find_child("offline_card", true, false) as Control).get_global_rect().size.x <= vp.x, "phone: the Play offline card is there and fits the width")
+	_check(m._grand_cards.vertical, "phone: the Host and Join panels stack")
+	_check(_btn("home_offline").get_global_rect().end.x <= vp.x and (m.find_child("host_card", true, false) as Control).get_global_rect().size.x <= vp.x, "phone: Play offline is in the Host panel and fits the width")
 	await _shot("grand_phone")
 	m.show_page("options")
 	await _frames(3)
@@ -1034,18 +1112,35 @@ func _phone() -> void:
 			await _press("home_Online_co-op")
 		var nc: Control = m._new_campaign
 		await _frames(4)
-		_check(nc.find_child("settings_fold", true, false) != null and not nc.find_child("settings_body", true, false).visible, "phone: the Settings panel is folded under a Settings header (%s)" % pk)
+		_check(nc.find_child("settings_fold", true, false) != null and not nc.find_child("settings_body", true, false).visible, "phone: the Settings panel is folded under a Campaign Settings header (%s)" % pk)
+		_check(Rect2(Vector2.ZERO, vp).encloses((nc.find_child("start_campaign", true, false) as Control).get_global_rect()), "phone: Start is on the screen without scrolling (%s)" % pk)
 		var wide := 0
 		for r in nc.find_children("row_*", "PanelContainer", true, false):
 			if (r as Control).get_global_rect().end.x > vp.x + 0.5:
 				wide += 1
 		_check(wide == 0, "phone: the faction rows fit the width (%s)" % pk)
 		if pk != "story":
+			var ppk: String = pk.get_slice("_", 1)
+			nc._pick(CData.faction_index("rome" if ppk == "rome" else "england"))
+			_check(CData.pack == ppk and nc.find_child("row_" + ("rome" if ppk == "rome" else "brethren"), true, false) != null and nc.find_child("row_" + ("brethren" if ppk == "rome" else "rome"), true, false) == null, "phone: Host on %s gives that setting's rows (CData.pack %s)" % [ppk, CData.pack])
+			_check(str(nc.build_state("PhoneHost", 3).get("pack", "rome")) == ppk, "phone: Host's build_state carries the %s pack" % ppk)
 			await _shot("faction_%s_phone" % pk)
 		nc.find_child("settings_fold", true, false).pressed.emit()
 		await _frames(3)
 		_check(nc.find_child("settings_body", true, false).visible, "phone: the fold opens")
+		nc.find_child("settings_fold", true, false).pressed.emit()   # (the open state is remembered for the session: fold it again)
 		nc.back.emit()
+		await _frames(3)
+	for ppk in ["rome", "west"]:
+		m.show_page("grand")
+		await _frames(2)
+		await _press("host_pack_" + ppk)
+		await _press("home_offline")
+		var po: Control = m._new_campaign
+		_check(po != null and not po.online and CData.pack == ppk and po.find_child("row_" + ("rome" if ppk == "rome" else "brethren"), true, false) != null, "phone: Play offline on %s gives that setting's rows (CData.pack %s)" % [ppk, CData.pack])
+		po._pick(CData.faction_index("rome" if ppk == "rome" else "england"))
+		_check(str(po.build_state("PhoneOffline", 4).get("pack", "rome")) == ppk, "phone: Play offline's build_state carries the %s pack" % ppk)
+		po.back.emit()
 		await _frames(3)
 	m.show_page("home")
 	UiScale._dpr_override = 1.0

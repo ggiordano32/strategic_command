@@ -109,13 +109,15 @@ static func parse(text: String) -> Dictionary:
 	if str(st.get("format", "")) != CState.FORMAT or int(st.get("version", 0)) > CState.VERSION \
 			or int(st.get("version", 0)) < CState.MIN_VERSION:
 		return {}
+	var keep := CData.pack   # (migrate makes the save's pack the active one; listing saves must not leave the title on another setting)
 	CState.migrate(st)  # older local saves get the new fields
+	CData.use_pack(keep)
 	if not data.has("session"):
 		data["session"] = {}
 	return data
 
 
-## Saved campaigns, newest first: [{slot, name, turn, date, factions, saved_at}].
+## Saved campaigns, newest first: [{slot, name, turn, date, factions, saved_at, story (1 for a story campaign)}].
 static func list() -> Array:
 	var out: Array = []
 	var d := DirAccess.open(dir())
@@ -129,6 +131,8 @@ static func list() -> Array:
 			continue
 		var m: Dictionary = data["meta"]
 		m["slot"] = fn.trim_suffix(".json")
+		var stt = data.get("state", {})
+		m["story"] = 1 if (stt is Dictionary and stt.get("story", null) != null) else 0   # (the Story Campaign page lists these; the Grand Campaign page the rest)
 		out.append(m)
 	out.sort_custom(func(a, b): return int(a.get("saved_at", 0)) > int(b.get("saved_at", 0)))
 	return out

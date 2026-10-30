@@ -122,10 +122,10 @@ var _srv_label: Label            # the Game server row at the bottom of the Gran
 var _srv_dot: Kit.Dot
 var _server_page  # game/net/server_page.gd
 var _online_box: VBoxContainer
+var _grand_saves_box: VBoxContainer   # the Grand Campaign page's offline saves
 var _grand_cards: BoxContainer   # the Host and Join cards (side by side, stacked on a phone)
 var _grand_col: VBoxContainer
 var _gh_pack := "west"           # the Host card's picked setting
-var _go_cards := {}              # the Play offline card's mini-cards (same pick as the Host card)
 var _gh_cards := {}              # pack key -> its mini-card
 var _gj_edit: LineEdit           # the Join card's code field
 var _gj_info: Label
@@ -266,6 +266,8 @@ func _ready() -> void:
 		elif a == "--custom-solo":
 			_open_custom()
 			custom._play_solo.call_deferred()  # testing aid: straight into the battle
+		elif a.begins_with("--new-grand="):
+			_new_campaign_page(false, a.get_slice("=", 1))  # testing aid: the Grand Campaign's offline setup (rome | west)
 		elif a == "--new-online":
 			_new_campaign_page(true)  # testing aid
 		elif a.begins_with("--open-online="):
@@ -551,7 +553,7 @@ func _build_home(bg: Control) -> Control:
 	_continue_emblem = Emblem.make("rome", 34)
 	_continue_emblem.position = Vector2(6, 10)
 	_continue_entry.add_child(_continue_emblem)
-	_entry("Campaign", "home_campaign", show_page.bind("campaign"))
+	_entry("Story Campaign", "home_campaign", show_page.bind("campaign"))
 	_entry("Grand Campaign", "home_grand", show_page.bind("grand"))
 	_entry("Battles", "home_battles", show_page.bind("battles"))
 	_entry("How to play", "home_howto", show_page.bind("howto"))
@@ -875,7 +877,7 @@ func _campaign_card(nm: String, label: String, subtitle: String, on_press: Calla
 	var b := Button.new()
 	b.name = nm
 	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = Vector2(250, 220)
+	b.custom_minimum_size = Vector2(280, 236)   # (wide enough for the display title "Your first command" inside the trim)
 	MenuStyle.card_style(b)
 	b.pressed.connect(AudioFx.click)
 	b.pressed.connect(on_press)
@@ -893,9 +895,10 @@ func _campaign_card(nm: String, label: String, subtitle: String, on_press: Calla
 	var em := Emblem.make(pack, 96)
 	em.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	v.add_child(em)
-	var t := Kit.label(label, 22, Color(1, 0.92, 0.7))
-	MenuStyle.use_display(t, 22)
+	var t := Kit.label(label, 20, Color(1, 0.92, 0.7), true)
+	MenuStyle.use_display(t, 20)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	t.custom_minimum_size.x = 40
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(t)
 	var sub := Kit.label(subtitle, 13, Kit.COL_DIM, true)
@@ -908,7 +911,7 @@ func _campaign_card(nm: String, label: String, subtitle: String, on_press: Calla
 ## Campaign (single player): the two settings as cards, then this device's saved campaigns and Import.
 func _build_campaign(bg: Control) -> Control:
 	var vb := _page_box(bg)
-	vb.add_child(_heading("Campaign"))
+	vb.add_child(_heading("Story Campaign"))
 	vb.add_child(Kit.label("Start with Your first command, or play the story of the Brethren of the Coast: one player or several on this device.", 14, Kit.COL_DIM))
 	var cards := HFlowContainer.new()
 	cards.add_theme_constant_override("h_separation", 16)
@@ -919,9 +922,10 @@ func _build_campaign(bg: Control) -> Control:
 		cards.add_child(_story_card())
 	vb.add_child(cards)
 	var yh := Kit.hbox(8)
-	yh.add_child(Kit.label("Your campaigns", 20, Kit.COL_GOLD))
+	yh.add_child(Kit.label("Your story campaigns", 20, Kit.COL_GOLD))
 	vb.add_child(yh)
 	_continue_box = Kit.vbox(6)
+	_continue_box.name = "continue_box"
 	_continue_box.custom_minimum_size.x = 560
 	_continue_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(_continue_box)
@@ -945,7 +949,7 @@ func _build_grand(bg: Control) -> Control:
 	_grand_col = vb
 	vb.add_theme_constant_override("separation", 12)
 	vb.add_child(_heading("Grand Campaign"))
-	var intro := Kit.label("Pick a setting (Rome or the Caribbean) and a faction: online, alone or with friends, or offline on this device with no server.", 14, Kit.COL_DIM, true)
+	var intro := Kit.label("Pick a setting (Rome or the Caribbean) and a faction: host online, alone or with friends, or play offline on this device with no server.", 14, Kit.COL_DIM, true)
 	intro.name = "grand_intro"
 	vb.add_child(intro)
 	_grand_cards = BoxContainer.new()
@@ -954,12 +958,15 @@ func _build_grand(bg: Control) -> Control:
 	vb.add_child(_grand_cards)
 	_grand_cards.add_child(_build_host_card())
 	_grand_cards.add_child(_build_join_card())
-	_grand_cards.add_child(_build_offline_card())
-	vb.add_child(Kit.title("Your grand campaigns", 20))
+	vb.add_child(Kit.title("Your Grand Campaigns", 20))
+	_grand_saves_box = Kit.vbox(6)
+	_grand_saves_box.name = "grand_saves_box"
+	_grand_saves_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_online_box = Kit.vbox(6)
 	_online_box.name = "online_box"
 	_online_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	vb.add_child(_online_box)
+	vb.add_child(_grand_saves_box)
 	# The server row.
 	var sp := Kit.panel(Color(0.07, 0.06, 0.05, 0.9), 8)
 	sp.name = "server_row"
@@ -990,7 +997,7 @@ func _layout_grand() -> void:
 	_phone_layout = _is_phone()
 	_grand_cards.vertical = w < 900.0 or _phone_layout
 	for c in _grand_cards.get_children():
-		(c as Control).custom_minimum_size.x = w if _grand_cards.vertical else (w - 28.0) / 3.0
+		(c as Control).custom_minimum_size.x = w if _grand_cards.vertical else (w - 14.0) / 2.0
 		(c as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_grand_col.custom_minimum_size.x = w
 
@@ -1007,7 +1014,7 @@ func _build_host_card() -> Control:
 	var v := Kit.vbox(8)
 	card.add_child(v)
 	v.add_child(Kit.title("Host a grand campaign", 20))
-	v.add_child(Kit.label("Pick a setting, then choose who plays each faction. The others join with a code.", 13, Kit.COL_DIM, true))
+	v.add_child(Kit.label("Pick a setting, then choose who plays each faction. Host online (the others join with a code) or play offline.", 13, Kit.COL_DIM, true))
 	var first := ""
 	for key in ["west", "rome"]:
 		if CData.has_pack(key):
@@ -1021,6 +1028,11 @@ func _build_host_card() -> Control:
 	hb.name = "home_Online_co-op"
 	Kit.tip(hb, "Host a grand campaign", "Opens the faction page for the chosen setting: pick the humans (one at least: alone on the server, or with friends who join by code) and the rules.")
 	v.add_child(hb)
+	var ob := Kit.hero_button("Play offline", "", func(): _new_campaign_page(false, _gh_pack), 0, 20)
+	ob.name = "home_offline"
+	Kit.tip(ob, "Play offline", "Opens the faction page for the chosen setting: pick your faction, teams and rules. The campaign is saved on this device; no server is used.")
+	v.add_child(ob)
+	v.add_child(Kit.label("Play offline: on this device, no server; a hot seat for two.", 13, Kit.COL_DIM, true))
 	var st := Kit.hbox(8)
 	_net_dot = Kit.dot(Kit.COL_DIM)
 	st.add_child(_net_dot)
@@ -1034,7 +1046,7 @@ func _build_host_card() -> Control:
 	return card
 
 
-## The setting mini-cards (West, Rome), registered in `cards` by pack key; the Host and Play offline cards share the pick (`_gh_pack`).
+## The setting mini-cards (West, Rome), registered in `cards` by pack key; the pick (`_gh_pack`) serves Host and Play offline.
 func _pack_row(prefix: String, cards: Dictionary) -> Control:
 	var pr := Kit.hbox(8)
 	for key in ["west", "rome"]:
@@ -1077,8 +1089,6 @@ func _gh_select(key: String) -> void:
 	_gh_pack = key
 	for k in _gh_cards:
 		_gh_light(_gh_cards[k], k == key)
-	for k in _go_cards:
-		_gh_light(_go_cards[k], k == key)
 
 
 func _gh_light(b: Button, on: bool) -> void:
@@ -1092,22 +1102,6 @@ func _gh_light(b: Button, on: bool) -> void:
 		b.add_theme_stylebox_override(st, sb)
 	b.add_theme_stylebox_override("focus", b.get_theme_stylebox("normal"))
 	b.set_meta("on", on)
-
-
-## Play offline: a sandbox on this device (the faction page with `online` false; saved locally, no server).
-func _build_offline_card() -> Control:
-	var card := _card_panel("offline_card")
-	var v := Kit.vbox(8)
-	card.add_child(v)
-	v.add_child(Kit.title("Play offline", 20))
-	v.add_child(Kit.label("A sandbox on this device: pick the setting and your faction; no server, no code", 13, Kit.COL_DIM, true))
-	v.add_child(_pack_row("offline_pack_", _go_cards))
-	var ob := Kit.hero_button("Play offline", "", func(): _new_campaign_page(false, _gh_pack), 0, 20)
-	ob.name = "home_offline"
-	Kit.tip(ob, "Play offline", "Opens the faction page for the chosen setting: pick your faction, teams and rules. The campaign is saved on this device; no server is used.")
-	v.add_child(ob)
-	_gh_select(_gh_pack)
-	return card
 
 
 ## Join a grand campaign: a code field (uppercase as typed), Paste, Join, and the result under it.
@@ -1251,11 +1245,26 @@ func _menu_visibility() -> void:
 
 
 func _fill_continue() -> void:
-	for c in _continue_box.get_children():
+	_fill_saves(_continue_box, true)
+
+
+## This device's offline saves of the Grand Campaign page (the non-story ones), under the online ones.
+func _fill_grand_saves() -> void:
+	_fill_saves(_grand_saves_box, false)
+
+
+## One list of local saves: the story campaigns (`story` true, the Story Campaign page) or the grand ones (the Grand Campaign page).
+func _fill_saves(box: VBoxContainer, story: bool) -> void:
+	if box == null:
+		return
+	for c in box.get_children():
 		c.queue_free()
-	var list := Saves.list()
-	if list.is_empty():
-		_continue_box.add_child(Kit.label("No saved campaigns yet.", 15, Kit.COL_DIM))
+	var list: Array = []
+	for m in Saves.list():
+		if (int(m.get("story", 0)) == 1) == story:
+			list.append(m)
+	if list.is_empty() and story:
+		box.add_child(Kit.label("No saved story campaigns yet.", 15, Kit.COL_DIM))
 	for m in list:
 		var h := Kit.hbox(6)
 		var sl := str(m["slot"])
@@ -1277,11 +1286,11 @@ func _fill_continue() -> void:
 		del.pressed.connect(func():
 			if del.text == "Sure?":
 				Saves.delete(sl)
-				_fill_continue()
+				_fill_saves(box, story)
 			else:
 				del.text = "Sure?")
 		h.add_child(del)
-		_continue_box.add_child(h)
+		box.add_child(h)
 
 
 ## An online seat's faction, read under its campaign's pack (restored after): {name, mark}.
@@ -1305,6 +1314,8 @@ func _fill_online() -> void:
 		return
 	var list: Array = net.local_campaigns()
 	if list.is_empty():
+		if _grand_saves_box != null and _grand_saves_box.get_child_count() > 0:
+			return   # (offline saves are listed under; no "none yet" line)
 		var el := Kit.label("No grand campaigns on this device yet. Host one above, or join with a code.", 14, Kit.COL_DIM, true)
 		el.name = "online_empty"
 		_online_box.add_child(el)
@@ -1370,12 +1381,12 @@ func _update_badges(labels: Dictionary) -> void:
 	var net := _net()
 	var got: Dictionary = await net.refresh_badges()
 	for cid in labels:
-		var l: Label = labels[cid]["badge"]
+		var l = labels[cid]["badge"]   # (untyped: the row may have been rebuilt, and so freed, while the request was out)
 		if is_instance_valid(l) and got.has(cid):
 			l.text = str(got[cid]["text"])
 			l.add_theme_color_override("font_color", got[cid]["color"])
 			var sm: Dictionary = got[cid].get("summary", {})
-			var tl: Label = labels[cid]["turn"]
+			var tl = labels[cid]["turn"]
 			if is_instance_valid(tl) and sm.has("turn"):
 				tl.text = " - turn %d" % (int(sm["turn"]) + 1)
 
@@ -1691,6 +1702,7 @@ func show_page(p: String) -> void:
 	if p == "campaign":
 		_fill_continue()
 	if p == "grand":
+		_fill_grand_saves()
 		_fill_online()
 		_check_server()
 	if p == "server" and _server_page != null:

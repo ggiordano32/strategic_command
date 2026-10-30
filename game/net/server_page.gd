@@ -13,6 +13,8 @@ const Host := preload("res://game/net/host.gd")
 var net: Node
 var _current: Label
 var _state: Label
+var _dot: Kit.Dot
+var _tag: Control
 var _edit_box: Control
 var _edit: LineEdit
 var _result: Label
@@ -32,40 +34,89 @@ func _init() -> void:
 	add_theme_constant_override("separation", 10)
 
 
+## The page is one trim panel (the kit's language): the Cinzel title, dim paragraphs with a rule between sections, the
+## current server as a field row (the address and a "default" capsule), the status as a dot and a line, and the
+## Back / Use default / Change buttons in one row.
 func setup(p_net: Node) -> void:
 	net = p_net
-	add_child(Kit.label("Game server", 22, Kit.COL_GOLD))
-	add_child(Kit.label("Online campaigns and live battles run on a game server. Host one yourself from the desktop version, or join a friend's. A default server is built in so a fresh install works.", 14, Kit.COL_DIM, true))
+	custom_minimum_size.x = 640.0
+	var panel := Kit.trim_panel(Color(0.06, 0.055, 0.045, 0.93), 14)
+	panel.name = "server_panel"
+	add_child(panel)
+	var v := Kit.vbox(10)
+	panel.add_child(v)
+	v.add_child(Kit.title("Game server", 24))
+	v.add_child(Kit.label("Online campaigns and live battles run on a game server. Host one yourself from the desktop version, or join a friend's. A default server is built in so a fresh install works.", 14, Kit.COL_DIM, true))
+	if not Host.supported():
+		var note := Kit.panel(Color(0.10, 0.085, 0.05, 0.9), 8)
+		note.name = "server_note"
+		note.add_child(Kit.label("Hosting a server needs the desktop version of the game (the web version can only join servers).", 13, Kit.COL_BONE, true))
+		v.add_child(note)
+	v.add_child(Kit.rule())
 	if Host.supported():
-		_build_host()
-		add_child(HSeparator.new())
-	else:
-		add_child(Kit.label("Hosting a server needs the desktop version of the game (the web version can only join servers).", 13, Kit.COL_DIM, true))
-	add_child(Kit.label("Join a friend's server", 19, Kit.COL_GOLD))
-	var row := Kit.flow(8)
-	_current = Kit.label("", 17, Color.WHITE)
+		_build_host(v)
+		v.add_child(Kit.rule())
+	v.add_child(Kit.title("Join a friend's server", 19))
+	var fld := PanelContainer.new()
+	fld.name = "server_field"
+	var fsb := Kit.box(Color(0.035, 0.03, 0.025, 0.96), 8.0, 4)
+	fsb.set_border_width_all(1)
+	fsb.border_color = Color(Kit.COL_RULE, 0.6)
+	fld.add_theme_stylebox_override("panel", fsb)
+	var fh := Kit.hbox(8)
+	fld.add_child(fh)
+	_current = Kit.label("", 16, Color.WHITE)
 	_current.name = "server_current"
-	row.add_child(_current)
-	var chg := Kit.button("Change", _toggle_edit, 110)
-	chg.name = "server_change"
-	row.add_child(chg)
-	add_child(row)
+	_current.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_current.clip_text = true
+	_current.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_current.custom_minimum_size.x = 40
+	fh.add_child(_current)
+	_tag = Kit.panel(Color(0.30, 0.22, 0.08, 1.0), 3)
+	_tag.name = "server_default_tag"
+	var tsb := Kit.box(Color(0.30, 0.22, 0.08, 1.0), 3.0, 9)
+	tsb.content_margin_left = 8.0
+	tsb.content_margin_right = 8.0
+	tsb.set_border_width_all(1)
+	tsb.border_color = Kit.COL_GOLD
+	_tag.add_theme_stylebox_override("panel", tsb)
+	_tag.add_child(Kit.label("default", 12, Kit.COL_GOLD))
+	_tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	fh.add_child(_tag)
+	v.add_child(fld)
+	var sr := Kit.hbox(8)
+	_dot = Kit.dot(Kit.COL_DIM)
+	sr.add_child(_dot)
 	_state = Kit.label("", 14, Kit.COL_DIM, true)
 	_state.name = "server_state"
-	add_child(_state)
-	_build_edit()
-	add_child(HSeparator.new())
-	add_child(Kit.label("The default server", 19, Kit.COL_GOLD))
-	add_child(Kit.label("%s is built into the game so a fresh install works. It is one person's own server, like any other you could host." % Api.DEFAULT_SERVER, 14, Kit.COL_DIM, true))
-	var o := Kit.button("Use default", _use_default, 150)
+	_state.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sr.add_child(_state)
+	v.add_child(sr)
+	_build_edit(v)
+	v.add_child(Kit.rule())
+	v.add_child(Kit.title("The default server", 19))
+	v.add_child(Kit.label("%s is built into the game so a fresh install works. It is one person's own server, like any other you could host." % Api.DEFAULT_SERVER, 14, Kit.COL_DIM, true))
+	var br := Kit.hbox(8)
+	var back := Kit.button("< Back", func(): back_requested.emit(), 0, 16)
+	back.name = "server_back"
+	Kit.nav_style(back)
+	br.add_child(back)
+	var sp := Control.new()
+	sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	br.add_child(sp)
+	var o := Kit.button("Use default", _use_default, 0, 16)
 	o.name = "server_default"
-	add_child(o)
-	var back := Kit.button("< Back", func(): back_requested.emit(), 150)
-	add_child(back)
+	Kit.nav_style(o)
+	br.add_child(o)
+	var chg := Kit.button("Change", _toggle_edit, 0, 16)
+	chg.name = "server_change"
+	Kit.nav_style(chg)
+	br.add_child(chg)
+	v.add_child(br)
 	refresh()
 
 
-func _build_edit() -> void:
+func _build_edit(parent: Control) -> void:
 	var box := Kit.vbox(8)
 	box.visible = false
 	_edit_box = box
@@ -85,15 +136,20 @@ func _build_edit() -> void:
 	_result.name = "server_result"
 	box.add_child(_result)
 	box.add_child(Kit.label("Browsers (including the game on itch.io) can only join servers with an https address. The desktop version can join any address, such as a friend's 192.168.1.20:8060.", 13, Kit.COL_DIM, true))
-	add_child(box)
+	parent.add_child(box)
 
 
 func refresh() -> void:
 	if net == null:
 		return
-	_current.text = "Server: %s%s" % [net.server_url(), " (default)" if net.is_default() else ""]
+	if is_inside_tree():
+		custom_minimum_size.x = minf(640.0, get_viewport_rect().size.x - 32.0)   # (a phone: the screen's width)
+	_current.text = net.server_url()
+	_tag.visible = net.is_default()
+	var col := Kit.COL_DIM
 	if net.available:
 		_state.text = Net_describe(net.info)
+		col = Kit.COL_GOLD if bool(net.info.get("invite_required", false)) else Kit.COL_GOOD
 		_state.add_theme_color_override("font_color", Kit.COL_GOOD)
 	else:
 		_state.text = "Not checked yet, or not reachable."
@@ -102,6 +158,8 @@ func refresh() -> void:
 	if t is Dictionary and not bool(t["ok"]):
 		_state.text = str(t["text"])
 		_state.add_theme_color_override("font_color", Kit.COL_BAD)
+		col = Kit.COL_BAD
+	_dot.set_col(col)
 	if Host.supported() and _host_status != null:
 		_refresh_host()
 
@@ -154,9 +212,9 @@ func _switch(url: String) -> void:
 
 # ------------------------------------------------------------------ host ---
 
-func _build_host() -> void:
+func _build_host(parent: Control) -> void:
 	var box := Kit.vbox(8)
-	box.add_child(Kit.label("Host a server", 19, Kit.COL_GOLD))
+	box.add_child(Kit.title("Host a server", 19))
 	box.add_child(Kit.label("Friends on the desktop version join with this address. Outside your network the game asks your router to open the port (UPnP); if that fails, forward the port yourself or use a tunnel like Tailscale. Browser players cannot join a plain-HTTP server.", 14, Kit.COL_DIM, true))
 	var r := Kit.flow(8)
 	r.add_child(Kit.label("Port", 15))
@@ -194,7 +252,7 @@ func _build_host() -> void:
 	box.add_child(ur)
 	_host_addrs = Kit.vbox(6)
 	box.add_child(_host_addrs)
-	add_child(box)
+	parent.add_child(box)
 	(net.get_host() as Host).upnp_changed.connect(_on_upnp_changed)
 	_refresh_host()
 

@@ -92,6 +92,8 @@ var _title_label: Label
 var _title_emblem: Control
 var _settings_body: Control
 var _fold_button: Button
+static var _fold_prefs := {}   # the Campaign Settings fold's last state this session, "grand" / "story" -> 1 open, 0 folded
+var _fold_open := 0
 var _bold: Font = null
 var _deploy_dd: OptionButton
 var _time_dd: OptionButton
@@ -408,23 +410,29 @@ func _build_settings() -> Control:
 	panel.name = "settings_panel"
 	var v := Kit.vbox(8)
 	panel.add_child(v)
-	if _narrow:
-		_fold_button = Kit.button("Settings  -", _toggle_fold, 0, 16)
-		_fold_button.name = "settings_fold"
-		_fold_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		Kit.nav_style(_fold_button)
-		v.add_child(_fold_button)
-	else:
-		v.add_child(Kit.title("Settings", 20))
+	# Name and Seed stay above the fold; the rest is the "Campaign Settings" section (a chevron header with a one-line summary).
+	var head := Kit.vbox(8)
+	head.name = "settings_head"
+	v.add_child(head)
+	_fold_button = Kit.button("", _toggle_fold, 0, 16)
+	_fold_button.name = "settings_fold"
+	_fold_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_fold_button.clip_text = true
+	Kit.nav_style(_fold_button)
+	v.add_child(_fold_button)
 	var body := Kit.vbox(8)
 	body.name = "settings_body"
 	_settings_body = body
 	v.add_child(body)
+	# (the Grand Campaign setups open folded; the story and tutorial ones keep their rows, folded only on a phone)
+	_fold_open = int(_fold_prefs[_fold_key()]) if _fold_prefs.has(_fold_key()) else (0 if (online or not (story_only or tutorial_only)) or _narrow else 1)
+	if "--settings-open" in OS.get_cmdline_user_args():
+		_fold_open = 1   # testing aid
 	name_edit = Kit.text_field("Campaign name", "Campaign", 200)
 	name_edit.name = "campaign_name"
 	Kit.tip(name_edit, "Name", "What the save is called.")
-	_srow(body, "name", "Name", "What the save is called.", name_edit)
-	body.add_child(Kit.rule())
+	_srow(head, "name", "Name", "What the save is called.", name_edit)
+	head.add_child(Kit.rule())
 	var sh := Kit.hbox(6)
 	seed_edit = Kit.text_field("Seed", str(int(Time.get_unix_time_from_system()) % 100000), 110, "Seed (a number: the same seed gives the same map)", true)
 	seed_edit.name = "campaign_seed"
@@ -442,23 +450,19 @@ func _build_settings() -> Control:
 		for pp in [Vector2(-0.5, -0.5), Vector2(0.5, 0.5), Vector2.ZERO, Vector2(0.5, -0.5), Vector2(-0.5, 0.5)]:
 			dice.draw_circle(c + pp * r * 1.1, 1.6, Kit.COL_BONE))
 	sh.add_child(dice)
-	var seed_row := _srow(body, "seed", "Seed", "The same seed gives the same map.", sh)
+	var seed_row := _srow(head, "seed", "Seed", "The same seed gives the same map.", sh)
 	var seed_rule := Kit.rule()
-	body.add_child(seed_rule)
+	head.add_child(seed_rule)
 	if tutorial_only:
 		seed_row.visible = false
 		seed_rule.visible = false
 		seed_edit.text = str(Tutorial.SEED)
 		_build_tutorial_settings(body)
-		if _narrow:
-			body.visible = false
-			_fold_button.text = "Settings  +"
+		_apply_fold()
 		return panel
 	if story_only:
 		_build_story_settings(body)
-		if _narrow:
-			body.visible = false
-			_fold_button.text = "Settings  +"
+		_apply_fold()
 		return panel
 	var vh := Kit.hbox(14)
 	vh.add_child(_stepper("victory_regions", "%d regions", "Regions to win", "Hold this many regions to win outright."))
@@ -496,9 +500,7 @@ func _build_settings() -> Control:
 	Kit.tip(tb, "Battle time", "How long a battle lasts before it is a draw (a long siege may need more than 15 minutes).")
 	_time_dd = tb
 	_srow(body, "time", "Battle time", "How long a battle lasts before it is a draw.", tb)
-	if _narrow:
-		body.visible = false
-		_fold_button.text = "Settings  +"
+	_apply_fold()
 	return panel
 
 
@@ -539,9 +541,37 @@ func _build_story_settings(body: Control) -> void:
 	_srow(body, "time", "Battle time", "How long a battle lasts before it is a draw.", tb)
 
 
+func _fold_key() -> String:
+	return "story" if (story_only or tutorial_only) else "grand"
+
+
 func _toggle_fold() -> void:
-	_settings_body.visible = not _settings_body.visible
-	_fold_button.text = "Settings  " + ("-" if _settings_body.visible else "+")
+	_fold_open = 1 - _fold_open
+	_fold_prefs[_fold_key()] = _fold_open   # (remembered for the session: the next setup opens the same way)
+	_apply_fold()
+
+
+## The Campaign Settings header: a chevron, the title and, folded, a one-line summary of the choices under it.
+func _apply_fold() -> void:
+	_settings_body.visible = _fold_open == 1
+	var txt := "Campaign Settings"
+	if not _settings_body.visible:
+		var sm := _settings_summary()
+		if sm != "":
+			txt += "   " + sm
+	_fold_button.text = ("v  " if _settings_body.visible else ">  ") + txt
+
+
+## "Average AI, 15 min battles, fog on" from the picked settings.
+func _settings_summary() -> String:
+	var parts: Array[String] = []
+	if settings.has("ai_campaign_skill"):
+		parts.append("%s AI" % SKILL_LABELS[clampi(int(settings["ai_campaign_skill"]), 0, 2)])
+	if settings.has("time_limit"):
+		parts.append("%d min battles" % (int(settings["time_limit"]) / 60))
+	if settings.has("fog") and not story_only:
+		parts.append("fog " + ("on" if int(settings["fog"]) == 1 else "off"))
+	return ", ".join(parts)
 
 
 func _new_seed() -> void:
@@ -674,6 +704,8 @@ func _team_text() -> String:
 
 
 func _update() -> void:
+	if _settings_body != null and _fold_button != null:
+		_apply_fold()
 	for k in _pack_buttons:
 		(_pack_buttons[k] as Button).set_pressed_no_signal(str(k) == CData.pack)
 		(_pack_buttons[k] as Button).disabled = _creating
@@ -814,6 +846,9 @@ func _start_story(coop: bool = false) -> void:
 
 ## The state a (non-story) campaign starts from: the picked humans and teams on the screen's setting (CData.pack).
 func build_state(nm: String, sd: int) -> Dictionary:
+	# (the chosen setting is asserted again: the global pack is shared with the title's live table, which sets it while it builds)
+	if pack_pick != "" and CData.has_pack(pack_pick) and CData.pack != pack_pick:
+		PackView.use_pack(pack_pick)
 	return CState.new_campaign(nm, sd, picks.duplicate(), settings, teams_array(), CData.pack)
 
 
