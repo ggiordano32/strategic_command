@@ -32,7 +32,7 @@ const NAMES: Array[String] = [
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
 	"details", "embark", "more",
 	"grenade", "pistol", "caracole", "target", "hand", "countermarch",
-	"hat", "knife", "cross", "feathers",
+	"hat", "knife", "cross", "feathers", "broken_shield",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
 ## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
@@ -666,6 +666,23 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 					for io in [1.0, -1.0]:
 						var rr: float = 0.72 + 0.17 * io
 						_leaf(cos(a) * rr, 0.05 + sin(a) * rr, tg + sg * 0.5 * io, 0.32, 0.11)
+		"broken_shield":  # a heater shield split by a crack, the halves apart (the die's defeat face)
+			var crack: Array = [0.02, -0.82, -0.14, -0.46, 0.1, -0.14, -0.1, 0.22, 0.08, 0.54, 0.0, 0.88]
+			var lft: Array = [-0.78, -0.82]
+			for k in range(0, crack.size(), 2):
+				lft.append(float(crack[k]) - 0.07)
+				lft.append(float(crack[k + 1]))
+			lft.append_array([-0.76, 0.08])
+			_pl(lft, true)
+			var rgt: Array = [0.78, -0.82]
+			rgt.append_array([0.8, 0.04, 0.06, 0.96])
+			var rc: Array = []
+			for k in range(crack.size() - 2, -1, -2):
+				rc.append(float(crack[k]) + 0.07)
+				rc.append(float(crack[k + 1]) + 0.06)
+			rgt.append_array(rc)
+			_pl(rgt, true)
+			_l(-0.5, -0.5, -0.38, -0.5, 0.8)
 		"defeat":  # broken sword
 			_l(-0.78, 0.78, -0.1, 0.1)
 			_l(-0.62, 0.22, -0.2, 0.64, 0.9)

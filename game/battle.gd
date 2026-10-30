@@ -21,6 +21,7 @@ const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
+const TableMotion := preload("res://game/table_motion.gd")
 const ObliquePack := preload("res://game/oblique_pack.gd")
 const KitOccluder := preload("res://game/kit_occluder.gd")
 const BoardLayer := preload("res://game/board_layer.gd")
@@ -180,6 +181,19 @@ var paused := false
 var speed_q := 4
 var _shown_speed := Vector2i(-1, -1)  # (speed, slider) last shown on the HUD
 var interactive := true
+## Tabletop pass 5, the dive (game/table_motion.gd): set by the screens that open a battle for a player; the camera starts high
+## above the table and drops to the fit in DIVE_SEC (a tap or key skips). `dive_t` is the seconds into it, -1 when not diving.
+var dive := false
+var dive_t := -1.0
+const DIVE_SEC := 1.2
+const DIVE_HUD_SEC := 0.4      # the HUD fades in over the last part
+const DIVE_START := 0.35       # the first zoom, as a share of the fit
+var _dive_z0 := 0.4
+var _dive_z1 := 1.0
+var _dive_p0 := Vector2.ZERO
+var _dive_p1 := Vector2.ZERO
+var _dive_mod: CanvasModulate
+var _dive_hold := -1.0
 var bench_mode := false
 ## Primary selected unit (last one picked), -1 if none.
 var selected := -1
@@ -512,6 +526,7 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--frame-stats="):
 			_fs_until = float(a.get_slice("=", 1)) + 3.0
+	_dive_begin()
 	_hash_text = "%08x" % sim.state_hash()
 	_tele = get_node_or_null("/root/Telemetry")
 	if _tele != null:
@@ -1048,9 +1063,59 @@ func _fit_camera() -> void:
 	camera.position = (lo + hi) * 0.5 + (vp * 0.5 - clear.get_center()) / z
 
 
+## The dive onto the table (view only): from DIVE_START of the fit, centred on the field (the table's wood and the board's edge
+## in view), to the fit with an ease-out; the HUD (a CanvasModulate on its layer) fades in over the last DIVE_HUD_SEC.
+func _dive_begin() -> void:
+	# (Testing aid --dive-hold=S: the dive held at S seconds, for the strip of shots; it ignores the other aids.)
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--dive-hold="):
+			_dive_hold = float(a.get_slice("=", 1))
+	if _dive_hold < 0.0 and (not dive or bench_mode or not interactive or not TableMotion.allowed()):
+		return
+	_dive_z1 = camera.zoom.x
+	_dive_p1 = camera.position
+	_dive_z0 = _dive_z1 * DIVE_START
+	var vp := get_viewport_rect().size
+	var top := hud.top_height()
+	var clear := Rect2(0.0, top, vp.x, maxf(vp.y - top - hud.bottom_height(), vp.y * 0.3))
+	var fc := BoardView.to_board(Vector2(sim.field_w, sim.field_h) / M * PX_PER_M * 0.5)
+	_dive_p0 = fc + (vp * 0.5 - clear.get_center()) / _dive_z0
+	dive_t = 0.0
+	_dive_mod = CanvasModulate.new()
+	_dive_mod.color = Color(1, 1, 1, 0)
+	hud.add_child(_dive_mod)
+	_dive_apply()
+
+
+func _dive_apply() -> void:
+	var p := TableMotion.ease_out(dive_t / DIVE_SEC)
+	camera.zoom = Vector2.ONE * (_dive_z0 * pow(_dive_z1 / _dive_z0, p))
+	camera.position = _dive_p0.lerp(_dive_p1, p)
+	var a := clampf((dive_t - (DIVE_SEC - DIVE_HUD_SEC)) / DIVE_HUD_SEC, 0.0, 1.0)
+	_dive_mod.color = Color(1, 1, 1, a)
+
+
+## To the end now: the fit, the HUD whole (the end of the time, a tap or key, or a new camera aid).
+func dive_finish() -> void:
+	if dive_t < 0.0:
+		return
+	dive_t = -1.0
+	camera.zoom = Vector2.ONE * _dive_z1
+	camera.position = _dive_p1
+	if _dive_mod != null:
+		_dive_mod.queue_free()
+		_dive_mod = null
+
+
 # ------------------------------------------------------------- stepping ---
 
 func _process(delta: float) -> void:
+	if dive_t >= 0.0:
+		dive_t = _dive_hold if _dive_hold >= 0.0 else dive_t + delta
+		if dive_t >= DIVE_SEC:
+			dive_finish()
+		else:
+			_dive_apply()
 	if _exit_timer > 0.0:
 		_exit_timer -= delta
 		if _exit_timer <= 0.0 and (coop == null or coop.final_frame >= 0 or coop.ls == null):
@@ -1070,7 +1135,7 @@ func _process(delta: float) -> void:
 		_end_tick()
 	if coop != null:
 		_coop_step(delta)
-	elif not paused and not _bench_done and not (campaign_mode and sim.ended != 0):
+	elif not paused and not _bench_done and not (campaign_mode and sim.ended != 0) and dive_t < 0.0:
 		# (A campaign battle stops at its end: the result returned is the
 		# state at `ended`.)
 		_acc += delta * speed_q / 4.0
@@ -3634,6 +3699,11 @@ func _cam_to(w: Vector2) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if dive_t >= 0.0 and ((event is InputEventKey and event.pressed and not event.echo) \
+			or (event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed)):
+		dive_finish()   # a tap or a key skips the dive (and is not an order)
+		get_viewport().set_input_as_handled()
+		return
 	# Modifiers come from the mouse event itself (key state can be missed by
 	# the browser). The emulated touch of a click is handled at release, after
 	# this has run.

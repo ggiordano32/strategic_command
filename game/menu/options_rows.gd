@@ -21,6 +21,7 @@ const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const ConfirmOrders := preload("res://game/confirm_orders.gd")
+const TableMotion := preload("res://game/table_motion.gd")
 const MapView := preload("res://game/campaign/map_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
@@ -68,7 +69,7 @@ func build(parent: Control, o: Dictionary) -> void:
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
 	_section(parent, "Looks", true)
-	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter. The view: Top, or Oblique from the table's edge.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
+	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter. The view: Top, or Oblique from the table's edge. Motion: the dive and the die.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
 		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
 	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
@@ -79,6 +80,10 @@ func build(parent: Control, o: Dictionary) -> void:
 			BoardView.save_pref(str(v))
 			if str(v) == "oblique":
 				ObliquePack.ensure(true))
+	# The table's motion on the same row (tabletop pass 5, game/table_motion.gd): the dive onto the table and the die.
+	_beside("battle_view", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",
+		"Motion (the default): the camera dives onto the table as a battle opens, and a die rolls on an Auto-resolve. Still: " \
+		+ "neither. A tap or a key skips either one. Takes effect at the next battle.", func(v): TableMotion.save_pref(str(v) == "on"))
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",
@@ -261,12 +266,18 @@ func _choice(parent: Control, key: String, label: String, desc: String, options:
 func _beside(row_key: String, key: String, options: Array, value, tip_title: String, tip_text: String, cb: Callable) -> void:
 	var first := seg[row_key] as Control
 	var host := first.get_parent()
-	var pair := Kit.hbox(10)
-	pair.size_flags_vertical = first.size_flags_vertical
-	pair.size_flags_horizontal = first.size_flags_horizontal
-	host.add_child(pair)
-	host.move_child(pair, first.get_index())
-	first.reparent(pair, false)
+	var pair: Container = Kit.hbox(10)
+	if bool(_o.get("narrow", false)):
+		pair = Kit.flow(10)   # (narrow: the capsules wrap)
+	if host.has_meta("beside"):
+		pair = host as Container   # (a third control on a row already shared: it joins the pair)
+	else:
+		pair.size_flags_vertical = first.size_flags_vertical
+		pair.size_flags_horizontal = first.size_flags_horizontal
+		pair.set_meta("beside", true)
+		host.add_child(pair)
+		host.move_child(pair, first.get_index())
+		first.reparent(pair, false)
 	var sg := Kit.segmented(options, value, Callable(), "%s_%s" % [str(_o["prefix"]), key])
 	sg.changed.connect(func(v):
 		if not _building:
@@ -328,6 +339,7 @@ func refresh() -> void:
 	put.call("fullscreen", 1 if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else 0)
 	put.call("battle_look", BattleLook.pref())
 	put.call("battle_view", BoardView.pref())
+	put.call("battle_dive", "on" if TableMotion.enabled() else "off")
 	MapView.load_view_pref()
 	put.call("map_view", "terrain" if MapView.terrain_view else "political")
 	put.call("map_style", MapView.style_pref)

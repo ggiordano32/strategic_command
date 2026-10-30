@@ -418,6 +418,34 @@ func _west_built(vw: int, vh: int) -> PackedByteArray:
 	return out
 
 
+## The trodden-ground channel (G) of a West town blurred over about 1.5 cells (a 3-cell box, two passes), so the
+## 4 m cells of a yard leave no edge; the sampler's bilinear filter does the rest (view only).
+func _soften_trodden(bytes: PackedByteArray, vw: int, vh: int) -> void:
+	var w := [0.25, 1.0, 1.0, 1.0, 0.25]
+	var src := PackedFloat32Array()
+	src.resize(vw * vh)
+	for k in vw * vh:
+		src[k] = float(bytes[k * 4 + 1])
+	for pass_i in 2:
+		var dst := PackedFloat32Array()
+		dst.resize(vw * vh)
+		for j in vh:
+			for i in vw:
+				var acc := 0.0
+				var wt := 0.0
+				for t in 5:
+					var ii := i + t - 2 if pass_i == 0 else i
+					var jj := j if pass_i == 0 else j + t - 2
+					if ii < 0 or jj < 0 or ii >= vw or jj >= vh:
+						continue
+					acc += src[jj * vw + ii] * w[t]
+					wt += w[t]
+				dst[j * vw + i] = acc / wt
+		src = dst
+	for k in vw * vh:
+		bytes[k * 4 + 1] = clampi(int(src[k] + 0.5), 0, 255)
+
+
 ## Ground features texture from the sim's 4 m vegetation grid.
 func _build_veg() -> void:
 	var m := material_ref
@@ -439,6 +467,9 @@ func _build_veg() -> void:
 			bytes[o + 1] = 70  # (a West town: only the built-up ground is trodden; yards and gardens between)
 		bytes[o + 2] = 255 if (b & MapGen.V_FIELD) != 0 else 0
 		bytes[o + 3] = 255 if (b & MapGen.V_PLAZA) != 0 else (130 if (b & MapGen.V_ROAD) != 0 else 0)
+	if not built.is_empty():
+		_soften_trodden(bytes, vw, vh)
+	m.set_shader_parameter("trod_soft", not built.is_empty())
 	var img := Image.create_from_data(vw, vh, false, Image.FORMAT_RGBA8, bytes)
 	m.set_shader_parameter("vegmap", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("veg_size_px", Vector2(vw, vh) * 4.0 * px_per_m)

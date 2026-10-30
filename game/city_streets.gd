@@ -11,6 +11,7 @@ const BoardView := preload("res://game/board_view.gd")
 const CELL := 0.5
 const LANE_GROW := 3.0      # metres: a lane runs this far from the houses' footprints
 const MARGIN := 6.0
+const LANE_FEATHER := 6     # cells (3 m): a West yard fades out over this far in from its edge
 
 
 func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
@@ -54,10 +55,18 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 	var zone := PackedByteArray()
 	zone.resize(w * h)
 	var marked := PackedInt32Array()
+	var west0 := int(lay.get("west", 0)) != 0
+	# (A West town: how deep a lane cell lies inside its yard, in cells, rounded at the corners, so the yard's
+	# edge fades out over LANE_FEATHER instead of stopping at a square.)
+	var depth := PackedByteArray()
+	if west0:
+		depth.resize(w * h)
 	# Lanes: the free ground round every footprint.
 	for r in rects:
 		var rc := (r as Rect2).grow(LANE_GROW)
 		_fill(zone, marked, w, h, org, rc, 1)
+		if west0:
+			_depth(depth, w, h, org, rc)
 	# Main streets: the sim's segments, and the agora's square.
 	for s in segs:
 		var a0 := Vector2(float(int(s[0])), float(int(s[1])))
@@ -125,11 +134,12 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 			if edge:
 				col *= 0.75
 		elif west:
-			# Streets: pale packed earth with a darker rim; alleys between the houses: a warmer, darker earth.
-			col = Vector3(0.76, 0.69, 0.55) if z == 2 else Vector3(0.56, 0.44, 0.31)
+			# Streets: pale packed earth with a darker rim; the yards round the houses: bare earth, lighter and warmer
+			# than the old dark squares, fading out at the edge (alpha below).
+			col = Vector3(0.76, 0.69, 0.55) if z == 2 else Vector3(0.62, 0.50, 0.35)
 			col *= 0.92 + 0.12 * n
-			if edge:
-				col *= 0.74 if z == 2 else 0.8
+			if edge and z == 2:
+				col *= 0.74
 		elif paved:
 			col = Vector3(0.68, 0.64, 0.57) if z == 2 else Vector3(0.54, 0.49, 0.42)
 			var cob := (cx / 2 + (cy / 2 % 2) * 1) % 3   # cobbles 1 m, offset rows
@@ -143,6 +153,9 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 			if edge:
 				col *= 0.9
 		var al := 1.0 if z >= 2 else 0.95
+		if west and z == 1:
+			var t := clampf(float(depth[i]) / float(LANE_FEATHER), 0.0, 1.0)
+			al = 0.8 * t * t * (3.0 - 2.0 * t) * (0.85 + 0.3 * n)
 		if edge and not paved and z != 3 and not west:
 			al *= 0.6
 		var o := i * 4
@@ -156,6 +169,27 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 	position = org * k
 	scale = Vector2.ONE * CELL * k
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST if paved else CanvasItem.TEXTURE_FILTER_LINEAR
+
+
+## Depth of each cell of rc in from its edge, in cells (a rounded rectangle: a square corner would show), the
+## largest over the rectangles that cover it.
+static func _depth(dep: PackedByteArray, w: int, h: int, org: Vector2, rc: Rect2) -> void:
+	var x0 := maxi(int((rc.position.x - org.x) / CELL), 0)
+	var x1 := mini(int((rc.end.x - org.x) / CELL), w - 1)
+	var y0 := maxi(int((rc.position.y - org.y) / CELL), 0)
+	var y1 := mini(int((rc.end.y - org.y) / CELL), h - 1)
+	var rr := float(LANE_FEATHER)
+	for cy in range(y0, y1 + 1):
+		var dy := mini(cy - y0, y1 - cy)
+		for cx in range(x0, x1 + 1):
+			var dx := mini(cx - x0, x1 - cx)
+			var d: float
+			if dx >= LANE_FEATHER or dy >= LANE_FEATHER:
+				d = float(mini(dx, dy))
+			else:
+				d = rr - sqrt(float((LANE_FEATHER - dx) * (LANE_FEATHER - dx) + (LANE_FEATHER - dy) * (LANE_FEATHER - dy)))
+			var i := cy * w + cx
+			dep[i] = maxi(dep[i], clampi(int(d), 0, 255))
 
 
 static func _fill(zone: PackedByteArray, marked: PackedInt32Array, w: int, h: int, org: Vector2, rc: Rect2, val: int) -> void:

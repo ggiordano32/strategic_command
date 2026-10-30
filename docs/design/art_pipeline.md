@@ -558,7 +558,8 @@ art; that decides the order.
 5. **Furniture and motion.** A brass ruler for the deployment line and the
    range rings, cotton smoke everywhere (the diorama's already is), the
    dive from the overworld onto the table as the battle opens, and, rule of
-   cool, a die that rolls across the table on an auto-resolve.
+   cool, a die that rolls across the table on an auto-resolve. (Built
+   2026-10-30: "Pass 5, furniture and motion" below.)
 
 **Client (the owner deferred the decision; decided 2026-10-27).** Web first
 stays: the measured lag is our own drawing cost and a native build would
@@ -1200,3 +1201,77 @@ Art half (`tools/`, the two sheet sets, one loader in `game/kit_ob.gd`); `sim/` 
 - **Preview.** `pack.py --contact` (top) and `preview/ob_contact.py --sheets DIR` (oblique, a folder of the same layout) for before / after.
 - **Open.** The owner's eye on the line weight and the warm edge; the mirrored E / NE / SE figures have their highlights on the right
   (flipped with the sprite); the elephant's many small parts get busy lines; a 6-bit posterise stays available if the on-demand pack grows.
+
+### Pass 5, furniture and motion (as built, 2026-10-30)
+
+The plan's item 5 and the leftover "trodden-ground squares"; view only (`sim/` and `campaign/` untouched, `git diff --stat sim/ campaign/` empty).
+Built in this order, each shot in both views.
+
+- **0. The squares round the West houses.** **Differs from the brief:** the dark squares are **not** the terrain shader's trodden-ground mask.
+  With `--no-kit` they vanish and with `trod = 0` in the shader they stay: they are `city_streets.gd`'s *lane zone* (the free ground within
+  `LANE_GROW` 3 m of every footprint, painted at 0.5 m cells in "a warmer, darker earth" with a darker rim on the zone's edge cells), the sprite that
+  lies under the kit in both views. Fixed there: in a West town the yard is lighter bare earth (0.62, 0.50, 0.35, was 0.56, 0.44, 0.31), the rim darkening is
+  gone, and its **alpha follows the depth** in from the yard's edge (`_depth`, a rounded rectangle per footprint, the largest where yards overlap,
+  `LANE_FEATHER` 6 cells = 3 m: smoothstep, x 0.85-1.15 by the cell's noise, at most 0.8), so the yard fades out at its rim and has no cell edge at
+  zoom 2. The terrain's own mask was softened as asked too (`_soften_trodden`: the G channel blurred over a 3-cell box twice before the bilinear
+  sampler, `trod_soft` in the shader: bare earth warmer and mixed 0.6 with the ground, a value-noise wobble 0.5-1.4 on its strength, so half as dark), a subtler
+  change, since the splat ground under a town is mostly the street texture. Both views (the top view's old black footing round the houses fades the same way).
+  The owner still reads "a yard round the house": about 3 m of earth round each building, strongest at the wall.
+- **1. The brass ruler** (`game/brass_rule.gd`, drawn by `overlay.gd`). The deployment line (the player's zone's four edges, ticks from each corner; the
+  enemy zone keeps its thin red line) and the **full range ring** of a selected missile unit or battery (a battery's firing sector keeps its coloured
+  edges and arcs: they carry information) are a band 0.8 m wide (never under 5 screen px): a soft contact shadow to the lower right (two
+  translucent passes), a dark brass edge, the brass body (0.94, 0.65, 0.17), a thin bevel highlight shifted to the upper left (the lamp), cut into
+  pieces of at most 8 m so it follows the hills through the lift (the overlay's own `SEG_M`). Engraved ticks every 10 m from the outer edge inward
+  (0.5 of the band; 0.78 with a small number every 50 m on the deployment line, in metres from the corner, left out when closer than 5 screen px / 26 px
+  for the numbers); a ring's numbers would be lengths along the circle, so it carries one label "140 m" at its top instead. A ring with no ammunition is the
+  same rule in pewter. The deployment fill stays. Checked on grass (custom battle) and sand (siege_city) at the fit and at zoom 2, both views: the dark edge
+  and the saturated orange keep it legible on sand. **Open:** ticks on a ring are along the arc from east, not from the unit.
+- **2. Cotton smoke** (`gun_smoke.gd`, `overlay.gd`). The four cloud tiles are re-baked: each is 2 to 4 round lobes (3, 2, 4, 3) as a smooth sum of soft
+  discs with lumps from noise, a silhouette soft all round (alpha = smoothstep of the field, no hard edge), shaded from the field's slope with the lamp
+  upper left, an underside shade per lobe (weighted by its share of the field), a darker core, a grey-blue shade against a warm white light. The tile
+  atlas is one texture as before, so the gun smoke still batches. The **fire smoke, a blast's cloud, the ruin dust, the dust kick, a chip's dust and
+  the burning columns** draw the same tiles (`GunSmoke.tuft`, tinted, instead of `draw_circle`) and stand up in the oblique view as before; the long-fire
+  haze, blast rings, sparks and the flash are as they were. Both soldier data paths and Low use the same atlas (the shading is baked in, so Low has no extra
+  work); the atlas is baked in the overlay's first frame, not in the frame that draws the first puff.
+- **3. The dive onto the table** (`game/table_motion.gd`, `Battle.dive`). Set by every screen that opens a battle for a player (the scenario / siege /
+  custom starts in `main.gd`, the campaign's Fight and the live co-op start in `campaign_screen.gd`): the camera starts at 0.35 of the fit centred on the
+  field (the wood and the board's edge show), drops to the fit over 1.2 s (ease-out cubic on the zoom taken geometrically, the position linearly) and the HUD
+  (a `CanvasModulate` on its layer) fades in over the last 0.4 s. A tap or a key skips it to the end and is not an order; the sim does not step during it. The top view dives the same
+  way (the tilt is not animated: the oblique camera is baked into the sheets). `[video] battle_dive` (default on; Options "Motion / Still", see ui.md) and
+  `--no-dive` turn it off. **No dive** under any command-line aid (`--shot`, `--frame-stats`, `--skip-ticks`, `--zoom`, `--cam`, `--cam-unit`, `--select`,
+  `--pause`), in benchmark mode, for a non-interactive battle, and **in any test script**: `TableMotion.allowed()` also needs a current scene, which `--script` runs
+  lack (`TableMotion.force` overrides it for `tests/table_motion_test.gd`). `--dive-hold=S` holds the dive at S seconds for the strip of shots.
+- **4. The die on the auto-resolve** (`game/campaign/die_roll.gd`, `campaign_screen.gd _roll_die`). When the resolver finishes, the progress bar gives
+  way to a wooden die (a rounded face with a grain, a bevel and the icon engraved) that tumbles across the dialog for 0.9 s with a decaying bounce and a soft
+  shadow, flips five times (the front face squashes as the next comes over its top edge) and settles for 0.45 s on the face the **rules** gave this player:
+  a laurel (`victory`) for a win, a broken shield (`broken_shield`, new in `ui_icons.gd`) for a loss, crossed swords (`battles`) for a draw (or no
+  seat); then `_apply_battle` runs and the result shows as before. The faces on the way are a fixed order counted back from the result, nothing random, and the
+  result was applied by the rules before the die rolled; the die only shows it. A tap or a key skips to the settled face. Off with the setting and in tests. No die for the AI's battles
+  (they resolve inside `cturn`, there is no screen) nor for a **sea** battle's instant auto-resolve (no dialog to roll in: open).
+- **The setting.** One row, one capsule, shared with Battle view (`options_rows.gd _beside` joins a third control; on the narrow layouts the capsules are a wrapping flow):
+  the Options page still does not scroll at 1024 x 576.
+- **Cost** (3 runs each, before = HEAD 64c97c2 in a scratch copy, after = this tree, seed 7, tick 600, `--disable-vsync`, high; the smoke case is siege_city
+  at tick 3000 with `--ai-both`, zoom 2, `--cam-unit=11`). The machine's load average was 15 to 20 on 16 cores (another agent's harness), so the frame
+  means swing +-2 ms between two runs of the same build (an after of 25 ms and a before of 20 ms in the same pair); the render times were taken
+  with a temporary `viewport_set_measure_render_time` read in `_frame_stats` (not kept) because the GPU time is not shared with that harness, and they scatter
+  +-0.5 ms. **Result: no systematic cost.** The deltas of the nine of ten rows within -1.1..+0.7 ms have both signs; the one over the +0.15 ms line, bench_4000_hills
+  at the default fit, oblique (+0.68), is one pair where the after run met a 25 ms load spike (the other two pairs: after lower than before in the top view and
+  equal at zoom 2). The expected cost is nil: the terrain's new branch runs only where the trodden channel is set (`trod_soft && v.g > 0.02`), the brass ruler draws
+  only in a deployment and for a selected shooter, the cotton tiles replace circles one for one, the smoke atlas is the same size. **To redo on a quiet machine.**
+
+  | case | zoom | view | GPU render ms (before / after) | CPU render ms (before / after) | frame mean ms (before / after) | render GPU + CPU delta |
+  |---|---|---|---|---|---|---|
+  | bench_4000_hills | default | oblique | 4.52 / 4.75 | 6.27 / 6.71 | 15.19 / 16.79 | +0.68 |
+  | bench_4000_hills | default | top | 4.23 / 4.34 | 6.40 / 6.45 | 15.37 / 16.19 | +0.16 |
+  | bench_4000_hills | 2 | oblique | 4.15 / 4.04 | 5.90 / 5.88 | 13.99 / 13.68 | -0.13 |
+  | bench_4000_hills | 2 | top | 4.05 / 3.85 | 5.91 / 5.71 | 13.64 / 12.74 | -0.39 |
+  | west_town | default | oblique | 2.07 / 2.23 | 3.59 / 3.75 | 8.25 / 9.07 | +0.32 |
+  | west_town | default | top | 2.06 / 1.83 | 3.72 / 3.34 | 8.59 / 7.31 | -0.61 |
+  | west_town | 2 | oblique | 2.15 / 2.19 | 3.55 / 3.38 | 8.16 / 8.18 | -0.12 |
+  | west_town | 2 | top | 1.78 / 1.80 | 3.14 / 3.15 | 6.85 / 6.70 | +0.04 |
+  | siege_city, 3000 ticks, guns | 2 | oblique | 1.71 / 1.47 | 5.05 / 4.15 | 8.92 / 7.51 | -1.14 |
+  | siege_city, 3000 ticks, guns | 2 | top | 1.31 / 1.29 | 3.34 / 2.88 | 6.35 / 5.65 | -0.48 |
+
+- **Open.** The die's faces are drawn flat (a 2D flip), not a rolled 3D cube; a sea auto-resolve has no die; the dive's tilt is not eased (the camera is baked);
+  the dive and the die are not yet on the phone (Tab S7, the web build); ring ticks start at east; the lane zone's "yard" of a **non**-West town is unchanged
+  (Rome's cobbled lanes keep their rim); the first top-view shots of the smoke at Low were not compared.

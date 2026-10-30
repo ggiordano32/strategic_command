@@ -138,6 +138,7 @@ const FX_CHIP := 4     # a ball stopped by a wall, house or rock (phase C0): a p
 const FX_RUIN := 5     # a wall stretch breached or a building fallen (destruction): a dust haze over it fading for 10 s
 const FX_LIFE := [0.0, 2.0, 3.0, 0.8, 1.6, 10.0]
 const COL_SMOKE := Color(0.22, 0.2, 0.19)
+const COL_SMOKE_C := Color(0.46, 0.43, 0.41)   # the cotton smoke's tint (the tuft's own shading darkens it: lit top, shaded underside)
 var _clock := 0.0
 ## Enemy units that dropped out of sight (the last-seen ghost, game/last_seen.gd).
 var last_seen := LastSeen.new()
@@ -178,6 +179,7 @@ var _sm_low_t := -10.0
 var smoke_puffs: int:                     # puffs made (tests, benchmarks)
 	get: return _gs.puffs_made
 var _props: Node2D                     # draws the wagon sprites (behind the overlay's lines)
+var _tex_warm := false
 var _up_on := false                    # the oblique view: items now drawn upright (see _up)
 ## The oblique view: a unit marker floats this much higher (world px a metre: over the upright figures).
 const FIG_LIFT_M := 1.7
@@ -189,6 +191,9 @@ func _process(delta: float) -> void:
 	if sim == null:
 		return
 	_clock += delta
+	if not _tex_warm:
+		_tex_warm = true
+		GunSmoke.texture()   # (the cotton atlas baked now, not in the first frame that draws a puff)
 	if (sim.ch_on != 0 or sim.vis_on != 0) and player_side >= 0:
 		var now := Time.get_ticks_msec()
 		last_seen.update(sim, player_side, now, not Quality.is_low())
@@ -421,7 +426,7 @@ func _smoke_column(p: Vector2, seed_k: int, n: int, rise: float, rad: float, a: 
 		var s := fposmod(phase + float(k) / n, 1.0)
 		var sway := sin(float(seed_k) * 1.3 + s * 5.0 + k) * rad * 0.5
 		var c := p + Vector2(sway + rise * 0.25 * s, -rise * s)
-		draw_circle(c, rad * (0.35 + 0.65 * s), Color(COL_SMOKE, a * sin(PI * s) * (1.0 - 0.5 * s)))
+		GunSmoke.tuft(self, c, rad * (0.35 + 0.65 * s) * 1.5, Color(COL_SMOKE_C, a * sin(PI * s) * (1.0 - 0.5 * s) * 1.5), seed_k + k)
 
 
 func _draw_fx(lw: float) -> void:
@@ -449,14 +454,14 @@ func _draw_fx(lw: float) -> void:
 				var s := a / 2.0
 				for k in 2:
 					var c := p + Vector2((k - 0.5) * pm * 0.7 * s + pm * 1.2 * s, -pm * (0.6 + 3.0 * s) - k * pm * 0.5 * s)
-					draw_circle(c, pm * (0.5 + 1.1 * s), Color(COL_SMOKE, 0.38 * (1.0 - s) * (0.8 + 0.1 * k)))
+					GunSmoke.tuft(self, c, pm * (0.5 + 1.1 * s) * 1.5, Color(COL_SMOKE_C, 0.5 * (1.0 - s) * (0.8 + 0.1 * k)), sd + k)
 			FX_BLAST:
 				var rr := maxf(_fx_rad[i], pm * 1.5)
 				if a < 0.15:
 					draw_circle(p, rr * 0.9, Color(1.0, 0.95, 0.7, 0.9 * (1.0 - a / 0.15)))
 				if a < 0.5:
 					var f := a / 0.5
-					draw_circle(p + Vector2(0, -rr * 0.3 * f if BoardView.oblique else 0.0), rr * (0.3 + 0.8 * f), Color(0.45, 0.38, 0.3, 0.5 * (1.0 - f)))
+					GunSmoke.tuft(self, p + Vector2(0, -rr * 0.3 * f if BoardView.oblique else 0.0), rr * (0.3 + 0.8 * f) * 1.5, Color(0.55, 0.47, 0.38, 0.6 * (1.0 - f)), sd)
 					_flat()
 					draw_arc(p, rr * (0.35 + 0.9 * f), 0.0, TAU, 28, Color(0.8, 0.7, 0.55, 0.85 * (1.0 - f)), lw * 2.0)
 					_up(p)
@@ -464,7 +469,7 @@ func _draw_fx(lw: float) -> void:
 				for k in 4:
 					var ang := float(sd % 5) + k * 1.57
 					var c := p + Vector2(cos(ang) * rr * 0.4 * (0.4 + s) + pm * s, sin(ang) * rr * 0.3 - rr * (0.3 + 1.2 * s))
-					draw_circle(c, rr * (0.45 + 0.5 * s), Color(COL_SMOKE, 0.42 * clampf(1.0 - s, 0.0, 1.0) * minf(1.0, a * 5.0)))
+					GunSmoke.tuft(self, c, rr * (0.45 + 0.5 * s) * 1.5, Color(COL_SMOKE_C, 0.55 * clampf(1.0 - s, 0.0, 1.0) * minf(1.0, a * 5.0)), sd + k)
 			FX_RUIN:
 				# A pale dust haze over the rubble, settling and fading over 10 s.
 				var f := a / 10.0
@@ -472,10 +477,10 @@ func _draw_fx(lw: float) -> void:
 				for k in 3:
 					var ang2 := float((sd + k * 5) % 9) * 0.7
 					var c2 := p + Vector2(cos(ang2) * rr2 * 0.35 + pm * 1.5 * f * k, sin(ang2) * rr2 * 0.25 - rr2 * 0.3 * f)
-					draw_circle(c2, rr2 * (0.7 + 0.5 * f), Color(0.72, 0.66, 0.56, 0.38 * (1.0 - f) * minf(1.0, a * 3.0)))
+					GunSmoke.tuft(self, c2, rr2 * (0.7 + 0.5 * f) * 1.5, Color(0.8, 0.73, 0.62, 0.5 * (1.0 - f) * minf(1.0, a * 3.0)), sd + k)
 			FX_DUST:
 				var f := a / 0.8
-				draw_circle(p + Vector2(0, -pm * (0.35 + 0.9 * f) * 0.5 if BoardView.oblique else 0.0), pm * (0.35 + 0.9 * f), Color(0.55, 0.45, 0.32, 0.4 * (1.0 - f)))
+				GunSmoke.tuft(self, p + Vector2(0, -pm * (0.35 + 0.9 * f) * 0.5 if BoardView.oblique else 0.0), pm * (0.35 + 0.9 * f) * 1.5, Color(0.7, 0.58, 0.42, 0.5 * (1.0 - f)), sd)
 			FX_CHIP:
 				# (Seen at any zoom: at least a few pixels across.)
 				var f := a / 1.6
@@ -487,8 +492,8 @@ func _draw_fx(lw: float) -> void:
 					var c := p + Vector2(cos(ang), sin(ang)) * r0 * (0.4 + 2.2 * minf(a * 3.0, 1.0))
 					if a < 0.5:
 						draw_circle(c, r0 * 0.18, Color(0.35, 0.3, 0.24, 0.9 * (1.0 - a / 0.5)))
-				draw_circle(p + Vector2(0, -r0 * 0.6 * f), r0 * (0.6 + 1.2 * f), Color(0.72, 0.64, 0.5, 0.6 * (1.0 - f)))
-				draw_circle(p + Vector2(r0 * 0.5 * f, -r0 * 1.1 * f), r0 * (0.4 + 0.9 * f), Color(0.6, 0.53, 0.42, 0.45 * (1.0 - f)))
+				GunSmoke.tuft(self, p + Vector2(0, -r0 * 0.6 * f), r0 * (0.6 + 1.2 * f) * 1.5, Color(0.85, 0.76, 0.6, 0.7 * (1.0 - f)), sd)
+				GunSmoke.tuft(self, p + Vector2(r0 * 0.5 * f, -r0 * 1.1 * f), r0 * (0.4 + 0.9 * f) * 1.5, Color(0.72, 0.64, 0.5, 0.55 * (1.0 - f)), sd + 1)
 	_flat()
 
 
@@ -574,6 +579,7 @@ func _up(anchor: Vector2) -> void:
 ## points only at their vertices (board_lift.gdshader), so a long one across a hill would cut through it. In the oblique view
 ## they are drawn in pieces of at most SEG_M metres so they follow the lift grid; the top view draws them as before.
 const SEG_M := 8.0
+const BrassRule := preload("res://game/brass_rule.gd")
 
 
 func _dl(a: Vector2, b: Vector2, col: Color, w := -1.0, aa := false) -> void:
@@ -628,6 +634,16 @@ func _da(c: Vector2, r: float, a0: float, a1: float, pts: int, col: Color, w := 
 	draw_arc(c, r, a0, a1, pts, col, w, aa)
 
 
+## A small label of the brass ruler (its numbers): upright in the oblique view, with a dark shadow so it reads on any ground.
+func _rule_label(pos: Vector2, text: String, fs: float, col: Color) -> void:
+	var f := int(roundf(fs))
+	var tw := ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, f).x
+	var at := pos + Vector2(-tw * 0.5, f * 0.35)
+	var o := 0.7 / zoom
+	_dstr(at + Vector2(o, o), text, HORIZONTAL_ALIGNMENT_LEFT, -1, f, Color(0.12, 0.07, 0.02, col.a * 0.85))
+	_dstr(at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, f, col)
+
+
 func _flat() -> void:
 	if _up_on:
 		draw_set_transform_matrix(Transform2D.IDENTITY)
@@ -675,9 +691,23 @@ func _draw_deploy_zones(lw: float) -> void:
 				var fs := _font_size(14.0)
 				_dstr(r.position + Vector2(fs * 0.4, -fs * 0.4),
 					"Deploy inside the walls or on them", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
+		elif mine:
+			# (The brass ruler: the line of my deployment zone, ticks from each corner.)
+			draw_rect(r, Color(col, 0.10))
+			var c0 := r.position
+			var c1 := Vector2(r.end.x, r.position.y)
+			var c2 := r.end
+			var c3 := Vector2(r.position.x, r.end.y)
+			BrassRule.band(self, PackedVector2Array([c0, c1, c2, c3, c0]), px_per_m, zoom)
+			var cen := r.get_center()
+			var lab := Callable(self, "_rule_label")
+			BrassRule.ticks(self, PackedVector2Array([c0, c1]), cen, px_per_m, zoom, lab)
+			BrassRule.ticks(self, PackedVector2Array([c1, c2]), cen, px_per_m, zoom, lab)
+			BrassRule.ticks(self, PackedVector2Array([c2, c3]), cen, px_per_m, zoom, lab)
+			BrassRule.ticks(self, PackedVector2Array([c3, c0]), cen, px_per_m, zoom, lab)
 		else:
-			draw_rect(r, Color(col, 0.10 if mine else 0.05))
-			draw_rect(r, Color(col, 0.8 if mine else 0.5), false, lw * (1.5 if mine else 1.0))
+			draw_rect(r, Color(col, 0.05))
+			draw_rect(r, Color(col, 0.5), false, lw)
 		k += 6
 
 
@@ -1547,7 +1577,19 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 				var py := cy + int(dir.y * r)
 				r = sim.range_h(ty, sim.u_h[u], sim.height_at(px, py))
 		pts.append(c + dir * (r * px_per_m / M))
-	_dp(pts, col, w)
+	if full and not _up_on:
+		# The range ring is a brass rule (a grey one when the ammunition is gone): `col`'s alpha says how strong.
+		var strong := clampf(col.a / 0.45, 0.0, 1.0)
+		BrassRule.band(self, pts, px_per_m, zoom, sim.u_ammo[u] > 0, lerpf(0.55, 1.0, strong))
+		var al := lerpf(0.55, 1.0, strong)
+		BrassRule.ticks(self, pts, c, px_per_m, zoom, Callable(self, "_rule_label"), al, false)
+		# (A ring's numbers would be lengths along the circle: one label with its range, at the top, instead.)
+		if pts.size() > 54:
+			var top := pts[54]
+			_rule_label(top + Vector2(0.0, BrassRule.width_px(px_per_m, zoom) * 1.6), "%d m" % int(round(float(rng) / M)),
+				maxf(5.0, 11.0 / zoom), Color(BrassRule.BRASS_HI if sim.u_ammo[u] > 0 else Color(0.9, 0.92, 0.95), 0.95 * al))
+	else:
+		_dp(pts, col, w)
 	return [pts[0], pts[pts.size() - 1]]
 
 

@@ -844,6 +844,12 @@ a long string").** View only.
   page adds Emblems Drawn / Painted (the menu picture moved to the title screen's selector) and its Help section (Controls, Unit book,
   Tests with `--dev`). Audio: a Sound On / Off capsule and three sliders (master, effects, ambient) with their percent.
   The page sits in a trim panel so it reads over any picture; it scrolls (the Help buttons are at the bottom).
+- *Table motion (tabletop pass 5, 2026-10-30)*: a third capsule **Motion / Still** (`home_battle_dive`, in-game `menu_battle_dive`,
+  stored `[video] battle_dive = on | off`, default on, `game/table_motion.gd`) shares the Battle look row with Battle view (the same
+  `_beside` pair, so the Options page does not grow and does not scroll at 1024 x 576). Motion is the camera's dive onto the table as a
+  battle opens (`Battle.dive`, game/battle.gd) and the die that rolls on the campaign's Auto-resolve
+  (game/campaign/die_roll.gd); Still turns both off; `--no-dive` does the same for one run. A tap or key skips either. Takes effect at the next battle /
+  auto-resolve. Details: docs/design/art_pipeline.md "Pass 5, furniture and motion".
 
 **Map view switch and the Looks rows (as built, 2026-10-25).** The campaign map's bottom-left button showed the
 *current* view ("Political" or "Terrain"); on the owner's phone "Political" read as "switch to Political", so the map

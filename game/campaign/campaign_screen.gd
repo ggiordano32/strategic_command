@@ -67,6 +67,8 @@ const CSea := preload("res://campaign/csea.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
+const DieRoll := preload("res://game/campaign/die_roll.gd")
+const TableMotion := preload("res://game/table_motion.gd")
 const Tutorial := preload("res://game/campaign/tutorial.gd")
 const Tips := preload("res://game/campaign/tips.gd")
 const CommandBar := preload("res://game/campaign/command_bar.gd")
@@ -163,6 +165,8 @@ var _battle_snap: Dictionary = {}
 var _battle_id := -1
 var _resolver: AutoResolve = null
 var _progress: ProgressBar = null
+var _auto_box: Control = null   # the auto-resolve dialog's content (the die rolls in it)
+var _die: Control = null        # the die rolling on an auto-resolve (tabletop pass 5), null otherwise
 var _plan_start_ms := 0
 var _tele: Node = null
 var online = null              # game/net/online_campaign.gd when playing online
@@ -3049,6 +3053,7 @@ func auto_resolve(bid: int) -> void:
 	_progress.step = 0.001
 	_progress.show_percentage = false
 	box.add_child(_progress)
+	_auto_box = box
 	show_dialog("Battle of %s" % CData.REGIONS[int(b["r"])]["city"], box, [])
 	_resolver.finished.connect(_on_auto_done)
 
@@ -3126,7 +3131,35 @@ func _on_auto_done(outcome: Dictionary) -> void:
 	_resolver.queue_free()
 	_resolver = null
 	_progress = null
+	if _roll_die(_battle_id, outcome):
+		return
 	_apply_battle(_battle_id, outcome)
+
+
+## The table's die (tabletop pass 5, game/campaign/die_roll.gd; view only): it rolls in the auto-resolve dialog and settles on the
+## face the rules gave this player (laurel, broken shield, crossed swords), then the result is applied and shown as before.
+## False (nothing rolled) with the setting off, in tests and with a command-line aid, or when the dialog is gone.
+func _roll_die(bid: int, outcome: Dictionary) -> bool:
+	if not TableMotion.allowed() or _auto_box == null or not is_instance_valid(_auto_box) or not _auto_box.is_inside_tree():
+		_auto_box = null
+		return false
+	var result := "draw"
+	var bt := CState.battle(st, bid)
+	if int(outcome.get("draw", 0)) == 0 and f >= 0 and not bt.is_empty():
+		var won := CRules.battle_side_of(st, bt, f) == (0 if int(outcome.get("winner", 1)) == 0 else 1)
+		result = "win" if won else "loss"
+	for c in _auto_box.get_children():
+		if c is ProgressBar:
+			c.visible = false   # (the die takes its place)
+	_die = DieRoll.new()
+	_die.setup(result)
+	_auto_box.add_child(_die)
+	_die.settled.connect(func():
+		_die.queue_free()
+		_die = null
+		_auto_box = null
+		_apply_battle(bid, outcome), CONNECT_ONE_SHOT)
+	return true
 
 
 func _apply_battle(bid: int, outcome: Dictionary) -> void:
@@ -3167,6 +3200,7 @@ func fight(bid: int) -> void:
 	_battle_snap = BattleScreen.snapshot(st, b, f)
 	_battle_id = bid
 	battle = Battle.new()
+	battle.dive = true
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
@@ -3296,6 +3330,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 		gl, CoopSession.guest_sides(bst, b, _battle_built, gl))
 	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
 	battle = Battle.new()
+	battle.dive = true
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])

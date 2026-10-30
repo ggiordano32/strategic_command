@@ -1917,6 +1917,7 @@ func _start_siege(params: Array) -> void:
 		return
 	_menu.visible = false
 	var b := Battle.new()
+	b.dive = true
 	b.scenario_id = "settlement"
 	var eq := int(params[8]) if params.size() > 8 else 0
 	var equip := {}
@@ -2033,6 +2034,7 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 		return
 	_menu.visible = false
 	var b := Battle.new()
+	b.dive = true
 	b.scenario_id = id
 	b.seed_value = sd
 	b.terrain_kind = terrain_kind
@@ -2088,6 +2090,7 @@ func _open_custom() -> void:
 
 func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	var b := Battle.new()
+	b.dive = true
 	b.scenario_id = "custom"
 	b.custom_scenario = built["scenario"]
 	b.seed_value = int(built["seed"])

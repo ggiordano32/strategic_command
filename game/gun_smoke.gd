@@ -1,8 +1,8 @@
 extends RefCounted
 ## Gun smoke for the battle view and the sea view (view only, no sim state;
-## docs/DESIGN.md "Firearms"). Puffs are soft baked cloud sprites (a small
-## atlas generated at first use, lit from the NW: bright top-left rim, dark
-## core and underside, grey-blue tint) that overlap into a continuous bank:
+## docs/DESIGN.md "Firearms"). Puffs are soft baked cotton-wool sprites (a small
+## atlas generated at first use: 2 to 4 lobes each, lit from above and the left, a shaded
+## underside, grey-blue tint; tabletop pass 5) that overlap into a continuous bank:
 ## each rolls forward from the muzzle, expands, rises and drifts with the
 ## wind, thinning over LIFE s. A faint haze accumulates over a long
 ## firefight (capped; not on Graphics Low). All in world px; one texture,
@@ -43,42 +43,62 @@ static func texture() -> ImageTexture:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 90210
 	var half := TILE * 0.5
+	# Cotton wool (tabletop pass 5): each tile is a pulled tuft of 2 to 4 round lobes (a smooth sum of their soft discs),
+	# its silhouette lumpy and soft all round (no hard alpha edge), lit from above and the left (a bright warm top, a
+	# cool shaded underside under every lobe, a darker core), shaded from the field's own slope.
+	var lobe_n := [3, 2, 4, 3]
 	for v in VARIANTS:
-		var blobs: Array = []
-		for b in 8:
-			var a := rng.randf() * TAU
-			var rr := 0.1 + rng.randf() * 0.3
-			blobs.append([cos(a) * rr, sin(a) * rr, 0.3 + rng.randf() * 0.22])
-		blobs.append([0.0, 0.0, 0.5])
-		var den := PackedFloat32Array()
-		den.resize(TILE * TILE)
+		var lobes: Array = []   # [cx, cy, r]
+		var n: int = lobe_n[v]
+		var a0 := rng.randf() * TAU
+		for b in n:
+			var an := a0 + TAU * float(b) / float(n) + (rng.randf() - 0.5) * 0.7
+			var rr := 0.34 + rng.randf() * 0.12
+			var off := 0.2 + rng.randf() * 0.2
+			var cx := cos(an) * off
+			var cy := sin(an) * off * 0.8 + 0.06
+			lobes.append([cx, cy, rr])
+		var fld := PackedFloat32Array()
+		fld.resize(TILE * TILE)
 		for y in TILE:
 			for x in TILE:
 				var u := (x - half + 0.5) / half
 				var w := (y - half + 0.5) / half
-				var d := 0.0
-				for bl in blobs:
-					var dd: float = Vector2(u - bl[0], w - bl[1]).length() / float(bl[2])
-					d += clampf(1.0 - dd, 0.0, 1.0)
-				d = d * 0.55 + noise.get_noise_2d(x + v * 100, y) * 0.12
-				var edge := clampf((1.0 - Vector2(u, w).length()) * 2.2, 0.0, 1.0)
-				den[y * TILE + x] = clampf(d, 0.0, 1.0) * edge
+				var f := 0.0
+				for lb in lobes:
+					var d2: float = (Vector2(u - lb[0], w - lb[1]) / float(lb[2])).length_squared()
+					var t := clampf(1.0 - d2, 0.0, 1.0)
+					f += t * t
+				f += noise.get_noise_2d(x + v * 100, y) * 0.16 * clampf(f * 3.0, 0.0, 1.0)
+				fld[y * TILE + x] = f
 		for y in TILE:
 			for x in TILE:
-				var d0 := den[y * TILE + x]
-				var xl := clampi(x - 4, 0, TILE - 1)
-				var yl := clampi(y - 4, 0, TILE - 1)
-				var xh := clampi(x + 4, 0, TILE - 1)
-				var yh := clampi(y + 4, 0, TILE - 1)
-				# Lit where the cloud thins toward the NW (the light); dark
-				# where it thickens: core and underside.
-				var lit := clampf(0.5 + (d0 - den[yl * TILE + xl]) * 1.0 - (den[yh * TILE + xh] - d0) * 0.4, 0.0, 1.0)
-				var core := clampf(d0 * 1.1, 0.0, 1.0)
-				var under := clampf((y - half) / half, 0.0, 1.0) * 0.18
-				var sh := clampf(0.35 + 0.65 * lit - 0.16 * core * core - under, 0.15, 1.0)
-				var al := pow(clampf(smoothstep(0.0, 1.0, d0), 0.0, 1.0), 2.0)
-				# Slight grey-blue in the shade, warm white in the light.
-				var c := Color(0.62 + 0.38 * sh, 0.65 + 0.35 * sh, 0.72 + 0.28 * sh, al)
+				var f0 := fld[y * TILE + x]
+				var xl := clampi(x - 2, 0, TILE - 1)
+				var xh := clampi(x + 2, 0, TILE - 1)
+				var yl := clampi(y - 2, 0, TILE - 1)
+				var yh := clampi(y + 2, 0, TILE - 1)
+				var gx := (fld[y * TILE + xh] - fld[y * TILE + xl]) * 1.6
+				var gy := (fld[yh * TILE + x] - fld[yl * TILE + x]) * 1.6
+				var nv := Vector3(-gx, -gy, 1.0).normalized()
+				var lit := clampf(nv.dot(Vector3(-0.38, -0.62, 0.69).normalized()), 0.0, 1.0)
+				# The underside of each lobe: the lower half of its disc is shaded, weighted by its share of the field.
+				var under := 0.0
+				var tot := 0.0
+				var u2 := (x - half + 0.5) / half
+				var w2 := (y - half + 0.5) / half
+				for lb in lobes:
+					var d3: float = (Vector2(u2 - lb[0], w2 - lb[1]) / float(lb[2])).length_squared()
+					var q := clampf(1.0 - d3, 0.0, 1.0)
+					q *= q
+					under += q * smoothstep(-0.1, 0.9, (w2 - float(lb[1])) / float(lb[2]))
+					tot += q
+				under = under / maxf(tot, 0.001)
+				var core := clampf((f0 - 0.7) * 0.5, 0.0, 0.3)
+				var sh := clampf(0.5 + 0.5 * lit - 0.32 * under - core, 0.12, 1.0)
+				var al := smoothstep(0.03, 0.5, f0)
+				al = al * (0.8 + 0.2 * smoothstep(0.4, 1.0, f0))
+				var c := Color(0.64 + 0.36 * sh, 0.67 + 0.33 * sh, 0.78 + 0.2 * sh, al)
 				img.set_pixel(v * TILE + x, y, c)
 	for y in TILE:
 		for x in TILE:
@@ -88,6 +108,12 @@ static func texture() -> ImageTexture:
 	img.generate_mipmaps()
 	_tex = ImageTexture.create_from_image(img)
 	return _tex
+
+
+## One cotton tuft at c (world px, radius r) in tint `col` (its alpha the strength), tile v: the fire smoke, a blast's cloud and
+## the ruin dust of the overlay draw this instead of a flat circle.
+static func tuft(ci: CanvasItem, c: Vector2, r: float, col: Color, v: int) -> void:
+	ci.draw_texture_rect_region(texture(), Rect2(c - Vector2(r, r), Vector2(r, r) * 2.0), Rect2((v % VARIANTS) * TILE, 0, TILE, TILE), col)
 
 
 ## Ages everything dt seconds and drops what is spent.
