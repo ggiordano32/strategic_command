@@ -113,7 +113,11 @@ func _ready() -> void:
 	_bold = fv
 	# The setting first (the title's emblem and the rows need it).
 	var pk := PackView.load_pref()
-	if pack_pick != "" and CData.has_pack(pack_pick):
+	# One call, no `and` with a string test in front of it: on the web (2026-10-30) the exported build
+	# evaluated `pack_pick != ""` as false (and `== ""` as null) with the pick set, so the pick was dropped
+	# and the setup always showed the last pack played; has_pack("") is false by itself.
+	var picked := CData.has_pack(pack_pick)
+	if picked:
 		pk = pack_pick
 		PackView.save_pref(pk)
 	for a in OS.get_cmdline_user_args():
