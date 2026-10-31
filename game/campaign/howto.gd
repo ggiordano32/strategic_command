@@ -1,6 +1,6 @@
 extends RefCounted
-## One place for the game's teaching words (docs/design/campaign_rules.md "The tutorial"): the eight "How to play"
-## sections, the ten lessons of the guided first campaign ("Your first command"), the battle tutorial's steps and the
+## One place for the game's teaching words (docs/design/campaign_rules.md "The tutorial"): the nine "How to play"
+## sections, the thirteen lessons of the guided first campaign ("Your first command"), the battle tutorial's steps and the
 ## first-time tips. The How to play page (howto_page.gd), the lesson cards (tutorial.gd), the battle steps
 ## (tutorial_battle.gd) and the tips (tips.gd) all read from here, so they never disagree. Plain words for someone who
 ## has never played a Rome-style game; one to three sentences a card, one a tip. Static data, view only.
@@ -41,7 +41,12 @@ const T := {
 	"dip_2": "Trust matters: nations that trust you accept more, and breaking a treaty or attacking a friend costs you trust.",
 	"dip_3": "Goals shows how to win: hold enough regions and great cities. Realm sums up your gold, income and upkeep, and the chronicle records what happened.",
 
-	# The guided first campaign: ten lessons (title, card text, objective)
+	# 9. Three ways to play (the nations' asymmetry; every line is a rule as built, docs/design/campaign_rules.md "The tutorial")
+	"ways_1": "The Europeans (England, France, the Dutch and Spain) can build every building to its top level, so they field the whole roster, with guns that break walls. Their shipyards raise frigates; only England and the Dutch launch ships of the line, and Spain's galleons carry six companies. They live on towns, trade agreements and the sea lanes, so keep your ports safe.",
+	"ways_2": "The Brethren of the Coast live on plunder. A fleet lying on a sea lane takes a share of an enemy's trade, and a pirate army that wins an assault can sack the port instead of holding it: three turns of its income and some of the owner's gold, every building a level down. Their havens train buccaneers and cutlass crews 20% cheaper, but every sack raises infamy and the nations hunt them harder. A letter of marque brings peace with a nation and 50% more plunder from its enemies for 12 turns, and a pirate lives on while it has a ship.",
+	"ways_3": "The Itza and the Miskito fight from cover: in woods and rocks their men take far fewer hits. Their buildings are capped (no Stables, and the War lodge and the Range stop at level 2), yet a War lodge 2 gives them scaling poles to climb walls, the Itza their Holcan and fire arrows, the Miskito torch raiders and poison arrows. War canoes land their war parties on any beach along the coast, and Miskito muskets need a trade agreement with a European nation.",
+
+	# The guided first campaign: thirteen lessons (title, card text, objective)
 	"lesson_1_title": "The map",
 	"lesson_1": "Welcome, Governor. Port Royal is your town and the banner beside it is your army. Drag to pan, scroll or pinch to zoom, and tap Port Royal to open it.",
 	"lesson_1_obj": "Open Port Royal's panel",
@@ -75,22 +80,32 @@ const T := {
 	"lesson_9": "Your fleet lies off Port Royal. With the army selected, tap the fleet: the army walks to the lit beach beside it and boards. Then select the fleet and tap the sea toward the Tortuga coast. The army boards at the end of the turn and the fleet waits for it; the voyage begins the turn after.",
 	"lesson_9_obj": "Board the fleet and sail toward the Tortuga coast",
 	"lesson_9_done": "Done. The army boards when the turn ends, then the fleet sails. Press End turn.",
-	"lesson_10_title": "Goals",
-	"lesson_10": "Goals tells you how to win: hold enough regions and great cities. Open it, and the lessons are over.",
-	"lesson_10_obj": "Open the Goals page",
+	"lesson_10_title": "Landing",
+	"lesson_10": "The army is aboard and the fleet waits in port. Instead of the open sea, aim for Spanish soil: select the fleet and tap a lit beach on the Santiago de Cuba coast. The fleet sails there and the men land at the end of the turn; a landing takes the army's turn. The ring shows the beach.",
+	"lesson_10_obj": "Land the army on the Santiago de Cuba coast",
+	"lesson_10_done": "Done. The fleet sails and the army lands when the turn ends. Press End turn.",
+	"lesson_11_title": "Raiding at sea",
+	"lesson_11": "A sea lane is a trade route between two ports. A fleet that lies on a lane of an enemy takes a cut of its trade every turn. Select the fleet and press Raid: it sails onto the richest lane in reach and holds it. Or tap a lane on the map to choose another.",
+	"lesson_11_obj": "Put the fleet on a raid on a sea lane",
+	"lesson_12_title": "Raiding on land",
+	"lesson_12": "Your army stands on enemy soil. An army in an enemy region can raid it: tap the region and press Raid. It takes half of the region's income every turn, and the owner cannot ignore that. Fortify or march again to stop.",
+	"lesson_12_obj": "Put the army on a raid in Santiago de Cuba",
+	"lesson_13_title": "Goals",
+	"lesson_13": "Goals tells you how to win: hold enough regions and great cities. Open it, and the lessons are over.",
+	"lesson_13_obj": "Open the Goals page",
 	"lesson_over_title": "The lessons are over",
-	"lesson_over": "From here the campaign is yours, with no more gates. Open How to play in the menu whenever you want a reminder.",
+	"lesson_over": "From here the campaign is yours, with no more gates. Open How to play in the menu whenever you want a reminder. Every nation plays its own way: see Three ways to play in How to play.",
 	"ui_skip": "Skip the lesson",
 	"ui_leave": "Leave the tutorial",
 	"ui_gate": "Finish the lesson first",
 	"ui_done": "Got it",
 	"ui_first_title": "New here?",
-	"ui_first": "Your first command walks you through a campaign in ten turns.",
+	"ui_first": "Your first command walks you through a campaign in thirteen turns.",
 	"ui_first_yes": "Start the tutorial",
 	"ui_first_no": "Not now",
 	"ui_objective": "To do: ",
 	"ui_left_note": "The lessons have stopped; the campaign goes on as it is.",
-	"ui_lesson_of": "Lesson %d of 10",
+	"ui_lesson_of": "Lesson %d of 13",
 
 	# The battle tutorial (lesson 6's battle): six steps and two small cards between them
 	"step_1": "Place your line: drag a company into the blue zone to set where it stands.",
@@ -111,10 +126,12 @@ const T := {
 	"tip_first_chip": "The buttons along the bottom are chips: hold one to read what it does.",
 	"tip_fleet_boarded": "Select the fleet and tap the sea to sail, or a lit beach to land the army.",
 	"tip_proposal_received": "Another nation made you an offer: open Diplomacy to accept it or turn it down.",
+	"tip_raid": "An army in enemy land can Raid: it takes half the region's income each turn while it stays.",
+	"tip_lane_raid": "A fleet can Raid a sea lane: it lies on the enemy's trade route and takes a cut every turn.",
 	"tip_battle_won": "Victory: the town is yours to run, so open it to recruit and build, and keep an army near to hold it.",
 }
 
-## The eight How to play sections: id, title, the keys of its lines.
+## The nine How to play sections: id, title, the keys of its lines.
 const SECTIONS := [
 	{"id": "map", "title": "The map and the turn", "lines": ["map_1", "map_2", "map_3"]},
 	{"id": "towns", "title": "Towns and buildings", "lines": ["towns_1", "towns_2", "towns_3"]},
@@ -124,11 +141,12 @@ const SECTIONS := [
 	{"id": "battle", "title": "Battles and the chips", "lines": ["battle_1", "battle_2", "battle_3"]},
 	{"id": "sea", "title": "The sea", "lines": ["sea_1", "sea_2", "sea_3"]},
 	{"id": "dip", "title": "Diplomacy and goals", "lines": ["dip_1", "dip_2", "dip_3"]},
+	{"id": "ways", "title": "Three ways to play", "lines": ["ways_1", "ways_2", "ways_3"]},
 ]
 
 const TIP_KEYS: Array[String] = ["army_selected", "town_opened", "siege_laid", "deployment", "first_chip", "fleet_boarded",
-	"proposal_received", "battle_won"]
-const LESSONS := 10
+	"proposal_received", "battle_won", "raid", "lane_raid"]
+const LESSONS := 13
 const STEPS := 6
 
 

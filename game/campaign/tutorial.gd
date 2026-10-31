@@ -1,6 +1,6 @@
 extends RefCounted
 ## The guided first campaign, "Your first command" (docs/design/campaign_rules.md "The tutorial"): a West campaign for
-## England at Port Royal with a fixed seed, Sevilla la Nueva as the target, and ten lessons, one a turn. Each lesson is a
+## England at Port Royal with a fixed seed, Sevilla la Nueva as the target, and thirteen lessons, one a turn. Each lesson is a
 ## card at the top of the screen (howto.gd words, the story cards' frame), a pointer on the thing to tap and a gate:
 ## End turn is held until the lesson's objective holds. "Skip the lesson" does the lesson's order for the player and
 ## "Leave the tutorial" stops the cards. The objectives are view-side checks of the state and the plan being made; this
@@ -8,7 +8,7 @@ extends RefCounted
 ## Where the player is (the lesson, the pages opened) lives in the local save's session ("tutorial"), not in the
 ## hashed state. The rules' only part is the setting `tutorial` 1 that the campaign AI reads (cai.gd tutorial_shield).
 ## Leave: the rules have no settings order, so `tutorial` stays set in the state (the AI keeps its peace until
-## `tutorial_turns`, 10 turns) and the cards stop.
+## `tutorial_turns`, 13 turns) and the cards stop.
 ## Seats (2026-10-29, the follow-ups): each human seat has its own lesson state (`PROFILES`: England at Port Royal against
 ## Sevilla la Nueva, France at Leogane (the region Saint-Domingue) against Cibao on Hispaniola), kept
 ## in the save's session (hot seat) or in the online seat's session blob (a one-human online campaign); the cards, the
@@ -27,21 +27,23 @@ const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const TutorCard := preload("res://game/campaign/tutor_card.gd")
 const TutorPointer := preload("res://game/campaign/tutor_pointer.gd")
 const TutorialBattle := preload("res://game/campaign/tutorial_battle.gd")
+const MapView := preload("res://game/campaign/map_view.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 
 const SEED := 1670
-const TURNS := 10          # settings.tutorial_turns: the AI declares no war on the player for this many turns
+const TURNS := 13          # settings.tutorial_turns: the AI declares no war on the player for this many turns
 const START_TREASURY := 3000
-const DONE_STAGE := 11     # the lessons are over (the closing card)
+const DONE_STAGE := 14     # the lessons are over (the closing card)
 const BATTLE_LESSON := 6
 ## The seats a guided campaign can have, in the order they are added (one human: England; a second on the same device: France).
 ## `home` the town the lessons start from, `target` the Spanish town they take, `partner` the nation proposed a trade,
-## `cede` a far region of the seat handed to Spain (a Spanish raid on it would interrupt the lessons), `sail` the town whose coast the voyage aims at, `sail_name` how the lesson text says it, `names` the text replaced for
+## `cede` a far region of the seat handed to Spain (a Spanish raid on it would interrupt the lessons), `sail` the town whose coast the voyage aims at, `sail_name` how the lesson text says it, `raid` the Spanish region the army lands in and raids (lessons 10 to 12; Oriente, whose town is Santiago de Cuba, is Spanish in the West start and a turn's sail from both seats' ports), `names` the text replaced for
 ## this seat (the words are written for England).
 const PROFILES := [
 	{"faction": "england", "home": "port_royal", "target": "sevilla_jamaica", "partner": "dutch", "sail": "port_de_paix", "sail_name": "Tortuga coast",
-		"cede": ["belize"], "names": {}},
+		"cede": ["belize"], "raid": "santiago_de_cuba", "names": {}},
 	{"faction": "france", "home": "leogane", "target": "santiago_caballeros", "partner": "dutch", "sail": "port_royal", "sail_name": "Jamaica coast",
-		"cede": ["new_orleans"],
+		"cede": ["new_orleans"], "raid": "santiago_de_cuba",
 		"names": {"Port Royal": "Saint-Domingue", "Sevilla la Nueva": "Cibao", "just west of you": "close by", "Sevilla": "Cibao", "Tortuga coast": "Jamaica coast"}},
 ]
 
@@ -227,6 +229,10 @@ func _sv() -> int:
 	return CData.region_index(str(profile(s.st, seat()).get("target", "sevilla_jamaica")))
 
 
+func _raid_r() -> int:
+	return CData.region_index(str(profile(s.st, seat()).get("raid", "santiago_de_cuba")))
+
+
 func _army() -> Dictionary:
 	var best := {}
 	for a in CState.armies_of(s.ps, s.f):
@@ -240,6 +246,42 @@ func _fleet() -> Dictionary:
 		return {}
 	var l := CFleet.fleets_of(s.ps, s.f)
 	return {} if l.is_empty() else l[0]
+
+
+var _lc_key := ""
+var _lc := -1
+
+
+## The lit beach lesson 10 aims at: of the raid region's land cells the fleet can land on this turn (a beach, land_ok, a
+## sea cell of this turn's reach beside it) the one nearest the region's town; -1 none. Kept per turn and fleet cell.
+func landing_cell() -> int:
+	var fl := _fleet()
+	if fl.is_empty() or s.ps.is_empty():
+		return -1
+	var key := "%d:%d:%d:%d" % [int(s.st["turn"]), CFleet.cell(fl), seat(), CFleet.carried_units(fl)]
+	if key == _lc_key:
+		return _lc
+	var rr := _raid_r()
+	var rt := CFleet.reach(s.ps, fl)
+	var beaches := MapView.beach_cells()
+	var site := CGrid.site(rr)
+	var best := -1
+	var bd := 1 << 30
+	for c in (beaches if beaches.size() > 0 else range(CGrid.count())):
+		if CGrid.region(c) != rr or not CFleet.land_ok(s.ps, s.f, c):
+			continue
+		var ok := false
+		for k in 8:
+			var j := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+			if j >= 0 and CFleet.is_sea(j) and rt[j] == 0:
+				ok = true
+				break
+		if ok and CGrid.d2(c, site) < bd:
+			bd = CGrid.d2(c, site)
+			best = c
+	_lc_key = key
+	_lc = best
+	return best
 
 
 ## The sea cell off the Tortuga coast the voyage of lesson 9 aims at (the first sea cell beside Port de Paix's harbour).
@@ -323,6 +365,39 @@ func met(n: int) -> bool:
 					sail = true
 			return boarded and sail
 		10:
+			# the landing: a voyage to a land cell of the raid region (a landing on arrival), or the army already ashore there
+			var lf := _fleet()
+			var rr := _raid_r()
+			for a in CState.armies_of(s.ps, s.f):
+				if int(a["busy"]) == 0 and CGrid.region(CState.cell(a)) == rr:
+					return true
+			if lf.is_empty():
+				return false
+			for o in s.orders:
+				var t := str(o.get("t", ""))
+				if int(o.get("fleet", -1)) != int(lf["id"]):
+					continue
+				var c := CGrid.at(int(o.get("x", -1)), int(o.get("y", -1)))
+				if (t == "fmove" or t == "land") and c >= 0 and not CFleet.is_sea(c) and CGrid.region(c) == rr:
+					return true
+			return false
+		11:
+			var rf := _fleet()
+			if rf.is_empty():
+				return false
+			for o in s.orders:
+				if str(o.get("t", "")) == "fraid" and int(o.get("fleet", -1)) == int(rf["id"]):
+					return true
+			return false   # (a fleet that lies on an enemy lane already raids it, so only the order counts)
+		12:
+			var ra := _army()
+			if ra.is_empty():
+				return false
+			for o in s.orders:
+				if str(o.get("t", "")) == "stance" and int(o.get("a", -1)) == int(ra["id"]):
+					return int(o.get("s", 0)) == CData.ST_RAID
+			return CState.stance(ra) == CData.ST_RAID
+		13:
 			return int(vd["goals"]) != 0
 	return false
 
@@ -472,8 +547,8 @@ func refresh() -> void:
 				line = tx("lesson_6_fight")
 			elif m:
 				line = tx("lesson_%d_open" % n) if strip else "Done. " + tx("lesson_%d_obj" % n) + ". Now end the turn."
-				if n == 9:
-					line = tx("lesson_9_done")
+				if Howto.text("lesson_%d_done" % n) != "" and not strip:
+					line = tx("lesson_%d_done" % n)
 			card.set_met(m, line)
 		if card.buttons.has("skip"):
 			(card.buttons["skip"] as Button).visible = not m
@@ -589,9 +664,30 @@ func skip() -> void:
 		9:
 			var fl := _fleet()
 			if not a.is_empty() and not fl.is_empty():
-				s.set_board(int(a["id"]), int(fl["id"]))
+				if CFleet.embark_check(s.ps, s.f, int(a["id"]), int(fl["id"])) == "" or CFleet.near_fleet(a, fl):
+					s.embark(int(a["id"]), int(fl["id"]))   # (an army in port beside the fleet boards at once)
+				else:
+					s.set_board(int(a["id"]), int(fl["id"]))
 				s.set_fmove(int(fl["id"]), sail_cell(_sail_town()))
 		10:
+			var lf := _fleet()
+			var lc := landing_cell()
+			if lf.is_empty() or lc < 0:
+				s.show_toast("No beach in reach: sail nearer the coast first.")
+				return
+			s.set_fmove(int(lf["id"]), lc)
+		11:
+			var rf := _fleet()
+			var rl: int = s.best_raid(rf) if not rf.is_empty() else -1
+			if rl < 0:
+				s.show_toast("No lane to raid in reach.")
+				return
+			s.set_station(int(rf["id"]), rl, -1)
+		12:
+			if a.is_empty():
+				return
+			s.panels._set_stance6(int(a["id"]), CData.ST_RAID)
+		13:
 			vd["goals"] = 1
 	_shown_met = false
 	_persist()
@@ -734,5 +830,26 @@ func _target() -> Variant:
 				return _map_pt(sail_cell(_sail_town()))
 			return _fleet_pt()
 		10:
+			var lf := _fleet()
+			if lf.is_empty():
+				return null
+			if s.sel_fleet == int(lf["id"]):
+				return _map_pt(landing_cell())
+			return _fleet_pt()
+		11:
+			var rf := _fleet()
+			if rf.is_empty():
+				return null
+			if s.sel_fleet == int(rf["id"]):
+				var rb: Variant = _cmd_button("act_raid")
+				return rb if rb != null else _fleet_pt()
+			return _fleet_pt()
+		12:
+			if s.sel_region == _raid_r():
+				var ab: Variant = _cmd_button("act_raid")
+				if ab != null:
+					return ab
+			return _map_pt(CGrid.site(_raid_r()))
+		13:
 			return _top_button("Goals")
 	return null

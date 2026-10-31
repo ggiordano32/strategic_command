@@ -1,10 +1,10 @@
 extends SceneTree
 ## The tutorial (docs/design/campaign_rules.md "The tutorial"), headless:
 ##   godot --headless --script res://tests/tutorial_test.gd
-## One text source (howto.gd: the eight sections, ten lessons, six battle steps, eight tips); the first-time tips (shown
+## One text source (howto.gd: the nine sections, thirteen lessons, six battle steps, ten tips); the first-time tips (shown
 ## once, remembered in the tests folder's tips.cfg, reset, never in the real user folder); the guided first campaign
 ## (its state: England at Port Royal, Sevilla la Nueva Spanish, `tutorial` 1; the campaign AI declares no war on the
-## player for the first ten turns; the ten lessons driven by the scripted order of each objective with End turn held
+## player for the first thirteen turns; the thirteen lessons driven by the scripted order of each objective with End turn held
 ## until it is met, a lesson card and a pointer each turn; the skip path; the leave path); the battle tutorial's six steps
 ## on the battle screen; the How to play page in the title menu and the two in-game menus. Exits 0 on success, 1 on failure.
 
@@ -16,6 +16,8 @@ const CTurn := preload("res://campaign/cturn.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CLanes := preload("res://campaign/clanes.gd")
+const MapOverlay := preload("res://game/campaign/map_overlay.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 const Howto := preload("res://game/campaign/howto.gd")
@@ -77,6 +79,7 @@ func _run() -> void:
 	_hot_seat_rules()
 	await _run_lessons()
 	await _run_skip_leave()
+	await _run_skip_raids()
 	await _run_hot_seat()
 	_online_stub()
 	await _howto_menus()
@@ -92,7 +95,7 @@ func _run() -> void:
 # ------------------------------------------------------------------ texts ---
 
 func _texts() -> void:
-	_check(Howto.SECTIONS.size() == 8, "How to play has eight sections")
+	_check(Howto.SECTIONS.size() == 9 and str(Howto.SECTIONS[8]["id"]) == "ways" and str(Howto.SECTIONS[8]["title"]) == "Three ways to play", "How to play has nine sections, the ninth Three ways to play")
 	var all_lines := true
 	for s in Howto.SECTIONS:
 		if (s["lines"] as Array).size() < 1 or (s["lines"] as Array).size() > 3:
@@ -101,23 +104,30 @@ func _texts() -> void:
 			if Howto.text(str(k)) == "":
 				all_lines = false
 	_check(all_lines, "every section has one to three lines, all with text")
+	var ways_ok := true
+	for k in ["ways_1", "ways_2", "ways_3"]:
+		var wt := Howto.text(k)
+		if wt == "" or wt.count(". ") < 1 or wt.count(". ") > 3:
+			ways_ok = false   # (two to four sentences)
+	_check(ways_ok and (Howto.SECTIONS[8]["lines"] as Array) == ["ways_1", "ways_2", "ways_3"], "the ways_1 to ways_3 lines (Europeans, Pirates, Natives) are there, two to four sentences each")
+	_check(Howto.text("lesson_over").contains("Three ways to play"), "the closing card points at Three ways to play")
 	var lessons_ok := true
 	for n in range(1, Howto.LESSONS + 1):
 		var L := Howto.lesson(n)
 		if str(L["title"]) == "" or str(L["text"]) == "" or str(L["obj"]) == "":
 			lessons_ok = false
-	_check(lessons_ok, "the ten lessons each have a title, a text and an objective")
+	_check(lessons_ok, "the thirteen lessons each have a title, a text and an objective")
 	var steps_ok := true
 	for n in range(1, Howto.STEPS + 1):
 		if Howto.step(n) == "":
 			steps_ok = false
 	_check(steps_ok and Howto.text("step_1b") != "" and Howto.text("step_win") != "", "the battle tutorial's six steps have text")
-	var tips_ok := Howto.TIP_KEYS.size() == 8
+	var tips_ok := Howto.TIP_KEYS.size() == 10 and Howto.TIP_KEYS.has("raid") and Howto.TIP_KEYS.has("lane_raid")
 	for k in Howto.TIP_KEYS:
 		var t := Howto.tip(k)
 		if t == "" or t.count(". ") > 0:
 			tips_ok = false   # (one sentence)
-	_check(tips_ok, "the eight tips are one sentence each")
+	_check(tips_ok, "the ten tips are one sentence each")
 
 
 # ------------------------------------------------------------------- tips ---
@@ -190,7 +200,7 @@ func _rules() -> void:
 	sv = CData.region_index("sevilla_jamaica")
 	var spa := CData.faction_index("new_spain")
 	_check(CData.pack == "west" and st["humans"] == [eng], "the tutorial is a West campaign for England")
-	_check(int(st["settings"]["tutorial"]) == 1 and int(st["settings"]["tutorial_turns"]) == 10, "settings: tutorial 1, tutorial_turns 10")
+	_check(int(st["settings"]["tutorial"]) == 1 and int(st["settings"]["tutorial_turns"]) == 13, "settings: tutorial 1, tutorial_turns 13")
 	_check(CState.owner(st, pr) == eng and CState.owner(st, sv) == spa, "Port Royal is English and Sevilla la Nueva Spanish")
 	_check(CState.at_war(st, eng, spa), "England is at war with Spain from the start")
 	var armies := CState.armies_of(st, eng)
@@ -216,7 +226,7 @@ func _rules() -> void:
 			var out := {"winner": 1, "mode": "auto", "units": [], "garrison_pct": 100}
 			st = CTurn.apply_battle(st, int(b["id"]), out)
 	_check(_wars_on(st, eng) == wars0, "nine turns on, no new war on England (%s wars on it)" % str(_wars_on(st, eng)))
-	_check(int(st["turn"]) >= 9 and CAI.tutorial_shield(st, eng) == (int(st["turn"]) < 10), "the shield ends with tutorial_turns")
+	_check(int(st["turn"]) >= 9 and CAI.tutorial_shield(st, eng) == (int(st["turn"]) < 13), "the shield ends with tutorial_turns")
 
 
 ## Two humans on one device: England at Port Royal and France on Hispaniola, each with a Spanish target and the shield.
@@ -287,6 +297,24 @@ func _end_turn() -> void:
 	await _frames(3)
 
 
+## A battle the AI started (Spain retaking Sevilla la Nueva while the army is away) is auto-resolved so the lessons go on.
+func _settle() -> void:
+	for k in 4:
+		var pb := CTurn.pending_for(cs.st)
+		if pb.is_empty():
+			break
+		print("   settle: auto-resolving the pending battle at region %d" % int(pb[0]["r"]))
+		cs.auto_resolve(int(pb[0]["id"]))
+		for j in 900:
+			await process_frame
+			if cs._resolver == null and (CTurn.pending_for(cs.st).size() < pb.size() or cs.dialog_kind != "battle_done"):
+				if CTurn.pending_for(cs.st).size() < pb.size():
+					break
+		await _frames(6)
+		await _close_dialogs()
+	await _frames(3)
+
+
 func _army_id() -> int:
 	var a := CState.armies_of(cs.ps, eng)
 	var best := -1
@@ -301,6 +329,11 @@ func _army_id() -> int:
 ## The pointer's last drawn point is at the centre of control c.
 func _ptr_at(c: Control) -> bool:
 	return c != null and cs.tutorial.pointer.showing and cs.tutorial.pointer.point.distance_to(c.get_global_rect().get_center()) < 2.0
+
+
+## The pointer's last drawn point is the screen point p.
+func _ptr_pt(p: Variant) -> bool:
+	return p != null and cs.tutorial.pointer.showing and cs.tutorial.pointer.point.distance_to(p) < 2.0
 
 
 func _card_text() -> String:
@@ -441,15 +474,71 @@ func _run_lessons() -> void:
 		cs.set_fmove(int(fl["id"]), Tutorial.sail_cell()))
 	await _end_turn()
 	await _close_dialogs()
-	# 10 goals
+	# 10 landing: the fleet waited in port for the army (the rule), a tap on a lit beach of the raid region lands it
+	var ori := CData.region_index("santiago_de_cuba")
 	await _lesson(10, func():
+		var fl: Dictionary = CFleet.fleets_of(cs.ps, eng)[0]
+		var fid := int(fl["id"])
+		_check(CFleet.carried_units(fl) > 0 and CFleet.cell(fl) == CFleet.cell(CFleet.fleets_of(cs.st, eng)[0]), "lesson 10: the army is aboard")
+		_check(_ptr_pt(tu._fleet_pt()), "lesson 10: the pointer is on the fleet")
+		cs.select_fleet(fid)
+		await _frames(4)
+		var lc: int = tu.landing_cell()
+		_check(lc >= 0 and CGrid.region(lc) == ori and cs.overlay.landing_cells.has(lc), "lesson 10: the beach is a lit one in the raid region (cell %d)" % lc)
+		_check(_ptr_pt(cs.overlay.to_screen(MapOverlay.cell_point(lc))), "lesson 10: the fleet selected, the pointer is on the beach")
+		_check(not tu.met(10), "lesson 10: the sail toward the Tortuga coast is not the landing")
+		cs.set_fmove(fid, lc))
+	_check(tu.card.obj_label.text.contains(Howto.text("lesson_10_done")), "lesson 10: the card says the fleet sails and the army lands when the turn ends")
+	await _end_turn()
+	await _close_dialogs()
+	var lfl: Dictionary = CFleet.fleets_of(cs.ps, eng)[0]
+	var ashore := CState.armies_of(cs.ps, eng)
+	_check(CFleet.carried_units(lfl) == 0 and ashore.size() == 1 and CGrid.region(CState.cell(ashore[0])) == ori, "the army is ashore in Santiago de Cuba's region and the fleet is empty (turn %d)" % int(cs.st["turn"]))
+	# 11 raiding at sea
+	await _lesson(11, func():
+		var fid := int(CFleet.fleets_of(cs.ps, eng)[0]["id"])
+		cs.close_side()
+		cs.sel_fleet = -1
+		await _frames(3)
+		_check(_ptr_pt(tu._fleet_pt()), "lesson 11: the pointer is on the fleet")
+		cs.select_fleet(fid)
+		await _frames(6)
+		var rb: Button = cs.cmd_bar.find_child("act_raid", true, false) as Button
+		_check(rb != null and _ptr_at(rb), "lesson 11: the fleet selected, the pointer is on its Raid action")
+		_check(not tu.met(11), "lesson 11: nothing ordered yet")
+		rb.pressed.emit()
+		await _frames(3))
+	var raided := false
+	for o in cs.orders:
+		if str(o.get("t", "")) == "fraid" and int(o["fleet"]) == int(CFleet.fleets_of(cs.ps, eng)[0]["id"]):
+			raided = true
+	_check(raided, "lesson 11: Raid put an fraid order on the fleet")
+	await _end_turn()
+	await _settle()
+	await _close_dialogs()
+	_check(not CLanes.raiders(cs.ps).is_empty(), "the fleet lies on a lane after the turn")
+	# 12 raiding on land
+	await _lesson(12, func():
+		_check(_ptr_pt(cs.overlay.to_screen(MapOverlay.cell_point(CGrid.site(ori)))), "lesson 12: the pointer is on the region's town")
+		cs.select_region(ori)
+		await _frames(6)
+		var rb: Button = cs.cmd_bar.find_child("act_raid", true, false) as Button
+		_check(rb != null and _ptr_at(rb), "lesson 12: the region selected, the pointer is on Raid")
+		rb.pressed.emit()
+		await _frames(3))
+	_check(CState.stance(CState.army(cs.ps, _army_id())) == CData.ST_RAID, "lesson 12: the army is on a raid in the plan")
+	await _end_turn()
+	await _settle()
+	await _close_dialogs()
+	# 13 goals
+	await _lesson(13, func():
 		cs.panels.show_objectives()
 		await _frames(2)
 		cs.close_dialog())
 	await _end_turn()
 	await _close_dialogs()
 	await _frames(3)
-	_check(tu.lesson_n() == Tutorial.DONE_STAGE and tu.card.visible and tu.card.buttons.has("over"), "after lesson 10 the card says the lessons are over")
+	_check(tu.lesson_n() == Tutorial.DONE_STAGE and tu.card.visible and tu.card.buttons.has("over"), "after lesson 13 the card says the lessons are over")
 	_check(_card_text() == Howto.text("lesson_over") and not tu.holds_end(), "... and End turn is free")
 	tu.card.buttons["over"].pressed.emit()
 	await _frames(2)
@@ -621,6 +710,36 @@ func _run_skip_leave() -> void:
 	_check(int(cs.st["turn"]) == 6 or not CTurn.pending_for(cs.st).is_empty() or int(cs.st["turn"]) > 5, "leave path: the turn resolves")
 
 
+
+## "Skip the lesson" for the sea lessons: lessons 9 to 12 (the sail, the landing, the raid at sea, the raid on land) from a fresh
+## campaign set to lesson 9; each skip does its order, opens the gate, and the turn after brings the next lesson.
+func _run_skip_raids() -> void:
+	await _new_screen(Tutorial.make_state("Skip raids", Tutorial.SEED, 0), "tutorial_test_d")
+	var tu = cs.tutorial
+	var vd: Dictionary = tu._vd()
+	vd["n"] = 9
+	vd["turn"] = int(cs.st["turn"])
+	tu._shown_n = -1
+	tu.refresh()
+	await _frames(3)
+	var ori := CData.region_index("santiago_de_cuba")
+	for n in range(9, 13):
+		_check(tu.lesson_n() == n and tu.holds_end() and tu.card.buttons.has("skip"), "skip raids: lesson %d is held" % n)
+		(tu.card.buttons["skip"] as Button).pressed.emit()
+		await _frames(4)
+		_check(tu.met(n) and not tu.holds_end(), "skip raids: Skip the lesson completes lesson %d" % n)
+		await _end_turn()
+		await _settle()
+		await _close_dialogs()
+		if n == 10:
+			var lf: Dictionary = CFleet.fleets_of(cs.ps, eng)[0]
+			var ar := CState.armies_of(cs.ps, eng)
+			_check(CFleet.carried_units(lf) == 0 and ar.size() == 1 and CGrid.region(CState.cell(ar[0])) == ori, "skip raids: the skipped landing put the army ashore in Santiago de Cuba's region")
+	_check(tu.lesson_n() == 13, "skip raids: four skips, then lesson 13")
+	var ra := CState.armies_of(cs.ps, eng)
+	_check(ra.size() == 1 and CState.stance(ra[0]) == CData.ST_RAID, "skip raids: the skipped Raid put the army on a raid")
+	_check(not CLanes.raiders(cs.ps).is_empty(), "skip raids: the fleet lies on a lane")
+
 # -------------------------------------------------------------- hot seat ---
 
 ## Dismiss the hand-over cover for the seat that is up and open its turn.
@@ -687,6 +806,30 @@ func _run_hot_seat() -> void:
 	await _frames(3)
 	_check(tu.holds_end() and not tu.met(2), "hot seat: ... and England's gate is still shut")
 	_check(int(cs.data["session"]["tutorial"]["n"]) == 2 and int(cs.data["session"]["tutorial%d" % fra]["n"]) == 2, "hot seat: each seat's state is in the session (tutorial, tutorial<seat>)")
+	# France's sea lessons read France's own orders (the fleet at Leogane, its army, the same Spanish coast)
+	cs._set_planner(fra, false)
+	await _frames(3)
+	var ffl: Dictionary = CFleet.fleets_of(cs.ps, fra)[0]
+	var fvd: Dictionary = tu._vd()
+	fvd["n"] = 10
+	tu._shown_n = -1
+	var ori := CData.region_index("santiago_de_cuba")
+	var flc: int = tu.landing_cell()
+	_check(flc >= 0 and CGrid.region(flc) == ori, "hot seat: France's landing beach is in the same Spanish region (cell %d)" % flc)
+	_check(not tu.met(10), "hot seat: France's lesson 10 is not met by England's plan")
+	cs.orders.append({"t": "fmove", "fleet": int(ffl["id"]), "x": CGrid.cx(flc), "y": CGrid.cy(flc), "persist": 1})
+	_check(tu.met(10), "hot seat: France's landing is an fmove of its fleet to the beach")
+	fvd["n"] = 11
+	_check(not tu.met(11), "hot seat: France's lesson 11 waits for its fraid order")
+	cs.orders.append({"t": "fraid", "fleet": int(ffl["id"]), "lane": 29})
+	_check(tu.met(11), "hot seat: France's raid at sea is an fraid order of its fleet")
+	fvd["n"] = 12
+	_check(not tu.met(12), "hot seat: France's lesson 12 waits for the stance order")
+	cs.orders.append({"t": "stance", "a": int(fa["id"]), "s": CData.ST_RAID})
+	_check(tu.met(12), "hot seat: France's raid on land is a stance 4 order of its army")
+	cs._set_planner(eng, false)
+	await _frames(3)
+	_check(not tu.met(12) and not tu.met(11), "hot seat: ... and England's plan holds none of them")
 
 
 # --------------------------------------------------------- online (one human) ---
@@ -746,7 +889,7 @@ func _howto_menus() -> void:
 	for s in Howto.SECTIONS:
 		if m.find_child("howto_h_" + str(s["id"]), true, false) != null:
 			heads += 1
-	_check(heads == 8, "... with the eight sections (%d)" % heads)
+	_check(heads == 9, "... with the nine sections (%d)" % heads)
 	var l: Label = m.find_child("howto_map_1", true, false) as Label
 	_check(l != null and l.text == Howto.text("map_1"), "... in the words of howto.gd")
 	var vp := m.get_viewport_rect().size

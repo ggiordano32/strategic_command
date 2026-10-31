@@ -2767,6 +2767,8 @@ func select_army(id: int) -> void:
 		show_side(func(box): panels.army_panel(box, id))
 		if int(a["f"]) == f:
 			Tips.show("army_selected")
+			if _can_raid_here(a):
+				Tips.show("raid")
 	_defer_sel = true
 	_refresh_map()
 	_defer_sel = false
@@ -2780,9 +2782,21 @@ func select_region(r: int) -> void:
 	show_side(func(box): panels.region_panel(box, r))
 	if f >= 0 and CState.owner(ps, r) == f:
 		Tips.show("town_opened")
+	if f >= 0:
+		for a in CState.armies_of(ps, f):
+			if int(a["r"]) == r and _can_raid_here(a):
+				Tips.show("raid")
+				break
 	tutorial.note("region", r)
 	_refresh_map()
 	_update_hint()
+
+
+## Army a of ours stands in a region of a nation we are at war with (the region bar's Raid action is offered).
+func _can_raid_here(a: Dictionary) -> bool:
+	var r := int(a["r"])
+	var o := CState.owner(ps, r)
+	return int(a["busy"]) == 0 and o >= 0 and o != f and CState.at_war(ps, f, o) and CState.battle_at(ps, r).is_empty()
 
 
 func select_fleet(id: int) -> void:
@@ -2794,6 +2808,8 @@ func select_fleet(id: int) -> void:
 	merge_tap = -1
 	if not CFleet.fleet(ps, id).is_empty():
 		show_side(func(box): panels.fleet_panel(box, id))
+		if f >= 0 and not raid_lanes_of(CFleet.fleet(ps, id)).is_empty():
+			Tips.show("lane_raid")
 	_refresh_map()
 	_update_hint()
 

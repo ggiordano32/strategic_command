@@ -1036,9 +1036,12 @@ tip toast never covers a toast another test waits for. While the tutorial runs `
 | 7 | After | the Realm page was opened (`show_faction`) | the Realm button |
 | 8 | Diplomacy | a `propose` `trade` order to the Dutch | the Diplomacy button |
 | 9 | The sea | the army boarded the fleet (a `move` with `fleet`, an `embark` order, or already aboard) and an `fmove` of that fleet ending within 6 cells of Port de Paix's harbour | the army, the fleet, then the sea off Tortuga |
-| 10 | Goals | the Goals page was opened (`show_objectives`) | the Goals button |
+| 10 | Landing | an `fmove` (or `land`) of the fleet to a land cell of the profile's `raid` region (Oriente, Santiago de Cuba), or the army already ashore there | the fleet, then the lit beach nearest Santiago de Cuba's town |
+| 11 | Raiding at sea | an `fraid` order of the fleet (a fleet that lies on an enemy lane already raids it, so only the order counts) | the fleet, then its Raid action (`act_raid`) |
+| 12 | Raiding on land | a `stance` order to 4 (Raid) for the army, or the army already on a raid | the region's town, then Raid (`act_raid`) |
+| 13 | Goals | the Goals page was opened (`show_objectives`) | the Goals button |
 
-  Once the objective holds the pointer goes to End turn. After lesson 10 the card says the lessons are over; "Got it" ends it
+  Once the objective holds the pointer goes to End turn. After lesson 13 the card says the lessons are over; "Got it" ends it
   and the campaign is the free sandbox. "Skip the lesson" does the lesson's order for the player (`add_order`, `set_move6`,
   `set_board` + `set_fmove`; for the page lessons it sets the flag), which opens the gate; the player still presses End turn
   (it does not end the turn itself). "Leave the tutorial" sets `left` and the cards stop: the rules have no settings order, so
@@ -1286,3 +1289,42 @@ have no outer wall (the fort is left be in these sets), so the poles cannot bite
 To finish: `measure.py` both plans on this tree and on d963579 (the probe file copied there).
 
 **Canoe yard moved to the Shipyard (2026-10-29, owner: "If we have nothing to build in the Workshop then it should go away ... it should come with what we need for Canoes").** The natives' Shipyard is the Canoe yard (the war canoes already launch from it); the Workshop, which only the Itza keep for the wagon, is the Craft house. Data only (`CHAIN_NAMES`); no rule or pin moves.
+
+
+**The raiding lessons and "Three ways to play" (2026-10-30, view and words; `Tutorial.TURNS` 13 is the one value the rules read).** The
+owner: "We should teach raiding stances for the army and the ships, we should also have a section that talks about Asymmetry and the
+benefits of the nations. I think Pirate vs Native vs European should mostly suffice."
+- *Three lessons after the sail, Goals is lesson 13* (`Howto.LESSONS` 13, `Tutorial.DONE_STAGE` 14, the AI's shield 13 turns, "Lesson n of 13").
+  **The order is landing, raid at sea, raid on land**, not the plan's raid first: a fleet that raids sails onto a lane and holds it, far
+  from any beach, so a raid ordered first would leave the army aboard with no landing in reach; a landing first leaves the fleet empty
+  beside the coast and the army ashore, and then both raids can be ordered. The lesson 9 sail waits a turn for the army to board (the
+  fleet-waits rule), so lesson 10 begins with the fleet still in port and the army aboard; every coast of the profiles' `raid` region is
+  within one turn of both seats' ports (probed: reach turn 0 from Port Royal and from Leogane), so one tap on a lit beach replaces the
+  stored voyage with a voyage to a land cell, which lands the troops on arrival (`CFleet.plan` with `landing`; it is an `fmove`, not a
+  `land` order, which needs the fleet beside the beach already). `Tutorial.landing_cell()` is that beach: of the raid region's `MapView`
+  beach cells that are `land_ok` and touch a sea cell of this turn's reach (`CFleet.reach` 0), the one nearest the town.
+- *The raid region.* `PROFILES[i]["raid"]` = `santiago_de_cuba` (the region Oriente, Spanish in the West start; New Spain is at war
+  with both seats). Not Tortuga Coast (`port_de_paix`, the Brethren's), not Cibao (unowned for England alone, France's target in the hot
+  seat, taken at lesson 6) and not Santo Domingo (unowned in the West start). The lane lessons need nothing from the profile: lanes 28,
+  29 and 37 to Santiago de Cuba are hostile to both seats and in reach, and `best_raid(fleet)` picks the richest.
+- *Objectives* (table above). Lesson 11 counts only an `fraid` order: after the landing the fleet already lies on a hostile lane, and
+  `CLanes.raiders` would make the lesson met before the player did anything. Lesson 12 reads the stance order (`{"t": "stance", "a", "s": 4}`)
+  or `CState.stance(a) == 4`. `skip()` does each: `set_fmove` to the landing cell, `set_station(fleet, best_raid(fleet), -1)`,
+  `panels._set_stance6(army, 4)`; lesson 9's skip now embarks at once for an army in port (it only knew the march to the beach).
+  Words: `lesson_10` .. `lesson_12`, `lesson_10_done` (the met line); the closing card gains "Every nation plays its own way: see Three
+  ways to play in How to play."
+- *A battle may arrive.* The tutorial's shield covers declared wars only; in the test run Spain attacks the empty Sevilla la Nueva (English since lesson 6)
+  at the end of lesson 11's turn, a pending battle that hides the card until it is fought or auto-resolved (the test auto-resolves it).
+- *Three ways to play* (the ninth How to play section, `SECTIONS` id `ways`, lines `ways_1` Europeans, `ways_2` Pirates, `ways_3` Natives; the
+  title menu, the campaign Menu and the battle Menu all list `SECTIONS`). Every claim is a rule as built: the Europeans (no building cap,
+  `chain_levels` full; frigates for all, ships of the line for England and the Dutch only, Spain's galleons carry six, `west_ships.gd`; the
+  natives have no gun rows); the Brethren (`CSea`: lane raid `LANE_RAID_TAKE`, sack by policy: `SACK_TURNS` 3 of the town's income and
+  `SACK_TREASURY_PCT` of the owner's gold, every building a level down, haven crews `HAVEN_PCT` 20 % cheaper up to 45 % with infamy, `INFAMY_SACK`
+  12 a sack, `MARQUE_TURNS` 12 and `MARQUE_BONUS_PCT` 50, "pirates live on while they have a ship"); the Itza and the Miskito (cover on their
+  rows, `CHAIN_CAP_FACTIONS`: no Stables, War lodge and Range level 2, `POLE_FACTIONS` scaling poles from a War lodge 2, the Itza's Holcan and fire
+  arrows, the Miskito's torch raiders and poison arrows, war canoes land a war party on any beach, `TREATY_LINES` the Miskito musket line).
+- *Tips.* `tip_raid` (an army of ours that can raid is selected, or its region is: the Raid action is offered) and `tip_lane_raid` (a
+  fleet of ours with a lane to raid is selected), `TIP_KEYS` ten; both wait while the tutorial runs, like the rest.
+- *Tests.* `tests/tutorial_test.gd` plays lessons 1 to 13 for England (10: the pointer on the fleet and then the lit beach, the landing;
+  11: the pointer on the fleet's Raid button, pressed; 12: the region's Raid button, pressed), a skip run for lessons 9 to 12 from lesson 9,
+  France's three objectives on its own orders, nine sections and the `ways_*` lines. `menu_test` expects nine sections.
