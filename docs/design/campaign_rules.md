@@ -45,6 +45,17 @@ original art.
   blockading are voyages to a station (orders `fraid`, `fblockade`), so a navy is the weaker side's play (raids) and
   the stronger side's (blockades); the treasure fleet sails along its lane, which is where a raider meets it. Rome's
   lanes pay the same way and will carry its navy. As built: docs/CAMPAIGN.md "Lane trade, raids and blockades".
+  **Decision (2026-10-31): a raided lane is shown to its owners whatever the fog.** The owner of either end port, the
+  raider's team and whoever sees the raider are told: the raided lane on the map (`MapOverlay.raided_info`) and the
+  chronicle row `lane_raided` (`CSight.event_seen` tells the two owners and the raider by faction, anyone else where they
+  see the cell), because an owner knows his trade is being taken, as he sees his own income fall. This is the design, not
+  a gap in the fog: there is no separate "a port sees its lane's cells" rule (the 2026-10-22 plan of CITY_R + 1 was never
+  built and is dropped), so `csight.gd` stays the one function for what a faction sees (its settlements' CITY_R squares,
+  coasts, armies, fleets) and the lanes add nothing to it. A Skilled AI fleet blockades the port its own army besieges
+  (`CAIFleet._blockade`: value x 3, reach BLOCKADE_TURNS + 2) and the blockaded port's stores fall by two a turn
+  (`CRules._siege_turn`), by one before the blockade stands; `campaign_test _skilled_siege_blockade` plays it (England
+  Skilled, Havana besieged, the fleet four turns off: the blockade stands at the end of the fourth turn, the stores falling 1, 1, 1, then 2, 2, 2 a turn), with
+  Average and Easy picking another port from there.
 - Armies recruit in owned settlements, limited by the military buildings present.
 - Missile units come from the Range (owner 2026-10-23): every non-siege missile line (archers, javelins, slingers, buccaneers, and now **musketeers**: Range of their tier, 1 for musketeers, 2 for the veterans) is made at the Range, not the Barracks; mounted missile units (camel archers, light horse, pistoleers, cuirassiers) keep the Stables for the horse and also need a Range 1. Artillery stays the Workshop. Capitals start with a Range 1, towns do not (a town needs one built to raise musketeers).
 - **West building chains (owner 2026-10-23: "tier 2 and 3 should have light and heavy cannons in the Caribbean, not rock throwers and siege arrows"):** the West pack has its own `CHAINS` (`campaign/data/west.gd`; the same keys, costs and rules as Rome's, only the texts in Caribbean words, Rome's untouched) and its **Workshop has three levels** (cost 600 / 1200 / 2000, build 2 / 3 / 3 turns): level 1 falconets (light guns) and the hand cart, level 2 culverins and ammunition wagons (with Stables), level 3 **heavy guns** (24-pounders, unit `heavy_gun`, `UNIT_NEEDS` Workshop 3; the second tier of the `field_gun` line, so the AI's best-tier pick takes it when it can; sim row in battle_sim.md "Firearms"). Spain, Tierra Firme, England, France and the Dutch may raise them (Tierra Firme and France only the heavy guns, no culverins); pirates and natives never. The AI's mixes are unchanged (it builds the Workshop as its build-up and general plan do).

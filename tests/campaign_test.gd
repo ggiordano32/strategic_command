@@ -147,6 +147,7 @@ func _init() -> void:
 	_dip_shield()
 	_dip_shield_attacks()
 	_shield_sea()
+	_skilled_siege_blockade()
 	_dip_passage()
 	_dip_west()
 	_dip_ai_alliances()
@@ -6892,6 +6893,79 @@ func _shield_sea() -> void:
 	CFleet.execute_moves(st4, [[int(CFleet.fleets_of(st4, eng)[0]["id"]), -1, eng, 0, int((sp_of.call(st4) as Dictionary)["id"])]])
 	_check(_sea_count(st4) == 1 and CFleet.spared(st4, eng, spa) and CFleet.spared(st4, spa, eng) and not CFleet.spared(st4, spa, CData.faction_index("france")) and not CFleet.spared(st4, eng, eng),
 		"shield at sea: England's attack order on the Spanish fleet still fights; spared is a human against an AI only")
+
+
+## England (an AI) besieges Havana (Spain's, a human's) with one army and has one fleet, four turns of sailing off: a Skilled
+## fleet blockades the port it besieges first (value x 3, two more turns of reach: its station is Havana's), an Average and an
+## Easy one pick another port (or none) from there, and a Skilled one without the siege does not pick Havana either. Played
+## through the AI's fleet orders and the end of the turn: the blockade appears on the port within four turns and the siege's
+## stores fall by two a turn while it holds, by one before it (crules._siege_turn).
+func _skilled_siege_blockade() -> void:
+	CData.use_pack("west")
+	CFleet.ensure()
+	var eng := CData.faction_index("england")
+	var spa := CData.faction_index("new_spain")
+	var hv := _r("havana")
+	var hb := CFleet.harbour(hv)
+	var pick := {}
+	for skill in [CP.SKILLED, CP.AVERAGE, CP.EASY]:
+		var st := _siege_blockade_setup(hv, eng, spa, skill, 4)
+		var fl: Dictionary = CFleet.fleets_of(st, eng)[0]
+		var bp := CAIFleet._blockade(st, eng, fl, {})
+		pick[skill] = int(bp[0]) if not bp.is_empty() else -1
+		if skill == CP.SKILLED:
+			_check(CAIFleet._turns(fl, hb) == 4, "skilled siege blockade: the fleet is four turns off Havana")
+			CRules.lift_siege(st, hv, "")
+			var bp2 := CAIFleet._blockade(st, eng, fl, {})
+			_check(bp2.is_empty() or int(bp2[0]) != hv, "skilled siege blockade control: without the siege Havana is not its pick")
+	_check(int(pick[CP.SKILLED]) == hv and int(pick[CP.AVERAGE]) != hv and int(pick[CP.EASY]) != hv,
+		"skilled siege blockade: Skilled picks the besieged port four turns off (%d), Average (%d) and Easy (%d) do not" % [pick[CP.SKILLED], pick[CP.AVERAGE], pick[CP.EASY]])
+	var st2 := _siege_blockade_setup(hv, eng, spa, CP.SKILLED, 4)
+	var first := -1
+	var drops: Array = []
+	for t in 6:
+		var before := int(CState.siege_at(st2, hv).get("supply", -1))
+		var fm: Array = []
+		CAIFleet.act(st2, eng, [], fm)
+		CFleet.execute_moves(st2, fm)
+		CRules.end_of_turn(st2)
+		var after := int(CState.siege_at(st2, hv).get("supply", -1))
+		var bk := CSea.blockader(st2, hv)
+		if bk >= 0 and first < 0:
+			first = t
+		drops.append([bk, before - after])
+	var ok := first >= 0 and first <= 4
+	for t in drops.size():
+		var d: Array = drops[t]
+		if t < first or first < 0:
+			ok = ok and int(d[0]) < 0 and int(d[1]) == 1
+		else:
+			ok = ok and int(d[0]) == eng and int(d[1]) == 2
+	_check(ok, "skilled siege blockade: the blockade stands on Havana from turn %d and the stores fall by one, then two a turn %s" % [first, str(drops)])
+
+
+## The setup above: Spain human, England (skill) with one army besieging Havana (stores 14) and its first fleet `tt` turns off.
+func _siege_blockade_setup(hv: int, eng: int, spa: int, skill: int, tt: int) -> Dictionary:
+	var st := CState.new_campaign("w", 11, [spa], {}, [], "west")
+	st["factions"][eng]["ai_skill"] = skill
+	var keep: Array = []
+	for a in st["armies"]:
+		if int(a["f"]) != eng:
+			keep.append(a)
+	st["armies"] = keep
+	for fl in CFleet.fleets(st):
+		if int(fl["f"]) != eng:
+			fl["ships"] = []
+	var a := _put(st, eng, CState.ring_cell(hv, 3), ["heavy"])
+	CRules.start_siege(st, hv, a, -1)
+	st["sieges"][0]["supply"] = 14
+	var fl: Dictionary = CFleet.fleets_of(st, eng)[0]
+	var hb := CFleet.harbour(hv)
+	for c in CGrid.disc(hb, CFleet.speed(fl) * (tt + 1)):
+		if CFleet.is_sea(c) and CGrid.cheb(c, hb) > 4 and CAIFleet._turns({"ships": fl["ships"], "x": CGrid.cx(c), "y": CGrid.cy(c)}, hb) == tt:
+			CFleet.place(fl, c)
+			break
+	return st
 
 
 ## Calls to arms: created for every ally the turn a war starts; an AI ally
