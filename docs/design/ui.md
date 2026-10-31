@@ -780,35 +780,45 @@ Button names are kept for the tests: `home_campaign`, `home_grand`, `home_battle
 are new; `home_controls`, `home_sandbox`, `home_custom`, `home_server`, `home_soldiers`, `home_quality`,
 `home_battle_look`, `home_map_style`, `home_Join`, `home_Import` live on their new pages. (After pass 2 the Options names are capsules: `home_<key>` with its segments `home_<key>_<value>`, e.g. `home_quality_low`; the in-game Menu's use `menu_<key>`; `home_Join` is the Join page's, the card's Join is `grand_join`.)
 
-**Backgrounds** (`[menu] background = art_west | art_rome | diorama_west | diorama_rome` in `user://settings.cfg`, set by
+**Backgrounds** (`[menu] background = diorama_west | diorama_rome` in `user://settings.cfg`, set by
 the selector at the bottom of the title screen, see "Background selector" below; `--menu-bg=` forces one for the session
-and also takes the old values; a test run defaults to the picture so it never switches the content pack):
+and also takes the old values; a test run that asked for none builds no table, so it never switches the content pack and
+the placeholder gradient shows):
+
+(2026-10-30) The painted key art retired (the owner: the AI paintings no longer match the overworld and the battle
+map). The backgrounds are the two dioramas only. `assets/ui/keyart/*.jpg` and their imports are deleted; the stored
+`art_west` / `art_rome` (and the older `art`, `auto`, `diorama`) migrate to the diorama of their setting (or of the
+last-played one). What stands in while a table builds, on the campaign pages' hovered setting card (while no table
+shows) and behind the loading panel is the setting's placeholder gradient, `MenuPrefs.PLACEHOLDER`: a dark warm wood
+brown for the West, a cooler stone grey for Rome, no picture file (no grain; a device that never gets the table
+still has a background, never a missing texture). The selector stays, now the setting pick: Caribbean table or Rome
+relief (it also sets the wordmark's emblem and subtitle). The camera is pulled back: the West's zoom 2.6 -> 2.1, Rome's
+2.0 -> 1.65, `at` and `shift` unchanged (Port Royal and the Bay of Naples still sit right of the entries at 1280x720
+and 844x390; neither view reaches the chart's edge). Testing aids `--menu-zoom=`, `--menu-at=x,y`, `--menu-shift=x,y`.
+Build time and frame time are unchanged by the zoom (the West about 2.15 s cold, Rome about 0.92 s; about 27 ms a frame
+in the windowed run, which is bound by something other than the table).
 - *diorama*: the live overworld. `game/menu/diorama.gd` builds a non-interactive copy of the campaign screen's layer
   stack (MapView, LandTrees, TownLayer, MinisLayer, MapOverlay) inside a SubViewport (the layers use canvas layers)
   on `CState.new_campaign("Menu", 7, [0], {"fog": 0}, [], pack)`, never saved, fog off, at a fixed scene per setting
-  (Port Royal from the sea at zoom 2.6; Campania / the Bay of Naples at 2.0), drifting 13 px each way over a 4
+  (Port Royal from the sea at zoom 2.1; Campania / the Bay of Naples at 1.65), drifting 13 px each way over a 4
   minute sine (about 20 px a minute at its fastest). The map style is forced per scene while it shows (the Caribbean the
   table, Rome the relief map, whatever the campaign map's own setting; it and the stale bake are put back on release). The build is queued as steps that `_process`
   runs one a frame (map, relief, landscape, state, layers, refresh), so the menu is never blocked and freeing the
   node in between is harmless. It holds the content pack (`CData`, `Geo`) of its setting, so it is freed when the
   menu hides (`release()` puts Rome back) and built again when it shows. It is built for the selected
-  setting only (one world at a time; the setting's key art stands in until it is ready); the campaign-card hover
-  cross-fades the key art, not the diorama.
-- *art*: `assets/ui/keyart/<pack>.jpg` fitted cover-style with a 1 % parallax (pointer, or tilt on a phone), a
-  dark gradient placeholder when the file is missing; it follows the selected choice, and the hovered setting card on the campaign pages (0.5 s cross-fade).
+  setting only (one world at a time; the setting's placeholder gradient stands in until it is ready).
 - There is no *auto* any more: Quality Low no longer forces the picture; a chosen diorama on Low uses the Low layers
   as the campaign does.
 Measured on this PC (RTX 3070, relief cached): Caribbean about 1.0-1.3 s (the first world after a Rome menu also
 rebuilds the map geometry), Rome about 0.65 s; the longest single frame is the landscape bake, about 250 ms.
 
 **Background selector** (owner 2026-10-22, after Rome 2's menu): bottom centre of the title page only, a thin gold rule
-over `[<]  The Caribbean, painted  [>]` (`bg_selector`, built in `main.gd`): 44 px nav-style arrow buttons (36 px on
+over `[<]  The Caribbean, the map table  [>]` (`bg_selector`, built in `main.gd`): 44 px nav-style arrow buttons (36 px on
 phones) with a chevron drawn in code (the kit has no chevron icon), the name in Cinzel 18 (16 on phones) in bone with a
-dark outline. The choices, in order and wrapping: The Caribbean, painted (`art_west`), Rome, painted (`art_rome`), The
-Caribbean, the map table (`diorama_west`), Rome, the relief map (`diorama_rome`). The arrows, the Left / Right keys and
+dark outline. The choices, in order and wrapping: The Caribbean, the map table (`diorama_west`), Rome, the relief map (`diorama_rome`). The arrows, the Left / Right keys and
 a 40 px swipe along the name step it; the switch cross-fades the pictures over 0.5 s (`MenuBg.switch_to`) and a diorama
-builds as before. The choice is saved at once; old saved values migrate (`art` and `auto` to the picture, `diorama` to
-the diorama, of the last-played setting; first run: the painting of the last-played setting). The wordmark's emblem and
+builds as before. The choice is saved at once; old saved values migrate (`art_west` / `art_rome` to the diorama of their setting; `art`, `auto`, `diorama` to
+the diorama of the last-played setting; first run: the table of the last-played setting). The wordmark's emblem and
 subtitle follow the selected choice's setting; Continue keeps its own save's emblem. Options no longer has a Menu
 picture row (the title screen's and the in-game Menu's).
 
@@ -911,7 +921,7 @@ View only (owner's notes). Nothing under `sim/` or `campaign/` changes.
 ### UI theme (as built, 2026-10-21, pass 1: the kit and the campaign screen)
 
 Owner's call: "the in game menu needs some work. trim, font, anything else". The title menu's dressing (Cinzel, gold
-`b08a40` / ink `1a1410` / bone `e8dcb0`, the dark warm panel, the 3 % hover growth, the setting emblems and key art)
+`b08a40` / ink `1a1410` / bone `e8dcb0`, the dark warm panel, the 3 % hover growth, the setting emblems and the placeholder gradients)
 now runs through the shared widget kit, `game/campaign/ui_kit.gd` (its header documents the theme: colours, type, trim,
 buttons, spacing). View only: nothing in `sim/` or `campaign/` changed. Pass 2 (the battle HUD, the sea screen) is
 separate.
@@ -949,8 +959,7 @@ duplicated from `game/main.gd`'s Options page (a later cleanup could move both i
 request and a tap on the dimmed map close it (one step back from Options or the confirm); Controls closes it and opens
 the controls page.
 
-**Loading** (`loading_panel.gd`): the setting's key art (`assets/ui/keyart/<pack>.jpg`, cover-fitted, darkened 40 %,
-a dark fill without the file) behind a trim panel with the title in Cinzel, a one-line tip from `LoadingPanel.TIPS`
+**Loading** (`loading_panel.gd`): the setting's placeholder gradient (`MenuPrefs.PLACEHOLDER`, darkened 40 %) behind a trim panel with the title in Cinzel, a one-line tip from `LoadingPanel.TIPS`
 (view-side random choice), the progress bar and the step. Used by the campaign start, the battle build and the turn
 resolve: "Resolving the turn" shows this panel when the last resolve took over 0.5 s (`last_resolve_ms`, measured in
 `_resolve_turn`), else the small dialog as before (the first resolve of a session always the dialog).
@@ -998,7 +1007,7 @@ hover / press motion, a capsule of momentary segments, the top-bar title block a
   (target and lighting reach) orange; flee heading violet (was grey); broadside arcs and range teal (were white); wind
   white (the rose's arrow was pale blue); wake white foam; grapple lines dark brown. Before, the course was cream, the
   arcs, the selection ring and the rose white and the wind arrow blue.
-- *Loading*: the battle build uses the themed panel (key art of the campaign's pack, tip, trim; `_enter_battle`) when the
+- *Loading*: the battle build uses the themed panel (the placeholder gradient of the campaign's pack, tip, trim; `_enter_battle`) when the
   last build was slow; a sea battle is added directly (as before; its build is fast).
 Tests: `tests/battle_theme_test.gd` (windowed; `-- --shots=DIR`, `--phone` for an 844x390 touch layout), `sea_help_test`
 (the Key lists every kind, the drawing uses only those kinds, six distinct colours, remembered, the hint), `input_test`

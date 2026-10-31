@@ -1,14 +1,12 @@
 # Menu art
 
-Painted emblems, key art, wordmark and the display font for the main menu (assets/ui/).
+Painted emblems, wordmark and the display font for the main menu (assets/ui/).
 
 Re-run:
 
     cd ~/Applications/ComfyUI && .venv/bin/python main.py --port 8076 --listen 127.0.0.1
     python3 tools/menu_art/gen.py OUT --kind emblem --side west --seeds 1,2,3,4,5,6     # 1024 px candidates
-    python3 tools/menu_art/gen.py OUT --kind keyart --side rome --seeds 1,2,3,4         # 1344x768 candidates
     python3 tools/menu_art/flatten.py OUT/emblem_west_2.png assets/ui/emblems/west.png assets/ui/emblems/west_128.png
-    python3 tools/menu_art/finish.py keyart OUT/keyart_west_3.png assets/ui/keyart/west.jpg
     python3 tools/menu_art/finish.py wordmark assets/ui/fonts/Cinzel-Bold.ttf assets/ui/wordmark.png
 
 flatten.py / finish.py need PIL (+ numpy, scipy for flatten); the hunyuan venv has them. Stop ComfyUI afterwards.
@@ -16,7 +14,7 @@ flatten.py / finish.py need PIL (+ numpy, scipy for flatten); the hunyuan venv h
 Kept (FLUX.2 Klein 4B distilled, 4 steps, CFG 1, euler):
 
 - emblems/west.png: seed 2, rome.png: seed 3 (of 1-6), prompts in gen.py. Flattened to gold b08a40 / ink 1a1410 / bone e8dcb0 on transparent, 512 px (+ 128 px).
-- keyart/west.jpg: seed 57 (of 51-58), "a Caribbean pirate harbour at dusk from the sea, 1650: a stone fort on the headland, palms, a frigate at anchor, fishing boats and a crowded quay, oil painting, loose brushwork, warm light, wide shot, no text, no modern buildings" (matches the Rome painting; the first, glossier version used the brief's plain "painted" prompt). keyart/rome.jpg: seed 24 (subject a, of 21-24) with "a Roman harbour at dawn, 280 BC: stone quays, a trireme fleet with oars and square sails, a marble temple on the hill, a legion camp with tents on the shore, oil painting, loose brushwork, warm light, wide shot, no text, no modern buildings". (The brief's "Bay of Naples" prompt and a Naples/Vesuvius variant both gave photographic modern-looking towns. Alternative tried: Carthage cothon harbour at dusk, seeds 31-34.) 1344x768 centre-cropped to 16:9, Lanczos to 1920x1080 (no upscale model installed), JPEG q85.
+- The painted key art (assets/ui/keyart, FLUX.2 Klein oil paintings of a Caribbean and a Roman harbour) was retired on 2026-10-30; the title background is the live diorama and its placeholder gradient. The `keyart` kinds of gen.py and finish.py are left as history.
 - wordmark.png: PIL, Cinzel Bold, gold with 2 px ink outline, 1600 px wide.
 - fonts: Cinzel Regular / Bold, static instances (wght 400 / 700, fontTools instancer) of the Google Fonts variable file ofl/cinzel/Cinzel[wght].ttf.
 

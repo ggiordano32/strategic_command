@@ -397,7 +397,7 @@ func _loading() -> void:
 		await lp.step("Building the battlefield")
 		await _frames(3)
 		var art := lp.find_child("loading_art", true, false) as TextureRect
-		_check(art != null and art.texture != null and art.modulate.r < 0.7, "%s: the loading panel shows the key art, darkened" % pack)
+		_check(art != null and art.texture != null and art.modulate.r < 0.7, "%s: the loading panel shows the placeholder gradient, darkened" % pack)
 		var tip := lp.find_child("loading_tip", true, false) as Label
 		_check(tip != null and tip.text != "" and LoadingPanel.TIPS.has(tip.text), "%s: it shows a tip from the list" % pack)
 		_check(lp.find_child("loading_title", true, false).has_theme_font_override("font"), "%s: the title is in the display face" % pack)

@@ -12,8 +12,8 @@ extends CanvasLayer
 ##   ...work...
 ##   await lp.done()
 ##
-## The panel sits over the setting's key art (assets/ui/keyart/<pack>.jpg, cover-fitted and darkened 40 %; a dark
-## gradient when the file is missing) with a trim panel holding the title in the display face, a one-line tip and the
+## The panel sits over the setting's placeholder gradient (MenuPrefs.PLACEHOLDER: dark wood for the West, cool stone
+## for Rome; darkened 40 %; no picture file) with a trim panel holding the title in the display face, a one-line tip and the
 ## progress bar. Used by the campaign start, the battle build and the turn resolve.
 ##
 ## Each step's time is kept in `timings` ([[label, ms], ...]) and printed
@@ -30,7 +30,7 @@ const SLOW_MS := 300.0
 ## RESOLVE_SLOW_MS (see slow_resolve()), else behind the small "Resolving the turn" dialog.
 static var last_resolve_ms := -1.0
 const RESOLVE_SLOW_MS := 500.0
-const KEYART := "res://assets/ui/keyart/%s.jpg"
+const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const TIPS: Array[String] = [
 	"Undo (bottom right) takes back your last order of the turn.",
 	"Tap another of your fleets with a fleet selected to join them.",
@@ -81,20 +81,21 @@ static func slow_resolve() -> bool:
 	return last_resolve_ms > RESOLVE_SLOW_MS
 
 
-## The key art of a pack, null when its file is missing.
+## The backdrop of a pack: its placeholder gradient (top to bottom) as a texture.
 static func keyart(p_pack: String) -> Texture2D:
 	if _art.has(p_pack):
 		return _art[p_pack]
-	var t: Texture2D = null
-	var path: String = KEYART % p_pack
-	if ResourceLoader.exists(path):
-		t = load(path) as Texture2D
-	elif FileAccess.file_exists(path):
-		var img := Image.load_from_file(path)
-		if img != null and not img.is_empty():
-			t = ImageTexture.create_from_image(img)
-	_art[p_pack] = t
-	return t
+	var cols: Array = MenuPrefs.PLACEHOLDER.get(p_pack, MenuPrefs.PLACEHOLDER["rome"])
+	var gr := Gradient.new()
+	gr.colors = PackedColorArray([cols[0], cols[1]])
+	var gt := GradientTexture2D.new()
+	gt.gradient = gr
+	gt.fill_from = Vector2(0.5, 0.0)
+	gt.fill_to = Vector2(0.5, 1.0)
+	gt.width = 4
+	gt.height = 256
+	_art[p_pack] = gt
+	return gt
 
 
 ## A tip for this panel (view only: the global random generator, never the sim's).
@@ -113,7 +114,7 @@ func _build(title: String) -> void:
 	art.set_anchors_preset(Control.PRESET_FULL_RECT)
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	art.stretch_mode = TextureRect.STRETCH_SCALE
 	art.modulate = Color(0.6, 0.6, 0.6)   # darkened 40 %
 	var pk := pack if pack != "" else CData.pack
 	art.texture = keyart(pk)

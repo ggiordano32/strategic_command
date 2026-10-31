@@ -1,23 +1,20 @@
 extends Control
 ## The title menu's background, one of MenuPrefs.BACKGROUNDS (the selector at the bottom of the title screen): the
-## live overworld (diorama.gd) or painted key art (assets/ui/keyart/<pack>.jpg, a dark placeholder until the file
-## exists) of one setting, fitted cover-style with a 1 % parallax. Switching cross-fades the pictures (0.5 s); a
-## diorama is built for the chosen setting (a step a frame; the setting's key art stands in until it is ready). On
-## the campaign pages the key art follows the hovered setting card.
+## live overworld (diorama.gd) of one setting, built a step a frame; the setting's placeholder gradient (a dark wood
+## for the West, a cool stone for Rome: MenuPrefs.PLACEHOLDER, no picture) stands in until it is ready, behind it,
+## and where it is not built at all (a test run). Switching drops the table and builds the other (0.5 s cross-fade).
+## On the campaign pages the placeholder follows the hovered setting card while no table shows.
 ## A gradient darkens the left side under the entries. View only.
 
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Diorama := preload("res://game/menu/diorama.gd")
 const PackView := preload("res://game/campaign/pack_view.gd")
 
-const KEYART := "res://assets/ui/keyart/%s.jpg"
-const PLACEHOLDER := {"west": [Color(0.05, 0.12, 0.14), Color(0.22, 0.16, 0.08)], "rome": [Color(0.07, 0.09, 0.14), Color(0.17, 0.2, 0.22)]}
-
 signal diorama_built(ms: float)
 
-var choice := "art_rome"      # the background in force (one of MenuPrefs.BACKGROUNDS)
-var pack := "rome"            # the setting the key art shows (the choice's, or the hovered card's)
-var mode := "art"             # what is in force: diorama / art
+var choice := "diorama_rome"  # the background in force (one of MenuPrefs.BACKGROUNDS)
+var pack := "rome"            # the setting the placeholder shows (the choice's, or the hovered card's)
+var mode := "diorama"         # always the live table (kept for the callers)
 var diorama: Node = null
 var _holder: SubViewportContainer
 var _vp: SubViewport
@@ -26,24 +23,14 @@ var _tw := {}                 # pack -> its fade tween
 var _dim: ColorRect
 var _shade: TextureRect
 var _building := false
-var par := Vector2.ZERO
 
 
 class ArtLayer extends Control:
-	var tex: Texture2D = null
 	var cols: Array = []
-	var par := Vector2.ZERO
 	func _draw() -> void:
 		var r := Rect2(Vector2.ZERO, size)
-		if tex == null:
-			# no painted file yet: a dark vertical gradient
-			var g := PackedColorArray([cols[0], cols[0], cols[1], cols[1]])
-			draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]), g)
-			return
-		var ts := tex.get_size()
-		var k := maxf(size.x / ts.x, size.y / ts.y) * 1.03
-		var dr := Rect2((size - ts * k) * 0.5 + par * size, ts * k)
-		draw_texture_rect(tex, dr, false)
+		var g := PackedColorArray([cols[0], cols[0], cols[1], cols[1]])
+		draw_polygon(PackedVector2Array([r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]), g)
 
 
 func _ready() -> void:
@@ -52,19 +39,12 @@ func _ready() -> void:
 	clip_contents = true
 	for p in ["west", "rome"]:
 		var a := ArtLayer.new()
-		a.cols = PLACEHOLDER[p]
+		a.cols = MenuPrefs.PLACEHOLDER[p]
 		a.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		a.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		a.modulate.a = 0.0
 		add_child(a)
 		_art[p] = a
-		var path: String = KEYART % p
-		if ResourceLoader.exists(path):
-			a.tex = load(path) as Texture2D
-		elif FileAccess.file_exists(path):
-			var img := Image.load_from_file(path)
-			if img != null and not img.is_empty():
-				a.tex = ImageTexture.create_from_image(img)
 	_holder = SubViewportContainer.new()
 	_holder.stretch = true
 	_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -98,7 +78,6 @@ func _ready() -> void:
 	_dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_dim)
 	resized.connect(_on_resized)
-	set_process(false)
 
 
 func _on_resized() -> void:
@@ -122,13 +101,13 @@ func _fade_art(p: String) -> void:
 		_tw[k] = tw
 
 
-## Show the setting's key art (cross-fade); a diorama in force stays.
+## Show the setting's placeholder (cross-fade); a table that is up stays.
 func show_pack(p: String) -> void:
 	if not _art.has(p) or p == pack and (_art[p] as Control).modulate.a > 0.5:
 		pack = p
 		return
 	pack = p
-	if mode == "art":
+	if diorama == null:
 		_fade_art(p)
 
 
@@ -137,23 +116,22 @@ func activate(c: String) -> void:
 	choice = c
 	mode = MenuPrefs.kind(c)
 	pack = MenuPrefs.pack_of(c)
-	set_process(true)
 	_drop_diorama()
 	_holder.visible = false
 	for k in _tw:
 		if (_tw[k] as Tween).is_valid():
 			(_tw[k] as Tween).kill()
 	_tw.clear()
-	# (the setting's key art is the stand-in until a diorama is ready)
+	# (the setting's placeholder is the stand-in until the table is ready)
 	for k in _art:
 		(_art[k] as Control).modulate.a = 1.0 if k == pack else 0.0
-	if mode == "diorama":
+	if not MenuPrefs.skip_live():
 		_start_diorama.call_deferred()
 
 
 ## Change to `c` with a cross-fade; the diorama is dropped and, if chosen, built anew for its setting.
 func switch_to(c: String) -> void:
-	if c == choice and (mode == "art" or diorama != null):
+	if c == choice and diorama != null:
 		return
 	choice = c
 	mode = MenuPrefs.kind(c)
@@ -161,17 +139,16 @@ func switch_to(c: String) -> void:
 	_drop_diorama()
 	_holder.visible = false
 	_fade_art(pack)
-	if mode == "diorama":
+	if not MenuPrefs.skip_live():
 		_start_diorama.call_deferred()
 
 
 func deactivate() -> void:
 	_drop_diorama()
-	set_process(false)
 
 
 func _start_diorama() -> void:
-	if mode != "diorama" or _building or not is_visible_in_tree():
+	if _building or not is_visible_in_tree():
 		return
 	if diorama != null and is_instance_valid(diorama):
 		return
@@ -196,21 +173,3 @@ func _drop_diorama() -> void:
 	_building = false
 	if _holder != null:
 		_holder.modulate.a = 0.0
-
-
-func _process(_delta: float) -> void:
-	# a 1 % parallax with the pointer (tilt on a phone)
-	var want := Vector2.ZERO
-	var g := Input.get_gravity()
-	if g.length() > 1.0 and DisplayServer.is_touchscreen_available() and OS.has_feature("mobile"):
-		want = Vector2(clampf(g.x / 9.8, -0.5, 0.5), clampf(g.y / 9.8, -0.5, 0.5)) * 2.0
-	elif size.x > 0.0 and size.y > 0.0:
-		var m := get_local_mouse_position()
-		want = Vector2(clampf(m.x / size.x, 0.0, 1.0), clampf(m.y / size.y, 0.0, 1.0)) * 2.0 - Vector2.ONE
-	var np := par.lerp(want * 0.01, 0.05)
-	if np.distance_to(par) < 0.00002:
-		return
-	par = np
-	for k in _art:
-		(_art[k] as ArtLayer).par = par
-		(_art[k] as Control).queue_redraw()

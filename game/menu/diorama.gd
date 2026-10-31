@@ -22,8 +22,8 @@ signal built(ms: float)
 
 ## Per setting: the region the camera looks at, its zoom, and where that spot sits in the window (fractions).
 const SCENES := {
-	"west": {"style": "table", "region": "port_royal", "zoom": 2.6, "at": Vector2(0.62, 0.40), "shift": Vector2(-10, 10)},
-	"rome": {"style": "relief", "region": "campania", "zoom": 2.0, "at": Vector2(0.64, 0.44), "shift": Vector2(-70, -25)},
+	"west": {"style": "table", "region": "port_royal", "zoom": 2.1, "at": Vector2(0.62, 0.40), "shift": Vector2(-10, 10)},
+	"rome": {"style": "relief", "region": "campania", "zoom": 1.65, "at": Vector2(0.64, 0.44), "shift": Vector2(-70, -25)},
 }
 const DRIFT_PX := 13.0       # amplitude: with a 4 minute period about 20 px a minute at the fastest
 const DRIFT_PERIOD := 240.0
@@ -43,6 +43,8 @@ var _vp: Vector2 = Vector2(1280, 720)
 var _base := Vector2.ZERO
 var _t := 0.0
 var _zoom := 1.5
+var _at := Vector2(0.6, 0.4)
+var _shift := Vector2.ZERO
 var _canceled := false
 var _forced := false
 var _prev_style := "auto"
@@ -109,6 +111,16 @@ func _make_layers() -> void:
 	ol.add_child(overlay)
 	var sc: Dictionary = SCENES[pack]
 	_zoom = float(sc["zoom"])
+	_at = sc["at"]
+	_shift = sc["shift"]
+	for a in OS.get_cmdline_user_args():   # testing aids: --menu-zoom=<z>, --menu-at=<x>,<y>, --menu-shift=<x>,<y>
+		var v := str(a).get_slice("=", 1)
+		if str(a).begins_with("--menu-zoom="):
+			_zoom = float(v)
+		elif str(a).begins_with("--menu-at="):
+			_at = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1)))
+		elif str(a).begins_with("--menu-shift="):
+			_shift = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1)))
 	_aim()
 	_apply_view()
 	map_view.state = st
@@ -132,8 +144,8 @@ func _finish() -> void:
 
 func _aim() -> void:
 	var sc: Dictionary = SCENES[pack]
-	var site := Geo.site(CData.region_index(str(sc["region"]))) + (sc["shift"] as Vector2)
-	_base = _vp * (sc["at"] as Vector2) - site * _zoom
+	var site := Geo.site(CData.region_index(str(sc["region"]))) + _shift
+	_base = _vp * _at - site * _zoom
 
 
 func resize(vp: Vector2) -> void:
