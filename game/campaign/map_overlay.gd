@@ -124,6 +124,8 @@ var markers: Array = []
 ## one tapped once (merge_tap: its glyph rings).
 var merge_marks: Array = []
 var merge_tap := -1
+## The army under a dragged army (an Exchange drop): a gold ring on its banner while the drag is over it, -1 none.
+var drop_army := -1
 var _tips: Array = []  # intents to draw over the banners: [point, kind, colour, caption]
 ## Fleets (a pack with ships): the selected one and the planned voyages
 ## ([{fleet, path [cells], t [turn per cell], land, attack}]).
@@ -894,7 +896,20 @@ func _mk_of(z: float) -> float:
 	return clampf(z / 0.7, 0.5, 1.0)
 
 
+func set_drop(id: int) -> void:
+	if id != drop_army:
+		drop_army = id
+		if _drawn_once:
+			(_nodes[P_GLOW] as Node2D).queue_redraw()
+
+
 func _glow_body() -> void:
+	if drop_army >= 0 and _army_epoch == _epoch and _army_pos.has(drop_army):
+		var dm := _mk_of(_dz[P_ARMIES])
+		var dc: Vector2 = _army_pos[drop_army] + Vector2(-2.0, -2.0) * maxf(dm, 0.8)
+		var dr := 24.0 * maxf(dm, 0.8) + 1.5 * sin(pulse * 6.0)
+		_ci.draw_circle(dc, dr, Color(Color(1.0, 0.85, 0.3), 0.22))
+		_ci.draw_arc(dc, dr, 0, TAU, 36, Color(Color(1.0, 0.85, 0.3), 0.95), 2.4, true)
 	var sel := selected_army
 	if sel < 0 or _army_epoch != _epoch or not _army_pos.has(sel):
 		return

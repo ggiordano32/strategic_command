@@ -1982,7 +1982,7 @@ func show_exchange(id: int, other: int) -> void:
 	var hl := Kit.label(hint, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and why != "no units chosen" else Kit.COL_DIM, true)
 	hl.name = "xc_hint"
 	v.add_child(hl)
-	var ok_text := ("Gift %d unit%s" % [out.size(), "" if out.size() == 1 else "s"]) if gift else "Confirm"
+	var ok_text := ("Gift %d unit%s" % [out.size(), "" if out.size() == 1 else "s"]) if gift else "Exchange"
 	# Confirm and Cancel in the dialog's button row: always in view. A
 	# re-render after a tap keeps the scroll position (show_dialog).
 	s.show_dialog("Exchange units" if not gift else "Give units to %s" % CData.faction_name(int(b["f"])), v,

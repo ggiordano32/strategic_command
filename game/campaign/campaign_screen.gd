@@ -1818,6 +1818,7 @@ func deselect_all() -> void:
 	_drag_army = -1
 	_drag_cell = -1
 	_drag_tgt = -1
+	overlay.set_drop(-1)
 	close_side()
 	_update_hint()
 	_t("campaign_input", {"what": "deselect"})
@@ -3691,6 +3692,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 		else:
 			_multi = true
 			_drag_army = -1
+			overlay.set_drop(-1)
 			_drag_preview(-1, -1)
 			_start_pinch()
 		return
@@ -3700,8 +3702,16 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 		_drag_army = -1
 		_dragging = false
 		_drag_preview(-1, -1)
+		var xt := _exchange_target(id2, e.position)
+		overlay.set_drop(-1)
 		if sel_army != id2:
 			select_army(id2)
+		if xt >= 0:
+			# dropped on another army of ours standing with it: the Exchange dialog (the drag's march is not planned)
+			merge_tap = -1
+			panels.show_exchange(id2, xt)
+			_t("campaign_input", {"what": "exchange_drag"})
+			return
 		_plan_at(e.position)
 		return
 	if not _touches.has(e.index):
@@ -3753,6 +3763,12 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
 	if _dragging and _drag_army >= 0:
+		var xt := _exchange_target(_drag_army, e.position)
+		overlay.set_drop(xt)
+		if xt >= 0:
+			if _drag_cell >= 0:
+				_drag_preview(-1, -1)   # over an army to trade with: no march path, the target is ringed
+			return
 		var tg := _target_at(e.position)
 		if int(tg[0]) != _drag_cell or int(tg[1]) != _drag_tgt:
 			_drag_preview(int(tg[0]), int(tg[1]))
@@ -4066,6 +4082,22 @@ func _plan_at(p: Vector2) -> void:
 	set_move6(sel_army, int(tg[0]), int(tg[1]))
 	if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
 		show_side(func(box): panels.army_panel(box, sel_army))
+
+
+## The army of ours under screen point p that the dragged army `id` may trade units with (same faction, standing
+## together: CRules.together via the panel's partners), -1 none. Dropping on it opens the Exchange dialog.
+func _exchange_target(id: int, p: Vector2) -> int:
+	var tid := overlay.army_at(p)
+	if tid < 0 or tid == id:
+		return -1
+	var a := CState.army(ps, id)
+	var b := CState.army(ps, tid)
+	if a.is_empty() or b.is_empty() or int(a["f"]) != f or int(b["f"]) != f:
+		return -1
+	for o in panels._partners(ps, a):
+		if int(o["id"]) == tid:
+			return tid
+	return -1
 
 
 ## The path preview while dragging an army (cell -1: none).

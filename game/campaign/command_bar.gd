@@ -58,6 +58,9 @@ const ACT_ICON := 26           # icon size, desktop
 const ACT_ICON_PHONE := 24
 const ACT_FONT := 11
 const MAX_TRAITS := 3
+const PRIMARY := 3             # actions that stay on the bar when the rest fold under "..."
+const FOLD_CARDS := 4          # the strip must hold this many cards (at their narrowest) beside the actions, else fold
+const QUICK_MAX := 3           # quick recruit chips beside Recruit
 const COL_BG := Color(0.07, 0.085, 0.075, 0.95)
 const WARM_ACTIONS := ["assault", "build", "cancel", "close", "details", "disband", "embark", "exchange", "merge", "raid",
 	"raise", "recruit", "sally", "ship", "shipyard", "siege", "split", "view_map", "walls", "war", "withdraw", "more"]
@@ -71,6 +74,8 @@ var _h := DESK_H
 var _key := ""
 var _scroll_keep := {}      # selection key -> strip scroll
 var _strip: ScrollContainer = null
+var _more: Array = []           # the actions folded under "..." (Buttons, not in the tree until the popover opens)
+var _pop: Control = null        # the open "..." popover (a child of the screen's ui layer), null closed
 
 
 func _init(screen) -> void:
@@ -141,6 +146,11 @@ func refresh() -> bool:
 	if _strip != null and is_instance_valid(_strip):
 		_scroll_keep[_key] = _strip.scroll_horizontal
 	_strip = null
+	_close_more()
+	for b in _more:
+		if is_instance_valid(b) and b.get_parent() == null:
+			b.queue_free()
+	_more = []
 	for c in get_children():
 		remove_child(c)
 		c.queue_free()
@@ -190,7 +200,7 @@ func _stat(icon: String, text: String, tip: String, col: Color = Color.WHITE) ->
 
 ## The card on the left: emblem, title and sub line, glyph + number pairs,
 ## a status line.
-func _leader(fac: int, title: String, sub: String, title_col: Color, stats: Array, status: String, status_col: Color) -> Control:
+func _leader(fac: int, title: String, sub: String, title_col: Color, stats: Array, status: String, status_col: Color, line: String = "") -> Control:
 	var v := Kit.vbox(3)
 	v.name = "leader_card"
 	v.custom_minimum_size.x = LEADER_W_PHONE if phone else LEADER_W
@@ -220,9 +230,16 @@ func _leader(fac: int, title: String, sub: String, title_col: Color, stats: Arra
 		stl.name = "leader_status"
 		stl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		stl.custom_minimum_size.x = 40
-		stl.tooltip_text = status
+		stl.tooltip_text = status if line == "" else "%s\n%s" % [status, line]
 		stl.mouse_filter = Control.MOUSE_FILTER_STOP
 		v.add_child(stl)
+	if line != "" and not phone:
+		# the summary under the status (a phone has no room: it is the status's tooltip)
+		var ll := Kit.label(line, 11, Kit.COL_DIM)
+		ll.name = "leader_line"
+		ll.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		ll.custom_minimum_size.x = 40
+		v.add_child(ll)
 	return v
 
 
@@ -301,7 +318,8 @@ func _details_action() -> Button:
 
 ## Put the pieces together: desktop: card, strip (scrolls), actions; phone:
 ## everything in one scrolling row.
-func _assemble(leader: Control, cards: Array, extra: Array, actions: Array) -> void:
+func _assemble(leader: Control, cards: Array, extra: Array, actions: Array, quick: Control = null) -> void:
+	actions = _fold(actions, cards.size(), quick)
 	if phone:
 		var sc := TouchScroll.new()
 		sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -316,6 +334,9 @@ func _assemble(leader: Control, cards: Array, extra: Array, actions: Array) -> v
 		for e in extra:
 			row.add_child(e)
 		row.add_child(_sep())
+		if quick != null:
+			row.add_child(quick)
+			row.add_child(_sep())
 		row.add_child(_actions(actions))
 		add_child(sc)
 		_strip = sc
@@ -341,8 +362,97 @@ func _assemble(leader: Control, cards: Array, extra: Array, actions: Array) -> v
 			sc2.accept_event())
 	root.add_child(sc2)
 	root.add_child(_sep())
+	if quick != null:
+		root.add_child(quick)
+		root.add_child(_sep())
 	root.add_child(_actions(actions))
 	_strip = sc2
+
+
+## The "..." fold: when the actions do not fit beside the leader card and a strip that still shows FOLD_CARDS cards
+## (a phone's single scrolling row, or a desktop bar on a narrow window), the first PRIMARY actions stay and the rest
+## go under one "..." button that opens a popover (`_open_more`). The folded buttons are the same Buttons, built by
+## `_action`, so their taps, greyed reasons and names are unchanged.
+func _fold(list: Array, ncards: int, quick: Control) -> Array:
+	_more = []
+	if list.size() <= PRIMARY + 1:
+		return list
+	var fits := true
+	if phone:
+		fits = false   # one scrolling row: everything past the primary actions would be scrolled to
+	else:
+		var vp: Vector2 = s._vp()
+		var act_w := ceili(list.size() / 2.0) * (ACT_W + 4.0)
+		var qw := 0.0 if quick == null else quick.get_combined_minimum_size().x + 20.0
+		var strip_need := minf(float(maxi(ncards, 1)), float(FOLD_CARDS)) * (CARD_MIN_W + 6.0)
+		fits = vp.x - 2.0 * MARGIN - LEADER_W - act_w - qw - 60.0 >= strip_need
+	if fits:
+		return list
+	var keep: Array = list.slice(0, PRIMARY)
+	_more = list.slice(PRIMARY)
+	var mb := _action("more", "...", "More actions (%d)" % _more.size(), func(): _open_more(), "", "more")
+	keep.append(mb)
+	return keep
+
+
+func _close_more() -> void:
+	if _pop != null and is_instance_valid(_pop):
+		for b in _pop.find_children("*", "Button", true, false):
+			if b.get_parent() != null:
+				b.get_parent().remove_child(b)
+		_pop.get_parent().remove_child(_pop)
+		_pop.queue_free()
+	_pop = null
+
+
+## The popover over the "..." button: the folded actions in a flow, in the bar's look, with a full-screen catcher
+## behind it (a tap anywhere else closes it and is not a map tap).
+func _open_more() -> void:
+	if _pop != null and is_instance_valid(_pop):
+		_close_more()
+		return
+	var mb: Button = find_child("act_more", true, false)
+	var layer := get_parent()
+	if mb == null or layer == null or _more.is_empty():
+		return
+	var vp: Vector2 = s._vp()
+	var catcher := Button.new()
+	catcher.name = "more_catcher"
+	catcher.flat = true
+	catcher.focus_mode = Control.FOCUS_NONE
+	catcher.mouse_filter = Control.MOUSE_FILTER_STOP
+	catcher.set_anchors_preset(Control.PRESET_FULL_RECT)
+	catcher.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	catcher.add_theme_stylebox_override("hover", StyleBoxEmpty.new())
+	catcher.add_theme_stylebox_override("pressed", StyleBoxEmpty.new())
+	catcher.pressed.connect(_close_more)
+	var pc := PanelContainer.new()
+	pc.name = "more_pop"
+	pc.add_theme_stylebox_override("panel", Kit.box(Color(0.07, 0.085, 0.075, 0.98), 6.0, 8))
+	var fl := Kit.flow(4)
+	fl.name = "more_flow"
+	var per_row := mini(_more.size(), maxi(2, int((vp.x - 2.0 * MARGIN - 24.0) / ((ACT_W_PHONE if phone else ACT_W) + 4.0))))
+	per_row = mini(per_row, 6)
+	fl.custom_minimum_size.x = per_row * ((ACT_W_PHONE if phone else ACT_W) + 4.0) - 4.0
+	for b in _more:
+		fl.add_child(b)
+		(b as Button).pressed.connect(_close_more, CONNECT_DEFERRED)
+	pc.add_child(fl)
+	catcher.add_child(pc)
+	layer.add_child(catcher)
+	_pop = catcher
+	# above the bar, its right edge on the "..." button's, kept inside the viewport. The flow's own minimum height is
+	# one row's, so the panel's size is worked out from the rows the buttons wrap into.
+	var bw := (ACT_W_PHONE if phone else ACT_W) + 4.0
+	var rows := ceili(float(_more.size()) / float(per_row))
+	var bh: float = (_more[0] as Button).get_combined_minimum_size().y
+	var sz := Vector2(per_row * bw - 4.0 + 12.0, rows * (bh + 4.0) - 4.0 + 12.0)
+	pc.custom_minimum_size = sz
+	pc.size = sz
+	var br := mb.get_global_rect()
+	var x := clampf(br.end.x - sz.x, MARGIN, maxf(MARGIN, vp.x - sz.x - MARGIN))
+	var y := maxf(MARGIN, get_global_rect().position.y - sz.y - 4.0)
+	pc.position = Vector2(x, y)
 
 
 ## Card width: the widest that lets n cards fit the strip on a desktop.
@@ -383,11 +493,14 @@ func _status(a: Dictionary) -> Array:
 		return ["In a battle", Kit.COL_BAD]
 	var role := CRules.siege_role(ps, a)
 	if role == 1:
-		return ["Besieging %s" % CData.REGIONS[int(a["r"])]["city"], Kit.COL_GOLD]
+		return ["Besieging %s: %s" % [CData.REGIONS[int(a["r"])]["city"], _stores(int(a["r"]))], Kit.COL_GOLD]
 	if role == 2:
-		return ["Besieged inside the walls", Kit.COL_BAD]
+		return ["Besieged: %s" % _stores(int(a["r"])), Kit.COL_BAD]
 	var p6: Dictionary = s.plan6(id)
 	if p6.is_empty():
+		var rg := int(a["r"])
+		if CState.stance(a) == CData.ST_RAID and CState.grid_on(ps) and CRules.raid_map(ps)[rg] == int(a["f"]):
+			return ["Raiding %s: +%d a turn" % [CData.REGIONS[rg]["city"], CRules._base_income(ps, rg) * CData.RAID_PCT / 100], Kit.COL_GOLD]
 		var tres: int = MapOverlay.trespass_owner(ps, int(a["f"]), int(a["r"])) if int(a["f"]) == s.f else -1
 		if tres >= 0:
 			return ["Trespassing in %s's land" % CData.faction_name(tres), Color(1.0, 0.55, 0.1)]
@@ -405,6 +518,19 @@ func _status(a: Dictionary) -> Array:
 		var last := int(rt["t"][-1])
 		when = ", arrives this turn" if last == 0 else (", next turn" if last == 1 else ", in %d turns" % (last + 1))
 	return [verb + when, Kit.COL_GOOD if kind in ["move", "inside", "merge"] else Kit.COL_BAD]
+
+
+## "3 turns of stores left" of the siege record at region r (CState.siege_at's "supply": the turns the besieged hold
+## out; each turn takes one, two while a blockade by sea stops the supply, CRules.end_turn).
+func _stores(r: int) -> String:
+	var n := int(CState.siege_at(s.ps, r).get("supply", 0))
+	return "%d turn%s of stores left" % [n, "" if n == 1 else "s"]
+
+
+## The army's summary line: men, companies, the stance's word.
+func _army_line(a: Dictionary) -> String:
+	var n := CState.unit_count(a)
+	return "%d men, %d compan%s, %s" % [CState.men(a), n, "y" if n == 1 else "ies", str(CData.STANCE_NAMES.get(CState.stance(a), "Default")).replace("Default", "March")]
 
 
 func _build_army(id: int) -> void:
@@ -445,7 +571,7 @@ func _build_army(id: int) -> void:
 		if int(CChars.slot_of(str(c["kind"]))) != CChars.SLOT_HERO:
 			stats.append(_stat(Panels.char_glyph(str(c["kind"])), "", "%s: %s" % [CChars.slot_name(CChars.slot_of(str(c["kind"]))), str(c.get("name", ""))]))
 	var stt := _status(a)
-	var leader := _leader(af, title, sub, CData.faction_color(af).lightened(0.45), stats, str(stt[0]), stt[1])
+	var leader := _leader(af, title, sub, CData.faction_color(af).lightened(0.45), stats, str(stt[0]), stt[1], _army_line(a))
 	# Actions.
 	var acts: Array = []
 	var sel: Array = s.panels._split_sel.get(id, [])
@@ -571,6 +697,68 @@ func _build_army(id: int) -> void:
 
 # -------------------------------------------------------------- city ---
 
+## The quick recruit chips beside Recruit: the first QUICK_MAX units the raise dialog lists (its order: the unit
+## groups, the dialog's `_grouped` filter), each with the short name and the price; a tap queues one recruit of a new
+## army (the order the dialog's Raise army sends); greyed, and a tap says why, when the turn's slots are used or the
+## gold is short (CRules.recruit_options' own refusal).
+func _quick_chips(r: int) -> Control:
+	var ps: Dictionary = s.ps
+	var f: int = s.f
+	var groups: Array = []
+	for g in Traits.GROUP_LABEL.size():
+		groups.append([])
+	for o in Panels.best_options(ps, f, r):
+		if Panels._is_locked(str(o["why"])):
+			continue
+		(groups[Traits.group_of(UT.index_of(str(o["t"])))] as Array).append(o)
+	var list: Array = []
+	for g in groups:
+		list.append_array(g)
+	if list.is_empty():
+		return null
+	var box := Kit.vbox(1)
+	box.name = "quick_recruit"
+	var cap := Kit.label("Quick recruit", 10, Kit.COL_DIM)
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(cap)
+	var row := Kit.hbox(3)
+	row.name = "quick_row"
+	var bh := (PHONE_H - 26.0 - 14.0) if phone else (ACT_H - 8.0)
+	for k in mini(QUICK_MAX, list.size()):
+		var o: Dictionary = list[k]
+		var key := str(o["t"])
+		var price := int(o["price"])
+		var nm := CData.unit_short(key, f)
+		var b := Button.new()
+		b.name = "quick_" + key
+		b.text = "%s\n%d" % [nm, price]
+		b.focus_mode = Control.FOCUS_NONE
+		b.clip_text = true
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_CHAR
+		b.add_theme_font_size_override("font_size", 11)
+		b.custom_minimum_size = Vector2(ACT_W_PHONE if phone else 58.0, bh + 14.0 if not phone else bh)
+		for st in ["normal", "hover", "pressed", "disabled", "focus", "hover_pressed"]:
+			var sb := Kit.box(_btn_col(st, false), 2.0, 6)
+			sb.content_margin_left = 1.0
+			sb.content_margin_right = 1.0
+			b.add_theme_stylebox_override(st, sb)
+		var why := "" if o["ok"] else CData.local_text(str(o["why"]), f)
+		b.tooltip_text = "Queue one %s (%d) for a new army at %s" % [CData.unit_name(key, f), price, CData.REGIONS[r]["city"]]
+		if why != "":
+			b.tooltip_text += "\n" + why
+			b.modulate = Color(1, 1, 1, 0.45)
+			b.pressed.connect(func():
+				AudioFx.play("refused", 0.9, 0.0, "ui")
+				s.show_toast(why))
+		else:
+			b.pressed.connect(AudioFx.click)
+			b.pressed.connect(func(): s.add_order({"t": "recruit", "r": r, "unit": key, "new": 1}))
+		row.add_child(b)
+	box.add_child(row)
+	return box
+
+
+
 func _build_region(r: int) -> void:
 	var ps: Dictionary = s.ps
 	var f: int = s.f
@@ -603,7 +791,7 @@ func _build_region(r: int) -> void:
 	var scol := Kit.COL_DIM
 	if not sg.is_empty():
 		var tn := int(ps["turn"]) - int(sg["turn"])
-		status = "Besieged by %s, turn %d" % [CData.faction_name(int(sg["f"])), tn]
+		status = "Besieged by %s, turn %d: %s" % [CData.faction_name(int(sg["f"])), tn, _stores(r)]
 		scol = Kit.COL_BAD
 		stats.append(_stat("forage", "%d" % int(sg["supply"]), "Turns of supplies left in the siege"))
 	elif not CState.battle_at(ps, r).is_empty():
@@ -734,10 +922,38 @@ func _build_region(r: int) -> void:
 				holder = gd
 			extra.append(_sep())
 			extra.append(holder)
-	_assemble(leader, cards, extra, acts)
+	_assemble(leader, cards, extra, acts, _quick_chips(r) if mine and grid and CRules.recruits_per_turn(ps, r) > 0 else null)
 
 
 # ------------------------------------------------------------- fleet ---
+
+## The fleet's summary: ships, troops aboard.
+func _fleet_line(fl: Dictionary) -> String:
+	var n := (fl["ships"] as Array).size()
+	var line := "%d ship%s" % [n, "" if n == 1 else "s"]
+	var u := CFleet.carried_units(fl)
+	if u > 0:
+		line += ", %d unit%s aboard" % [u, "" if u == 1 else "s"]
+	return line
+
+
+## Where a fleet holds a station now, in words: "Raiding <lane>: +<take> a turn" (CLanes.raiders and lane_state's
+## "take") or "Blockading <port>: +<take> a turn" (CSea.blockader and blockade_take), "" none.
+func _station(fl: Dictionary) -> String:
+	var ps: Dictionary = s.ps
+	var fid := int(fl["id"])
+	if not CData.SEA_LANES.is_empty():
+		var rt := CLanes.raiders(ps)
+		for lane in CLanes.count():
+			if rt.has(lane) and int((rt[lane] as Dictionary)["id"]) == fid:
+				return "Raiding %s: +%d a turn" % [CLanes.lane_name(lane), int(CLanes.lane_state(ps, lane, rt)["take"])]
+	var rad := CSea.k("BLOCKADE_CELLS", 3)
+	for r in CData.region_count():
+		if CSea.blockader(ps, r) == int(fl["f"]) and CFleet.harbour(r) >= 0 and CGrid.cheb(CFleet.cell(fl), CFleet.harbour(r)) <= rad:
+			return "Blockading %s: +%d a turn" % [CData.REGIONS[r]["city"], CSea.blockade_take(ps, r)]
+	return ""
+
+
 
 func _build_fleet(id: int) -> void:
 	var ps: Dictionary = s.ps
@@ -769,7 +985,10 @@ func _build_fleet(id: int) -> void:
 	if casting:
 		status = "Casting off"
 	var planned := status == "Voyage planned" or dko >= 0 or casting
-	var leader := _leader(ff, "The flota" if flota else "%s fleet" % CData.FACTIONS[ff]["adj"], place, CData.faction_color(ff).lightened(0.45), stats, status, Kit.COL_GOOD if planned else Kit.COL_DIM)
+	var station := _station(fl)
+	if station != "" and not planned:
+		status = station
+	var leader := _leader(ff, "The flota" if flota else "%s fleet" % CData.FACTIONS[ff]["adj"], place, CData.faction_color(ff).lightened(0.45), stats, status, Kit.COL_GOOD if planned else (Kit.COL_GOLD if station != "" else Kit.COL_DIM), _fleet_line(fl))
 	var acts: Array = []
 	if mine and not flota and int(fl.get("moved", 0)) == 0:
 		# (Docking) a fleet lying in port casts off (the same tap again takes the order back); one at sea docks.

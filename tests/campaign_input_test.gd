@@ -130,7 +130,7 @@ func _initialize() -> void:
 		_g_city, _g_city_check, _g_arrive_assault, _g_inside, _g_inside_check, _g_stance, _g_stance_check,
 		_g_drag_army, _g_drag_check, _g_pan, _g_pan_check, _g_siege, _g_siege_assault, _g_siege_continue, _g_siege_withdraw,
 		_g_siege_done, _g_end_turn, _g_summary, _g_replay, _g_replay_check,
-		_m_setup, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
+		_m_setup, _c3_drag, _m_card, _m_xc_open, _m_xc_move, _m_xc_confirm, _m_xc_check, _m_undo, _m_tap1, _m_tap2, _m_merged,
 		_m_far, _m_far1, _m_far2, _m_far_check, _m_block_setup, _m_block_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
 		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
 		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x,
@@ -141,7 +141,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _dp_run, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _c3_bar, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _c3_fleet, _dp_run, _j_done, _s_done,
 	]
 
 
@@ -2787,6 +2787,384 @@ func _s_done() -> void:
 	_check(_errs.n == 0, "the log has no script errors (%d; first %s)" % [_errs.n, _errs.first])
 	print("RESULT: %s" % ("PASS" if failures == 0 else "FAIL (%d)" % failures))
 	quit(0 if failures == 0 else 1)
+
+# --------------------------------------- command bar, round 3 (view only) ---
+
+## A real mouse's drag (the engine emulates a touch and a drag with this device id): press on `from`, move to `to` in
+## steps. `release` false stops with the button held (the highlight is looked at before the drop).
+func _c3_mouse_drag(from: Vector2, to: Vector2, release: bool = true) -> void:
+	var e := InputEventScreenTouch.new()
+	e.index = 0
+	e.device = InputEvent.DEVICE_ID_EMULATION
+	e.position = _win(from)
+	e.pressed = true
+	Input.parse_input_event(e)
+	for k in range(1, 9):
+		var d := InputEventScreenDrag.new()
+		d.index = 0
+		d.device = InputEvent.DEVICE_ID_EMULATION
+		d.position = _win(from.lerp(to, k / 8.0))
+		d.relative = (to - from) / 8.0
+		Input.parse_input_event(d)
+	if release:
+		_c3_mouse_up(to)
+
+
+func _c3_mouse_up(p: Vector2) -> void:
+	var u := InputEventScreenTouch.new()
+	u.index = 0
+	u.device = InputEvent.DEVICE_ID_EMULATION
+	u.position = _win(p)
+	u.pressed = false
+	Input.parse_input_event(u)
+
+
+func _c3_orders(kind: String) -> Array:
+	var out: Array = []
+	for o in cs.orders:
+		if str(o["t"]) == kind:
+			out.append(o)
+	return out
+
+
+## Dragging an army onto another of ours standing with it (touch, then a mouse): the Exchange dialog with the two
+## armies in two columns; Exchange sends one order, Cancel none; the drop target is ringed while the drag is over it;
+## a drop elsewhere opens nothing (it plans the march it always did).
+func _c3_drag() -> void:
+	hold = true
+	cs.close_side()
+	cs.select_army(g0)
+	await process_frame
+	await process_frame
+	var pos: Dictionary = cs.overlay.army_positions()
+	_check(pos.has(g0) and pos.has(g1) and CRules.together(cs.ps, CState.army(cs.ps, g0), CState.army(cs.ps, g1)) == "", "drag: two armies of ours stand together")
+	# the ring while the drag is over the other army, gone when it moves off
+	_c3_mouse_drag(pos[g0], pos[g1], false)
+	await process_frame
+	_check(cs.overlay.drop_army == g1 and cs.overlay.drag.is_empty(), "drag: the army under the drag is ringed (drop_army %d) and the march path is not drawn" % cs.overlay.drop_army)
+	_c3_mouse_up(pos[g1])
+	await process_frame
+	await process_frame
+	var pnl = cs.dialog.find_child("exchange_panel", true, false)
+	_check(cs.dialog.visible and pnl != null and cs.overlay.drop_army == -1, "drag: the drop (mouse) opens the Exchange dialog and clears the ring")
+	_check(_move_order(g0).is_empty() and _move_order(g1).is_empty(), "drag: no march is planned by the drop")
+	_check(cs.dialog.find_child("xa_0", true, false) != null and cs.dialog.find_child("xb_0", true, false) != null, "drag: the dialog lists each army's units")
+	var xc = cs.dialog.find_child("xc_cancel", true, false)
+	if xc != null:
+		_tap_control(xc)
+	await process_frame
+	await process_frame
+	_check(not cs.dialog.visible and _c3_orders("exchange").is_empty(), "drag: Cancel closes it and sends nothing")
+	# touch: a drag drop, a unit across, Exchange
+	pos = cs.overlay.army_positions()
+	_drag(pos[g0], pos[g1])
+	await process_frame
+	await process_frame
+	var row = cs.dialog.find_child("xa_0", true, false)
+	_check(cs.dialog.visible and row != null, "drag: the drop (touch) opens the dialog too")
+	if row != null:
+		_tap_control(row)
+		await process_frame
+		await process_frame
+	var ok = cs.dialog.find_child("xc_confirm", true, false)
+	_check(ok != null and (ok as Button).text == "Exchange" and not (ok as Button).disabled, "drag: the button is Exchange and enabled after a unit is tapped across")
+	if ok != null:
+		_tap_control(ok)
+	await process_frame
+	await process_frame
+	var xo := _c3_orders("exchange")
+	_check(xo.size() == 1 and int(xo[0]["from"]) == g0 and int(xo[0]["to"]) == g1 and str(xo[0]["units"]) == str([0]),
+		"drag: Exchange sends one exchange order {from, to, units}: %s" % str(xo))
+	cs.remove_orders(func(o): return str(o["t"]) == "exchange")
+	# a drop on the ground opens no dialog and plans the march (the drag's old behaviour)
+	cs.select_army(g0)
+	await process_frame
+	pos = cs.overlay.army_positions()
+	var c := CState.field_cell(CData.region_index("samnium"))
+	_c3_mouse_drag(pos[g0], _cell_screen(c))
+	await process_frame
+	await process_frame
+	_check(not cs.dialog.visible and cs.overlay.drop_army == -1, "drag: a drop elsewhere opens no dialog")
+	cs.remove_orders(func(o): return str(o["t"]) == "move")
+	cs.close_side()
+	cs.select_army(g0)
+	await process_frame
+	hold = false
+
+
+func _c3_label(name: String) -> String:
+	var l = cs.cmd_bar.find_child(name, true, false)
+	return (l as Label).text if l != null else ""
+
+
+## Rome, a fresh campaign: the status line for a besieging army, a besieged town and a raiding army; the "..." fold
+## at narrow widths; the quick recruit chips.
+func _c3_bar() -> void:
+	hold = true
+	cs.queue_free()
+	await process_frame
+	var st := CState.new_campaign("C3", 3, [rome])
+	cs = CampaignScreen.new()
+	cs.no_bar = false
+	cs.details_on_select = false
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_c3")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.cover.visible = false
+	cs.orders = []
+	var mine := CState.armies_of(cs.st, rome)
+	var a0 := int(mine[0]["id"])
+	var a1 := int(mine[1]["id"])
+	# --- the status line: besieging army, besieged town
+	var cor := CData.region_index("corsica")
+	var city := str(CData.REGIONS[cor]["city"])
+	CState.place(CState.army(cs.st, a0), CState.ring_cell(cor, 0))
+	CRules.start_siege(cs.st, cor, CState.army(cs.st, a0), CData.region_index("latium"))
+	cs._replan()
+	cs.focus_region(cor, 1.1)
+	cs.select_army(a0)
+	await process_frame
+	await process_frame
+	var sup := int(CState.siege_at(cs.ps, cor)["supply"])
+	var want := "Besieging %s: %d turn%s of stores left" % [city, sup, "" if sup == 1 else "s"]
+	_check(_c3_label("leader_status") == want, "status: a besieging army reads '%s' (got '%s')" % [want, _c3_label("leader_status")])
+	var line := _c3_label("leader_line")
+	var ar := CState.army(cs.ps, a0)
+	_check(line.contains("%d men" % CState.men(ar)) and line.contains("%d companies" % CState.unit_count(ar)), "status: the summary line has men and companies (%s)" % line)
+	cs.select_region(cor)
+	await process_frame
+	await process_frame
+	var tw := _c3_label("leader_status")
+	_check(tw.begins_with("Besieged by") and tw.ends_with("%d turn%s of stores left" % [sup, "" if sup == 1 else "s"]), "status: the besieged town reads its stores (%s)" % tw)
+	# --- a raiding army (stance Raid, in a land at war with us)
+	cs.st["sieges"] = []
+	var rr := -1
+	for r in CData.region_count():
+		var o := CState.owner(cs.st, r)
+		if o >= 0 and o != rome and CState.at_war(cs.st, rome, o) and r != cor:
+			rr = r
+			break
+	if rr < 0:
+		var o2 := CState.owner(cs.st, CData.region_index("apulia"))
+		CRules.declare_war(cs.st, rome, o2)
+		rr = CData.region_index("apulia")
+	var rar := CState.army(cs.st, a1)
+	CState.place(rar, CState.field_cell(rr))
+	rar["stance"] = CData.ST_RAID
+	cs._replan()
+	cs.focus_region(rr, 1.1)
+	cs.select_army(a1)
+	await process_frame
+	await process_frame
+	var raid := int(CRules.income(cs.ps, rome).get("raid", 0))
+	var rw := "Raiding %s: +%d a turn" % [str(CData.REGIONS[rr]["city"]), raid]
+	_check(raid > 0 and _c3_label("leader_status") == rw, "status: a raiding army reads '%s' (got '%s')" % [rw, _c3_label("leader_status")])
+	rar["stance"] = CData.STANCE_FIELD
+	cs._replan()
+	# --- the fold: our army with its neighbour at narrow widths
+	var lat := CData.region_index("latium")
+	var c0 := CState.field_cell(lat)
+	CState.place(CState.army(cs.st, a0), c0)
+	CState.place(CState.army(cs.st, a1), _neighbour(c0))
+	var gu1: Array = CState.army(cs.st, a1)["units"]
+	while gu1.size() > 3:
+		gu1.pop_back()   # (room to merge: the bar then offers Merge and Exchange both, seven actions)
+	cs._replan()
+	cs.focus_region(lat, 1.4)
+	var win := root.content_scale_size
+	var root_size := root.size
+	for sz in [Vector2i(1280, 720), Vector2i(800, 450), Vector2i(844, 390), Vector2i(600, 360)]:
+		root.content_scale_size = sz
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		if DisplayServer.get_name() == "headless":
+			root.size = sz
+		cs.close_side()
+		await process_frame
+		cs.select_army(a0)
+		for k in 4:
+			await process_frame
+		var bar = cs.cmd_bar
+		var tag := "fold %dx%d: " % [sz.x, sz.y]
+		var more = bar.find_child("act_more", true, false)
+		if sz.x == 1280:
+			_check(more == null and bar.find_child("act_exchange", true, false) != null, tag + "everything fits, no '...' button")
+			continue
+		var names: Array[String] = []
+		for b in bar.find_children("act_*", "Button", true, false):
+			names.append(str(b.name))
+		_check(more != null and bar.find_child("act_stance", true, false) != null and bar.find_child("act_details", true, false) == null,
+			tag + "the '...' button shows, the first actions stay, Details is folded (bar: %s)" % str(names))
+		if more == null:
+			continue
+		var br: Rect2 = bar.get_global_rect()
+		_check(br.encloses((more as Control).get_global_rect()) or (sz.x < 700), tag + "'...' is inside the bar")
+		(more as Button).pressed.emit()
+		await process_frame
+		await process_frame
+		var pop = cs.find_child("more_pop", true, false)
+		br = bar.get_global_rect()
+		_check(pop != null and pop.get_global_rect().position.x >= -0.5 and pop.get_global_rect().end.x <= cs._vp().x + 0.5 and pop.get_global_rect().end.y <= br.position.y + 0.5,
+			tag + "the popover opens above the bar, inside the screen (%s)" % str(pop.get_global_rect() if pop != null else null))
+		var reach := true
+		var miss: Array[String] = []
+		for nm in ["act_exchange", "act_merge", "act_split", "act_disband", "act_details"]:
+			var b = cs.find_child(nm, true, false)
+			if b == null:
+				reach = false
+				miss.append(nm)
+		_check(reach, tag + "split / merge / exchange / disband / details are all reachable (on the bar or in the popover; missing %s)" % str(miss))
+		var xb = cs.find_child("act_exchange", true, false)
+		if pop != null and xb != null:
+			_check(pop.is_ancestor_of(xb) or bar.is_ancestor_of(xb), tag + "Exchange is on the bar or in the popover")
+			if pop.is_ancestor_of(xb):
+				(xb as Button).pressed.emit()
+				await process_frame
+				await process_frame
+				_check(cs.dialog.visible and cs.dialog.find_child("exchange_panel", true, false) != null and cs.find_child("more_pop", true, false) == null,
+					tag + "a folded action works (Exchange opens its dialog) and the popover closes")
+				var xcl = cs.dialog.find_child("xc_cancel", true, false)
+				if xcl != null:
+					_tap_control(xcl)
+					await process_frame
+		if sz == Vector2i(800, 450):
+			cs.select_army(a0)
+			await process_frame
+			await process_frame
+			var m2 = cs.cmd_bar.find_child("act_more", true, false)
+			if m2 != null:
+				(m2 as Button).pressed.emit()
+				await process_frame
+				await process_frame
+				var outside = cs.find_child("more_catcher", true, false)
+				_check(outside != null, tag + "a catcher stands behind the open popover")
+				(outside as Button).pressed.emit()
+				await process_frame
+				_check(cs.find_child("more_pop", true, false) == null, tag + "a tap outside closes the popover")
+	root.content_scale_size = win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+	if DisplayServer.get_name() == "headless":
+		root.size = root_size
+	cs.close_side()
+	await process_frame
+	# --- quick recruit chips at Roma
+	cs.st["factions"][rome]["treasury"] = 100000
+	cs.orders = []
+	cs._replan()
+	cs.select_region(lat)
+	for k in 3:
+		await process_frame
+	var qr = cs.cmd_bar.find_child("quick_row", true, false)
+	_check(qr != null and qr.get_child_count() >= 1 and qr.get_child_count() <= 3, "quick: up to three chips beside Recruit (%d)" % (qr.get_child_count() if qr != null else -1))
+	cs.panels.show_raise(lat, "army")
+	await process_frame
+	await process_frame
+	var dlg_keys: Array[String] = []
+	for rw2 in cs.dialog.find_children("raise_row_*", "", true, false):
+		dlg_keys.append(str(rw2.name).trim_prefix("raise_row_"))
+	cs.close_dialog()
+	await process_frame
+	cs.select_region(lat)
+	for k in 3:
+		await process_frame
+	qr = cs.cmd_bar.find_child("quick_row", true, false)
+	var ck: Array[String] = []
+	if qr != null:
+		for b in qr.get_children():
+			ck.append(str(b.name).trim_prefix("quick_"))
+	_check(not ck.is_empty() and ck == dlg_keys.slice(0, ck.size()), "quick: the chips are the dialog's first rows in its order (%s vs %s)" % [str(ck), str(dlg_keys.slice(0, 3))])
+	var cap := CRules.recruits_per_turn(cs.ps, lat)
+	var first = qr.get_child(0) if qr != null else null
+	_check(first != null and (first as Button).text.contains(str(CRules.unit_price(cs.ps, rome, lat, ck[0]))) and (first as Button).modulate.a >= 1.0, "quick: a chip shows the unit and its price and is live")
+	var n_before := _c3_orders("recruit").size()
+	for k in cap:
+		var q = cs.cmd_bar.find_child("quick_row", true, false)
+		if q == null or (q.get_child(0) as Button).modulate.a < 1.0:
+			break
+		(q.get_child(0) as Button).pressed.emit()
+		await process_frame
+		await process_frame
+	var rec := _c3_orders("recruit")
+	_check(rec.size() - n_before == cap and int(rec[-1].get("new", 0)) == 1 and str(rec[-1]["unit"]) == ck[0] and int(rec[-1]["r"]) == lat,
+		"quick: each tap queues one recruit of a new army (%d of %d slots, last %s)" % [rec.size() - n_before, cap, str(rec[-1]) if not rec.is_empty() else ""])
+	var q2 = cs.cmd_bar.find_child("quick_row", true, false)
+	var all_grey := q2 != null
+	if q2 != null:
+		for b in q2.get_children():
+			if (b as Button).modulate.a >= 1.0:
+				all_grey = false
+	_check(all_grey, "quick: every chip is greyed once the %d slots are used" % cap)
+	if q2 != null:
+		(q2.get_child(0) as Button).pressed.emit()
+		await process_frame
+		_check(_c3_orders("recruit").size() == rec.size(), "quick: a greyed chip queues nothing")
+	cs.orders = []
+	cs._replan()
+	cs.close_side()
+	await process_frame
+	hold = false
+
+
+## England (the West pack): a fleet lying on a lane of an enemy port reads its raid station with the take.
+func _c3_fleet() -> void:
+	hold = true
+	cs.queue_free()
+	await process_frame
+	CData.use_pack("west")
+	var eng := CData.faction_index("england")
+	var st := CState.new_campaign("C3F", 3, [eng], {}, [], "west")
+	var CLanes := preload("res://campaign/clanes.gd")
+	var lane := -1
+	var other := -1
+	for id in CLanes.count():
+		if CLanes.is_exit(id):
+			continue
+		var es: Array = CLanes.ends(id)
+		for x in es:
+			if int(x) >= 0 and CState.owner(st, int(x)) >= 0 and CState.owner(st, int(x)) != eng:
+				other = CState.owner(st, int(x))
+		if other >= 0:
+			lane = id
+			break
+	_check(lane >= 0, "fleet status: a lane with a foreign port exists")
+	if lane < 0:
+		hold = false
+		return
+	CState.set_dip(st, eng, other, CState.WAR)
+	var cells := CLanes.cells_of(lane)
+	var cell := int(cells[cells.size() / 2])
+	st["fleets"] = [{"id": 910, "f": eng, "x": CGrid.cx(cell), "y": CGrid.cy(cell), "ships": [{"t": "sloop", "h": 100, "c": 100}], "carry": [], "moved": 0}]
+	st["next_fleet"] = 911
+	cs = CampaignScreen.new()
+	cs.no_bar = false
+	cs.details_on_select = false
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_c3f")
+	root.add_child(cs)
+	_key_off()
+	await process_frame
+	await process_frame
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.cover.visible = false
+	cs.select_fleet(910)
+	for k in 3:
+		await process_frame
+	var rt := CLanes.raiders(cs.ps)
+	var text := _c3_label("leader_status")
+	if rt.has(lane) and CLanes.lane_state(cs.ps, lane, rt)["rid"] == 910:
+		var take := int(CLanes.lane_state(cs.ps, lane, rt)["take"])
+		var w := "Raiding %s: +%d a turn" % [CLanes.lane_name(lane), take]
+		_check(text == w, "fleet status: a fleet on a hostile lane reads '%s' (got '%s')" % [w, text])
+	else:
+		_check(false, "fleet status: the fleet is not raiding the lane the test put it on (%s)" % str(rt.keys()))
+	_check(_c3_label("leader_line").begins_with("1 ship"), "fleet status: the summary line counts the ships (%s)" % _c3_label("leader_line"))
+	cs.close_side()
+	await process_frame
+	hold = false
+
 
 # ------------------------------------------------- the overworld (format 6) ---
 

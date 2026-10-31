@@ -610,6 +610,33 @@ shipyard are on the bar or in a popup, each order in one place. A planned new
 army's X is in the Recruit popup; a planned recruit into an army is a dimmed
 card (tap cancels). Testing aid `--popup=build:key|raise:key|ship:key|recruit:N`.
 
+**Command bar round 3 (as built, 2026-10-31).** View only (`command_bar.gd`, `campaign_screen.gd`, `map_overlay.gd`,
+`campaign_panels.gd` one word; nothing under `campaign/` or `sim/`). *Status:* the leader card's coloured status line now
+says what the rules hold: an army "Besieging <town>: N turns of stores left" (the siege record's `supply`, `CState.siege_at`),
+inside a besieged town "Besieged: N turns of stores left", a raiding army "Raiding <town>: +G a turn" (`CRules.raid_map` for
+who raids, `CRules.income(...)["raid"]` is the rules' own total; G is its per-region term `_base_income * RAID_PCT / 100`), a town's "Besieged by X, turn T:
+N turns of stores left"; a fleet "Raiding <lane>: +take a turn" (`CLanes.raiders`, `lane_state()["take"]`) or "Blockading <port>:
++take a turn" (`CSea.blockader`, `blockade_take`). Under it a dim summary line (`leader_line`: "610 men, 8 companies, March";
+a fleet "2 ships, 3 units aboard"), on a phone only as the status line's tooltip (the 96 px card has no room). The campaign has no
+army morale, so none is shown; an army aboard a fleet leaves `armies` and has no bar (the fleet's summary counts the units
+aboard). *The "..." fold* (`_fold`, `_open_more`): the rule is the bar's width, not only the phone layout: the first three
+actions stay when the actions plus the leader card would leave the strip less than four cards at their narrowest
+(`FOLD_CARDS`), or always in the phone's single scrolling row (under 700 logical px); the rest are the same buttons under a
+"..." button (name `act_more`) whose popover (`more_pop`, a flow above the bar, right edge on the button, inside the screen)
+closes on a tap anywhere (`more_catcher`), on an action and on any rebuild. The battle HUD's `MoreBox` holds ability chips and
+is not shared. The width rule folds an army with seven actions below about 870 logical px (800x450 and 844x390 with a
+neighbour army to merge with); on the S size the logical screen is wider (800x450 at S is 1355 x 763) and the bar fits whole.
+*Quick recruit* (`_quick_chips`): a "Quick recruit" caption over up to three chips (`quick_<key>`, short name and price)
+beside Recruit and Build in an owned city: the first three rows the raise dialog lists (non-locked `best_options` in the
+dialog's group order); a tap adds `{"t": "recruit", "r", "unit", "new": 1}` (the dialog's own order); greyed, with the refusal
+on a tap, when `CRules.recruit_options` refuses (the turn's `recruits_per_turn` slots used, or the gold short). *Drag onto
+another army:* a drag from one of our free armies (the screen's existing drag, `DRAG_THRESHOLD` 14 px, mouse and touch alike:
+the map has no long-press) that is over another army of ours standing together (`_exchange_target`, `Panels._partners`
+and `CRules.together`) rings it (`Overlay.set_drop`, gold, in the glow layer) and draws no march path; the drop selects the
+dragged army and opens the existing Exchange dialog (`show_exchange`: two columns, a tap sends a unit across, either way,
+one order, `exchange {from, to, units, back}`), whose button now reads "Exchange" (a gift stays "Gift N units"). A drop
+anywhere else is what it was: the march plan. Tests in `campaign_input_test`: `_c3_drag`, `_c3_bar`, `_c3_fleet`.
+
 **Shipyard rows and the dialog height (as built, 2026-10-26).** The Shipyard
 tab's rows are `Kit.ShipRow`, a drawn row of the soldier row's shape and
 height (200 x 72, both on the base `Kit.PressRow` that holds the press /
