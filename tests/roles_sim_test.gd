@@ -680,10 +680,11 @@ func _torch_sc(n_def: int, orders: Array) -> Dictionary:
 
 ## A walls-`walls` oppidum, the torch raiders 14 m out from the gate nearest them, the defenders `dfn` (10
 ## javelinmen at the plaza holding their fire, for the set pieces); AI sides `ai`. Returns [scenario, gate].
-func _torch_gate_sc(walls: int, ai: Array, skill: int, dfn: Array = [[UT.JAVELIN, 10]]) -> Array:
+func _torch_gate_sc(walls: int, ai: Array, skill: int, dfn: Array = [[UT.JAVELIN, 10]],
+		att: Array = [[UT.index_of("torch_raiders"), 60]]) -> Array:
 	var city := {"seed": 21, "level": 1, "walls": walls, "bld": [1, 2], "plan": MapGen.PLAN_OPPIDUM, "founder": MapGen.CUL_CELTIC}
 	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": MapGen.PAL_GREEN}
-	var sc: Dictionary = Scenarios.settlement(city, terr, [[UT.index_of("torch_raiders"), 60]], dfn, 1, ai, {})["scenario"]
+	var sc: Dictionary = Scenarios.settlement(city, terr, att, dfn, 1, ai, {})["scenario"]
 	sc["ai_skill"] = [skill, skill]
 	sc["deploy_zones"] = []
 	var probe := BattleSim.new()
@@ -701,11 +702,13 @@ func _torch_gate_sc(walls: int, ai: Array, skill: int, dfn: Array = [[UT.JAVELIN
 			gate = g
 			var o := (gf.z + 512) & 1023
 			spot = Vector3i(gf.x + FM_cos(o) * 14, gf.y + FM_sin(o) * 14, gf.z)
+	var k := 0
 	for ud in sc["units"]:
 		if int(ud["side"]) == 0:
-			ud["x_m"] = spot.x / M
+			ud["x_m"] = spot.x / M + 12 * k  # (side by side along the wall: a second unit 12 m over)
 			ud["y_m"] = spot.y / M
 			ud["facing"] = spot.z
+			k += 1
 	return [sc, gate]
 
 
@@ -780,4 +783,43 @@ func _native() -> void:
 			_check(now_seen and s3.stat_mbat_blows > 0 and down > 0, "native: the siege AI batters the gate with the torch raiders and it falls")
 		else:
 			_check(s3.stat_ab_orders == 0 and s3.stat_mbat_blows == 0, "native: Easy gives the torch raiders no ability order")
+	_torch_stretch_check()
+
+
+## docs/AI.md 51: two torch raider units at a walls-1 oppidum's gate (the palisade), the AI at Average: the first
+## (10 men: slow blows) takes the gate, the second (60) a palisade stretch by it, and that stretch is breached
+## before the gate falls (the breach is the entry: the assault begins).
+func _torch_stretch_check() -> void:
+	var trk := UT.index_of("torch_raiders")
+	var ga := _torch_gate_sc(1, [0, 1], 1, [[UT.HEAVY, 80], [UT.SPEAR, 80]], [[trk, 10], [trk, 60]])
+	var sc: Dictionary = ga[0]
+	var sim := BattleSim.new()
+	sim.setup(sc, 7)
+	var a := -1
+	var b := -1
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and sim.t_mbat[sim.u_type[u]] != 0:
+			if a < 0:
+				a = u
+			elif b < 0:
+				b = u
+	var gate_now := false
+	var stretch := -1
+	var breach := -1
+	var gate_down := -1
+	while sim.tick < 3000 and breach < 0:
+		sim.step()
+		var g: int = sim.ai_gate[0]
+		if g >= 0 and sim.ability_state(a, UT.AB_BATTER) == UT.AB_NOW and sim.u_abt[a] == -2 - g:
+			gate_now = true
+		if stretch < 0 and sim.ability_state(b, UT.AB_BATTER) == UT.AB_NOW and sim.u_abt[b] >= 0:
+			stretch = sim.u_abt[b]
+		if stretch >= 0 and sim.ws_state[stretch] != BattleSim.WS_STANDING:
+			breach = sim.tick
+		if gate_down < 0 and g >= 0 and sim.g_state[g] == BattleSim.GATE_BROKEN:
+			gate_down = sim.tick
+	print("native stretch: gate party %s, second unit's stretch %d, breached at %d, gate down at %d, phase %d, %d blows" % [
+		str(gate_now), stretch, breach, gate_down, sim.ai_phase[0], sim.stat_mbat_blows])
+	_check(gate_now and stretch >= 0, "native: of two torch raider units at a palisade gate the second batters a stretch")
+	_check(breach > 0 and (gate_down < 0 or gate_down >= breach), "native: the second torch raider unit's stretch is breached (a second way in)")
 

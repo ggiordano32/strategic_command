@@ -2443,6 +2443,17 @@ it applies to plan maps only (a city with `tp`); scenario keys and custom battle
 
 **Rome walls 1-2 (2026-10-22, AI.md 33).** On a walled Rome plan the defenders' street stack behind the breach holds at most `S_ROME_STACK` 4 units (the rest hold the plaza) and the storm's non-pike foot outside the houses attack at the run. Rome pooled attacker wins at 32 seeds, walls 1 / 2 / 3: 36 / 27 / 21 -> 58 / 35 / 23 % (targets 56 / 38 / 25). The West and generated maps are untouched by construction. Open: the citadel fight on the Greek and Punic plans (the plaza is the citadel), the castrum at walls 2, gate HP at walls 2.
 
+**Rome walls reading (2026-10-31, measure only, no change).** `tools/balance` `rome_walls_full` (6 Rome plan towns x
+walls 1-3 x 32 seeds, code 13d2d791e8): pooled attacker wins 73 / 41 / 31 % (the 2026-10-22 pass ended at 58 / 35 / 23;
+the destruction AI and later siege rows moved it). Walls 2 by town: Carthage (zeugitana) 34, Athens (attica) 25,
+Syracuse (sicilia_or) 59, Rome (latium) 72, Massalia 44, the Arverni 12 (all +-12-16). The gate at walls 2 (2,700 HP)
+falls in 53-72 % of the battles on the plans that use it, at a median 7.9-10.8 min against 7.3-9.4 at walls 1 (the
+castrum and the oppidum are taken by breach and ladders, their gates never down at walls 1-2), and the battles are
+decided at 8-15 min either way. Reading for the main session: the walls-2 gate HP slows the gate by a minute or two
+and does not decide the storm, so it needs no change; Carthage at walls 2 (34 %) sits inside the pooled 41 % interval
+and is no longer the outlier (it is at walls 3, 9 %, with Massalia 12 %), while the Arverni oppidum (34 / 12 % at walls
+1 / 2) and the castrum's lead (100 / 72 %) are the spread now worth a look.
+
 ## Destruction: walls and buildings fall (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: "Cannons being able to damage and destroy walls and buildings. Occupied buildings that fall

@@ -4203,3 +4203,31 @@ and the fall-back still count the human's forces as hostile. Rules side, so a pa
 what the planner refrains from: no AI blockade of the human's ports (`CSea.update_blockades`) and no AI lane raid on its
 lanes (`CLanes.raiders`). Off without the setting (pins unchanged). Design and test: `docs/design/campaign_rules.md`
 "The tutorial (as built)", "(2026-10-30) The shield covers attacks".
+
+## 51. The torch raiders batter a palisade stretch (2026-10-31)
+
+The open item of note 45 ("the AI batters only the attacked gate, never a stretch"). Code: `sim/siege_ai.gd`
+`_torch_stretch` (with `TORCH_AT_R` 15 m, `TORCH_WAIT` 400 ticks) and its call in `_torch_gate`; under `R_TORCH_GATE`
+(292: Easy 0, so Easy is unchanged; no new knob). No new sim state.
+
+- **When.** In the approach, the attacked gate shut, on a walls-1 ring (`BattleSim.mbat_palisade`: stone takes nothing
+  from the melee batter, so walls 2-3, the citadel and the West fort never qualify), a melee batter unit (the torch
+  raiders) leaves the gate to a stretch when the gate already has a batterer (the side's ram still able to work it,
+  `_ram_avail`, or another batter unit sent at it: of two at the gate the lower index keeps it), or the gate burns
+  (`g_burn`: the fire finishes it), or the unit has stood within 15 m of the gate's face 40 s (its `A_HACK` mode's
+  `u_ai_x` holds the tick it got there) with no hit on the gate in the last 40 s.
+- **Which stretch.** The standing palisade stretch nearest the gate (middle within `BATTER_GATE_R` 100 m, a way
+  through it once breached, its outside point on open ground, not facing the sea) that no other unit of the side is
+  battering (`u_gtarget` -2 - stretch: a battery or another batter unit): one unit a stretch, as the ladder parties.
+  The batter's Use now at it (the men go to its outside face, `_update_mbat`: 80 a blow, 1,200 at walls 1). A stretch
+  the unit already batters stays its own (the choice is sticky through the order, not memory).
+- **After.** The breach is an entry (note 35): the assault begins and the unit storms through it as through the gate
+  (`_torch_gate` is the gate party only in the approach). With a ram on a palisade the torch raiders now batter a
+  stretch where before they were only grenadiers; with no free stretch they keep the old rule.
+
+Measured (`tools/balance` `native_walls_miskito`, now the six walled native towns: Tayasal, Cabo Gracias, Natchez,
+Choctaw, Valladolid, Darien x walls 1-2 x 16 seeds, the West set defending): attacker wins walls 1 / 2 16 / 5 -> 18 / 5 %
+(within the interval); at walls 1 a stretch breached in 16 of 96 battles (none before), every one before the gate,
+the gate's median fall 54 -> 65 s (one company fewer at it); walls 2 identical (stone). `native_walls_itza`
+identical (no torch raiders). Test: `tests/roles_sim_test.gd --only=native` (two torch raider units at a walls-1
+oppidum gate: the second batters a stretch, breached before the gate falls).

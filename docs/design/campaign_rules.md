@@ -1368,6 +1368,16 @@ battles (Havana walls 0-1), identical to before on those seeds. The Miskito plan
 have no outer wall (the fort is left be in these sets), so the poles cannot bite; the torch raiders' pots (held houses) can.
 To finish: `measure.py` both plans on this tree and on d963579 (the probe file copied there).
 
+**(2026-10-31) The walls measure finished, and a stretch battered.** Both plans now target the six walled native towns
+(Tayasal, Cabo Gracias, Natchez, Choctaw, Valladolid, Darien; their oppidum plan has an outer wall, a timber palisade at
+walls 1, stone at walls 2) x walls 1-2 x 16 seeds, the West set defending. Itza (poles, no ram): walls 1 / 2 58 / 4 %
+attacker wins, 4.7-10.5 / 11.8-15 min to decide, the gate never down at walls 2 (they climb or fail). Miskito (poles
+and two torch raider units): 16 / 5 % before the AI change, 18 / 5 % after it (docs/AI.md 51: a second torch raider
+unit, or one beside a ram or a burning gate or idle 40 s at the gate, batters the nearest free palisade stretch; a
+breach in 16 of 96 walls-1 battles, each before the gate; within the interval). The Miskito storm is weak against the
+equal-price Spanish set (Darien 62 %, Natchez 0 %); the campaign never fights it (auto-resolve), so this is a reading
+for the owner, not a lever pulled.
+
 **Canoe yard moved to the Shipyard (2026-10-29, owner: "If we have nothing to build in the Workshop then it should go away ... it should come with what we need for Canoes").** The natives' Shipyard is the Canoe yard (the war canoes already launch from it); the Workshop, which only the Itza keep for the wagon, is the Craft house. Data only (`CHAIN_NAMES`); no rule or pin moves.
 
 

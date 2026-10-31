@@ -4338,8 +4338,9 @@ static func _gren_siege(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 ## (ai_gate), in the assault a stormed West fort's gate or the citadel's, while it is shut and no ram of ours
 ## can still work a gate (_ram_avail): the batter ability's Use now at it (the men go to its face and strike
 ## it, BattleSim._update_mbat); else back to Auto and the grenadiers' rule for its fire pots (_gren_siege:
-## Hold in the approach, Use now at a shut gate or a held house in reach). Stateless; ordered only when the
-## wanted state differs. True while it batters.
+## Hold in the approach, Use now at a shut gate or a held house in reach). On a palisade it may batter a
+## stretch instead (_torch_stretch, docs/AI.md 51), a ram notwithstanding. Ordered only when the wanted state
+## differs. True while it batters.
 static func _torch_gate(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 	if kn[AP.R_TORCH_GATE] == 0 or sim.t_mbat[sim.u_type[u]] == 0 or sim.city_on == 0:
 		return false
@@ -4352,16 +4353,83 @@ static func _torch_gate(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 	elif phase == SP_ASSAULT and sim.cit_gate >= 0 and (sim.fort_on == 0 or sim.ai_fort[side] == 2):
 		g = sim.cit_gate
 	var st: int = sim.ability_state(u, UT.AB_BATTER)
-	if g < 0 or g >= sim.n_gates or sim.g_state[g] != GATE_CLOSED or _ram_avail(sim, side) >= 0:
+	var sg := -1
+	if g >= 0 and g < sim.n_gates and sim.g_state[g] == GATE_CLOSED and phase == SP_APPROACH:
+		sg = _torch_stretch(sim, u, g)
+	if g < 0 or g >= sim.n_gates or sim.g_state[g] != GATE_CLOSED or (sg < 0 and _ram_avail(sim, side) >= 0):
 		if st == UT.AB_NOW:
 			BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_AUTO, -1)
 		return false
 	if _engaged(sim, u):
 		return true
+	if sg >= 0:
+		if st != UT.AB_NOW or sim.u_abt[u] != sg or sim.u_gtarget[u] != -2 - sg:
+			BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_NOW, sg)
+			BattleAI._count(sim, side, AP.C_SIEGE)
+		return true
+	BattleAI._set_mode(sim, u, A_HACK)  # (u_ai_x: the tick it reached the gate + 1, _torch_stretch)
+	if sim.u_ai_x[u] == 0 and BattleAI._d(sim.u_cx[u] - sim.gate_face(g).x, sim.u_cy[u] - sim.gate_face(g).y) <= TORCH_AT_R:
+		sim.u_ai_x[u] = sim.tick + 1
 	if st != UT.AB_NOW or sim.u_abt[u] != -2 - g or sim.u_gtarget[u] != g:
 		BattleAI._ability(sim, u, UT.AB_BATTER, UT.AB_NOW, -2 - g)
 		BattleAI._count(sim, side, AP.C_SIEGE)
 	return true
+
+
+## The palisade stretch melee batter u batters in the approach instead of the attacked gate g (docs/AI.md 51;
+## R_TORCH_GATE's rule), -1 none: on a walls-1 ring (BattleSim.mbat_palisade: stone takes nothing from the
+## batter) when the gate already has a batterer (the side's ram still able to work it, or another batter unit
+## sent at it: of two, the lower index keeps the gate), or it burns (the fire finishes it), or u has stood at it
+## (within TORCH_AT_R) TORCH_WAIT ticks with no blow on it in the last TORCH_WAIT: the standing palisade stretch
+## nearest g (middle within BATTER_GATE_R, a way through it once breached, its outside point on open ground) that
+## no other unit of the side is battering (one unit a stretch, as the ladder parties). A stretch u already
+## batters stays its own. Once breached the assault begins (the breach is an entry) and u storms through it.
+const TORCH_AT_R := 15 * M     # a batter unit this close to the gate's face stands at it
+const TORCH_WAIT := 400        # ticks (40 s) at the gate with no blow before it takes a stretch
+static func _torch_stretch(sim, u: int, g: int) -> int:
+	if sim.city_walls != 1 or sim.ws_state.is_empty():
+		return -1
+	var side: int = sim.u_side[u]
+	var cur: int = sim.u_abt[u]
+	if sim.ability_state(u, UT.AB_BATTER) == UT.AB_NOW and cur >= 0 and cur < sim.ws_state.size() \
+			and sim.ws_state[cur] == WS_STANDING and sim.mbat_palisade(sim, cur):
+		return cur
+	var busy: bool = _ram_avail(sim, side) >= 0 or (g < sim.g_burn.size() and sim.g_burn[g] > 0)
+	if not busy:
+		for o in sim.n_units:
+			if o != u and sim.u_side[o] == side and sim.u_state[o] == U_READY and sim.t_mbat[sim.u_type[o]] != 0 \
+					and sim.u_gtarget[o] == g and (o < u or sim.u_gtarget[u] != g):
+				busy = true
+				break
+	if not busy and sim.u_ai[u] == A_HACK and sim.u_ai_x[u] > 0 and sim.tick - (sim.u_ai_x[u] - 1) > TORCH_WAIT \
+			and sim.tick - sim.g_hit_t[g] > TORCH_WAIT:
+		busy = true
+	if not busy:
+		return -1
+	var f: Vector2i = sim.gate_face(g)
+	var best := -1
+	var bd := 0
+	for sg in sim.ws_state.size():
+		if sim.ws_state[sg] != WS_STANDING or sim.ws_hp0[sg] <= 0 or (sim.ws_fl[sg] & MapGen.SEG_SEA) != 0 \
+				or not sim.mbat_palisade(sim, sg) or not sim.ws_way(sg):
+			continue
+		var mp: Vector2i = sim.seg_pt(sim, sg, sim.seg_len(sim, sg) / 2)
+		var d := BattleAI._d(mp.x - f.x, mp.y - f.y)
+		if d > BATTER_GATE_R or (best >= 0 and d >= bd):
+			continue
+		var op: Vector2i = sim.ws_side_pt(sg, false)
+		if (sim.nav_at(op.x, op.y) & (MapGen.NAV_GROUND | MapGen.NAV_DITCH)) == 0:
+			continue
+		var taken := false
+		for o in sim.n_units:
+			if o != u and sim.u_side[o] == side and sim.u_state[o] == U_READY and sim.u_gtarget[o] == -2 - sg:
+				taken = true
+				break
+		if taken:
+			continue
+		best = sg
+		bd = d
+	return best
 
 
 ## Attacking siege battery u in the assault with no stretch to batter
