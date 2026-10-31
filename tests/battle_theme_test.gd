@@ -166,7 +166,8 @@ func _menu() -> void:
 	var names: Array = []
 	for n in b.menu.find_children("menu_*", "Button", true, false):
 		names.append(str(n.name))
-	_check(names == ["menu_resume", "menu_options", "menu_controls", "menu_leave"], "entries: Resume, Options, Controls, Leave the battle (%s)" % [names])
+	_check(names == ["menu_resume", "menu_options", "menu_howto", "menu_chips", "menu_controls", "menu_leave"],
+		"entries: Resume, Options, How to play, Chips, Controls, Leave the battle (%s)" % [names])
 	await _shot("battle_menu")
 	var ev := InputEventAction.new()
 	ev.action = "ui_cancel"

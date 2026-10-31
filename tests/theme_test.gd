@@ -311,7 +311,7 @@ func _menu(pack: String) -> void:
 	for c in gm.body.get_children():
 		if c is Button and str(c.name).begins_with("menu_") and c.get_parent() == gm.body:
 			names.append(str(c.name))
-	_check(names == ["menu_resume", "menu_save", "menu_options", "menu_controls", "menu_leave"], "entries in order: %s" % str(names))
+	_check(names == ["menu_resume", "menu_save", "menu_options", "menu_howto", "menu_controls", "menu_leave"], "entries in order: %s" % str(names))
 	_check(gm.find_child("menu_title", true, false).has_theme_font_override("font"), "the campaign name is in the display face")
 	_check(gm.column.get_global_rect().size.x <= 440.5 and gm.column.get_global_rect().position.x == 0.0, "the entries stack on the left")
 	await _shot("menu_%s_main" % pack)
@@ -417,6 +417,11 @@ func _loading() -> void:
 # -------------------------------------------------------------------- phone ---
 
 func _phone() -> void:
+	# (Headless the window is 64 px whatever window_set_size asks, so UiScale.apply lays the HUD out at the 0.1 scale
+	# floor, 640 px wide; the logical size the desktop screens were checked at is put back at the end.)
+	var old_scale := root.content_scale_size
+	var old_mode := root.content_scale_mode
+	var old_aspect := root.content_scale_aspect
 	UiScale._dpr_override = 3.0
 	UiScale._touch_override = 1
 	var old := DisplayServer.window_get_size()
@@ -461,6 +466,10 @@ func _phone() -> void:
 	DisplayServer.window_set_size(old)
 	await _frames(6)
 	UiScale.apply(root)
+	root.content_scale_mode = old_mode
+	root.content_scale_aspect = old_aspect
+	root.content_scale_size = old_scale
+	UiScale._last = Vector2i.ZERO
 	await _frames(3)
 
 

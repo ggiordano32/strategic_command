@@ -146,6 +146,7 @@ func _init() -> void:
 	_dip_calls()
 	_dip_shield()
 	_dip_shield_attacks()
+	_shield_sea()
 	_dip_passage()
 	_dip_west()
 	_dip_ai_alliances()
@@ -6793,6 +6794,104 @@ func _dip_shield_attacks() -> void:
 					"shield (skill %d): from turn %d the planner no longer filters England" % [skill, last + 1])
 			else:
 				_check(not hits.is_empty(), "shield control (skill %d): without the setting Spain attacks the emptied Jamaica (%s)" % [skill, str(hits.slice(0, 2))])
+
+
+## The tutorial's shield at sea (CFleet.spared): a shielded human's fleet and an AI's do not meet, whether both sail
+## (England's lesson 9 voyage to the Tortuga coast against a Spanish fleet sailing the other way), one lies beside the
+## other at the end of the turn, or an AI voyage ends inside the human's zone (no attack made of it); England's own
+## attack order still fights. The controls: the same setups without the setting, and at turn tutorial_turns, meet.
+static func _sea_count(st: Dictionary) -> int:
+	var n := 0
+	for b in st["battles"]:
+		if int(b.get("sea", 0)) == 1:
+			n += 1
+	return n
+
+
+static func _sea_setup(mode: String, sc: int, ec: int = -1) -> Dictionary:
+	var st := Tutorial.make_state("Sea shield", Tutorial.SEED, 0)
+	var eng := CData.faction_index("england")
+	var spa := CData.faction_index("new_spain")
+	if mode == "off":
+		st["settings"]["tutorial"] = 0
+	elif mode == "late":
+		st["turn"] = int(st["settings"]["tutorial_turns"])
+	var efl: Dictionary = CFleet.fleets_of(st, eng)[0]
+	if ec >= 0:
+		efl.erase("in")
+		CFleet.place(efl, ec)
+	for fl in CFleet.fleets_of(st, spa):
+		if CFleet.docked(fl) < 0:
+			fl["ships"] = []
+	var ships: Array = []
+	for s in efl["ships"]:
+		ships.append((s as Dictionary).duplicate())
+	CFleet._new_fleet(st, spa, sc, ships)
+	return st
+
+
+func _shield_sea() -> void:
+	CData.use_pack("west")
+	CFleet.ensure()
+	var eng := CData.faction_index("england")
+	var spa := CData.faction_index("new_spain")
+	var dest := Tutorial.sail_cell("port_de_paix")
+	var home := Tutorial.sail_cell("port_royal")
+	var sp_of := func(st: Dictionary) -> Dictionary:
+		var l: Array = CFleet.fleets_of(st, spa)
+		return l[l.size() - 1]
+	# (1) Both sail: the first Spanish start (cell order) whose voyage home meets England's in the control.
+	var start := -1
+	for c in CGrid.disc(dest, 9):
+		if not CFleet.is_sea(c) or CGrid.cheb(c, dest) <= CFleet.FLEET_ZONE + 1:
+			continue
+		var st := _sea_setup("off", c)
+		var sf: Dictionary = sp_of.call(st)
+		CFleet.execute_moves(st, [[int(CFleet.fleets_of(st, eng)[0]["id"]), dest, eng, 0, -1], [int(sf["id"]), home, spa, 0, -1]])
+		if _sea_count(st) > 0:
+			start = c
+			break
+	# (2), (3): England at rest at sea off Port Royal, a Spanish fleet two cells off (lying there, or sailing in from afar).
+	var rest := -1
+	var near := -1
+	for c in CGrid.disc(home, 6):
+		if not CFleet.is_sea(c) or CGrid.cheb(c, home) < 3:
+			continue
+		for j in CGrid.disc(c, CFleet.FLEET_ZONE):
+			if CFleet.is_sea(j) and CGrid.cheb(j, c) == CFleet.FLEET_ZONE:
+				rest = c
+				near = j
+				break
+		if rest >= 0:
+			break
+	var far := -1
+	for c in CGrid.disc(rest, 8):
+		if CFleet.is_sea(c) and CGrid.cheb(c, rest) >= 6:
+			far = c
+			break
+	_check(start >= 0 and rest >= 0 and far >= 0, "shield at sea: the setups found (start %d, rest %d, far %d)" % [start, rest, far])
+	if start < 0 or rest < 0 or far < 0:
+		return
+	var got := {}
+	for mode in ["on", "off", "late"]:
+		var st := _sea_setup(mode, start)
+		var sf: Dictionary = sp_of.call(st)
+		CFleet.execute_moves(st, [[int(CFleet.fleets_of(st, eng)[0]["id"]), dest, eng, 0, -1], [int(sf["id"]), home, spa, 0, -1]])
+		var a := _sea_count(st)
+		st = _sea_setup(mode, near, rest)
+		(sp_of.call(st) as Dictionary)["moved"] = 1
+		st = CTurn.resolve_turn(st, [CTurn.submission(st, eng, [])])
+		var b := _sea_count(st)
+		st = _sea_setup(mode, far, rest)
+		CFleet.execute_moves(st, [[int((sp_of.call(st) as Dictionary)["id"]), near, spa, 0, -1]])
+		got[mode] = [a, b, _sea_count(st)]
+	_check(got["on"] == [0, 0, 0], "shield at sea: no sea battle between England and Spain (both sailing, lying beside at the turn's end, a Spanish voyage ending in England's zone) %s" % str(got["on"]))
+	_check(got["off"] == [1, 1, 1] and got["late"] == [1, 1, 1],
+		"shield at sea control: without the setting %s and from turn tutorial_turns %s the same setups meet" % [str(got["off"]), str(got["late"])])
+	var st4 := _sea_setup("on", far, rest)
+	CFleet.execute_moves(st4, [[int(CFleet.fleets_of(st4, eng)[0]["id"]), -1, eng, 0, int((sp_of.call(st4) as Dictionary)["id"])]])
+	_check(_sea_count(st4) == 1 and CFleet.spared(st4, eng, spa) and CFleet.spared(st4, spa, eng) and not CFleet.spared(st4, spa, CData.faction_index("france")) and not CFleet.spared(st4, eng, eng),
+		"shield at sea: England's attack order on the Spanish fleet still fights; spared is a human against an AI only")
 
 
 ## Calls to arms: created for every ally the turn a war starts; an AI ally

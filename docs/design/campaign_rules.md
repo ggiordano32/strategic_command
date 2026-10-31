@@ -1117,7 +1117,15 @@ state, no `CState.VERSION` bump; the rules hash moves (online players reload bet
 cession of `make_state` stays (saved tutorials keep their state). Tested: `campaign_test` `_dip_shield_attacks` (the
 tutorial state with Sevilla English, England's army and ships gone and a strong Spanish army in Sevilla's field: twelve AI
 turns at Easy and Skilled bring no battle, siege, raid, blockade or lane raid against England; without the setting Spain
-attacks), `tutorial_test` (the lesson-12 settle of a Spanish battle at Sevilla no longer happens).
+attacks), `tutorial_test` (the lesson-12 settle of a Spanish battle at Sevilla no longer happens). (2026-10-31) Sea contact too: a fleet's
+voyage still met any fleet at war within `FLEET_ZONE` of a step, so an AI fleet passing a shielded human's (or lesson 9's
+sail, lesson 11's lane station passing an AI fleet) made a sea battle nobody planned. `CFleet.spared(st, a, b)` (the
+shield holds and exactly one of the two is human) now keeps such a pair apart: neither fleet's zone blocks the other's
+path or turns a voyage ending in it into an attack (`block_mask`, `zone_owner`), a step into it or lying in it at the
+turn's end is no sea battle (`execute_moves`' foes, `sea_battle`'s defenders, `end_of_turn`'s pass), and no afloat army
+of the other is sunk (`sink_afloat`); a human's own attack order on an AI fleet (the voyage's target) still fights. Off
+without the setting and from `tutorial_turns` (the pins unchanged); no state, no VERSION bump, the rules hash moves.
+Tested: `campaign_test` `_shield_sea`.
 
 **Lessons inside a popup (2026-10-30, view only).** The owner: recruiting should highlight the unit and then say to end the turn.
 Lessons 2 (the army's Recruit list), 3 (the Build list) and 8 (Diplomacy) are done inside a dialog, and the card and ring used to

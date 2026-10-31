@@ -331,13 +331,26 @@ static func afloat(a: Dictionary) -> bool:
 	return CGrid.is_wet(CState.cell(a))
 
 
+## (The guided first campaign, cai.gd tutorial_shield) While the tutorial's shield holds (settings `tutorial` set,
+## turn < `tutorial_turns`), a human's ships and an AI faction's do not meet at sea: neither fleet's zone blocks or
+## turns the other's voyage into an attack (block_mask, zone_owner), a step or the end of the turn within the zone is no
+## sea battle (execute_moves, sea_battle, end_of_turn) and a fleet sinks no afloat army of the other (sink_afloat).
+## A human's explicit attack order on an AI fleet (the voyage's tgt) still fights. Humans against humans, AI against
+## AI and every campaign without the setting: false.
+static func spared(st: Dictionary, a: int, b: int) -> bool:
+	var sets: Dictionary = st.get("settings", {})
+	if int(sets.get("tutorial", 0)) == 0 or int(st["turn"]) >= int(sets.get("tutorial_turns", 10)):
+		return false
+	return CState.is_human(st, a) != CState.is_human(st, b)
+
+
 ## Fleet fl of faction f has sailed to sea cell c: every afloat army at war
 ## with f within FLEET_ZONE of it is destroyed (event "canoes_sunk"), armies
 ## in index order.
 static func sink_afloat(st: Dictionary, f: int, c: int) -> void:
 	var gone: Array = []
 	for a in st["armies"]:
-		if int(a["busy"]) != 0 or not afloat(a) or not CState.at_war(st, f, int(a["f"])):
+		if int(a["busy"]) != 0 or not afloat(a) or not CState.at_war(st, f, int(a["f"])) or spared(st, f, int(a["f"])):
 			continue
 		if CGrid.within(c, CState.cell(a), FLEET_ZONE):
 			gone.append(a)
@@ -984,7 +997,7 @@ static func block_mask(st: Dictionary, f: int, tgt: int = -1) -> PackedByteArray
 	m.resize(CGrid.count())
 	m.fill(0)
 	for e in fleets(st):
-		if int(e["id"]) == tgt or not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0:
+		if int(e["id"]) == tgt or not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0 or spared(st, f, int(e["f"])):
 			continue
 		for c in CGrid.disc(cell(e), FLEET_ZONE):
 			m[c] = 1
@@ -1195,7 +1208,7 @@ static func zone_owner(st: Dictionary, f: int, c: int) -> int:
 	var best := -1
 	var bd := INF
 	for e in fleets(st):
-		if not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0:
+		if not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0 or spared(st, f, int(e["f"])):
 			continue
 		if CGrid.within(cell(e), c, FLEET_ZONE) and CGrid.d2(cell(e), c) < bd:
 			bd = CGrid.d2(cell(e), c)
@@ -1402,16 +1415,18 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 				fl["dk"] = dk
 		fl["moved"] = 1
 		plans.append({"id": fid, "steps": steps, "done": done, "goal": int(p["goal"]), "land": int(p["land"]),
-			"stop": false, "dk": dk})
+			"stop": false, "dk": dk, "tgt": int(p["tgt"])})
 	_mlog = []
 	var rounds := 0
 	for p in plans:
 		rounds = maxi(rounds, (p["steps"] as Array).size())
-		# The fleets at war with it (the wars do not change while they sail).
+		# The fleets at war with it (the wars do not change while they sail; the tutorial's
+		# shield spares a human's and an AI's fleets but for the voyage's own target).
 		var pf := int(fleet(st, int(p["id"]))["f"])
 		var foes0: Array = []
 		for e in fleets(st):
-			if CState.at_war(st, pf, int(e["f"])) and not e.has("busy") and docked(e) < 0:
+			if CState.at_war(st, pf, int(e["f"])) and not e.has("busy") and docked(e) < 0 \
+					and (int(e["id"]) == int(p["tgt"]) or not spared(st, pf, int(e["f"]))):
 				foes0.append(e)
 		p["foes"] = foes0
 	for i in rounds:
@@ -1506,7 +1521,7 @@ static func sea_battle(st: Dictionary, mover: Dictionary, foes: Array, c: int) -
 			continue  # (N3a) in a pending sea battle already; (Docking) behind the mole
 		if CState.friendly(st, f, int(e["f"])):
 			att.append(e)
-		elif foes.has(e) or CState.at_war(st, f, int(e["f"])):
+		elif foes.has(e) or (CState.at_war(st, f, int(e["f"])) and not spared(st, f, int(e["f"]))):
 			dfn.append(e)
 	var ids := {}
 	for e in att + dfn:
@@ -1946,7 +1961,7 @@ static func end_of_turn(st: Dictionary) -> void:
 		var foes: Array = []
 		for e in fleets(st):
 			if not (e["ships"] as Array).is_empty() and not e.has("busy") and docked(e) < 0 and CState.at_war(st, int(fl["f"]), int(e["f"])) \
-					and CGrid.within(cell(fl), cell(e), FLEET_ZONE):
+					and CGrid.within(cell(fl), cell(e), FLEET_ZONE) and not spared(st, int(fl["f"]), int(e["f"])):
 				foes.append(e)
 		if not foes.is_empty():
 			sea_battle(st, fl, foes, cell(fl))
