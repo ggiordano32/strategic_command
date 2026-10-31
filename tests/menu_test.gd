@@ -275,9 +275,9 @@ func _continue() -> void:
 
 # ----------------------------------------------------------- campaign ---
 
-## Every descendant of the two Story Campaign cards lies inside its card's rect (the tutorial card once sprawled out).
+## Every descendant of the three Story Campaign cards lies inside its card's rect (the tutorial card once sprawled out).
 func _cards_inside(tag: String) -> void:
-	for nm in ["card_tutorial", "card_story"]:
+	for nm in ["card_tutorial", "card_native", "card_story"]:
 		var card := _btn(nm)
 		var r := card.get_global_rect().grow(0.5)
 		var bad := 0
@@ -303,7 +303,7 @@ func _campaign_page() -> void:
 	var ncards := 0
 	for c in m._pages["campaign"].find_children("card_*", "Button", true, false):
 		ncards += 1
-	_check(ncards == 2 and _btn("card_story") != null and _btn("card_tutorial") != null, "the Campaign page has two cards, Your first command and the story (%d)" % ncards)
+	_check(ncards == 3 and _btn("card_story") != null and _btn("card_tutorial") != null and _btn("card_native") != null, "the Campaign page has three cards, Your first command, The native way and the story (%d)" % ncards)
 	_check(_btn("card_west") == null and _btn("card_rome") == null, "... no setting cards (Rome is the Grand Campaign's)")
 	_check(_btn("home_Import") != null, "Import is on the Campaign page")
 	_cards_inside("story page")

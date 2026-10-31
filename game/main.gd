@@ -38,6 +38,7 @@ const HowtoPage := preload("res://game/campaign/howto_page.gd")
 const Tips := preload("res://game/campaign/tips.gd")
 const TutorCard := preload("res://game/campaign/tutor_card.gd")
 const Howto := preload("res://game/campaign/howto.gd")
+const TutorialNative := preload("res://game/campaign/tutorial_native.gd")
 ## Menu terrain choices for the playable battles: -1 = random from the seed.
 const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE,
 	Terrain.K_VALLEY, Terrain.K_HILL, Terrain.K_SLOPE]
@@ -872,6 +873,12 @@ func _tutorial_card() -> Button:
 		_new_campaign_page.bind(false, "west", true, true))
 
 
+## "The native way": the second guided battle (game/campaign/tutorial_native.gd on the scenario tutorial_native).
+func _native_card() -> Button:
+	return _campaign_card("card_native", "The native way", "One battle as the Miskito: poisoned arrows, fire on the gate, the raiders and the storm.",
+		_start.bind("tutorial_native"))
+
+
 func _campaign_card(nm: String, label: String, subtitle: String, on_press: Callable) -> Button:
 	var pack := "west"
 	var b := Button.new()
@@ -919,6 +926,7 @@ func _build_campaign(bg: Control) -> Control:
 	cards.alignment = FlowContainer.ALIGNMENT_CENTER
 	if CData.has_pack("west"):
 		cards.add_child(_tutorial_card())
+		cards.add_child(_native_card())
 		cards.add_child(_story_card())
 	vb.add_child(cards)
 	var yh := Kit.hbox(8)
@@ -2036,6 +2044,8 @@ func _process(_delta: float) -> void:
 func _start(id: String) -> void:
 	# Benchmarks use a fixed seed so runs on different devices are comparable.
 	var sd := 42 if id.begins_with("bench") else int(Time.get_unix_time_from_system()) & 0x7FFFFFFF
+	if id == "tutorial_native":
+		sd = 1671   # (the lesson plays the same every time)
 	if _seed >= 0:
 		sd = _seed
 	_start_with(id, sd, TERRAIN_CHOICES[_terrain_idx])
@@ -2053,6 +2063,18 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 	b.ai_skill = _ai_skill
 	if id in Scenarios.PLAYABLE and _ground_idx > 0:
 		b.ground = _ground_idx
+	if id == "tutorial_native":
+		# The native way (docs/design/campaign_rules.md "The native way (as built)"): its script, its own map and
+		# the defender on Easy (the scenario's), the West's names and colours (the Miskito against New Spain), no tips.
+		b.tutorial = TutorialNative.new()
+		b.terrain_kind = -1
+		b.ai_skill = -1
+		if CData.has_pack("west"):
+			if _names_keep_pack == "":
+				_names_keep_pack = CData.pack
+			CData.use_pack("west")
+			b.side_name_fkeys = ["miskito", "new_spain"]
+		Tips.suppress = true
 	_last_siege = []
 	_last_id = id
 	_last_seed = sd
@@ -2066,6 +2088,8 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 
 
 func _end_battle() -> void:
+	if _battle != null and _battle.scenario_id == "tutorial_native":
+		Tips.suppress = false
 	if _names_keep_pack != "":
 		CData.use_pack(_names_keep_pack)
 		_names_keep_pack = ""

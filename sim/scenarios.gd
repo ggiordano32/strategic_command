@@ -184,6 +184,8 @@ static func title(id: String) -> String:
 			return "AI vs AI benchmark: 4,000 in a West city"
 		"west_fort_storm":
 			return "West: storming a harbour fort (ram, ladders)"
+		"tutorial_native":
+			return "The native way"
 	return id
 
 
@@ -231,6 +233,8 @@ static func make(id: String) -> Dictionary:
 			return west_town(4242, 2, 1, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN, 3)
 		"west_fort_storm":
 			return fort_storm()
+		"tutorial_native":
+			return native_lesson()
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -1630,6 +1634,39 @@ static func fort_storm(city_seed: int = 21) -> Dictionary:
 	for e in sc.get("equip", []):
 		e[1] = clampi(int(e[1]) + dx, 10, int(sc["width_m"]) - 10)
 		e[2] = clampi(int(e[2]) + dy, 10, int(sc["height_m"]) - 10)
+	return sc
+
+
+## The native way (docs/design/campaign_rules.md "The native way (as built)"): the second guided battle,
+## game/campaign/tutorial_native.gd's scenario. The player (side 0) storms a Spanish palisade village (the ring
+## plan at level 0 with walls 1: a timber palisade and wooden gates, which fire arrows burn down in about 70 s;
+## the West's own walls-1 town is an open town beside a harbour fort with a stouter gate, so the ring village is
+## used) with a native war party: two bowmen companies carrying poisoned arrows (the Miskito's kind), one carrying
+## fire arrows (the Itza's kind in the campaign), two canoe raiders, two warriors and the Holcan. The garrison:
+## musketeers, colonial militia and pikemen, no guns; the defender AI on Easy. Deployment waits for the player
+## (deploy_time -1); side 1 is the AI. Data only: the special kinds are the units' "ak" (UnitTypes.AMMO rows).
+const NATIVE_ARMY := [["native_bowmen", 80, "poison_arrows"], ["native_bowmen", 80, "poison_arrows"],
+	["native_bowmen", 80, "fire_arrows"], ["canoe_raiders", 60, ""], ["canoe_raiders", 60, ""],
+	["native_warriors", 100, ""], ["native_warriors", 100, ""], ["holcan", 60, ""]]
+const NATIVE_GARRISON := [["musketeers", 80], ["colonial_militia", 80], ["w_pikemen", 60]]
+static func native_lesson(ai_sides: Array = [1]) -> Dictionary:
+	var att: Array = []
+	for e in NATIVE_ARMY:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = []
+	for e in NATIVE_GARRISON:
+		dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 1671 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_GREEN],
+		"ground": MapGen.PAL_GREEN}
+	var city := {"seed": 1671, "level": 0, "walls": 1, "bld": [1, 2, 4]}
+	var r := settlement(city, terr, att, dfn, 1, ai_sides)
+	var sc: Dictionary = r["scenario"]
+	for k in (r["order"] as Array).size():
+		var o: Array = r["order"][k]
+		if int(o[0]) == 0 and str(NATIVE_ARMY[int(o[1])][2]) != "":
+			sc["units"][k]["ak"] = UT.ammo_index(str(NATIVE_ARMY[int(o[1])][2]))
+	sc["deploy_time"] = -1
+	sc["ai_skill"] = [0, 0]
 	return sc
 
 

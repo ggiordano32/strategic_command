@@ -6,7 +6,7 @@ extends RefCounted
 ## has never played a Rome-style game; one to three sentences a card, one a tip. Static data, view only.
 
 ## key -> text. Keys: "<section>_<n>" (a section's lines), "lesson_<n>" / "lesson_<n>_title" / "lesson_<n>_obj",
-## "step_<n>" (the battle tutorial), "tip_<key>" (first-time tips), "ui_*" (the cards' buttons and notes).
+## "step_<n>" (the battle tutorial), "nstep_<n>" (the native way), "tip_<key>" (first-time tips), "ui_*" (the cards' buttons and notes).
 const T := {
 	# 1. The map and the turn
 	"map_1": "The map is split into regions, and every region has one town. A colour shows who owns it; yours is the bright one.",
@@ -44,7 +44,7 @@ const T := {
 	# 9. Three ways to play (the nations' asymmetry; every line is a rule as built, docs/design/campaign_rules.md "The tutorial")
 	"ways_1": "The Europeans (England, France, the Dutch and Spain) can build every building to its top level, so they field the whole roster, with guns that break walls. Their shipyards raise frigates; only England and the Dutch launch ships of the line, and Spain's galleons carry six companies. They live on towns, trade agreements and the sea lanes, so keep your ports safe.",
 	"ways_2": "The Brethren of the Coast live on plunder. A fleet lying on a sea lane takes a share of an enemy's trade, and a pirate army that wins an assault can sack the port instead of holding it: three turns of its income and some of the owner's gold, every building a level down. Their havens train buccaneers and cutlass crews 20% cheaper, but every sack raises infamy and the nations hunt them harder. A letter of marque brings peace with a nation and 50% more plunder from its enemies for 12 turns, and a pirate lives on while it has a ship.",
-	"ways_3": "The Itza and the Miskito fight from cover: in woods and rocks their men take far fewer hits. Their buildings are capped (no Stables, and the War lodge and the Range stop at level 2), yet a War lodge 2 gives them scaling poles to climb walls, the Itza their Holcan and fire arrows, the Miskito torch raiders and poison arrows. War canoes land their war parties on any beach along the coast, and Miskito muskets need a trade agreement with a European nation.",
+	"ways_3": "The Itza and the Miskito fight from cover: in woods and rocks their men take far fewer hits. Their buildings are capped (no Stables, and the War lodge and the Range stop at level 2), yet a War lodge 2 gives them scaling poles to climb walls, the Itza their Holcan and fire arrows, the Miskito torch raiders and poison arrows. War canoes land their war parties on any beach along the coast, and Miskito muskets need a trade agreement with a European nation. The native way, on the Campaign page, is one battle that shows them.",
 
 	# The guided first campaign: thirteen lessons (title, card text, objective)
 	"lesson_1_title": "The map",
@@ -118,6 +118,18 @@ const T := {
 	"step_win": "That is all the orders you need. Now beat the garrison.",
 	"step_title": "Battle lesson %d of 6",
 
+	# The native way (a second guided battle from the Campaign page, tutorial_native.gd): six steps
+	"nstep_1": "Place your war party: drag a company into the blue zone outside the palisade to set where it stands.",
+	"nstep_1b": "Happy with the war party? Press Start battle.",
+	"nstep_2": "Poisoned arrows: select the two poison bowmen, open the Ammo chip and choose Poisoned arrows, then tap a Spanish company to shoot it. A man an arrow wounds sickens: the company keeps losing men and heart after the shooting stops. Poison is for men, not walls.",
+	"nstep_3": "Fire arrows on the gate: select the fire bowmen, open the Ammo chip and choose Fire arrows, walk them within bowshot of the gate (the ring shows a spot) and tap the gate. Fire arrows catch on wood: a palisade gate or a timber tower burns down; stone shrugs them off.",
+	"nstep_4": "Canoe raiders: select the raiders, turn the Run chip on and tap the ground by the gate, or through it once it falls. The raiders are the fastest men on the field and throw javelins; on the campaign map they paddle the coast without ships.",
+	"nstep_5": "The storm: select the warriors and the Holcan and tap the gate or a Spanish company to attack. The Holcan are the storming party; warriors follow.",
+	"nstep_6": "Now beat the garrison: break every Spanish company, or take the village square and hold it.",
+	"nstep_win": "The village is yours. Poison for men, fire for wood, speed for the raiders and the Holcan at the gate: that is the native way.",
+	"nstep_title": "Native lesson %d of 6",
+	"ui_menu": "Back to the menu",
+
 	# First-time tips (one sentence each)
 	"tip_army_selected": "Tap the ground to march the selected army: the shaded area is how far it gets this turn.",
 	"tip_town_opened": "Press Recruit to raise companies and Build to add buildings; both are ready in a turn or two.",
@@ -148,6 +160,7 @@ const TIP_KEYS: Array[String] = ["army_selected", "town_opened", "siege_laid", "
 	"proposal_received", "battle_won", "raid", "lane_raid"]
 const LESSONS := 13
 const STEPS := 6
+const NSTEPS := 6   # the native way's steps (nstep_<n>)
 
 
 static func text(key: String) -> String:
@@ -160,6 +173,10 @@ static func lesson(n: int) -> Dictionary:
 
 static func step(n: int) -> String:
 	return text("step_%d" % n)
+
+
+static func nstep(n: int) -> String:
+	return text("nstep_%d" % n)
 
 
 static func tip(key: String) -> String:

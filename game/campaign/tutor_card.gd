@@ -46,6 +46,7 @@ func setup(title: String, text: String, obj: String, width: float) -> void:
 	obj_label.visible = obj != ""
 	custom_minimum_size.x = 0.0
 	reset_size()
+	reset_size.call_deferred()   # (again once the label has wrapped: a card set before its first layout stood screen-tall)
 
 
 ## Add a small button (key names it "tutor_<key>").

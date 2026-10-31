@@ -1144,6 +1144,44 @@ skip the dialog for that battle (`_next_step`). Lesson 9's words say the army bo
 it (the rule is another change) and its met line reads "The army boards when the turn ends, then the fleet sails." Tests:
 `tests/tutorial_test.gd` plays lessons 2, 3 and 8 and the battle choice through the real buttons; `tests/tutorial_shots.gd` takes
 the pictures.
+### The native way (as built, 2026-10-31)
+
+The owner, 2026-10-31: "A tutorial on the canoe raiders and poison arrows may be good. Using fire arrows to bring down a gate
+or tower also." A second guided battle, standalone (no campaign), view and scenario data only: no sim rule, no state, no battle hash (the rules hash moves: `sim/scenarios.gd` is in it).
+
+- *The scenario* `tutorial_native` (`sim/scenarios.gd` `native_lesson`, title "The native way"): the player (side 0) storms a
+  Spanish palisade village, the ring plan at level 0 with walls 1 (city seed 1671, flat green ground): a timber palisade with
+  two wooden gates, which fire arrows burn down (`GATE_FIRE_CHIP` walls 1). The West's own walls-1 town is an open town beside
+  a harbour fort whose gate is the sim's walls 2 and need not be taken, so it cannot teach the gate. The war party: two native
+  bowmen companies of 80 with poisoned arrows, one of 80 with fire arrows (the special kind is the scenario unit's `"ak"`, an
+  `UnitTypes.AMMO` row riding on the bow's arrows; any bowmen row can carry either: in the campaign `AMMO_AVAIL` gives poison
+  to the Miskito and fire to the Itza at Range 2, so the lesson's party is a Miskito one with an Itza fire company and Holcan),
+  two canoe raiders of 60, two warriors of 100 and the Holcan 60 (620 men). The garrison: musketeers 80, colonial militia 80,
+  pikemen 60, no guns; the battle AI on Easy (`ai_skill` [0, 0], side 1 only); deployment waits for the player
+  (`deploy_time` -1). Measured with the battle AI playing the war party (`tests/native_lesson_probe.gd`, seeds 7000-7007):
+  Average 7 of 8 won (the loss at 629 s), Easy 8 of 8; battles of 5 to 7 minutes.
+- *The script* `game/campaign/tutorial_native.gd` extends the battle tutorial (`tutorial_battle.gd`, unchanged) and keeps its
+  card, pointer, attach and helpers; six steps, words `nstep_1` .. `nstep_6`, `nstep_1b`, `nstep_win`, title
+  `nstep_title` "Native lesson %d of 6" (`Howto.nstep(n)`, `Howto.NSTEPS`): 1 place the war party, then Start battle; 2 poisoned
+  arrows (the Ammo order to the special kind for a poison company, then a shot: a poison company's arrows spent or a Spaniard
+  poisoned, `u_poisoned`); 3 fire arrows on the gate (done when a gate burns or is broken, `g_burn` / `GATE_BROKEN`; the bow
+  shoots a gate only from within range, so the pointer marks a spot at 60 % of the fire kind's range before the gate until the
+  company is in range or walking there, then the gate); 4 canoe raiders (a run order and a move or attack by a raiders unit);
+  5 the storm (attacks by a warriors company and by the Holcan); 6 beat the garrison (no Skip), and on the win the closing card
+  with "Back to the menu" (`ui_menu`, which leaves the battle), placed under the Victory banner. Skip and Leave the tutorial as in the first. Pointers: the
+  company's card, the Ammo chip and its special row, the Run chip, the gate (the outer gate nearest the war party), the garrison.
+- *Entry points.* The Story Campaign page's second card `card_native` "The native way" ("One battle as the Miskito: poisoned
+  arrows, fire on the gate, the raiders and the storm."), which starts the scenario through `main.gd` `_start`, and
+  `--scenario=tutorial_native` / `?scenario=tutorial_native` the same way; `_start_with` attaches the script, fixes the seed at
+  1671 unless `--seed=`, keeps the scenario's map and skill, switches to the West's pack for the names (the Miskito against New
+  Spain, put back at the end) and sets `Tips.suppress` until the battle ends. How to play's "Three ways to play" `ways_3` ends
+  "The native way, on the Campaign page, is one battle that shows them." Not in the sandbox's test list (`Scenarios.IDS`).
+- *Test* `tests/tutorial_native_test.gd`: the words, the scenario's army and kinds, each step driven by the player's orders
+  through the HUD calls (the Ammo chip's options, the gate tap, Run), each card's words and pointer, the battle fought out to
+  the win and the closing card, Back to the menu, and a second battle for Skip and Leave; `--shots=DIR` in a window saves each
+  card. `menu_test` expects three Campaign cards. A card set before its label had wrapped stood screen-tall (both battle
+  scripts' step 1): `tutor_card.gd` `setup` now resizes once more after the layout.
+
 ### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
 
 The owner: "It's crazy hard to assault cities as the miskito. They have no
