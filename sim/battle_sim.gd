@@ -173,6 +173,11 @@ static var CHASE_FULL_RUN_ON := 1  # the pursuit bonus (docs/AI.md 47): an ancho
 static var CHASE_FULL_RUN_TOWN := 0  # ... on settlement maps too (0: field only; with
                                  # it San Juan and Granada moved beyond their
                                  # intervals in west_walls, docs/AI.md 47)
+static var HIDDEN_CLOSE_ON := 1  # missile troops ordered onto a target they cannot
+                                 # see (a crest, a cliff between: docs/AI.md 48)
+                                 # close until they see it, at worst into contact
+                                 # (else they stood at a quarter of their range),
+                                 # and on a landform map go round by the path
 static var SKIRM_RESUME_ON := 1  # a skirmisher that falls back from a threat
                                  # keeps its attack order pending (u_ptarget) and
                                  # takes it up again once the threat is past
@@ -10011,10 +10016,12 @@ func _update_units() -> void:
 				var mlof := true
 				if mis and (ton or mon):
 					mlof = lof_units(u, t)
+					if HIDDEN_CLOSE_ON != 0 and vis_on != 0 and u_seen[t] == 0:
+						mlof = false  # (not seen: no shot at it either, _pm_cand; docs/AI.md 48)
 				# (u_inreach, not u_fighting: men holding to their places
 				# leave the closing to the anchor, which goes by the streets.)
 				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_inreach[u] == 0 \
-						and not (mis and d <= range_vs(u, t) and (mlof or city_on == 0 or land_only != 0)):
+						and not (mis and d <= range_vs(u, t) and (mlof or (city_on == 0 and (land_only == 0 or HIDDEN_CLOSE_ON == 0)))):
 					var goal := _attack_goal(u, t)
 					if city_on != 0:
 						# Out of reach (another piece of ground: a shut gate
@@ -10088,7 +10095,15 @@ func _update_units() -> void:
 					var stop := mrange(u) * CAR_STOP_PCT / 100 if car else mrange(u) * 17 / 20
 					if ton or mon:
 						stop = range_vs(u, t) * CAR_STOP_PCT / 100 if car else range_vs(u, t) * 17 / 20
-						if not mlof:
+						if not mlof and HIDDEN_CLOSE_ON != 0 and d > 0:
+							# No line of fire (a crest or a cliff between,
+							# docs/AI.md 48): on until it sees the target, at
+							# worst into contact as a melee unit closes. (A
+							# quarter of its range, as before, left a line at
+							# the foot of a rise with its target behind the
+							# crest standing there for good, and the target too.)
+							stop = (absi(dx) * ((u_maxx[t] - u_minx[t]) >> 1) + absi(dy) * ((u_maxy[t] - u_miny[t]) >> 1)) / d + M
+						elif not mlof:
 							stop = mrange(u) / 4
 						if d > stop and ton:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000

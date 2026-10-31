@@ -4146,3 +4146,45 @@ Three follow-ups to 46, agreed with the owner; sim only. Code: `sim/battle_sim.g
    harness holds both ways: `CHASE_TOWN_LEASH` / `CHASE_TOWN_RUN` 0 is the alternative, the owner's call after a
    town playtest); horse javelins in a crowd (range against `SKIRM_INF`, no shot while falling back: a skirmish
    rule of its own); the reposition after a town chase (73 % of the men within 2 m at 30 s, HEAD 95 %).
+
+## 48. Units that stand at a hill line (2026-10-30)
+
+The owner (a West campaign battle, the hills pass): "if two units approach each other right at a hill line, they
+kinda just stand there and don't engage. I had to manually move the unit forward and once they contacted the enemy
+they began to engage." Sim only. Code: `sim/battle_sim.gd` (`HIDDEN_CLOSE_ON`, the attack branch of
+`_update_units`: `mlof`, the path condition, the missile stop). Probe: `tests/hill_probe.gd` (grounds flat, ramp,
+steep, crest, step on a custom 400 x 400 m field and cliff on generated ridge maps with landforms; modes one / both
+/ ai; `--off` the build before; `--check` the regression, PASS / FAIL).
+
+1. **Reproduction.** Melee rows (heavy, rodeleros, native warriors, West pikemen) engaged on every ground and in
+   every mode, before and after (results identical line for line). The fault is the **musket lines** (musketeers,
+   marines, colonial militia, buccaneers; flat weapons with a line-of-fire rule) under an attack order:
+   - *Crest* (a 5 m ridge between them; A at the foot 62 m off, B just behind the crest, no order): A closed to
+     31.1 m (a quarter of its 125 m range) with no line of fire and stood there; B, fire at will, skips hidden
+     targets. 100 / 100 men alive after 180 s, `u_order` 2, moved 0, nobody fighting.
+   - *Cliff* (8 generated cliffs, A 50 m below on the fall line, B 50 m above): at terrain seed 9 A stood 103 m off
+     with a line of fire but the target not seen by its side (`u_seen` 0; the cliff blocks sight), so `_pm_cand`
+     never gave a shot, while the closing looked at the line of fire only; at terrain seed 4 A walked straight into
+     the cliff (on a landform map a missile unit in range never took the path: the exemption `city_on == 0 or
+     land_only != 0`), was stuck, regrouped back and stood 64 m off. With both sides ordered onto each other (the
+     owner's case) the seed-4 pair stood 62 m apart for good, both unseen; the AI's line the same (56.7 m).
+2. **Cause** (lines in the attack branch): `if not mlof: stop = mrange(u) / 4` ("walks to a quarter of its range
+   until it can see": it stops there whether or not it sees), `mlof = lof_units(u, t)` without the sight rule the
+   shooting uses (`_unseen`), and `not (mis and d <= range_vs(u, t) and (mlof or city_on == 0 or land_only != 0))`
+   keeping a hidden target's shooter off the path on field maps with cliffs. Not the cause: the 2D contact test,
+   the charge uphill, the steep-ground disorder, the AI's hold-the-heights rule or the pursuit rules (46-47).
+3. **Rule as built** (`HIDDEN_CLOSE_ON` 1, a static switch): a missile unit under an attack order whose target it
+   has no line of fire to, **or that its side does not see** (`vis_on` and `u_seen` 0), walks on until it sees,
+   at worst into contact (the stop a melee unit closes to: the target's half box along the way + 1 m), and on a
+   landform map goes round by the path (`land_only` no longer exempt). Once it sees, the old stop (17/20 of the
+   height-adjusted range) holds and it stands and fires. No new state (the switch is static).
+4. **Numbers** (`tests/hill_probe.gd`, musketeers both sides, 180 s, men alive A / B, before -> after): crest one
+   100 / 100 -> 81 / 27; cliff seed 4 one 100 / 100 -> 24 / 41, both 100 / 100 -> 44 / 46, ai 100 / 100 -> 25 /
+   36; cliff seed 9 one 100 / 100 -> 47 / 7; flat, ramp, steep, step, crest both / ai and the other cliffs
+   identical. `--check`: before FAIL (3), after PASS. Only part 1 or only part 2 (sight, path) leaves seed 4 one /
+   ai standing.
+5. **Checks.** `tests/determinism_test.gd`, `tests/lockstep_test.gd`, `tests/custom_battle_test.gd` PASS; the
+   campaign pins of all four sets unchanged (auto-resolved battles).
+6. **Open.** Not measured: the AI vs AI hill benchmarks and `tests/matchups.gd -- --only=terrain` (musket lines
+   on hilly maps now close on hidden targets; the AI's own attack orders on them move too). A javelin or bolt row
+   with an attack order on a hidden target follows the same rule (batteries still wait).
