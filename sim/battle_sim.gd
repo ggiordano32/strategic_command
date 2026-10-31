@@ -585,6 +585,15 @@ const WALL_JOIN := 26 * M        # stretches whose ends are this near (through a
 const MAN_WALL_R := 60 * M       # "Man the wall": stretches this near the unit
 const NAV_TOWER := 8             # passability bit of tower cells: the walkway runs through them (wall units only)
 const NAV_WALK := 16             # ... and of the walkway itself (with MapGen.NAV_WALL; a stair has NAV_WALL only)
+const NAV_WATER := 32            # ... and of water (the sea, a lake, the river; the sea gate's passage) while amph_on: amphibious units only
+const AMPHIB_PCT := 60           # an amphibious unit's pace on the water, % of its pace on foot
+const AW_STEP := 8               # the amphibious graph: water nodes every this many 2 m cells ...
+const AW_SHORE := 35             # ... no farther than this many cells from land ...
+const AW_EDGE := 40 * M          # ... joined to nodes this near with a clear way
+const HARB_OUT := 8 * M          # the sea gate's outside point this far beyond the passage's water end, its inside point this far inside
+const QUAY_FORT_R := 60 * M      # a West open town's harbour fort: the quay landing this far beyond its bastions, water nodes this near them dearer ...
+const QUAY_FORT_PCT := 400       # ... paddled edges by them at this % of their cost (the canoes go round its fire where they can)
+const QUAY_IN := 12 * M          # the quay landing this far inland from the water's edge
 const CIT_GATE_PCT := 60         # a citadel's gate: % of the outer gates' hit points
 const CIT_SIEGE := 1200          # the attackers 3:1 inside the walls this long: the town is lost ...
 const CIT_SIEGE_LOSS := 6        # ... lose this much morale a second
@@ -1158,6 +1167,30 @@ var rv := PackedByteArray()       # 2 m cells: MapGen.R_* (static)
 var riv: Dictionary = {}          # the crossing's geometry (MapGen.river_geom; static)
 var riv_box := PackedInt32Array([0, 0, 0, 0])  # the ford's cells' bounding box (sim units; static)
 var u_frd := PackedInt32Array()   # per unit: 1 if any of its men stood in the ford after the last tick
+# Amphibious units and the sea gate (docs/design/battle_sim.md "Amphibious
+# units and the sea gate (as built)"): on a map with water and a unit whose
+# row has amphib 1 (amph_on), C_WATER cells are NAV_WATER (amphibious units'
+# ground, paddled at AMPHIB_PCT), a coastal plan's sea gate is a water
+# passage through the sea wall (obs C_WATER), and amphibious units plan
+# over the street graph joined to a lattice of water nodes. Static except
+# u_wet (state, hashed while amph_on).
+var amph_on: int = 0
+var u_wet := PackedInt32Array()   # per unit: its men standing on water after the last tick
+var harb := PackedInt32Array()    # the sea gate: outside x, y (on the water), inside x, y (the quay), gate x, y (static; empty: none)
+var quay := PackedInt32Array()    # a West open town's quay landing: x, y on the quay, then the seaward unit (x, y, 1/4096) (static; empty: none)
+var a_body := PackedInt32Array()  # 2 m cells: the water body (-1 none; static)
+var a_bp0 := PackedInt32Array()   # per water body: the lowest piece of ground beside it (-1 none; static)
+var a_up := PackedInt32Array()    # pairs of pieces joined by a water body (static)
+var _aroot := PackedInt32Array()  # pieces joined by gates and water (amphibious units), for nav_epoch _aroot_ep
+var _aroot_ep: int = -1
+var aw_n0: int = 0                # the amphibious graph: street nodes first (aw_n0 of them), then water nodes
+var aw_x := PackedInt32Array()
+var aw_y := PackedInt32Array()
+var aw_e0 := PackedInt32Array()
+var aw_to := PackedInt32Array()
+var aw_w := PackedInt32Array()
+var _adist: Dictionary = {}       # distance tables on it by goal node (a pure cache, for nav_epoch _adist_ep)
+var _adist_ep: int = -1
 var city_on: int = 0
 var city_def: int = -1            # defending side
 var city_walls: int = 0
@@ -1558,6 +1591,7 @@ var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on
 var vis_on: int = 0                   # some sight blockers on the map, scenario "los" not 0 (static)
 var cov_on: int = 0                   # ... and a unit with the cover trait (static)
 var t_cover := PackedInt32Array()
+var t_amph := PackedInt32Array()   # amphibious (the row's amphib: paddles the water, BattleSim amph_on)
 var t_pis := PackedInt32Array()       # roles step 2: pistols a man carries (row "pistols")
 var t_abil := PackedInt32Array()      # ... the abilities (UT.abilities: a bit per UT.AB_*)
 var t_mbat := PackedInt32Array()      # native siege: the batter ability's melee form (row "batter": the torch raiders)
@@ -1759,7 +1793,7 @@ var stat_impact_blocked: int = 0   # charge impacts taken on a formed front's sh
 ## [12] holds of high ground, [13] missile / artillery slots moved onto a
 ## rise, [14] deployments shifted to higher ground.
 var stat_ai := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 ## Per-competency AI counters, side * AIProfile.N_COUNTERS + AIProfile.C_*
 ## (docs/AI.md 6: flank hits, pull-outs, units saved, spear responses,
 ## missiles caught, ammunition left at rout ...). Not hashed, never read by
@@ -2148,6 +2182,10 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		# A river crossing: the map is the crossing's own (sim/mapgen.gd).
 		terr0 = terr0.duplicate()
 		terr0["river"] = scenario["river"]
+	amph_on = 0
+	for ud in scenario.get("units", []):
+		if UT.stat(int(ud["type"]), "amphib") != 0:
+			amph_on = 1  # (cleared again by _setup_amph without water on the map)
 	_setup_terrain(terr0, p_seed)
 	_setup_occ()
 	_setup_destr()
@@ -2864,7 +2902,7 @@ func _load_types() -> void:
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
 		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen,
 		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden,
-		t_m_gun, t_m_volley, t_m_obj, t_m_spread2, t_cover]
+		t_m_gun, t_m_volley, t_m_obj, t_m_spread2, t_cover, t_amph]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -2878,7 +2916,7 @@ func _load_types() -> void:
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
 		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen",
 		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden",
-		"m_gun", "m_volley_r", "m_obj", "m_spread2", "cover"]
+		"m_gun", "m_volley_r", "m_obj", "m_spread2", "cover", "amphib"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -3444,11 +3482,18 @@ func _setup_map(f: Dictionary) -> void:
 			riv_box = PackedInt32Array([bx0 * 2 * M, by0 * 2 * M, (bx1 + 1) * 2 * M, (by1 + 1) * 2 * M])
 	if obs_on != 0:
 		nav.resize(ob_w * ob_h)
+		if amph_on != 0:
+			_amph_carve()  # (the sea gate's passage: water)
 		_rebuild_nav()
 		_wall_joins()
 		_build_cmp()
 		if fort_on != 0 and n_cmp > 0:
 			fort_cmp = cmp[clampi(cit_y >> 11, 0, ob_h - 1) * ob_w + clampi(cit_x >> 11, 0, ob_w - 1)]
+		if amph_on != 0:
+			_setup_amph()
+	elif amph_on != 0:
+		amph_on = 0
+		harb = PackedInt32Array()
 	map_hash = 0
 	if map_on != 0:
 		var ctx := HashingContext.new()
@@ -3769,7 +3814,11 @@ static func open_snap(sim, x: int, y: int, mask: int) -> Vector2i:
 ## shut town: it goes to the gate and holds there); (x, y, 3) if there is
 ## no way at all (no gate on its side). Read-only (the order rule and the
 ## preview).
-func reach_snap(ax: int, ay: int, x: int, y: int, side: int) -> Vector3i:
+func reach_snap(ax: int, ay: int, x: int, y: int, side: int, u: int = -1) -> Vector3i:
+	if u >= 0 and amph_on != 0 and t_amph[u_otype[u]] != 0:
+		var au := reach_u(u, ax, ay)
+		if au >= 0 and au == reach_u(u, x, y):
+			return Vector3i(x, y, 0)  # (by water: an amphibious unit)
 	var ru := reach_at(ax, ay)
 	if ru < 0:
 		return Vector3i(x, y, 0)
@@ -3837,6 +3886,10 @@ func gate_way(ru: int, ax: int, ay: int, x: int, y: int, side: int) -> Vector3i:
 func unreach_goal(u: int, _t: int, goal: Vector2i) -> Vector3i:
 	if city_on == 0 or n_cmp == 0 or u_wall[u] > 0 or u_cls[u] == UT.CLS_ART:
 		return Vector3i.ZERO
+	if amph_on != 0 and t_amph[u_otype[u]] != 0:
+		var au := reach_u(u, u_ax[u], u_ay[u])
+		if au >= 0 and au == reach_u(u, goal.x, goal.y):
+			return Vector3i.ZERO  # (by water: an amphibious unit)
 	var ru := reach_at(u_ax[u], u_ay[u])
 	if ru < 0:
 		return Vector3i.ZERO
@@ -3864,6 +3917,8 @@ func unreach_goal(u: int, _t: int, goal: Vector2i) -> Vector3i:
 func _nav_of(k: int) -> int:
 	if k == MapGen.C_OPEN:
 		return MapGen.NAV_GROUND
+	if k == MapGen.C_WATER:
+		return NAV_WATER if amph_on != 0 else 0  # (amphibious units' ground)
 	if k == MapGen.C_WALK:
 		return MapGen.NAV_WALL | NAV_WALK
 	# Towers: shut, but those joining two stretches (_wall_joins) let wall
@@ -4379,8 +4434,8 @@ func _mask_of(u: int) -> int:
 func _ground_mask(u: int) -> int:
 	var c := u_cls[u]
 	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and not carries_ram(u):
-		return MapGen.NAV_GROUND | MapGen.NAV_DITCH
-	return MapGen.NAV_GROUND
+		return MapGen.NAV_GROUND | MapGen.NAV_DITCH | (NAV_WATER if amph_on != 0 and t_amph[u_otype[u]] != 0 else 0)
+	return MapGen.NAV_GROUND | (NAV_WATER if amph_on != 0 and t_amph[u_otype[u]] != 0 else 0)
 
 
 ## Street graph node usable now (a closed gate's node is not).
@@ -4507,6 +4562,9 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 	var ax := u_ax[u]
 	var ay := u_ay[u]
 	var gm := _ground_mask(u)
+	if (gm & NAV_WATER) != 0 and aw_x.size() > 0:
+		_plan_path_amph(u, gx, gy, gm)  # (over the street graph and the water: an amphibious unit)
+		return
 	var straight := ng_x.is_empty() or _los_fat(ax, ay, gx, gy, gm)
 	var srcs := PackedInt32Array()
 	var dsts := PackedInt32Array()
@@ -4603,6 +4661,8 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 ## cache): the waypoints, interleaved x, y, (gx, gy) last; empty if every
 ## way there is shut. For the view (route previews, refusals).
 func route_to(ax: int, ay: int, gx: int, gy: int, gm: int = MapGen.NAV_GROUND) -> PackedInt32Array:
+	if (gm & NAV_WATER) != 0 and aw_x.size() > 0:
+		return _route_amph(ax, ay, gx, gy, gm)
 	var out := PackedInt32Array()
 	if ng_x.is_empty() or _los_fat(ax, ay, gx, gy, gm):
 		out.append_array([gx, gy])
@@ -6462,8 +6522,8 @@ func _update_gates() -> void:
 		var gx := g_x[g]
 		var gy := g_y[g]
 		var r := wall_t + MapGen.GATE_HW * M + 6 * M
-		if sg_on != 0:
-			_siege_gate(g)
+		if sg_on != 0 or amph_on != 0:
+			_siege_gate(g)  # (amphibious units landed inside unbar it as ladder men do)
 			if g_state[g] != GATE_CLOSED:
 				continue
 		if not gate_hackable(self, g):
@@ -8521,7 +8581,7 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			# Where it can get to: open ground of its own piece (a tap on a
 			# house: beside it), else the gate on its side on the way (a tap
 			# inside a shut town: it goes to the gate and holds there).
-			var rs: Vector3i = sim.reach_snap(int(d["ax"]), int(d["ay"]), x, y, sim.u_side[u])
+			var rs: Vector3i = sim.reach_snap(int(d["ax"]), int(d["ay"]), x, y, sim.u_side[u], u)
 			if rs.z == 1 or rs.z == 2:
 				x = rs.x
 				y = rs.y
@@ -8617,6 +8677,19 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			# Native siege: a batter row (the torch raiders) goes to the gate's face and strikes it (_update_mbat),
 			# unless the order is its grenade ability's throw ("throw": the fire pots from where it stands).
 			var mb: bool = UT.stat(ty, "batter") > 0 and int(o.get("throw", 0)) == 0 and carry < 0 and wallu == 0
+			if sim.amph_on != 0 and sim.t_amph[sim.u_otype[u]] != 0 and carry < 0 and wallu == 0 \
+					and sim.reach_at(int(d["ax"]), int(d["ay"])) >= 0 \
+					and sim.reach_at(int(d["ax"]), int(d["ay"])) == sim.reach_at(sim.g_ix[gt], sim.g_iy[gt]):
+				# Landed inside by the sea gate (amphibious): to its inside, to unbar it.
+				var gfi: Vector3i = sim.gate_front(gt, sim.city_def)
+				d["order"] = O_MOVE
+				d["dx"] = gfi.x
+				d["dy"] = gfi.y
+				d["dface"] = gfi.z
+				d["target"] = -1
+				d["gtarget"] = gt
+				d["run"] = 1 if int(o.get("run", 0)) != 0 else 0
+				return
 			if c == UT.CLS_MISSILE and carry < 0 and wallu == 0 and not mb:
 				# Missile troops shoot at it from where they stand (fire
 				# missiles set it alight; others glance off).
@@ -9269,6 +9342,8 @@ func step() -> void:
 		_update_works()
 	if riv_on != 0:
 		_update_ford()
+	if amph_on != 0:
+		_update_wet()
 	if n_eq > 0:
 		_update_equip()
 	if n_gates > 0:
@@ -9823,6 +9898,11 @@ func _update_units() -> void:
 			aspeed = aspeed * FORD_SPEED / 1000
 			_u_vfac[u] = _u_vfac[u] * FORD_SPEED / 1000
 			stat_ford += 1
+		if amph_on != 0 and t_amph[u_otype[u]] != 0 and (afloat(u) or (nav_at(u_ax[u], u_ay[u]) & NAV_WATER) != 0):
+			# Paddling (amphibious units): the formation keeps to the pace
+			# of its men on the water.
+			aspeed = aspeed * AMPHIB_PCT / 100
+			_u_vfac[u] = _u_vfac[u] * AMPHIB_PCT / 100
 		var lag := 0
 		if oon and _u_obs[u] != 0 and u_fighting[u] == 0 and u_charge[u] == 0 and u_wall[u] == 0 \
 				and u_stair[u] == 0 and u_bnd[u] == 0:
@@ -10012,7 +10092,8 @@ func _update_units() -> void:
 				# fire (houses between), they go round by the streets too
 				# (fight jitter pass, 2026-10-16: they closed straight into
 				# a house and stood there for minutes).
-				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u) and not _butt(u)
+				var mis := cls == UT.CLS_MISSILE and u_ammo[u] > 0 and not _gren_hold(u) and not _butt(u) \
+					and not (amph_on != 0 and afloat(u))  # (paddling: on to land, then shoot)
 				var mlof := true
 				if mis and (ton or mon):
 					mlof = lof_units(u, t)
@@ -10400,13 +10481,13 @@ func _stuck_release(u: int, k: int) -> void:
 			u_sry[u] = u_cy[u]
 			return
 		if u_order[u] == O_MOVE and st == 0 and (FM.approx_len(u_dx[u] - u_ax[u], u_dy[u] - u_ay[u]) <= STUCK_NEAR \
-				or (city_on != 0 and reach_at(u_dx[u], u_dy[u]) != reach_at(u_ax[u], u_ay[u]))):
+				or (city_on != 0 and reach_u(u, u_dx[u], u_dy[u]) != reach_u(u, u_ax[u], u_ay[u]))):
 			# (Or it cannot get there any more: a gate shut since, its goal on
 			# another piece of ground; it went straight at it into a house.)
 			u_order[u] = O_NONE
 			stat_unstick[1] += 1
 		elif u_order[u] == O_MOVE and (st == 0 or st == 2) and city_on != 0 and u_pn[u] > 0 \
-				and (reach_at(u_pgx[u], u_pgy[u]) != reach_at(u_ax[u], u_ay[u]) \
+				and (reach_u(u, u_pgx[u], u_pgy[u]) != reach_u(u, u_ax[u], u_ay[u]) \
 				or route_to(u_ax[u], u_ay[u], u_pgx[u], u_pgy[u], _ground_mask(u)).is_empty()):
 			# No way to where it is going (a march to a stair's foot across a
 			# shut gate; the street graph not reaching a pocket by an alley
@@ -12797,6 +12878,8 @@ func _update_missiles() -> void:
 		if gun_on != 0 and t_m_gun[u_type[u]] != 0 and u_cls[u] != UT.CLS_ART:
 			_gun_unit(u)  # volleys (engines that are guns shoot in _update_artillery)
 			continue
+		if amph_on != 0 and afloat(u):
+			continue  # (paddling: no volleys, no reloading)
 		var ft := u_ftarget[u]
 		if ft < 0:
 			continue
@@ -12912,6 +12995,10 @@ func _pm_unit(u: int) -> void:
 		var i := slot_soldier[base + s]
 		if state[i] != S_FORMED or ammo[i] <= 0:
 			continue
+		if amph_on != 0 and (nav_at(pos_x[i], pos_y[i]) & NAV_WATER) != 0:
+			if tick - s_rl[i] < reload:
+				s_rl[i] += 1  # (paddling: his reload waits)
+			continue  # (no shot from the water)
 		if tick - s_rl[i] < reload:
 			continue  # (reloading)
 		if not may or (still >= 0 and (i & 1) != still):
@@ -18121,6 +18208,8 @@ const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": 
 	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true,
 	"ws_cell": true, "ob_cell": true, "ws_cmp": true, "ob_cmp": true, "ws_in": true, "obs0": true,
 	"ob_timber": true, "ob_adj0": true, "ob_adj": true,
+	"harb": true, "quay": true, "a_body": true, "a_bp0": true, "a_up": true, "_aroot": true, "_aroot_ep": true, "aw_x": true, "aw_y": true,
+	"aw_e0": true, "aw_to": true, "aw_w": true, "_adist": true, "_adist_ep": true,
 	"bld_g": true, "_tr_c": true, "_tr_wood": true, "clr_g": true, "clr_b": true, "cb_k": true, "cb_g": true, "cb_l": true, "cl_sat": true, "cl_sw": true, "cl_on": true, "cl_w": true, "cl_h": true}
 const _SNAP_MAGIC := 0x31534353  # "SCS1"
 
@@ -18656,6 +18745,8 @@ func restore(blob: PackedByteArray) -> bool:
 		set(k, d[k])
 	_destr_restore()  # (the fallen pieces' rubble on the static cells)
 	_croot_ep = -1  # (derived from the gates: recomputed on use)
+	_aroot_ep = -1  # (amphibious units' pieces: the same)
+	_adist = {}
 	# Derived path distances: the tables this sim held (they decide which
 	# units may plan this tick), for the gates as they are here.
 	_dist_cache = {}
@@ -18798,6 +18889,12 @@ func state_hash() -> int:
 	if riv_on != 0:
 		# River crossings (battles without one hash as before).
 		ctx.update(u_frd.to_byte_array())
+	if amph_on != 0:
+		# Amphibious units on a map with water (battles without them hash as before;
+		# the gates' unbarring, which they can do, with or without siege gear).
+		ctx.update(u_wet.to_byte_array())
+		if sg_on == 0 and n_gates > 0:
+			ctx.update(g_unbar.to_byte_array())
 	if ch_on != 0:
 		# Heroes and agents (battles without them hash as before).
 		for arr in _char_arrays():
@@ -19052,9 +19149,11 @@ static func place_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 	var p := deploy_clamp(sim, side, x, y)
 	if p.z == 0:
 		return
-	if sim.city_on != 0 and sim.n_cmp > 0 and sim._piece0(p.x, p.y) < 0:
+	# (Amphibious units: also afloat, on water cells of the zone.)
+	var aboard: bool = sim.amph_on != 0 and sim.t_amph[sim.u_otype[u]] != 0 and (sim.nav_at(p.x, p.y) & NAV_WATER) != 0
+	if sim.city_on != 0 and sim.n_cmp > 0 and sim._piece0(p.x, p.y) < 0 and not aboard:
 		return  # a house, a wall, a gateway
-	if sim.city_on == 0 and sim.obs_on != 0 and (sim.nav_at(p.x, p.y) & MapGen.NAV_GROUND) == 0:
+	if sim.city_on == 0 and sim.obs_on != 0 and (sim.nav_at(p.x, p.y) & MapGen.NAV_GROUND) == 0 and not aboard:
 		# On a rock or a cliff (landforms): beside it, if that is still in the zone.
 		var op := open_snap(sim, p.x, p.y, MapGen.NAV_GROUND)
 		var p2 := deploy_clamp(sim, side, op.x, op.y)
@@ -19465,6 +19564,8 @@ func _setup_equip(sc: Dictionary, units: Array) -> void:
 	u_fwc.fill(0)
 	u_frd.resize(n_units)
 	u_frd.fill(0)
+	u_wet.resize(n_units)
+	u_wet.fill(0)
 	var q0 := lst.size() + wag.size()
 	for k in fws.size():
 		var f: Array = fws[k]
@@ -20287,9 +20388,9 @@ func _siege_gate(g: int) -> void:
 	for u in n_units:
 		if u_side[u] == city_def or u_state[u] != U_READY or u_alive[u] <= 0:
 			continue
-		var ram := carries_ram(u)
-		if not ram and u_lq[u] < 0:
-			continue
+		var ram := sg_on != 0 and carries_ram(u)
+		if not ram and u_lq[u] < 0 and not (amph_on != 0 and t_amph[u_otype[u]] != 0):
+			continue  # (only the ram's crew, men over the wall by ladders, amphibious men landed inside)
 		if u_order[u] == O_MOVE and u_gtarget[u] != g:
 			continue
 		if u_maxx[u] < gx - r or u_minx[u] > gx + r or u_maxy[u] < gy - r or u_miny[u] > gy + r:
@@ -21572,3 +21673,536 @@ func _skd_places(u: int) -> void:
 		off_x[base + s] = bx - ax
 		off_y[base + s] = by - ay
 		stat_skd_men += 1
+
+
+# ------------------------------------------- amphibious units, the sea gate ---
+# docs/design/battle_sim.md "Amphibious units and the sea gate (as built)".
+# A battle with a unit whose row has amphib 1 (the canoe raiders) on a map
+# with water (amph_on): the water's cells (C_WATER: the sea, a lake, a
+# river) are NAV_WATER, ground for amphibious units only (_ground_mask);
+# their men on it paddle at AMPHIB_PCT of their pace (_update_wet, the
+# anchor's pace), neither shoot nor reload, cannot strike or be struck in
+# melee (_reach_ok wants ground under both men) and are shot at as men in
+# the open. A coastal plan's sea gate (MapGen._harbour) is a passage of
+# water through the sea wall (_amph_carve: the wall's cells there become
+# C_WATER), so only amphibious units use it, from the water to the quay
+# inside and back; it is no gate object (it cannot be shut, battered or
+# burnt). Amphibious units plan over the street graph joined to a lattice
+# of water nodes (aw_*: _build_aw), and their reach (reach_u) joins the
+# pieces of ground a water body touches. Battles without amph_on run and
+# hash exactly as before.
+
+## Unit u paddles: amphibious, on a map with water.
+func amphib(u: int) -> bool:
+	return amph_on != 0 and t_amph[u_otype[u]] != 0
+
+
+## Unit u is afloat: most of its men on the water (it paddles at AMPHIB_PCT,
+## gives no volleys and does not stop to shoot on an attack order).
+func afloat(u: int) -> bool:
+	return amph_on != 0 and u_wet[u] * 2 > u_alive[u]
+
+
+## (x, y) is water an amphibious unit may paddle (amph_on).
+func on_water(x: int, y: int) -> bool:
+	return amph_on != 0 and (nav_at(x, y) & NAV_WATER) != 0
+
+
+## The sea gate's passage (setup, before the passability): the sea wall's
+## cells within GATE_HW - 1 m of the gate's line, from the wall's inner face
+## out to the water, become water; harb its outside point (HARB_OUT beyond
+## the water's edge), its inside point (HARB_OUT inside the inner face) and
+## the gate's middle. Nothing without a sea gate (the West open towns: their
+## quay is open to the water already).
+func _amph_carve() -> void:
+	harb = PackedInt32Array()
+	if city_on == 0 or not map_info.has("city"):
+		return
+	var sd: Dictionary = (map_info["city"] as Dictionary).get("sea", {})
+	if sd.is_empty() or (sd.get("gate", []) as Array).is_empty():
+		return
+	var sg: Array = sd["gate"]
+	var gx := int(sg[0]) * M
+	var gy := int(sg[1]) * M
+	var dc := FM.cos_a(int(sg[2]))
+	var ds := FM.sin_a(int(sg[2]))
+	var wout := -1
+	var a := 0
+	while a <= 40 * M:
+		if obs_kind(gx + dc * a / FM.TRIG_ONE, gy + ds * a / FM.TRIG_ONE) == MapGen.C_WATER:
+			wout = a
+			break
+		a += M / 2
+	var win := -1
+	a = 0
+	while a <= 40 * M:
+		if obs_kind(gx - dc * a / FM.TRIG_ONE, gy - ds * a / FM.TRIG_ONE) == MapGen.C_OPEN:
+			win = a
+			break
+		a += M / 2
+	if wout < 0 or win < 0:
+		return
+	var hw := (MapGen.GATE_HW - 1) * M
+	var t := -win
+	while t <= wout + M:
+		var l := -hw
+		while l <= hw:
+			var px := gx + (dc * t - ds * l) / FM.TRIG_ONE
+			var py := gy + (ds * t + dc * l) / FM.TRIG_ONE
+			if px >= 0 and py >= 0 and (px >> 11) < ob_w and (py >> 11) < ob_h:
+				var c := (py >> 11) * ob_w + (px >> 11)
+				var k := obs[c]
+				if k == MapGen.C_WALL or k == MapGen.C_WALK or k == MapGen.C_TOWER or k == MapGen.C_STAIR:
+					obs[c] = MapGen.C_WATER
+			l += M / 2
+		t += M / 2
+	harb = PackedInt32Array([gx + dc * (wout + HARB_OUT) / FM.TRIG_ONE, gy + ds * (wout + HARB_OUT) / FM.TRIG_ONE,
+		gx - dc * (win + HARB_OUT) / FM.TRIG_ONE, gy - ds * (win + HARB_OUT) / FM.TRIG_ONE, gx, gy])
+
+
+## Setup (after the passability and the pieces of ground): off again without
+## water on the map; else the water bodies, the pieces each touches, and the
+## amphibious graph.
+func _setup_amph() -> void:
+	var nc := ob_w * ob_h
+	var any := false
+	for c in nc:
+		if obs[c] == MapGen.C_WATER:
+			any = true
+			break
+	if not any:
+		amph_on = 0
+		harb = PackedInt32Array()
+		return
+	a_body.resize(nc)
+	a_body.fill(-1)
+	a_bp0 = PackedInt32Array()
+	a_up = PackedInt32Array()
+	var q := PackedInt32Array()
+	q.resize(nc)
+	var w := ob_w
+	var nb := 0
+	for c0 in nc:
+		if obs[c0] != MapGen.C_WATER or a_body[c0] >= 0:
+			continue
+		var head := 0
+		var tail := 1
+		q[0] = c0
+		a_body[c0] = nb
+		var pcs := PackedInt32Array()
+		while head < tail:
+			var c := q[head]
+			head += 1
+			var i := c % w
+			for k in 4:
+				var n2 := c + 1 if k == 0 else (c - 1 if k == 1 else (c + w if k == 2 else c - w))
+				if (k == 0 and i + 1 >= w) or (k == 1 and i == 0) or n2 < 0 or n2 >= nc:
+					continue
+				if obs[n2] == MapGen.C_WATER:
+					if a_body[n2] < 0:
+						a_body[n2] = nb
+						q[tail] = n2
+						tail += 1
+				elif n_cmp > 0 and cmp[n2] >= 0 and pcs.find(cmp[n2]) < 0:
+					pcs.append(cmp[n2])
+		pcs.sort()
+		a_bp0.append(pcs[0] if not pcs.is_empty() else -1)
+		for k in range(1, pcs.size()):
+			a_up.append(pcs[0])
+			a_up.append(pcs[k])
+		nb += 1
+	_aroot_ep = -1
+	_build_aw()
+	_find_quay()
+
+
+## The harbour fort of a West open town beside the quay: its middle and the radius its bastions reach
+## (sim units); z 0 none.
+func _quay_fort() -> Vector3i:
+	if wt_on == 0 or not map_info.has("city"):
+		return Vector3i.ZERO
+	var f: Dictionary = (map_info["city"] as Dictionary).get("fort", {})
+	if f.is_empty() or not f.has("x"):
+		return Vector3i.ZERO
+	return Vector3i(int(f["x"]) * M, int(f["y"]) * M, (int(f.get("h", 0)) + int(f.get("b", 0))) * M)
+
+
+## A West open town (no sea gate) on the sea: the landing on its quay (amphibious units, R_HARBOUR): the open
+## cell beside the water inside the town (V_URBAN) on the plaza's ground, at least QUAY_FORT_R beyond the
+## harbour fort's bastions, nearest the plaza (rows then columns, every cell), moved QUAY_IN inland toward the
+## plaza where that is open ground of the same piece. Static.
+func _find_quay() -> void:
+	quay = PackedInt32Array()
+	if not harb.is_empty() or wt_on == 0 or sea_on == 0 or city_on == 0:
+		return
+	var px := plaza[0]
+	var py := plaza[1]
+	var rp := reach_at(px, py)
+	var fo := _quay_fort()
+	var best := -1
+	var bd := 0
+	for j in range(1, ob_h - 1):
+		for i in range(1, ob_w - 1):
+			var c := j * ob_w + i
+			if obs[c] != MapGen.C_OPEN or not _by_water(c):
+				continue
+			var x := (i << 11) + 1024
+			var y := (j << 11) + 1024
+			if (veg_bits(x, y) & MapGen.V_URBAN) == 0 or reach_at(x, y) != rp:
+				continue
+			if fo.z > 0 and FM.approx_len(x - fo.x, y - fo.y) < fo.z + QUAY_FORT_R:
+				continue
+			var d := FM.approx_len(x - px, y - py)
+			if best < 0 or d < bd:
+				best = c
+				bd = d
+	if best < 0:
+		return
+	var bx := ((best % ob_w) << 11) + 1024
+	var by := ((best / ob_w) << 11) + 1024
+	var l := maxi(FM.approx_len(px - bx, py - by), 1)
+	var ix := bx + (px - bx) * mini(QUAY_IN, l) / l
+	var iy := by + (py - by) * mini(QUAY_IN, l) / l
+	if (nav_at(ix, iy) & MapGen.NAV_GROUND) == 0 or reach_at(ix, iy) != rp:
+		ix = bx
+		iy = by
+	quay = PackedInt32Array([ix, iy, (bx - px) * 4096 / l, (by - py) * 4096 / l])
+
+
+## Pieces of ground joined with the gates as they are and by the water
+## (an amphibious unit's): each piece's lowest joined piece.
+func _aroots() -> PackedInt32Array:
+	if _aroot_ep == nav_epoch and _aroot.size() == n_cmp:
+		return _aroot
+	var par := _roots().duplicate()
+	for k in range(0, a_up.size(), 2):
+		var ra := _afind(par, a_up[k])
+		var rb := _afind(par, a_up[k + 1])
+		if ra != rb:
+			par[maxi(ra, rb)] = mini(ra, rb)
+	for k in n_cmp:
+		par[k] = _afind(par, k)
+	_aroot = par
+	_aroot_ep = nav_epoch
+	return _aroot
+
+
+static func _afind(par: PackedInt32Array, k: int) -> int:
+	var r := k
+	while par[r] != r:
+		r = par[r]
+	return r
+
+
+## reach_at for unit u: an amphibious unit's pieces joined by the water it
+## paddles (a water cell: the pieces its body touches); others as reach_at.
+func reach_u(u: int, x: int, y: int) -> int:
+	if amph_on == 0 or t_amph[u_otype[u]] == 0 or n_cmp == 0 or a_body.is_empty():
+		return reach_at(x, y)
+	if x >= 0 and y >= 0 and (x >> 11) < ob_w and (y >> 11) < ob_h:
+		var b := a_body[(y >> 11) * ob_w + (x >> 11)]
+		if b >= 0:
+			return _aroots()[a_bp0[b]] if a_bp0[b] >= 0 else -1
+	var r := reach_at(x, y)
+	return _aroots()[r] if r >= 0 else r
+
+
+## Once a tick after the men moved (amph_on): an amphibious unit's men on
+## the water have their step cut to AMPHIB_PCT (a cut step that would end
+## where they may not stand leaves them where they were); u_wet counts them.
+func _update_wet() -> void:
+	for u in n_units:
+		if t_amph[u_otype[u]] == 0:
+			continue
+		var nw := 0
+		if u_alive[u] > 0 and u_state[u] < U_DESTROYED:
+			var base := u_slot_base[u]
+			var gm := _mask_of(u)
+			for s in u_alive[u]:
+				var i := slot_soldier[base + s]
+				if state[i] >= S_DEAD or (nav_at(pos_x[i], pos_y[i]) & NAV_WATER) == 0:
+					continue
+				nw += 1
+				var mx := pos_x[i] - prev_x[i]
+				var my := pos_y[i] - prev_y[i]
+				if mx != 0 or my != 0:
+					var wx := prev_x[i] + mx * AMPHIB_PCT / 100
+					var wy := prev_y[i] + my * AMPHIB_PCT / 100
+					if (nav_at(wx, wy) & gm) == 0:
+						wx = prev_x[i]
+						wy = prev_y[i]
+					pos_x[i] = wx
+					pos_y[i] = wy
+		u_wet[u] = nw
+
+
+## The amphibious graph (setup): the street graph's nodes and edges, then
+## water nodes every AW_STEP cells on water at least 2 and at most AW_SHORE
+## cells from land, then the sea gate's outside point, middle and inside
+## point; each new node joined to every node before it within AW_EDGE with
+## a clear 3 m way over ground or water (a paddled edge costs 100 /
+## AMPHIB_PCT of its length).
+func _build_aw() -> void:
+	aw_n0 = ng_x.size()
+	aw_x = ng_x.duplicate()
+	aw_y = ng_y.duplicate()
+	var nc := ob_w * ob_h
+	var w := ob_w
+	var dist := PackedInt32Array()
+	dist.resize(nc)
+	dist.fill(-1)
+	var q := PackedInt32Array()
+	q.resize(nc)
+	var tail := 0
+	for c in nc:
+		if obs[c] != MapGen.C_WATER:
+			continue
+		var i := c % w
+		if (i + 1 < w and obs[c + 1] != MapGen.C_WATER) or (i > 0 and obs[c - 1] != MapGen.C_WATER) \
+				or (c + w < nc and obs[c + w] != MapGen.C_WATER) or (c >= w and obs[c - w] != MapGen.C_WATER):
+			dist[c] = 1
+			q[tail] = c
+			tail += 1
+	var head := 0
+	while head < tail:
+		var c := q[head]
+		head += 1
+		if dist[c] >= AW_SHORE:
+			continue
+		var i := c % w
+		for k in 4:
+			var n2 := c + 1 if k == 0 else (c - 1 if k == 1 else (c + w if k == 2 else c - w))
+			if (k == 0 and i + 1 >= w) or (k == 1 and i == 0) or n2 < 0 or n2 >= nc:
+				continue
+			if obs[n2] == MapGen.C_WATER and dist[n2] < 0:
+				dist[n2] = dist[c] + 1
+				q[tail] = n2
+				tail += 1
+	for j in range(AW_STEP / 2, ob_h, AW_STEP):
+		for i in range(AW_STEP / 2, ob_w, AW_STEP):
+			var c := j * w + i
+			if obs[c] == MapGen.C_WATER and dist[c] >= 2:
+				aw_x.append((i << 11) + 1024)
+				aw_y.append((j << 11) + 1024)
+	if harb.size() >= 6:
+		for k in [0, 4, 2]:
+			aw_x.append(harb[k])
+			aw_y.append(harb[k + 1])
+	var na := aw_x.size()
+	# Edges as (from, to, weight): the street graph's first, then the new
+	# ones; laid out by node keeping that order (a counting sort).
+	var ef := PackedInt32Array()
+	var et := PackedInt32Array()
+	var ew := PackedInt32Array()
+	for v in aw_n0:
+		for e in range(ng_e0[v], ng_e0[v + 1]):
+			ef.append(v)
+			et.append(ng_to[e])
+			ew.append(ng_w[e])
+	var mask := MapGen.NAV_GROUND | MapGen.NAV_DITCH | NAV_WATER
+	var fo := _quay_fort() if harb.is_empty() else Vector3i.ZERO
+	for a in range(aw_n0, na):
+		for b in a:
+			var dx := aw_x[b] - aw_x[a]
+			var dy := aw_y[b] - aw_y[a]
+			if absi(dx) > AW_EDGE or absi(dy) > AW_EDGE:
+				continue
+			var l := FM.approx_len(dx, dy)
+			if l > AW_EDGE or not _los_fat(aw_x[a], aw_y[a], aw_x[b], aw_y[b], mask):
+				continue
+			var wt := maxi(l / 128 * 100 / AMPHIB_PCT, 1)
+			if fo.z > 0 and (FM.approx_len(aw_x[a] - fo.x, aw_y[a] - fo.y) < fo.z + QUAY_FORT_R \
+					or (b >= aw_n0 and FM.approx_len(aw_x[b] - fo.x, aw_y[b] - fo.y) < fo.z + QUAY_FORT_R)):
+				wt = wt * QUAY_FORT_PCT / 100  # (under the harbour fort's guns: round it where the water allows)
+			ef.append_array([a, b])
+			et.append_array([b, a])
+			ew.append_array([wt, wt])
+	aw_e0 = PackedInt32Array()
+	aw_e0.resize(na + 1)
+	aw_e0.fill(0)
+	for k in ef.size():
+		aw_e0[ef[k] + 1] += 1
+	for v in na:
+		aw_e0[v + 1] += aw_e0[v]
+	aw_to = PackedInt32Array()
+	aw_to.resize(ef.size())
+	aw_w = PackedInt32Array()
+	aw_w.resize(ef.size())
+	var fill := aw_e0.slice(0, na)
+	for k in ef.size():
+		var p := fill[ef[k]]
+		aw_to[p] = et[k]
+		aw_w[p] = ew[k]
+		fill[ef[k]] = p + 1
+	_adist = {}
+	_adist_ep = -1
+
+
+func _anode_open(k: int) -> bool:
+	return k >= aw_n0 or _node_open(k)
+
+
+## As _near_nodes, on the amphibious graph.
+func _near_anodes(x: int, y: int, most: int, mask: int) -> PackedInt32Array:
+	var cand := PackedInt32Array()
+	var cd := PackedInt32Array()
+	for k in aw_x.size():
+		if not _anode_open(k):
+			continue
+		if k < aw_n0 and fort_on != 0 and ng_e0[k + 1] == ng_e0[k]:
+			continue
+		var d := FM.approx_len(aw_x[k] - x, aw_y[k] - y)
+		var pos := cand.size()
+		while pos > 0 and (cd[pos - 1] > d or (cd[pos - 1] == d and cand[pos - 1] > k)):
+			pos -= 1
+		if pos < 6:
+			cand.insert(pos, k)
+			cd.insert(pos, d)
+			if cand.size() > 6:
+				cand.resize(6)
+				cd.resize(6)
+	var out := PackedInt32Array()
+	for k in cand.size():
+		if _los_fat(x, y, aw_x[cand[k]], aw_y[cand[k]], mask):
+			out.append(cand[k])
+			if out.size() >= most:
+				break
+	if out.is_empty() and not cand.is_empty():
+		out.append(cand[0])
+	return out
+
+
+## Distances (1/8 m, paddling dearer) from every node of the amphibious
+## graph to node dst with the gates as they are (a pure cache: the same
+## whether kept or not, so not state).
+func _adist_table(dst: int) -> PackedInt32Array:
+	if _adist_ep != nav_epoch:
+		_adist = {}
+		_adist_ep = nav_epoch
+	if _adist.has(dst):
+		return _adist[dst]
+	var cnt_n := aw_x.size()
+	var dist := PackedInt32Array()
+	dist.resize(cnt_n)
+	dist.fill(PATH_INF)
+	var heap := PackedInt32Array()
+	dist[dst] = 0
+	heap.append(dst)  # key = d * 65536 + node
+	while not heap.is_empty():
+		var top := heap[0]
+		var last := heap[heap.size() - 1]
+		heap.resize(heap.size() - 1)
+		if not heap.is_empty():
+			var i := 0
+			var hn := heap.size()
+			while true:
+				var c := 2 * i + 1
+				if c >= hn:
+					break
+				if c + 1 < hn and heap[c + 1] < heap[c]:
+					c += 1
+				if heap[c] >= last:
+					break
+				heap[i] = heap[c]
+				i = c
+			heap[i] = last
+		var d := top >> 16
+		var v := top & 65535
+		if d > dist[v]:
+			continue
+		for e in range(aw_e0[v], aw_e0[v + 1]):
+			var to := aw_to[e]
+			if not _anode_open(to):
+				continue
+			var nd := d + aw_w[e]
+			if nd < dist[to]:
+				dist[to] = nd
+				var key := nd * 65536 + to
+				heap.append(key)
+				var j := heap.size() - 1
+				while j > 0:
+					var par := (j - 1) >> 1
+					if heap[par] <= key:
+						break
+					heap[j] = heap[par]
+					j = par
+				heap[j] = key
+	_adist[dst] = dist
+	return dist
+
+
+## The waypoints from (ax, ay) to (gx, gy) on the amphibious graph (as
+## route_to: interleaved x, y, the goal last; empty if there is no way).
+func _route_amph(ax: int, ay: int, gx: int, gy: int, gm: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if _los_fat(ax, ay, gx, gy, gm):
+		out.append_array([gx, gy])
+		return out
+	var srcs := _near_anodes(ax, ay, 3, gm)
+	var dsts := _near_anodes(gx, gy, 2, gm)
+	var best := PATH_INF
+	var ba := -1
+	var bt := PackedInt32Array()
+	var bb := -1
+	for b in dsts:
+		var dt := _adist_table(b)
+		var tail := FM.approx_len(gx - aw_x[b], gy - aw_y[b]) / 128
+		for a in srcs:
+			if dt[a] >= PATH_INF:
+				continue
+			var c := FM.approx_len(aw_x[a] - ax, aw_y[a] - ay) / 128 + dt[a] + tail
+			if c < best:
+				best = c
+				ba = a
+				bb = b
+				bt = dt
+	if ba < 0:
+		return out
+	var cur := ba
+	out.append_array([aw_x[cur], aw_y[cur]])
+	var k := 1
+	while cur != bb and k < PATH_MAX - 1:
+		var nxt := -1
+		var nv := PATH_INF
+		for e in range(aw_e0[cur], aw_e0[cur + 1]):
+			var to := aw_to[e]
+			if not _anode_open(to):
+				continue
+			var c2 := aw_w[e] + bt[to]
+			if c2 < nv or (c2 == nv and to < nxt):
+				nv = c2
+				nxt = to
+		if nxt < 0 or bt[nxt] >= bt[cur]:
+			break
+		cur = nxt
+		out.append_array([aw_x[cur], aw_y[cur]])
+		k += 1
+	out.append_array([gx, gy])
+	var pk := 0
+	var cnt := out.size() / 2
+	while pk + 1 < cnt - 1 and _los_fat(ax, ay, out[(pk + 1) * 2], out[(pk + 1) * 2 + 1], gm):
+		pk += 1
+	return out.slice(pk * 2)
+
+
+## _plan_path for an amphibious unit: the same plan on the amphibious graph
+## (every table built when wanted: no per-tick budget, so nothing is state).
+func _plan_path_amph(u: int, gx: int, gy: int, gm: int) -> void:
+	var r := _route_amph(u_ax[u], u_ay[u], gx, gy, gm)
+	stat_paths += 1
+	var base := u * PATH_MAX
+	u_pgx[u] = gx
+	u_pgy[u] = gy
+	u_pep[u] = nav_epoch
+	u_pk[u] = 0
+	u_pn[u] = 1
+	pth_x[base] = gx
+	pth_y[base] = gy
+	var n2 := r.size() / 2
+	if n2 <= 1:
+		return  # (straight there, or no way at all: straight on)
+	for k in n2:
+		pth_x[base + k] = r[k * 2]
+		pth_y[base + k] = r[k * 2 + 1]
+	u_pn[u] = n2
+	_trail_push(u, u_ax[u], u_ay[u])

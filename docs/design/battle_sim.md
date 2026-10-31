@@ -2880,3 +2880,73 @@ armour or shield. Price "about a warriors' company": 7 a man x 60 = 420 (warrior
 held house out of reach (`range_vs` from below its windows: the set piece stopped at 19 m and never threw); 25 m, the
 grenadiers' row, gives about 20 m at a house. The `batter` field is new (DEFAULTS 0); `abilities` gives `AB_BATTER`
 for it as for `guns_siege`. Campaign: the Miskito's `siege` line (they keep no wagon: they forage), their mix `siege` 5.
+
+### Amphibious units and the sea gate (as built, 2026-10-31)
+
+The native siege's later entries (docs/STATUS.md "Native siege"): the harbour assault (canoe raiders landing at the
+quay inside a port's walls) and the lake of Tayasal (the Itza's home defence by canoe). The row trait `amphib` (the
+canoe raiders; campaign_rules.md "Amphibious armies") now also counts in the battle sim. Code: `sim/battle_sim.gd`
+section "amphibious units, the sea gate" (`amph_on`, `NAV_WATER`, `AMPHIB_PCT`, `_amph_carve`, `_setup_amph`,
+`reach_u`, `_update_wet`, `afloat`, `_build_aw`, `_plan_path_amph`, `_route_amph`) and its hooks (`_nav_of`,
+`_ground_mask`, `_plan_path`, `route_to`, `unreach_goal`, `reach_snap`, the order rule's gate branch, `_siege_gate`,
+`place_rule`, the anchor's pace, `_update_missiles`, `_pm_unit`, the missile attack's closing); the AI: docs/AI.md 50;
+the scenarios `west_harbour_assault` and `tayasal` (`sim/scenarios.gd` `harbour_assault`, `tayasal`).
+
+- **When.** `amph_on` is 1 for a battle with a unit whose row has `amphib` 1 on a map with water (`C_WATER`: the sea of
+  a coastal settlement, a West port's harbour, a river); off, nothing below happens and every battle hashes as before
+  (the tutorial_native village has no water: unchanged). Static, from the scenario.
+- **Water is ground for amphibious units.** With `amph_on`, `C_WATER` cells carry `NAV_WATER` (32) and an amphibious
+  unit's ground mask (`_ground_mask`, so every man step, slot flow, line check and open-point search) includes it;
+  other units never enter water (their masks are unchanged, an order onto water snaps to their own ground as before).
+  The river's channel is the same kind of cell, so canoes cross rivers anywhere too.
+- **Afloat.** `_update_wet` (once a tick after the men moved, after the ford) cuts the step of each amphibious man on
+  water to `AMPHIB_PCT` 60 % (a cut step that would end where he may not stand leaves him where he was) and counts
+  them in `u_wet` (per unit, hashed while `amph_on`; captured by `snapshot()` as every script variable). A unit with
+  most of its men on water is `afloat`: its anchor keeps to 60 % of its pace, it gives no volleys, and on an attack
+  order a missile unit does not stop at its range on the water but closes to land (then shoots). A man on water never
+  shoots and his reload waits (`_pm_unit`), cannot strike or be struck in melee (`_reach_ok` wants ground under both
+  men) and is shot at as a man in the open (no cover on water). Measured (tests/harbour_test.gd): 18 m afloat
+  against 30 m ashore in 20 s (62 %).
+- **The sea gate is a water passage.** `MapGen._harbour` draws a sea gate in the longest stretch of a coastal plan's
+  sea wall (the Rome plans and the natives' oppidum; the West's walled plan at walls 3, which is one of them). With
+  `amph_on`, `_amph_carve` (setup, before the passability) turns the sea wall's cells within `GATE_HW` - 1 m of the
+  gate's line, from the wall's inner face out to the water, into `C_WATER`: an 8 m channel. Only amphibious units use
+  it, from the water onto the quay (the ring road inside) and back; it is no gate object, so it cannot be shut,
+  battered or burnt, and shots pass through it as through any opening. `harb` keeps its outside point (8 m beyond the
+  water's edge), its inside point (8 m inside the inner face) and the gate's middle (static, rebuilt by setup). The
+  mole stays scenery. A West open town (walls 0-2) has no sea wall: its quay is open water already, so a canoe lands
+  on it anywhere (nothing added).
+- **Reach.** The pieces of ground (`cmp`) do not change. `_setup_amph` floods the water bodies (`a_body`) and records
+  the pieces each touches (`a_bp0`, `a_up`); `reach_u(u, x, y)` is `reach_at` for every unit but an amphibious one,
+  for which the pieces a water body touches are one (with the gates as they are: `_aroots`, a pure cache by
+  `nav_epoch`). The order rule's move snap (`reach_snap(..., u)`), `unreach_goal` and the stuck watchdog's "no way
+  there any more" read `reach_u`, so a raider ordered from outside the walls to the quay goes by water instead of to a
+  shut gate.
+- **Paths.** The street graph is unchanged. `_build_aw` (setup) makes the amphibious graph: the street graph's nodes
+  and edges, then water nodes every 8 cells (16 m) on water at least 4 m and at most 70 m from land, then the sea
+  gate's three points; each new node is joined to every node before it within 40 m with a clear 3 m way over ground or
+  water, a paddled edge costing 100 / 60 of its length. An amphibious unit plans on it (`_plan_path_amph`,
+  `route_to` with a mask carrying `NAV_WATER`); its distance tables are built when wanted (no per-tick budget, so the
+  cache `_adist` is not state). The harbour assault's map: 119 street nodes, 271 in all, 2,886 edges; set-up 370 ms
+  (as without).
+- **Landing and unbarring.** An amphibious unit landed inside the walls may unbar a shut outer gate as ladder men do
+  (the order rule sends it to the gate's inside face; `_siege_gate`, now also run with `amph_on` and no siege gear,
+  counts its men there: `UNBAR_MEN` 4 for `UNBAR_TICKS` 15 s); `g_unbar` is hashed with `amph_on` as with siege gear.
+- **Deployment.** An amphibious unit may be placed on water cells of its side's zone (`place_rule`: water passes where
+  other units need open ground of a piece); a zone without water leaves it ashore. The scenarios place theirs: the
+  harbour assault's raiders start afloat off the left shore.
+- **The view.** Nothing new: men on water draw as men anywhere (the sea is ground drawn under the soldiers in both
+  views; screenshots: men afloat upright on the sea in the oblique view); the paths hatch shows the channel open.
+  The passage is drawn (view only, from `sim.harb`): the top view paints it as water over the wall strip, from the
+  wall's inner face out to the sea, with the wall's two cut ends as dark edges (`CityDraw.draw_sea_passage`, called by
+  `battlekit.gd`'s `_RubbleDraw._draw` and the Low path's `_LowDraw._draw` where the rubble is drawn); the oblique
+  wall mesh is cut there like a gate's opening, with end caps (`battlekit.gd` `_ob_walls`, a cut from `sim.harb`),
+  between the sea gate's two towers. The kit has no water-gate piece: two wall ends with the water between.
+- **The open quay.** A West open town on the sea (no sea gate) gets a quay landing (`_find_quay`, static, setup
+  under `amph_on`: `quay`): the open cell beside the water inside the town on the plaza's ground nearest the plaza,
+  at least `QUAY_FORT_R` 60 m beyond the harbour fort's bastions, moved `QUAY_IN` 12 m inland; and on such a map
+  the amphibious graph's paddled edges within 60 m of the fort's bastions cost `QUAY_FORT_PCT` 400 %, so canoes go
+  round the fort's fire where the water allows (the AI: docs/AI.md 50).
+
+Open: a landing into a
+breach or onto the mole is not modelled; routers afloat follow no flow field over water (they head for their edge).

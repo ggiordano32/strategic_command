@@ -2850,3 +2850,23 @@ Target pick for torch raiders, the unit book's "The natives' siege" paragraph, t
 - **Rome and the old battles.** No Rome row has the `batter` field or a burning standard kind, no Rome scenario
   places poles; `_foot_key`'s change touches West rows only. The flat goldens and Rome hashes are unchanged
   (determinism_test); `--only=native` is the new set piece.
+
+### The harbour assault and the lake of Tayasal (as built, 2026-10-31)
+
+The native siege's later entries. The sim rules (canoes on the water, the sea gate as a water passage, landing and
+unbarring): docs/design/battle_sim.md "Amphibious units and the sea gate (as built)"; the AI: docs/AI.md 50
+(`R_HARBOUR`, Easy 0). In a siege on a coastal plan (the Rome plans, the natives' oppidum, the West's walled plan at
+walls 3) the sea gate in the sea wall, until now scenery, is an 8 m channel of water that only amphibious units (the
+canoe raiders) use, from the sea to the quay inside and back. The attacking AI stages its canoes on the water off it,
+sends them in when the storm goes in, and once landed they unbar the nearest shut gate from inside as a ladder party
+does (or storm the town); the garrison posts a company on the quay when it sees canoes afloat near the sea gate. A
+defending amphibious unit sorties once by water while the walls hold, landing on the shore nearest the attackers'
+shooters or guns and falling on them for at most a minute, then comes back in by the sea gate (hit and run). The
+West's open towns (walls 0-2, the campaign's Caribbean ports) have no sea wall: their quay is open water and canoes
+land on it anywhere; the AI lands its canoes on the quay at least 60 m beyond the harbour fort's bastions, keeping off
+the fort's guns where the water allows, and storms the town from the quay side, and the garrison holds the quay
+against them. Both views draw the sea gate's passage open: water between the two cut ends of the wall. The harbour
+assault's Easy draws every battle by design (Easy's canoes fight on land and nobody gets in). Scenarios:
+`west_harbour_assault` ("West: the harbour assault, raiders at the quay": a
+Miskito war party against a walled Spanish port, the canoes afloat off its left shore) and `tayasal` ("The lake of
+Tayasal, 1697": the Itza's oppidum on the lake, the Spanish by land with ladders and a falconet battery).

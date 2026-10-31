@@ -196,7 +196,8 @@ func _draw() -> void:
 		draw_bridge(self, bridge, px_per_m, Vector2.ZERO)
 	if lay.is_empty():
 		return
-	CityDraw.draw_static(self, lay, px_per_m, Vector2.ZERO, true, false, use_kit)
+	CityDraw.draw_static(self, lay, px_per_m, Vector2.ZERO, true, false, use_kit,
+		sim != null and sim.harb.size() >= 6)  # (amphibious units: the sea gate a water passage)
 
 
 ## A river crossing's stone bridge (layout `r`: x0, x1, the two mouths, m):

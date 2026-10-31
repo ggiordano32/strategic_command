@@ -1123,6 +1123,12 @@ func _ob_walls() -> void:
 					var st := rt.dot(d)
 					if st + hc > 0.0 and st - hc < l:
 						cuts.append([st - hc, st + hc])
+			if sim != null and sim.harb.size() >= 6:
+				# (The sea gate's water passage, amphibious units' only: the wall cut there, end caps either side.)
+				var rh := Vector2(sim.harb[4], sim.harb[5]) / 1024.0 - p[e]
+				var shw := float(MapGen.GATE_HW - 1)
+				if absf(rh.dot(n)) < t * 0.5 + 2.0 and rh.dot(d) > -shw and rh.dot(d) < l + shw:
+					cuts.append([rh.dot(d) - shw, rh.dot(d) + shw])
 			if not rub.is_empty():
 				var sq := 0.5
 				var c0 := -1.0
@@ -1556,6 +1562,7 @@ class _RubbleDraw extends Node2D:
 	var kit
 
 	func _draw() -> void:
+		kit.CityDraw.draw_sea_passage(self, kit.sim, float(kit.k), Vector2.ZERO)  # (amphibious units: the sea gate's channel)
 		if not kit._rubble_cells.is_empty():
 			kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, false)
 
@@ -1584,6 +1591,9 @@ class _LowDraw extends Node2D:
 				draw_set_transform_matrix(Transform2D.IDENTITY)
 				var st: Vector3 = kit.STONE_TINT[kit.culture]
 				draw_mesh(strip_mesh, kit.TEX_S_LOW, Transform2D.IDENTITY, Color(st.x, st.y, st.z))
+			if i == kit.strip_at:
+				draw_set_transform_matrix(Transform2D.IDENTITY)
+				kit.CityDraw.draw_sea_passage(self, kit.sim, float(kit.k), Vector2.ZERO)  # (the sea gate's channel)
 			if i == kit.strip_at and not kit._rubble_cells.is_empty():
 				draw_set_transform_matrix(Transform2D.IDENTITY)
 				kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, true)

@@ -69,7 +69,8 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"test_bolts_crest", "test_woods", "siege_village", "siege_town", "siege_city", "siege_hill",
 	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
 	"bench_4000_polis", "bench_4000_castrum", "west_village", "west_town", "west_city", "west_inland",
-	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "west_fort_storm", "tutorial_native"]
+	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "west_fort_storm",
+	"west_harbour_assault", "tayasal", "tutorial_native"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
 ## the menu picks one). The benchmarks stay flat so their timings compare
@@ -186,6 +187,10 @@ static func title(id: String) -> String:
 			return "West: storming a harbour fort (ram, ladders)"
 		"tutorial_native":
 			return "The native way"
+		"west_harbour_assault":
+			return "West: the harbour assault, raiders at the quay"
+		"tayasal":
+			return "The lake of Tayasal, 1697"
 	return id
 
 
@@ -235,6 +240,10 @@ static func make(id: String) -> Dictionary:
 			return fort_storm()
 		"tutorial_native":
 			return native_lesson()
+		"west_harbour_assault":
+			return harbour_assault()
+		"tayasal":
+			return tayasal()
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -1692,3 +1701,121 @@ static func bench_city(plan: int = MapGen.PLAN_RING, coast: int = 0, kind: int =
 		city["coast"] = coast
 	var r := settlement(city, terr, att, dfn, 1, [0, 1])
 	return r["scenario"]
+
+
+## The harbour assault (docs/design/battle_sim.md "Amphibious units and the sea gate (as built)"; the native
+## siege's later entry): a Miskito war party storms a Spanish port behind stone walls (the West's walled plan:
+## walls 3, the castrum on the coast, its sea wall with a sea gate; the West's walls 1-2 are open towns with a
+## harbour fort and no sea wall) with no ladders: the torch raiders batter the gate and the canoe raiders, afloat
+## off the shore beyond the town's left flank, paddle along the sea wall, in through the sea gate (a water
+## passage only amphibious units use) and land on the quay inside, then unbar the gate from within (the siege AI's
+## R_HARBOUR, docs/AI.md 50). The garrison: musketeers, militia and pikemen, no tower engines; both sides AI.
+## gar_pct scales the garrison's companies (tests/harbour_probe.gd measures the balance with it). Its sizes are the
+## measured even fight on Average (5 of 8 attacker wins; 87-90 men a company pooled 21 of 40): the outcome turns on
+## whether the torch raiders' fire pots burn the main gate in the first 90 s, and one man a company moves it.
+const HARBOUR_ARMY := [["native_warriors", 100, ""], ["native_warriors", 100, ""],
+	["native_bowmen", 80, "poison_arrows"], ["native_bowmen", 80, "poison_arrows"], ["holcan", 60, ""],
+	["torch_raiders", 60, ""], ["canoe_raiders", 60, ""], ["canoe_raiders", 60, ""], ["canoe_raiders", 60, ""]]
+const HARBOUR_GARRISON := [["musketeers", 89], ["colonial_militia", 89], ["w_pikemen", 89], ["musketeers", 59]]
+static func harbour_assault(gar_pct: int = 100, ai_sides: Array = [0, 1]) -> Dictionary:
+	var att: Array = []
+	for e in HARBOUR_ARMY:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = []
+	for e in HARBOUR_GARRISON:
+		dfn.append([UT.index_of(str(e[0])), maxi(int(e[1]) * gar_pct / 100, 10)])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 1683 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_ARID] + 10,
+		"ground": MapGen.PAL_ARID}
+	var city := {"seed": 15, "level": 2, "walls": 3, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 1,
+		"founder": MapGen.CUL_LATIN, "west": 1, "towers": 0}
+	var r := settlement(city, terr, att, dfn, 1, ai_sides)
+	var sc: Dictionary = r["scenario"]
+	var lay: Dictionary = r["layout"]
+	# The canoe raiders afloat off the left shore (beyond the town's flank, out of the walls' reach), in a column
+	# along the shore facing the town.
+	var fl: Array = (lay["sea"] as Dictionary)["flee"]
+	var shore := int(fl[0][1]) - 30
+	var q := 0
+	for k in (r["order"] as Array).size():
+		var o: Array = r["order"][k]
+		if int(o[0]) != 0:
+			continue
+		var e: Array = HARBOUR_ARMY[int(o[1])]
+		if str(e[2]) != "":
+			sc["units"][k]["ak"] = UT.ammo_index(str(e[2]))
+		if str(e[0]) == "canoe_raiders":
+			sc["units"][k]["x_m"] = 24 + q * 30
+			sc["units"][k]["y_m"] = maxi(shore - 26, 12)
+			sc["units"][k]["facing"] = FACE_RIGHT
+			sc["units"][k]["files"] = 10
+			q += 1
+	return sc
+
+
+## The lake of Tayasal, 1697 (docs/design/battle_sim.md "Amphibious units and the sea gate (as built)"): the
+## Itza's home defence. Their walled town (the natives' plan, the oppidum, walls 2) stands on the shore of Lake
+## Peten Itza (the map's water is the lake: coast 1, its sea gate a canoe landing); the Spanish come by land with
+## ladders and a falconet battery, no boats. The Itza's two canoe raider companies sortie by water out of the
+## sea gate and land on the attackers' flank or rear (the siege AI's R_HARBOUR, docs/AI.md 50); their bowmen
+## carry fire arrows. Both sides AI; gar_pct scales the Itza's companies (tests/harbour_probe.gd). The Itza stand at
+## half strength (warriors 50, bowmen 40, Holcan and canoes 30); the balance is the sortie's (its hit and run,
+## SiegeAI.HSORTIE_FIGHT_T: 3 of 8 Spanish wins on Average, 7 of 16 over seeds 8100-8115; docs/AI.md 50), not the
+## garrison's (40-60 % strength and a stronger Spanish side all gave 0-3 of 8).
+const TAYASAL_SPANISH := [["musketeers", 100], ["musketeers", 100], ["w_pikemen", 120], ["rodeleros", 100],
+	["colonial_militia", 80], ["light_gun", 12]]
+const TAYASAL_ITZA := [["native_warriors", 50, ""], ["native_warriors", 50, ""], ["native_warriors", 50, ""],
+	["native_bowmen", 40, "fire_arrows"], ["native_bowmen", 40, "fire_arrows"], ["holcan", 30, ""], ["holcan", 30, ""],
+	["canoe_raiders", 30, ""], ["canoe_raiders", 30, ""]]
+static func tayasal(gar_pct: int = 100, ai_sides: Array = [0, 1], walls: int = 2, att_pct: int = 100) -> Dictionary:
+	var att: Array = []
+	for e in TAYASAL_SPANISH:
+		att.append([UT.index_of(str(e[0])), int(e[1]) if str(e[0]) == "light_gun" else int(e[1]) * att_pct / 100])
+	var dfn: Array = []
+	for e in TAYASAL_ITZA:
+		dfn.append([UT.index_of(str(e[0])), maxi(int(e[1]) * gar_pct / 100, 10)])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 1697 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_GREEN] + 15,
+		"ground": MapGen.PAL_GREEN}
+	var city := {"seed": 1697, "level": 2, "walls": walls, "bld": [1, 2, 4], "plan": MapGen.PLAN_OPPIDUM, "coast": 1,
+		"founder": MapGen.CUL_CELTIC, "west": 1, "towers": 0}
+	var r := settlement(city, terr, att, dfn, 1, ai_sides, {"ladders": 2})
+	var sc: Dictionary = r["scenario"]
+	for k in (r["order"] as Array).size():
+		var o: Array = r["order"][k]
+		if int(o[0]) == 1 and o.size() == 2 and str(TAYASAL_ITZA[int(o[1])][2]) != "":
+			sc["units"][k]["ak"] = UT.ammo_index(str(TAYASAL_ITZA[int(o[1])][2]))
+	return sc
+
+
+## The quay raid (tests/harbour_test.gd; docs/AI.md 50, the open quay): west_port's map (a West port at walls 1,
+## an open town with its harbour fort beside the quay) stormed by the harbour assault's Miskito war party, its
+## canoe raiders afloat off the left shore; the garrison WEST_DEF (west_town's). Not in IDS.
+static func quay_raid(ai_sides: Array = [0, 1]) -> Dictionary:
+	var att: Array = []
+	for e in HARBOUR_ARMY:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = []
+	for e in WEST_DEF:
+		dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 15 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_ARID] + 20,
+		"ground": MapGen.PAL_ARID}
+	var city := {"seed": 15, "level": 2, "walls": 1, "bld": [1, 2, 4], "plan": MapGen.CUL_PUNIC, "coast": 1,
+		"founder": MapGen.CUL_PUNIC, "west": 1}
+	var r := settlement(city, terr, att, dfn, 1, ai_sides)
+	var sc: Dictionary = r["scenario"]
+	var fl: Array = ((r["layout"] as Dictionary)["sea"] as Dictionary)["flee"]
+	var shore := int(fl[0][1]) - 30
+	var q := 0
+	for k in (r["order"] as Array).size():
+		var o: Array = r["order"][k]
+		if int(o[0]) != 0:
+			continue
+		var e: Array = HARBOUR_ARMY[int(o[1])]
+		if str(e[2]) != "":
+			sc["units"][k]["ak"] = UT.ammo_index(str(e[2]))
+		if str(e[0]) == "canoe_raiders":
+			sc["units"][k]["x_m"] = 24 + q * 30
+			sc["units"][k]["y_m"] = maxi(shore - 26, 12)
+			sc["units"][k]["facing"] = FACE_RIGHT
+			sc["units"][k]["files"] = 10
+			q += 1
+	return sc

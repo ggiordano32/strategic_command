@@ -4204,6 +4204,81 @@ what the planner refrains from: no AI blockade of the human's ports (`CSea.updat
 lanes (`CLanes.raiders`). Off without the setting (pins unchanged). Design and test: `docs/design/campaign_rules.md`
 "The tutorial (as built)", "(2026-10-30) The shield covers attacks".
 
+## 50. The harbour: canoes through the sea gate, the quay, the sortie (2026-10-31)
+
+The AI side of docs/design/battle_sim.md "Amphibious units and the sea gate (as built)" (the native siege's later
+entries, docs/STATUS.md "Native siege"). Code: `sim/siege_ai.gd` section "the harbour" (`_harbour_att`,
+`_harb_storm`, `_harbour_def`, `_hsortie_target`, `_hsortie_landing`, `_quay_guard`, `_hsortie_unit`, `_harb_in`,
+`_harb_stage`), `sim/ai_profile.gd` (`R_HARBOUR`). One rule, `R_HARBOUR` (293, from the unused 293-299; `KNOB_GAPS`
+now 294-299): Easy 0, Average 1, Skilled 1. Without it (Easy) amphibious units fight on land as before and the
+garrison ignores canoes afloat.
+
+1. **Attackers by water** (`_harbour_att`, from `_attacker` before the class rules; mode `A_HARB` 40). An attacking
+   amphibious unit (not on a wall, not in the pursuit) whose quay inside the sea gate (`_harb_in`: `HARB_IN` 24 m in
+   from the passage's inside point, open ground of the inside's piece) is on another piece of ground than its own
+   (walls between) but within its reach by water (`reach_u`) paddles at the run to a staging point on the water
+   `HARB_STAGE` 45 m out beyond the passage (`u_ai_x` 1), waits there for the storm (the side's assault phase, or
+   `HARB_WAIT` 60 s after it got there: `u_ai_y` 1, `u_ai_t`), then goes in through the passage to the quay (2).
+   Landed (its anchor on the inside's piece: 3) it turns its skirmish off and storms as a ladder party does once over
+   the wall: to the inside of the nearest shut outer gate, which its men unbar (`UNBAR_MEN` 4 for 15 s; the order
+   rule's new branch for amphibious units inside), else into the town (`_storm`, mode `A_STORM`).
+   **The open quay** (2026-10-31, the coordinator's follow-up): a West open town at walls 0-2 (the campaign's real
+   Caribbean ports: a harbour fort beside an open quay) has no sea gate; its landing is the sim's `quay`
+   (BattleSim `_find_quay`: beside the water inside the town, nearest the plaza, 60 m or more beyond the fort's
+   bastions). Under `R_HARBOUR` the same rule runs with the quay as the landing: an amphibious attacker more than
+   `QUAY_NEAR` 40 m from it paddles round (the amphibious graph makes the water within 60 m of the fort's bastions 4
+   times dearer, so the canoes keep off its guns where a way allows) to a staging point `HARB_STAGE` out to sea from the
+   quay, goes in, and has landed once its anchor is within `QUAY_LANDED` 25 m of the quay and it is not afloat; it then
+   storms from the quay side (no shut outer gate: `_storm`). tests/harbour_test.gd: on west_port's map (walls 1) with
+   the Miskito party the raiders land on the quay (tick 1210) and a defender holds it.
+2. **The quay's company** (`_harbour_def` from the defender's `_army`; mode `A_HQUAY` 41). An enemy amphibious unit
+   seen afloat within `HARB_SEE_R` 150 m of the sea gate's outside point (an open quay: of a point 10 m out from it),
+   or landed on the sea gate's quay: one company of the
+   town's reserve, plaza or gate stack (not on a wall, not amphibious) holds the quay, the nearest missile unit with
+   ammunition first, else the nearest foot; one at a time (a new one once it is gone). It attacks attackers within
+   `HARB_QUAY_R` 35 m of the quay (a missile company: within 90 % of its range, afloat ones too, shooting into the
+   passage; foot never at men afloat: no blows on the water), else stands on the quay facing the sea gate (it is where
+   the canoes land, so they land into it).
+3. **The sortie** (`_harbour_def`, `_hsortie_unit`; mode `A_HSORTIE` 42). While the walls hold (every outer gate shut,
+   no land stretch breached), each own amphibious unit in the town or on its walls (a wall company comes down by a
+   stair first) sorties once: when an attacking missile unit or battery stands within `HSORTIE_R` 250 m of an outer
+   gate (`_hsortie_target`: the nearest to it), it paddles out of the sea gate to the open cell beside the water on
+   that target's ground nearest it, at least `HSORTIE_WALL_R` 60 m from the sea gate and `HSORTIE_IN` 20 m on toward
+   the target (`_hsortie_landing`; `u_ai_y` the cell, `u_ai_x` 1), lands (2) and attacks that target (or the nearest
+   attacker within `HSORTIE_FIGHT_R` 120 m, shooters and engines first) for at most `HSORTIE_FIGHT_T` 60 s from its
+   landing (hit and run: then, or with nobody left, it breaks off and goes back in by the sea gate to the quay (3),
+   fighting only attackers within 40 m once it is within 60 m of the quay). A unit that has sortied never sorties
+   again (the mode stays).
+
+Measured (tests/harbour_probe.gd, both sides AI at the skill, 8 seeds 8100-8107, 15-minute limit):
+| Scenario | Average | Easy | Notes |
+|---|---|---|---|
+| `west_harbour_assault` (garrison 89 / 89 / 89 / 59) | 5 of 8 attacker wins | 0 of 8 (8 draws at the limit) | the canoes landed in every Average battle (116-161 s) and unbarred a gate in 6; the quay's company posted at 27 s; one man a company more or less moves 2-4 battles (87-90 a company pooled: 21 of 40); the battle turns on whether the torch raiders' fire pots burn the main gate in the first 90 s. Easy: no fire-pot order, no canoes by water, warriors cannot hack a walls-3 gate: nobody gets in |
+| `tayasal` (the Itza at half strength, the sortie's hit and run) | 3 of 8 (seeds 8108-8115: 4 of 8; 7 of 16) | 7 of 8 | the sortie lands in every Average battle; the garrison was not the lever (the Itza at 40-60 % 0-3 of 8, the Spanish 25-30 % stronger 0-2 of 8, walls 1 1-2 of 8) |
+
+**The harbour assault's Easy** is 0 of 8, every battle a draw at the limit, by design: Easy has no `R_HARBOUR` (its
+canoe raiders fight on land), no torch raiders' ability order (`R_TORCH_GATE` 0) and warriors cannot hack a walls-3
+gate, so nobody gets in and the garrison never sallies.
+
+**Tayasal's sortie, tuned** (the coordinator's follow-up, 2026-10-31; 8 seeds 8100-8107 on Average unless noted; the
+Itza at half strength):
+
+| Sortie variant | Spanish wins |
+|---|---|
+| as first built (nearest shooters or guns, fights to the end) | 3 of 8 (8 of 24 over 8100-8123) |
+| the guns only | 1 of 8 |
+| landing 120 / 200 / 300 m or more from its target (seen and met) | 3 / 3 / 2 of 8 |
+| one company sorties a battle | 3 of 8 |
+| one company, landing 200 m off | 3 of 8 |
+| hit and run 15 / 30 / 45 s, then back in | 6 / 6 (8108-8115: 5) / 6 (8108-8115: 4) of 8 |
+| hit and run 30 s, guns only / one company / landing 200 m off | 6 / 6 / 6 of 8 |
+| **hit and run 60 s (kept: `HSORTIE_FIGHT_T` 600)** | **3 of 8 (8108-8115: 4 of 8; 7 of 16, 44 %)** |
+| hit and run 75 / 90 s | 6 / 6 of 8 |
+
+The kept setting is the one in the band over 16 seeds (44 %); on the standard eight it is 3 of 8. The curve is noisy
+(15-45 s and 75-90 s both give 6 of 8): what decides a battle is whether the Spanish shooters break when the canoes
+land in their flank, and a sortie that stays in the fight longer than a minute is cut down before it can come back.
+
 ## 51. The torch raiders batter a palisade stretch (2026-10-31)
 
 The open item of note 45 ("the AI batters only the attacked gate, never a stretch"). Code: `sim/siege_ai.gd`

@@ -337,6 +337,8 @@ static func _army(sim, side: int) -> void:
 			_sk_defend(sim, side, kn)
 		if sim.ai_cit[side] == 0:
 			_plug_breaches(sim, side, kn)
+		if sim.amph_on != 0 and kn[AP.R_HARBOUR] != 0:
+			_harbour_def(sim, side)
 		return
 	# Attackers. Clearly lost: withdraw (as in the field).
 	var own := BattleAI._strength(sim, side)
@@ -957,6 +959,12 @@ static func _defender(sim, u: int) -> void:
 		return
 	if mode == A_DCHARGE:
 		_dcharge_unit(sim, u)
+		return
+	if mode == A_HQUAY:
+		_quay_guard(sim, u)
+		return
+	if mode == A_HSORTIE:
+		_hsortie_unit(sim, u)
 		return
 	# Not yet classified (the army thinks first on the same tick).
 
@@ -2145,6 +2153,8 @@ static func _attacker(sim, u: int) -> void:
 		return
 	if sim.n_eq > 0 and sim.u_ai[u] == A_MANTLET and _att_mantlet(sim, u, phase):
 		return
+	if sim.amph_on != 0 and _harbour_att(sim, u, phase, kn):
+		return  # (amphibious units by water through the sea gate: docs/AI.md 50)
 	if cls == UT.CLS_ART:
 		_att_art(sim, u, phase)
 	elif cls == UT.CLS_CAV:
@@ -4724,3 +4734,374 @@ static func deploys_posts(sim, side: int) -> bool:
 static func placed_at_post(sim, u: int) -> bool:
 	return sim.u_ai[u] == A_RESERVE and sim.u_wall[u] == 0 and _street_ai(sim, sim.u_side[u]) and _street_row(sim, u) \
 		and AP.of(sim, sim.u_side[u])[AP.S_DEF_ZONE] != 0
+
+
+# ------------------------------------------------------------ the harbour ---
+# docs/AI.md 50 (R_HARBOUR; Easy 0): amphibious units and the sea gate
+# (BattleSim amph_on, harb; docs/design/battle_sim.md "Amphibious units and
+# the sea gate (as built)").
+##   attackers  an amphibious unit, when the sea gate's quay is reachable by
+##              water and lies inside walls it cannot otherwise pass, paddles
+##              to a staging point on the water off the sea gate, waits there
+##              for the storm (the assault, or HARB_WAIT), goes in through the
+##              passage onto the quay and, landed, storms as a ladder party
+##              does once up: to the inside of the nearest shut outer gate to
+##              unbar it, else into the town (_storm).
+##   defenders  an enemy amphibious unit seen afloat within HARB_SEE_R of the
+##              sea gate: one company (the nearest missile unit first, else
+##              foot) holds the quay (A_HQUAY) against it. An own amphibious
+##              unit in the town, while the walls hold, sorties once by water
+##              out of the sea gate to the shore nearest the attackers'
+##              missile units or engines within HSORTIE_R of the walls,
+##              lands there and attacks them (A_HSORTIE), then comes back in.
+const A_HARB := 40       # attacking amphibious unit by water (u_ai_x: 1 to the staging point, 2 in through the sea gate, 3 landed: the storming party; u_ai_y 1 once staged)
+const A_HQUAY := 41      # defender holding the quay against amphibious attackers
+const A_HSORTIE := 42    # defending amphibious unit's sortie (u_ai_x: 1 out to the landing, 2 landed and attacking, 3 done; u_ai_y the landing's 2 m cell)
+const HARB_STAGE := 45 * M     # the staging point this far out beyond the sea gate's outside point
+const HARB_WAIT := 600         # ... waited at for the storm at most this long (ticks), then in
+const HARB_IN := 24 * M        # the quay (landing) point this far inside the sea gate's inside point
+const QUAY_NEAR := 40 * M      # an open quay (a West town): an amphibious attacker this near it already is not sent round by water ...
+const QUAY_LANDED := 25 * M    # ... and has landed with its anchor this near it, ashore
+const HARB_SEE_R := 150 * M    # defenders hold the quay against amphibious attackers afloat this near the sea gate
+const HARB_QUAY_R := 35 * M    # ... the quay's company attacks attackers this near its post (its missiles: within their range)
+const HSORTIE_R := 250 * M     # a sortie by water goes for attacking shooters or engines this near an outer gate ...
+const HSORTIE_WALL_R := 60 * M  # ... landing on the shore nearest the target, at least this far from the sea gate ...
+const HSORTIE_IN := 20 * M     # ... its landing point this far on from the water's edge toward the target
+const HSORTIE_FIGHT_R := 120 * M  # ... and attacks attackers this near it once landed
+const HSORTIE_FIGHT_T := 600   # ... for at most this long (ticks), then back in by water before the attackers turn on it (hit and run)
+
+
+## The quay inside the sea gate (where amphibious attackers land and its
+## company stands): HARB_IN further in from harb's inside point, on open
+## ground of the inside's piece; (-1, -1) without a sea gate.
+static func _harb_in(sim) -> Vector2i:
+	if sim.harb.size() < 6:
+		if sim.quay.size() >= 4:
+			return Vector2i(sim.quay[0], sim.quay[1])  # (a West open town: its quay, BattleSim._find_quay)
+		return Vector2i(-1, -1)
+	var ix: int = sim.harb[2]
+	var iy: int = sim.harb[3]
+	var dx: int = ix - sim.harb[4]
+	var dy: int = iy - sim.harb[5]
+	var l := maxi(FM.approx_len(dx, dy), 1)
+	var p: Vector2i = sim.open_snap(sim, ix + dx * HARB_IN / l, iy + dy * HARB_IN / l, MapGen.NAV_GROUND)
+	if sim.reach_at(p.x, p.y) < 0 or sim.reach_at(p.x, p.y) != sim.reach_at(ix, iy):
+		return Vector2i(ix, iy)
+	return p
+
+
+## Where the landing faces from: the sea gate's middle, or (an open quay) a point 10 m out to sea from it.
+static func _harb_front(sim) -> Vector2i:
+	if sim.harb.size() >= 6:
+		return Vector2i(sim.harb[4], sim.harb[5])
+	return Vector2i(sim.quay[0] + sim.quay[2] * 10 * M / 4096, sim.quay[1] + sim.quay[3] * 10 * M / 4096)
+
+
+## The staging point on the water off the sea gate (an open quay: HARB_STAGE out to sea from its water's edge).
+static func _harb_stage(sim) -> Vector2i:
+	if sim.harb.size() < 6:
+		var d: int = HARB_STAGE + sim.QUAY_IN
+		return sim.open_snap(sim, sim.quay[0] + sim.quay[2] * d / 4096, sim.quay[1] + sim.quay[3] * d / 4096, sim.NAV_WATER)
+	var ox: int = sim.harb[0]
+	var oy: int = sim.harb[1]
+	var dx: int = ox - sim.harb[4]
+	var dy: int = oy - sim.harb[5]
+	var l := maxi(FM.approx_len(dx, dy), 1)
+	return sim.open_snap(sim, ox + dx * HARB_STAGE / l, oy + dy * HARB_STAGE / l, sim.NAV_WATER)
+
+
+## Attacking unit u (amphibious, R_HARBOUR): by water through the sea gate.
+## True while the rule has it.
+static func _harbour_att(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.R_HARBOUR] == 0 or not sim.amphib(u) or (sim.harb.size() < 6 and sim.quay.size() < 4) \
+			or sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0:
+		return false
+	var lp := _harb_in(sim)
+	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
+	var rl: int = sim.reach_at(lp.x, lp.y)
+	var open_q: bool = sim.harb.size() < 6  # (a West open town's quay: no walls between, so landed is "there")
+	var dl := BattleAI._d(sim.u_ax[u] - lp.x, sim.u_ay[u] - lp.y)
+	if sim.u_ai[u] != A_HARB:
+		if phase == SP_PURSUE or rl < 0 or (not open_q and ra >= 0 and ra == rl) or (open_q and dl <= QUAY_NEAR):
+			return false  # (already inside or on the quay, or the town as good as taken: the usual rules)
+		var au: int = sim.reach_u(u, sim.u_ax[u], sim.u_ay[u])
+		if au < 0 or au != sim.reach_u(u, lp.x, lp.y):
+			return false  # (no way by water)
+		BattleAI._set_mode(sim, u, A_HARB)
+		sim.u_ai_x[u] = 1
+		BattleAI._count(sim, sim.u_side[u], AP.C_SIEGE)
+	var st: int = sim.u_ai_x[u]
+	if st < 3 and ra >= 0 and ra == rl and (not open_q or (dl <= QUAY_LANDED and not sim.afloat(u))):
+		# Landed on the quay: the storming party, not throwing from cover.
+		st = 3
+		sim.u_ai_x[u] = 3
+		sim.u_ai_t[u] = sim.tick
+		if sim.u_skirm[u] != 0:
+			BattleAI._order(sim, u, {"type": ORDER_SKIRMISH, "on": 0}, 8)
+	if st == 3:
+		_harb_storm(sim, u)
+		return true
+	if _engaged(sim, u):
+		return true
+	var gf := _harb_front(sim)
+	var gx: int = gf.x
+	var gy: int = gf.y
+	if st == 1:
+		var sp := _harb_stage(sim)
+		if BattleAI._d(sim.u_ax[u] - sp.x, sim.u_ay[u] - sp.y) > 12 * M and sim.u_ai_y[u] == 0:
+			_go_run(sim, u, sp.x, sp.y, FM.atan2_a(gy - sp.y, gx - sp.x), 6, 1)
+			return true
+		if sim.u_ai_y[u] == 0:
+			sim.u_ai_y[u] = 1  # (staged: the wait starts)
+			sim.u_ai_t[u] = sim.tick
+		if phase == SP_APPROACH and sim.tick - sim.u_ai_t[u] < HARB_WAIT:
+			return true
+		sim.u_ai_x[u] = 2
+	_go_run(sim, u, lp.x, lp.y, FM.atan2_a(lp.y - gy, lp.x - gx), 4, 1)
+	return true
+
+
+## Landed amphibious attacker u: the ladder party's rule once over the wall:
+## to the inside of the nearest shut outer gate to unbar it; none: storm.
+static func _harb_storm(sim, u: int) -> void:
+	if _engaged(sim, u):
+		return
+	var tg := -1
+	var bd := 0
+	for k in sim.n_gates:
+		if sim.g_cit[k] != 0 or sim.g_state[k] != GATE_CLOSED:
+			continue
+		var d := BattleAI._d(sim.g_ix[k] - sim.u_cx[u], sim.g_iy[k] - sim.u_cy[u])
+		if tg < 0 or d < bd:
+			tg = k
+			bd = d
+	if tg < 0:
+		_storm(sim, u)
+		return
+	if sim.u_gtarget[u] != tg or sim.u_order[u] != O_MOVE:
+		if sim.u_order[u] == O_NONE and sim.u_gtarget[u] == tg:
+			return  # (at its inside, unbarring)
+		BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "gate": tg, "run": 1}, 0)
+
+
+## Side `side` defending (R_HARBOUR): the quay's company and the sorties.
+static func _harbour_def(sim, side: int) -> void:
+	if sim.harb.size() < 6 and sim.quay.size() < 4:
+		return
+	var lp := _harb_in(sim)
+	var gf := _harb_front(sim)
+	var rl: int = sim.reach_at(lp.x, lp.y)
+	var have := false
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and sim.u_ai[u] == A_HQUAY:
+			have = true
+			break
+	if not have:
+		var threat := false
+		for o in sim.n_units:
+			if sim.u_side[o] == side or sim.u_state[o] != U_READY or not sim.amphib(o) or sim.hidden_from(o, side):
+				continue
+			var near := BattleAI._d(sim.u_cx[o] - gf.x, sim.u_cy[o] - gf.y) <= HARB_SEE_R
+			if near and (sim.afloat(o) or (sim.harb.size() >= 6 and sim.reach_at(sim.u_ax[o], sim.u_ay[o]) == rl)):
+				threat = true
+				break
+		if threat:
+			var best := -1
+			var bk := 0
+			for u in sim.n_units:
+				if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] > 0 or sim.amphib(u) \
+						or BattleAI.is_char(sim, u) or sim.reach_at(sim.u_ax[u], sim.u_ay[u]) != rl:
+					continue
+				var m: int = sim.u_ai[u]
+				if m != A_RESERVE and m != A_PLAZA and m != A_MOUTH:
+					continue
+				var c: int = sim.u_cls[u]
+				var mis: bool = c == UT.CLS_MISSILE and sim.u_ammo[u] > 0
+				if not mis and c != UT.CLS_INF and c != UT.CLS_PIKE:
+					continue
+				var key := (0 if mis else 1 << 30) + BattleAI._d(sim.u_cx[u] - lp.x, sim.u_cy[u] - lp.y)
+				if best < 0 or key < bk:
+					best = u
+					bk = key
+			if best >= 0:
+				BattleAI._set_mode(sim, best, A_HQUAY)
+	# The sorties (the defender's own amphibious units), while the walls hold (a sea gate's town only).
+	if sim.harb.size() < 6:
+		return
+	var hold := true
+	for g in sim.n_gates:
+		if sim.g_cit[g] == 0 and sim.g_state[g] != GATE_CLOSED:
+			hold = false
+	for sg in sim.ws_state.size():
+		if sim.ws_state[sg] != WS_STANDING and (sim.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) == 0:
+			hold = false
+	if not hold:
+		return
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or not sim.amphib(u) or sim.u_ai[u] == A_HSORTIE \
+				or sim.u_stair[u] != 0 or (sim.u_wall[u] == 0 and sim.reach_at(sim.u_ax[u], sim.u_ay[u]) != rl):
+			continue  # (in the town or on its walls: a wall company comes down by a stair first)
+		var t := _hsortie_target(sim, u)
+		if t < 0:
+			continue
+		var c := _hsortie_landing(sim, u, t)
+		if c < 0:
+			continue
+		BattleAI._set_mode(sim, u, A_HSORTIE)
+		sim.u_ai_x[u] = 1
+		sim.u_ai_y[u] = c
+		BattleAI._count(sim, side, AP.C_SIEGE)
+
+
+## The attackers' shooters or engines a sortie by unit u goes for: the
+## nearest to u of those within HSORTIE_R of an outer gate (on open ground,
+## not afloat, seen); -1 none.
+static func _hsortie_target(sim, u: int) -> int:
+	var best := -1
+	var bd := 0
+	var side: int = sim.u_side[u]
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.hidden_from(o, side) or sim.afloat(o):
+			continue
+		var c: int = sim.u_cls[o]
+		if c != UT.CLS_MISSILE and c != UT.CLS_ART:
+			continue
+		var ng := 1 << 40
+		for g in sim.n_gates:
+			if sim.g_cit[g] == 0:
+				ng = mini(ng, BattleAI._d(sim.u_cx[o] - sim.g_x[g], sim.u_cy[o] - sim.g_y[g]))
+		if ng > HSORTIE_R or sim.reach_at(sim.u_cx[o], sim.u_cy[o]) < 0:
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if best < 0 or d < bd:
+			best = o
+			bd = d
+	return best
+
+
+## Where unit u's sortie lands for target t: the open 2 m cell beside the
+## water on t's ground nearest t (every second cell, rows then columns), at
+## least HSORTIE_WALL_R from the sea gate (out of the walls' shadow); -1 none.
+static func _hsortie_landing(sim, u: int, t: int) -> int:
+	var rt: int = sim.reach_at(sim.u_cx[t], sim.u_cy[t])
+	var best := -1
+	var bd := 0
+	var w: int = sim.ob_w
+	for j in range(1, sim.ob_h - 1, 2):
+		for i in range(1, w - 1, 2):
+			var c := j * w + i
+			if sim.obs[c] != MapGen.C_OPEN or not sim._by_water(c):
+				continue
+			var px := (i << 11) + 1024
+			var py := (j << 11) + 1024
+			if BattleAI._d(px - sim.harb[4], py - sim.harb[5]) < HSORTIE_WALL_R or sim.reach_at(px, py) != rt \
+					or sim.reach_u(u, px, py) != sim.reach_u(u, sim.harb[2], sim.harb[3]):
+				continue
+			var d := BattleAI._d(px - sim.u_cx[t], py - sim.u_cy[t])
+			if best < 0 or d < bd:
+				best = c
+				bd = d
+	if best < 0:
+		return -1
+	# (Ashore far enough for the whole company: HSORTIE_IN on toward the
+	# target where that is open ground of the same piece.)
+	var bx := ((best % w) << 11) + 1024
+	var by := ((best / w) << 11) + 1024
+	var dx: int = sim.u_cx[t] - bx
+	var dy: int = sim.u_cy[t] - by
+	var l := maxi(BattleAI._d(dx, dy), 1)
+	var ix := bx + dx * mini(HSORTIE_IN, l) / l
+	var iy := by + dy * mini(HSORTIE_IN, l) / l
+	if (sim.nav_at(ix, iy) & MapGen.NAV_GROUND) != 0 and sim.reach_at(ix, iy) == rt:
+		return (iy >> 11) * w + (ix >> 11)
+	return best
+
+
+## The quay's company: attacks attackers that come near the quay (missile
+## units also those afloat in reach), else holds it facing the sea gate.
+static func _quay_guard(sim, u: int) -> void:
+	if _engaged(sim, u):
+		return
+	var lp := _harb_in(sim)
+	if lp.x < 0:
+		BattleAI._set_mode(sim, u, A_RESERVE)
+		sim.u_ai_x[u] = sim.u_ax[u]
+		sim.u_ai_y[u] = sim.u_ay[u]
+		return
+	var mis: bool = sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0
+	var r: int = maxi(HARB_QUAY_R, sim.mrange(u) * 9 / 10) if mis else HARB_QUAY_R
+	var best := -1
+	var bd := r
+	for o in sim.n_units:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.hidden_from(o, sim.u_side[u]):
+			continue
+		if not mis and sim.afloat(o):
+			continue  # (no blows on the water)
+		var d := BattleAI._d(sim.u_cx[o] - lp.x, sim.u_cy[o] - lp.y)
+		if d < bd:
+			best = o
+			bd = d
+	if best >= 0:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+			BattleAI._attack(sim, u, best, 0)
+		return
+	var gf := _harb_front(sim)
+	_go_home(sim, u, lp.x, lp.y, FM.atan2_a(gf.y - lp.y, gf.x - lp.x), 6)
+
+
+## A defending amphibious unit's sortie (A_HSORTIE): out by water to its
+## landing, then at the attackers there; with nobody left near it, back in
+## by the sea gate to the quay, where it fights attackers who reach it.
+static func _hsortie_unit(sim, u: int) -> void:
+	var st: int = sim.u_ai_x[u]
+	var c: int = sim.u_ai_y[u]
+	var lx: int = ((c % sim.ob_w) << 11) + 1024
+	var ly: int = ((c / sim.ob_w) << 11) + 1024
+	if st == 1:
+		if sim.reach_at(sim.u_ax[u], sim.u_ay[u]) == sim.reach_at(lx, ly) \
+				and BattleAI._d(sim.u_ax[u] - lx, sim.u_ay[u] - ly) <= 30 * M:
+			st = 2
+			sim.u_ai_x[u] = 2
+			sim.u_ai_t[u] = sim.tick
+		else:
+			var t0 := _hsortie_target(sim, u)
+			var fc: int = sim.u_face[u] if t0 < 0 else FM.atan2_a(sim.u_cy[t0] - ly, sim.u_cx[t0] - lx)
+			_go_run(sim, u, lx, ly, fc, 6, 1)
+			return
+	if st == 2 and sim.tick - sim.u_ai_t[u] >= HSORTIE_FIGHT_T:
+		st = 3
+		sim.u_ai_x[u] = 3  # (struck: back in before the attackers turn on it)
+	if st == 2 and _engaged(sim, u):
+		return
+	if st == 2:
+		var tt := _hsortie_target(sim, u)
+		if tt >= 0:
+			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != tt:
+				BattleAI._attack(sim, u, tt, 1)
+			return
+		var best := -1
+		var bk := 0
+		for o in sim.n_units:
+			if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.hidden_from(o, sim.u_side[u]) or sim.afloat(o):
+				continue
+			var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+			if d > HSORTIE_FIGHT_R:
+				continue
+			var key := d - (60 * M if sim.u_cls[o] == UT.CLS_MISSILE or sim.u_cls[o] == UT.CLS_ART else 0)
+			if best < 0 or key < bk:
+				best = o
+				bk = key
+		if best >= 0:
+			if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+				BattleAI._attack(sim, u, best, 1)
+			return
+		sim.u_ai_x[u] = 3  # (done: back in)
+	var lp := _harb_in(sim)
+	var t := _nearest_attacker(sim, u, sim.u_cx[u], sim.u_cy[u], 40 * M, false)
+	if t >= 0 and not sim.afloat(t) and not sim.afloat(u) \
+			and BattleAI._d(sim.u_ax[u] - lp.x, sim.u_ay[u] - lp.y) <= 60 * M:
+		if sim.u_order[u] != O_ATTACK or sim.u_target[u] != t:
+			BattleAI._attack(sim, u, t, 0)
+		return
+	if lp.x >= 0:
+		_go_run(sim, u, lp.x, lp.y, FM.atan2_a(sim.harb[5] - lp.y, sim.harb[4] - lp.x), 8, 1)

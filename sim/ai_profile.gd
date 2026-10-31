@@ -369,10 +369,12 @@ const S_DEF_FIRE := 290        # 1: a West street defender shot by shooters stan
 const S_DEF_ZONE := 291        # 1: West street posts at the start stand out of the attackers' guns' reach from their deployment zone, and the defenders are placed at their posts in the deployment (0: as placed)
 # Native siege (docs/AI.md 45, 2026-10-29).
 const R_TORCH_GATE := 292      # 1: a melee batter unit (the torch raiders) attacking a town batters the attacked gate (Use now) while the storm has no ram to work it; 0 its fire pots only (the grenadiers' rule)
+# The harbour (docs/AI.md 50, 2026-10-31).
+const R_HARBOUR := 293         # 1: attacking amphibious units go in by water through the sea gate onto the quay and storm from inside (unbarring a gate); a defender holds the quay against them afloat; defending amphibious units sortie once by water onto the attackers' flank while the walls hold; 0 none of it (Easy)
 # The play library (docs/AI.md 44, 2026-10-27): scripted historical plays
 # (sim/plays.gd) a side runs by its scenario's ai_plays bits. Ids 300-309
 # the framework and the tercio, 310-319 the countermarch, 320-329 the ambush,
-# 330-339 the Swedish salvo; 293-299, 304-310, 312-319, 326-329 unused
+# 330-339 the Swedish salvo; 294-299, 304-310, 312-319, 326-329 unused
 # (KNOB_GAPS: 0, no row).
 const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits allow (Plays.army_think); 0 none (Easy)
 const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
@@ -401,7 +403,7 @@ const SALVO_RUN_R := 339       # ... the lines close the last this many metres (
 const N_KNOBS := 340
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[293, 300], [304, 311], [312, 320], [326, 330]]
+const KNOB_GAPS: Array = [[294, 300], [304, 311], [312, 320], [326, 330]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -678,6 +680,8 @@ const KNOBS: Array = [
 	[S_DEF_ZONE, 0, 1, 1],
 	# Native siege (docs/AI.md 45).
 	[R_TORCH_GATE, 0, 1, 1],  # (Easy: no ability order, as the grenadiers' R_GREN_SIEGE)
+	# The harbour (docs/AI.md 50): Easy fights its canoes on land and ignores them afloat (a deliberate mistake).
+	[R_HARBOUR, 0, 1, 1],
 	[PLAYS_ON, 0, 1, 1],
 	[TERCIO, 0, 1, 1],
 	[TERCIO_FILES, 8, 14, 14],

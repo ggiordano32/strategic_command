@@ -59,7 +59,7 @@ static func banner_color(lay: Dictionary) -> Color:
 ## gates are battle kit pieces (game/battlekit.gd): they, the stairs, the sea gate's towers and
 ## the banners are left out here (the banners and stairs come from draw_over, above the kit).
 static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, fine: bool, gates: bool,
-		kit := false) -> void:
+		kit := false, sea_open := false) -> void:
 	var banner := banner_color(lay)
 	_draw_squares(ci, lay, k, o)
 	if not kit:
@@ -78,7 +78,7 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 		_draw_buildings(ci, lay, k, o, fine)
 	if kit:
 		if int(lay["walls"]) > 0 and not sea.is_empty() and not (sea["gate"] as Array).is_empty():
-			_draw_sea_gate(ci, lay, sea["gate"], k, o, false)
+			_draw_sea_gate(ci, lay, sea["gate"], k, o, false, not sea_open)
 		return
 	if int(lay["walls"]) > 0:
 		var pal := int(lay.get("palisade", 0)) != 0
@@ -92,7 +92,7 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 		if fine:
 			_draw_stairs(ci, lay, k, o)
 		if not sea.is_empty() and not (sea["gate"] as Array).is_empty():
-			_draw_sea_gate(ci, lay, sea["gate"], k, o)
+			_draw_sea_gate(ci, lay, sea["gate"], k, o, true, not sea_open)
 		if gates:
 			for g in (lay["gates"] as Array).size():
 				draw_gate(ci, lay, g, BattleSim.GATE_CLOSED, false, 0, k, o)
@@ -487,7 +487,8 @@ static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) 
 
 
 ## The sea gate (scenery): an arch across the sea wall, two small towers.
-static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, o: Vector2, towers := true) -> void:
+static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, o: Vector2, towers := true,
+		bars := true) -> void:
 	var t: float = lay["t"]
 	var ang := float(int(g[2])) * TAU / 1024.0
 	var n := Vector2(cos(ang), sin(ang))
@@ -497,8 +498,8 @@ static func _draw_sea_gate(ci: CanvasItem, lay: Dictionary, g: Array, k: float, 
 	var pts := PackedVector2Array([o + (c - e * hw - n * t * 0.5) * k, o + (c + e * hw - n * t * 0.5) * k,
 		o + (c + e * hw + n * t * 0.5) * k, o + (c - e * hw + n * t * 0.5) * k])
 	ci.draw_colored_polygon(pts, Color(0.22, 0.30, 0.36))
-	for q in range(-2, 3):
-		var a := c + e * (q * hw / 2.5)
+	for q in (5 if bars else 0):  # (no grating over an open water passage: BattleSim amph_on)
+		var a := c + e * ((q - 2) * hw / 2.5)
 		ci.draw_line(o + (a - n * t * 0.3) * k, o + (a + n * t * 0.3) * k, Color(0.12, 0.12, 0.12), maxf(k * 0.2, 1.0))
 	for s in [-1.0, 1.0]:
 		if not towers:
@@ -1040,6 +1041,7 @@ static func draw_surround(ci: CanvasItem, plan: Dictionary, k: float, o: Vector2
 # ------------------------------------------------------------ destruction ---
 
 const RUBBLE_DUST := Color(0.60, 0.55, 0.46)
+const SEA_PASSAGE := Color(0.20, 0.33, 0.46)   # the sea gate's water passage (the battle ground's sea colour)
 const RUBBLE_STONES: Array[Color] = [Color(0.56, 0.53, 0.48), Color(0.66, 0.62, 0.55), Color(0.47, 0.44, 0.40),
 	Color(0.62, 0.52, 0.40), Color(0.52, 0.40, 0.30)]
 
@@ -1060,6 +1062,30 @@ static func rubble_cells(sim) -> PackedInt32Array:
 ## Rubble over `cells` (sim 2 m cells): a dusty bed a little wider than each cell, broken stones and
 ## blocks scattered on it by a hash of the cell (the same every frame), each with a shadow to the south
 ## east. `low` (Graphics Low): two stones a cell, no shadows. Scale sc px a metre, offset o.
+## The sea gate's water passage (BattleSim amph_on: _amph_carve turned the sea wall's cells there to water): the
+## channel drawn as water over the wall strip from its inner face out to the sea, the wall's two cut ends as dark
+## edges either side (view only; nothing without sim.harb).
+static func draw_sea_passage(ci: CanvasItem, sim, sc: float, o: Vector2) -> void:
+	if sim == null or sim.harb.size() < 6:
+		return
+	var g := Vector2(sim.harb[4], sim.harb[5]) / 1024.0
+	var po := Vector2(sim.harb[0], sim.harb[1]) / 1024.0
+	var pi := Vector2(sim.harb[2], sim.harb[3]) / 1024.0
+	var hout := float(BattleSim.HARB_OUT) / 1024.0
+	var n := (po - g).normalized()
+	var e := Vector2(-n.y, n.x)
+	var a := g - n * maxf(pi.distance_to(g) - hout, 0.5)
+	var b := g + n * (po.distance_to(g) - hout + 1.0)
+	var hw := float(MapGen.GATE_HW - 1)
+	var pts := PackedVector2Array([o + (a - e * hw) * sc, o + (b - e * hw) * sc, o + (b + e * hw) * sc,
+		o + (a + e * hw) * sc])
+	if Geometry2D.triangulate_polygon(pts).is_empty():
+		return  # (degenerate at this scale)
+	ci.draw_colored_polygon(pts, SEA_PASSAGE)
+	for s in [-1.0, 1.0]:
+		ci.draw_line(o + (a + e * hw * s) * sc, o + (b + e * hw * s) * sc, STONE_DARK, maxf(sc * 0.6, 1.5))
+
+
 static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, low: bool) -> void:
 	var ow: int = sim.ob_w
 	for c in cells:
