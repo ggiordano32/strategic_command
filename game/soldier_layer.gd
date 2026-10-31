@@ -637,7 +637,7 @@ func _engine_set_of(u: int) -> int:
 
 
 ## Missile look of unit u's shots: bit 0 side, bits 1-2: 0 arrow, 1
-## javelin, 2 bolt, 3 stone (what it shoots now: its own missiles or the
+## javelin, 2 bolt, 3 stone, 4 sling bullet, 5 gunpowder ball (what it shoots now: its own missiles or the
 ## engines it works).
 func _pr_flag_of(u: int) -> int:
 	var ty: int = sim.u_type[u]
@@ -646,6 +646,8 @@ func _pr_flag_of(u: int) -> int:
 		mk = 2 if UT.stat(ty, "m_kind") == 1 else 3
 	elif UT.stat(ty, "m_ak") >= 0 and UT.stat(ty, "m_ak") == UT.ammo_index("sling"):
 		mk = 4  # sling stones and lead bullets: small bullets
+	elif UT.stat(ty, "m_speed") >= 10240:
+		mk = 5  # gunpowder small arms (muskets, pistols, arquebuses: 200 m/s; guns are CLS_ART above): a ball and its streak
 	return (sim.u_side[u] & 1) | (mk << 1)
 
 

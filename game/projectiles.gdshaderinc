@@ -11,7 +11,7 @@
 // Texture variant, blocks (each `rows_per_block` rows of `tex_width` texels):
 //   0 sx, 1 sy, 2 x, 3 y, 4 t0, 5 t1 (-1 = free slot), 6 shooter unit,
 //   7 unit flags (indexed by unit: bit0 side, bits 1-3 kind: 0 arrow,
-//     1 javelin, 2 bolt, 3 stone, 4 sling bullet),
+//     1 javelin, 2 bolt, 3 stone, 4 sling bullet, 5 musket / pistol ball),
 //   8 ammunition kind of the slot's missile (fire kinds: bits of fire_mask)
 // CPU-fed variant (skip_vertex_transform), through MODEL_MATRIX: [3].xy
 // firing point, [0].xy landing point, [1].x t0, [1].y t1; INSTANCE_CUSTOM.x
@@ -57,7 +57,7 @@ int fetch_int(int block, int idx) {
 #endif
 
 // One missile in flight from s to e (sim units) at fraction f; side 0 / 1,
-// kind 0 arrow, 1 javelin, 2 bolt, 3 stone, 4 sling bullet. Returns the corner's position
+// kind 0 arrow, 1 javelin, 2 bolt, 3 stone, 4 sling bullet, 5 gunpowder ball. Returns the corner's position
 // in the layer's space; col: its colour.
 vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out vec4 col) {
 	vec2 p = mix(s, e, f) * px_per_unit;
@@ -80,18 +80,27 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out 
 	} else if (kind == 4) {
 		size = vec2(0.45, 0.3);  // a sling bullet: small, a little drawn out along its flight
 		lift = 0.8;
+	} else if (kind == 5) {
+		size = vec2(3.0, 0.3);  // a musket or pistol ball: a short pale streak, the ball at its head
+		lift = 0.0;
 	}
 #ifdef OBLIQUE
 	// The arc's height (world px): arrows and stones lobbed, bolts and javelins flatter.
-	float hk = kind == 2 ? 0.03 : (kind == 1 ? 0.08 : (kind == 3 ? 0.28 : 0.18));
+	float hk = kind == 2 ? 0.03 : (kind == 1 ? 0.08 : (kind == 3 ? 0.28 : (kind == 5 ? 0.01 : 0.18)));
 	float span = length(d) * px_per_unit;
 	float h0 = hk * span * 4.0 * f * (1.0 - f);
 	float f1 = min(f + 0.02, 1.0);
 	float f0 = f1 - 0.02;
-	vec2 b0 = ob_board(mix(s, e, f0) * px_per_unit) - vec2(0.0, hk * span * 4.0 * f0 * (1.0 - f0) * OB_SIN);
-	vec2 b1 = ob_board(mix(s, e, f1) * px_per_unit) - vec2(0.0, hk * span * 4.0 * f1 * (1.0 - f1) * OB_SIN);
+	// The shot flies a straight line through the air: the ground's lift under the shooter blended to the lift under the
+	// target (the men stand on the ground at both ends), plus its own arc; the lift of the ground between does not enter.
+	vec2 sp = s * px_per_unit;
+	vec2 ep = e * px_per_unit;
+	float l_s = ob_lift_px(sp);
+	float l_e = ob_lift_px(ep);
+	vec2 b0 = vec2(mix(sp.x, ep.x, f0), mix(sp.y, ep.y, f0) * OB_COS) - vec2(0.0, mix(l_s, l_e, f0) + hk * span * 4.0 * f0 * (1.0 - f0) * OB_SIN);
+	vec2 b1 = vec2(mix(sp.x, ep.x, f1), mix(sp.y, ep.y, f1) * OB_COS) - vec2(0.0, mix(l_s, l_e, f1) + hk * span * 4.0 * f1 * (1.0 - f1) * OB_SIN);
 	ang = atan(b1.y - b0.y, b1.x - b0.x);
-	p = ob_board(p) - vec2(0.0, h0 * OB_SIN);
+	p = vec2(p.x, p.y * OB_COS) - vec2(0.0, mix(l_s, l_e, f) + h0 * OB_SIN);
 	lift = 0.0;
 #endif
 	size *= 1.0 + lift * sin(3.14159 * f);
@@ -107,6 +116,8 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out 
 	vec3 tint = side == 0 ? vec3(0.75, 0.85, 1.0) : vec3(1.0, 0.82, 0.75);
 	if (kind == 2) {
 		tint = mix(tint, vec3(0.35, 0.25, 0.15), 0.55);
+	} else if (kind == 5) {
+		tint = vec3(0.92, 0.9, 0.84);
 	} else if (kind >= 3) {
 		tint = mix(tint, vec3(0.45, 0.43, 0.4), 0.8);
 	}
@@ -166,7 +177,16 @@ void vertex() {
 }
 
 void fragment() {
-	if (v_kind > 2.5) {
+	if (v_kind > 4.5) {
+		// A gunpowder ball: a dark dot at the head (uv.x 0.9) and a short pale streak fading behind it.
+		float dx = (0.9 - v_uv.x) * 10.0;  // 3 m quad: units of 0.3 m
+		float dy = (v_uv.y - 0.5) * 2.0;
+		float ball = 1.0 - smoothstep(0.6, 1.0, length(vec2(dx, dy)));
+		float t = clamp((0.9 - v_uv.x) / 0.9, 0.0, 1.0);
+		float streak = (1.0 - smoothstep(0.0, 0.7, abs(dy))) * (1.0 - t) * step(v_uv.x, 0.9) * 0.55;
+		vec3 c = mix(v_color.rgb, vec3(0.12, 0.1, 0.09), ball);
+		COLOR = vec4(c, max(streak, ball) * v_color.a);
+	} else if (v_kind > 2.5) {
 		// Stone (and a sling bullet): a shaded ball with a dark rim.
 		vec2 q = (v_uv - vec2(0.5)) * 2.0;
 		float r = length(q);

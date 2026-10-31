@@ -1381,3 +1381,13 @@ terrain texture and the lift field), `game/terrain.gdshader` (steps, shadows), `
   were not shot). (e) A tap on a riser's face resolves to the face's world point (the ramp's 0.36 m), which is the nearest surface, as the eye reads it.
   (f) The cast shadow and the crest rim are subtle by design and have not been judged by the owner. (g) The crest ghost's corner case: a kit piece farther than a crest
   keeps its own nearness over the ground's. (h) The exaggeration 1.4 and the ramp 0.18 are guesses at the owner's eye: `--height-exag=`, `RAMP`, `ob_sink`.
+- **(2026-10-30) Shots fly straight over the lift** (the owner: "the bullets take an interesting trajectory over the obstacles before getting to their target"). The
+  missile shader placed a shot at `ob_board(mix(s, e, f))`, which includes the lift of the ground under each point of the track, so a shot crossing a terrace or hill
+  rose and fell with the foam steps beneath it. Now (`projectiles.gdshaderinc`, `OBLIQUE`) the height is the lift under the shooter blended to the lift under the target
+  by f, plus the shot's own arc: board position `(w.x, w.y * OB_COS - (mix(ob_lift_px(s), ob_lift_px(e), f) + h0 * OB_SIN))`, the heading from the same formula at f
+  and f + 0.02 (`ob_board` is no longer called for the track). Two lift fetches a vertex (the coarse grid on the CPU-fed path: `ob_lift_px` exists on both).
+  **Gunpowder small arms get a ball look** (missile kind 5, `soldier_layer.gd _pr_flag_of`): any non-artillery unit whose `m_speed >= 10240` (100 m/s) that is not a sling
+  row, which today is exactly musketeers, musketeers2, marines, buccaneers, colonial militia, coureurs, maroons, dragoons, cuirassiers, pistoleers and mounted arquebusiers
+  (all 200 m/s; bows 45, slings 40, bolts 50-55, guns are `CLS_ART` and keep their stone look). Before, they fell through to the javelin look and its arc. The ball is a dark
+  dot with a short pale streak (3 m quad, head at uv.x 0.9) and an almost flat arc (hk 0.01). Arrows, javelins, bolts, stones and sling bullets are unchanged. Aid:
+  `tests/shots_over_hill.gd` (a line shoots across a ridge or hill, paused with shots at mid-flight).
