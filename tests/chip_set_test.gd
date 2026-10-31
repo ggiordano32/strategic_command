@@ -40,7 +40,8 @@ func _choose(c, value: int) -> void:
 	var row = b.hud.opt_box.find_child("opt_%d" % value, false, false)
 	_check(row != null, "%s: a row for %d" % [c.key, value])
 	if row != null:
-		_check(not row.current or value == 1000, "%s: no row is marked (now) on a mixed selection (row %d)" % [c.key, value]) if b.hud.chip_mixed.get(c.key, false) else null
+		if b.hud.chip_mixed.get(c.key, false):
+			_check(not row.current or value == 1000, "%s: no row is marked (now) on a mixed selection (row %d)" % [c.key, value])
 		row.pressed.emit()
 	await _frames(2)
 

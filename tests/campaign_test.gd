@@ -4725,7 +4725,7 @@ func _rome_fleets() -> void:
 		if CGrid.passable(c) and (wbeach < 0 or CGrid.cheb(c, wstart) < CGrid.cheb(wbeach, wstart)):
 			wbeach = c
 	CState.place(wa, wstart)
-	var wfar := CFleet.cell(CFleet.fleet(s2, int(rf["id"])))
+	var _wfar := CFleet.cell(CFleet.fleet(s2, int(rf["id"])))
 	var wo: Array = [{"t": "move", "army": int(wa["id"]), "x": CGrid.cx(wbeach), "y": CGrid.cy(wbeach), "mode": CData.MODE_SIEGE, "persist": 1, "fleet": int(wf["id"])},
 		{"t": "fmove", "fleet": int(wf["id"]), "x": CGrid.cx(tgt), "y": CGrid.cy(tgt), "persist": 1}]
 	var wg := CTurn.resolve_turn(wst, [CTurn.submission(wst, rome, wo)])

@@ -267,7 +267,10 @@ func landing_cell() -> int:
 	var site := CGrid.site(rr)
 	var best := -1
 	var bd := 1 << 30
-	for c in (beaches if beaches.size() > 0 else range(CGrid.count())):
+	var cells: Array = Array(beaches)
+	if cells.is_empty():
+		cells = range(CGrid.count())
+	for c in cells:
 		if CGrid.region(c) != rr or not CFleet.land_ok(s.ps, s.f, c):
 			continue
 		var ok := false

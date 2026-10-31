@@ -37,7 +37,7 @@ func _init() -> void:
 						burnt = sim.tick
 		if sim.winner == 0:
 			won += 1
-		var pois := 0
+		var _pois := 0
 		print("BATTLE seed %d winner %d t %d s alive %d/%d gate broken at %d s fire_dmg %d burnt %d" % [sd, sim.winner,
 			sim.tick / BattleSim.TICKS_PER_SECOND, sim.alive_count(0), sim.alive_count(1),
 			burnt / BattleSim.TICKS_PER_SECOND if burnt >= 0 else -1, sim.stat_fire_dmg, sim.stat_burnt])

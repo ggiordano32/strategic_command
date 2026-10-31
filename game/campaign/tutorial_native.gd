@@ -267,7 +267,9 @@ func _nearest_foe(u: int) -> Variant:
 			if d < bd:
 				bd = d
 				best = e
-	return _world_pt(best) if best >= 0 else null
+	if best >= 0:
+		return _world_pt(best)
+	return null
 
 
 func _target() -> Variant:
