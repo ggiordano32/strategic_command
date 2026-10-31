@@ -1016,7 +1016,8 @@ tip toast never covers a toast another test waits for. While the tutorial runs `
   gold. England and Spain are at war from the West start, and Port Royal's army stands on the ring of Sevilla (two cells away).
 - *The rules line.* `cai.gd` `tutorial_shield(st, g)`: `settings.tutorial` is set, `g` is human and `turn < tutorial_turns`.
   The three places the campaign AI declares a war on its own (the opportunistic war, the pirates', the "unwise war" mistake) skip
-  such a `g`. Not shielded: a Spanish attack under the war that already exists (the trespass war and the call to arms are shielded too: follow-ups below). A 9-turn passive run of the tutorial state gives England no new war and no battle (the test runs it).
+  such a `g`. The trespass war and the call to arms are shielded too (follow-ups below), and since 2026-10-30 so are the
+  attacks under the war that already exists ("The shield covers attacks" below). A 9-turn passive run of the tutorial state gives England no new war and no battle (the test runs it).
 - *The lessons* (`game/campaign/tutorial.gd`, a view object of the campaign screen; the card is `tutor_card.gd`, the pointer
   `tutor_pointer.gd`). Where the player is lives in the save's session, key `tutorial` (`n` the lesson 1..10, 11 the closing card,
   `turn` the turn it was last looked at, `done` its objective held when the turn was sent, `region`, `realm`, `goals` the pages
@@ -1095,6 +1096,28 @@ two guards in `cdip.gd`; no `CState.VERSION` bump, no pin moved.
 - *Open still.* A playtest; the two-player lessons share the tutorial battle but France's board has not been played through by a
   person; a second human cannot join a one-human online campaign today, so that ending is a guard, not a flow.
 
+
+**(2026-10-30) The shield covers attacks.** The owner's tutorial run had Spain attack the emptied Sevilla la Nueva at the
+end of lesson 11's turn (England's only army had sailed to Cuba for the landing and raiding lessons): the pending battle hid
+the lesson card and a newcomer would lose the town they had just taken. Now, while `CAI.tutorial_shield(st, g)` holds for a
+human `g`, an AI faction at war with `g` plans no move against it: no siege, assault or attack on its settlements, no hunt of
+its armies, no landing, no blockade, no raid on its regions, no attack or sortie on its fleets, no raid on a lane that ends
+at its port. The AI still garrisons, recruits, fights everyone else, and fights a battle the player brings to it. Where it
+is checked: `cai.gd` `_shield(st, f, r)` (the region filter the story havens already used) is also true for a region of a
+shielded human, so the attack targets of `_move_grid` (and the idle armies' fair chance, which reads the same list),
+`_hunt` (also by the army's owner), `_raid6` (the free army's raid, the amphibious bands' raids, raiders staying on),
+`_sieges_grid` (an own siege of a shielded region neither storms nor takes joiners), the older formats' `_move`,
+`_move_sieges`, `_move_free` and `_raid`, and in `cai_fleet.gd` `_landing`, `_blockade` and `_stranded` (an army whose
+only enemy regions on its land are shielded counts as having nothing to do there) skip it; `cai_fleet.gd` `_prey` and
+`_sorties` skip a shielded human's fleets; `_raid` skips a lane `CLanes._tutorial_spared` names. Two rules lines catch what
+an AI fleet does by passing: `CSea.update_blockades` sets no blockade by an AI faction on a shielded human's port
+(`CSea._tutorial_spared`) and `CLanes.raiders` counts no AI fleet as raiding a lane that ends at one. Every check is
+false at once without `settings.tutorial`, so other campaigns play as before (the four pin sets are unchanged); no new
+state, no `CState.VERSION` bump; the rules hash moves (online players reload between turns). The Belize / New Orleans
+cession of `make_state` stays (saved tutorials keep their state). Tested: `campaign_test` `_dip_shield_attacks` (the
+tutorial state with Sevilla English, England's army and ships gone and a strong Spanish army in Sevilla's field: twelve AI
+turns at Easy and Skilled bring no battle, siege, raid, blockade or lane raid against England; without the setting Spain
+attacks), `tutorial_test` (the lesson-12 settle of a Spanish battle at Sevilla no longer happens).
 
 **Lessons inside a popup (2026-10-30, view only).** The owner: recruiting should highlight the unit and then say to end the turn.
 Lessons 2 (the army's Recruit list), 3 (the Build list) and 8 (Diplomacy) are done inside a dialog, and the card and ring used to

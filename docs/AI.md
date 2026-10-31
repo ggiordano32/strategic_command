@@ -4188,3 +4188,18 @@ steep, crest, step on a custom 400 x 400 m field and cliff on generated ridge ma
 6. **Open.** Not measured: the AI vs AI hill benchmarks and `tests/matchups.gd -- --only=terrain` (musket lines
    on hilly maps now close on hidden targets; the AI's own attack orders on them move too). A javelin or bolt row
    with an attack order on a hidden target follows the same rule (batteries still wait).
+
+## 49. The tutorial's shield covers attacks (2026-10-30)
+
+The guided first campaign shielded its human only from new wars (`CAI.tutorial_shield`), and Spain, at war with England
+from the West start, attacked the emptied Sevilla la Nueva mid-lesson. Now the campaign AI plans as if a shielded human
+had no reachable targets while the shield holds (`settings.tutorial`, the human, `turn < tutorial_turns`): the region
+filter `CAI._shield(st, f, r)` (the story havens' filter) is true for the human's regions, which covers the attack
+targets of `_move_grid` and the idle armies' fair chance, `_hunt`, `_raid6`, the landings (`cai_fleet.gd` `_landing`), the
+blockades (`_blockade`) and the ferry's "nothing to do on this land" (`_stranded`); `_hunt` also skips the human's armies
+wherever they stand, `_prey` and `_sorties` its fleets, the lane raid (`_raid`) any lane ending at its port, and an own
+siege of its region (`_sieges_grid`) neither storms nor gathers. Defence is untouched: threats, danger, screens, stances
+and the fall-back still count the human's forces as hostile. Rules side, so a passing AI fleet does not do by accident
+what the planner refrains from: no AI blockade of the human's ports (`CSea.update_blockades`) and no AI lane raid on its
+lanes (`CLanes.raiders`). Off without the setting (pins unchanged). Design and test: `docs/design/campaign_rules.md`
+"The tutorial (as built)", "(2026-10-30) The shield covers attacks".

@@ -214,6 +214,14 @@ static func _blockade_sides(st: Dictionary, r: int, pw: PackedInt32Array) -> Arr
 	return [best, per[best] if best >= 0 else 0, own]
 
 
+## (The guided first campaign, cai.gd tutorial_shield) A human's port is not blockaded by an AI faction while the
+## tutorial's shield covers the human: an AI fleet passing by (a ferry, a voyage elsewhere) holds no blockade of it.
+static func _tutorial_spared(st: Dictionary, o: int, b: int) -> bool:
+	var sets: Dictionary = st["settings"]
+	return int(sets.get("tutorial", 0)) != 0 and CState.is_human(st, o) and not CState.is_human(st, b) \
+			and int(st["turn"]) < int(sets.get("tutorial_turns", 10))
+
+
 ## End of turn, before the money: every port's blockade from where the
 ## fleets lie now (an enemy at war within BLOCKADE_CELLS of the harbour,
 ## stronger there than the owner's side). Events "blockade" (a new one) and
@@ -229,7 +237,7 @@ static func update_blockades(st: Dictionary) -> void:
 		var o := int(rs["owner"])
 		if o >= 0 and CFleet.harbour(r) >= 0:
 			var sd := _blockade_sides(st, r, pw)
-			if int(sd[0]) >= 0 and int(sd[1]) > int(sd[2]):
+			if int(sd[0]) >= 0 and int(sd[1]) > int(sd[2]) and not _tutorial_spared(st, o, int(sd[0])):
 				b = int(sd[0])
 		if b >= 0:
 			rs["bk"] = b

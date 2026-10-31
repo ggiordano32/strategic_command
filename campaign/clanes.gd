@@ -405,9 +405,21 @@ static func raiders(st: Dictionary) -> Dictionary:
 		if not _can_raid(fl):
 			continue
 		for id in lanes_at(CFleet.cell(fl)):
-			if not out.has(id) and hostile(st, int(fl["f"]), int(id)):
+			if not out.has(id) and hostile(st, int(fl["f"]), int(id)) and not _tutorial_spared(st, int(fl["f"]), int(id)):
 				out[id] = fl
 	return out
+
+
+## (The guided first campaign, cai.gd tutorial_shield) An AI fleet raids no lane that ends at a port of a human the
+## tutorial's shield covers (as CSea.update_blockades: no blockade of such a port).
+static func _tutorial_spared(st: Dictionary, f: int, id: int) -> bool:
+	var sets: Dictionary = st["settings"]
+	if int(sets.get("tutorial", 0)) == 0 or CState.is_human(st, f) or int(st["turn"]) >= int(sets.get("tutorial_turns", 10)):
+		return false
+	for x in [_ea[id], _eb[id]]:
+		if x >= 0 and CState.is_human(st, CState.owner(st, x)):
+			return true
+	return false
 
 
 ## Port lane id joins two ports whose owners are at war: it pays nothing to

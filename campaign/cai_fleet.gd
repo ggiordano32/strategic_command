@@ -392,7 +392,7 @@ static func _build(st: Dictionary, f: int) -> void:
 static func _stranded(st: Dictionary, f: int, cx: Dictionary) -> Array:
 	var work := {}
 	for r in CData.region_count():
-		if CState.at_war(st, f, CState.owner(st, r)) and not CSea.spared(st, f, r):
+		if CState.at_war(st, f, CState.owner(st, r)) and not CSea.spared(st, f, r) and not CAI._shield(st, f, r):
 			work[int(CData.REGIONS[r]["land"])] = 1
 	var out: Array = []
 	for a in CState.armies_of(st, f):
@@ -541,7 +541,7 @@ static func _landing(st: Dictionary, f: int, fl: Dictionary) -> int:
 		return CFleet.beach(best)
 	var work := {}
 	for r in CData.region_count():
-		if CState.at_war(st, f, CState.owner(st, r)):
+		if CState.at_war(st, f, CState.owner(st, r)) and not CAI._shield(st, f, r):
 			work[int(CData.REGIONS[r]["land"])] = 1
 	var bd := 1 << 30
 	var home := -1
@@ -579,7 +579,7 @@ static func _prey(st: Dictionary, f: int, fl: Dictionary, treasure_only: bool = 
 	var bp := 1 << 30
 	var bg := 0
 	for e in CFleet.fleets(st):
-		if not CState.at_war(st, f, int(e["f"])) or CFleet.docked(e) >= 0:
+		if not CState.at_war(st, f, int(e["f"])) or CFleet.docked(e) >= 0 or CAI.tutorial_shield(st, int(e["f"])):
 			continue  # (Docking: a fleet behind the mole is out of reach)
 		var ep := _power(e)
 		var pct := PIRATE_ATTACK_PCT if pir else ATTACK_PCT
@@ -647,7 +647,7 @@ static func _sorties(st: Dictionary, f: int, mine: Array, used: Dictionary, fmov
 		var b_foe := 0
 		for e in CFleet.fleets(st):
 			if not CState.at_war(st, f, int(e["f"])) or (e["ships"] as Array).is_empty() or CFleet.docked(e) >= 0 \
-					or e.has("busy"):
+					or e.has("busy") or CAI.tutorial_shield(st, int(e["f"])):
 				continue
 			var d := CGrid.cheb(CFleet.cell(e), hb)
 			if d > reach:
@@ -818,11 +818,11 @@ static func _raid(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary, rt:
 	var bv := 0
 	var bs := -1
 	for id in CLanes.lanes_at(here):  # (the lane it lies on first)
-		if int(id) < CLanes.count() and not taken.has(id) and CLanes.hostile(st, f, int(id)) \
+		if int(id) < CLanes.count() and not taken.has(id) and CLanes.hostile(st, f, int(id)) and not CLanes._tutorial_spared(st, f, int(id)) \
 				and (not rt.has(id) or int((rt[id] as Dictionary)["id"]) == int(fl["id"])) and _lane_gold(st, f, int(id)) > 0:
 			return [int(id), here]
 	for id in CLanes.count():
-		if taken.has(id) or not CLanes.hostile(st, f, id):
+		if taken.has(id) or not CLanes.hostile(st, f, id) or CLanes._tutorial_spared(st, f, id):
 			continue
 		if rt.has(id) and int((rt[id] as Dictionary)["id"]) != int(fl["id"]):
 			continue  # somebody holds it already

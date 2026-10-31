@@ -978,7 +978,7 @@ static func _move(st: Dictionary, f: int) -> void:
 	var targets: Array = []
 	for t in nreg:
 		var o := CState.owner(st, t)
-		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty():
+		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or _shield(st, f, t):
 			continue
 		var reach: Array = []
 		var power := 0
@@ -1049,7 +1049,8 @@ static func _move_sieges(st: Dictionary, f: int) -> void:
 	var targets: Array = []
 	for t in nreg:
 		var o := CState.owner(st, t)
-		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
+		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty() \
+				or _shield(st, f, t):
 			continue
 		var reach: Array = []
 		var power := 0
@@ -1295,7 +1296,7 @@ static func _move_free(st: Dictionary, f: int, out: Array) -> void:
 		var o := CState.owner(st, t)
 		if not CState.at_war(st, f, o) or not CState.battle_at(st, t).is_empty() or not CState.siege_at(st, t).is_empty():
 			continue
-		if CSea.spared(st, f, t):
+		if CSea.spared(st, f, t) or _shield(st, f, t):
 			continue  # (N2) pirates leave a port they sacked lately
 		var now: Array = []
 		var soon: Array = []
@@ -2376,7 +2377,11 @@ static func site_dist(c: int, r: int, ring: bool, water: bool = false) -> int:
 ## walls when far outmatched; the rest default.
 ## (A story campaign, campaign/cstory.gd) region r is a captain's haven and f
 ## has no quarrel with the captains yet: the AI leaves it alone.
+## Region r is off limits to faction f's attack plans: a story haven (campaign/cstory.gd shielded), or a region of a
+## human the guided first campaign shields (tutorial_shield: no siege, assault, raid, landing or blockade of it).
 static func _shield(st: Dictionary, f: int, r: int) -> bool:
+	if tutorial_shield(st, CState.owner(st, r)):
+		return true
 	return st.has("story") and (load("res://campaign/cstory.gd") as GDScript).call("shielded", st, f, r)
 
 
@@ -2969,6 +2974,10 @@ static func _sieges_grid(st: Dictionary, f: int, free: Array, etas: Dictionary, 
 			continue
 		var o := CState.owner(st, r)
 		var site := CGrid.site(r)
+		if int(sg["f"]) == f and tutorial_shield(st, o):
+			for a in CRules.besiegers(st, r):
+				used[int(a["id"])] = 1  # (the tutorial's shield: no storm, no one joins)
+			continue
 		if int(sg["f"]) == f:
 			var bs := CRules.besiegers(st, r)
 			var join: Array = []
@@ -3076,7 +3085,7 @@ static func _hunt(st: Dictionary, f: int, free: Array, used: Dictionary, out: Ar
 	var hunt_slack := kn[CP.HUNT_SLACK]
 	for e in st["armies"]:
 		if int(e["busy"]) != 0 or not CState.at_war(st, f, int(e["f"])) or CRules.inside(st, e) or CRules.siege_role(st, e) == 2 \
-				or _shield(st, f, int(e["r"])):
+				or _shield(st, f, int(e["r"])) or tutorial_shield(st, int(e["f"])):
 			continue
 		var ec := CState.cell(e)
 		var go: Array = []
@@ -3383,7 +3392,8 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 			var o := CState.owner(st, t)
 			if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w:
 				continue
-			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
+			if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0 \
+					or _shield(st, f, t):
 				continue
 			if int(cx["foe"][t]) != 0 or int(cx["thr"][t]) > _str(cx, a):
 				continue
@@ -3414,7 +3424,8 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 				var o := CState.owner(st, t)
 				if o < 0 or not CState.at_war(st, f, o) or int(CData.REGIONS[t]["wealth"]) < raid_w or taken.has(t):
 					continue
-				if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0:
+				if not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty() or CRules.raider(st, t) >= 0 \
+						or _shield(st, f, t):
 					continue
 				if int(cx["foe"][t]) != 0 or int(cx["thr"][t]) > _str(cx, a):
 					continue
@@ -3434,7 +3445,8 @@ static func _raid6(st: Dictionary, f: int, free: Array, etas: Dictionary, used: 
 			continue
 		var r := int(a["r"])
 		var o := CState.owner(st, r)
-		if o >= 0 and CState.at_war(st, f, o) and CState.siege_at(st, r).is_empty() and int(cx["thr"][r]) <= _str(cx, a):
+		if o >= 0 and CState.at_war(st, f, o) and CState.siege_at(st, r).is_empty() and int(cx["thr"][r]) <= _str(cx, a) \
+				and not _shield(st, f, r):
 			used[id] = 1
 			want[id] = CData.ST_RAID
 

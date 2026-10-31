@@ -76,6 +76,7 @@ const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const CDip := preload("res://campaign/cdip.gd")
+const Tutorial := preload("res://game/campaign/tutorial.gd")
 
 var fails := 0
 
@@ -144,6 +145,7 @@ func _init() -> void:
 	_diplomacy()
 	_dip_calls()
 	_dip_shield()
+	_dip_shield_attacks()
 	_dip_passage()
 	_dip_west()
 	_dip_ai_alliances()
@@ -6730,6 +6732,67 @@ func _dip_shield() -> void:
 	CDip.end_turn(tp)
 	_check(not CState.at_war(tp, mace, rome) and _ev(tp, "war", {"a": mace, "b": rome}).is_empty(), "shield: no trespass war on the tutorial's human")
 	_check(CDip.regard(tp, mace, rome) < -40, "... the regard still pays for the trespass (%d)" % CDip.regard(tp, mace, rome))
+
+
+## The tutorial's shield covers attacks (docs/design/campaign_rules.md "The tutorial (as built)", 2026-10-30): the
+## tutorial state with Sevilla la Nueva taken and England's army and ships gone, a strong Spanish army in Sevilla's
+## field; while the shield holds no battle pends for England, no siege, raid or blockade of its ports, no AI fleet raids
+## its lanes. Control: the same state without the setting is attacked.
+func _dip_shield_attacks() -> void:
+	for skill in [0, 2]:
+		for on in [1, 0]:
+			var st := Tutorial.make_state("Shield", Tutorial.SEED, skill)
+			var eng := CData.faction_index("england")
+			var spa := CData.faction_index("new_spain")
+			var sv := CData.region_index("sevilla_jamaica")
+			st["regions"][sv]["owner"] = eng
+			var armies: Array = st["armies"]
+			for j in range(armies.size() - 1, -1, -1):
+				if int(armies[j]["f"]) == eng:
+					armies.remove_at(j)
+			for fl in st["fleets"]:
+				if int(fl["f"]) == eng:
+					fl["ships"] = []
+			var big: Dictionary = {}
+			for a in CState.armies_of(st, spa):
+				if big.is_empty() or CState.strength(a) > CState.strength(big):
+					big = a
+			for u in big["units"]:
+				u["n"] = int(u["n"]) * 3
+			CState.place(big, CState.field_cell(sv))
+			CRules.check_sieges(st)
+			if on == 0:
+				st["settings"]["tutorial"] = 0
+			var hits: Array = []
+			var last := int(st["settings"]["tutorial_turns"]) - 1
+			while int(st["turn"]) < last:
+				st = CTurn.resolve_turn(st, [CTurn.submission(st, eng, [])])
+				var tn := int(st["turn"])
+				for b in CTurn.pending_for(st, eng):
+					hits.append("t%d battle at %s" % [tn, CData.REGIONS[int(b["r"])]["key"]])
+				for r in CState.regions_of(st, eng):
+					if not CState.siege_at(st, r).is_empty():
+						hits.append("t%d siege of %s" % [tn, CData.REGIONS[r]["key"]])
+					if CRules.raider(st, r) >= 0:
+						hits.append("t%d raid on %s" % [tn, CData.REGIONS[r]["key"]])
+					if CSea.blockader(st, r) >= 0:
+						hits.append("t%d blockade of %s" % [tn, CData.REGIONS[r]["key"]])
+				var rt := CLanes.raiders(st)
+				for id in rt:
+					var ls := CLanes.lane_state(st, int(id), {})
+					if (int(ls["oa"]) == eng or int(ls["ob"]) == eng) and int((rt[id] as Dictionary)["f"]) != eng:
+						hits.append("t%d lane %d raided" % [tn, int(id)])
+				while not CTurn.pending_for(st).is_empty():
+					var b: Dictionary = CTurn.pending_for(st)[0]
+					st = CTurn.apply_battle(st, int(b["id"]), {"winner": 1, "mode": "auto", "units": [], "garrison_pct": 100})
+			if on == 1:
+				_check(hits.is_empty() and CAI.tutorial_shield(st, eng), "shield (skill %d): %d AI turns, no battle, siege, raid, blockade or lane raid against England %s"
+					% [skill, last, str(hits.slice(0, 4))])
+				st["turn"] = last + 1
+				_check(not CAI.tutorial_shield(st, eng) and not CAI._shield(st, spa, sv) and not CLanes._tutorial_spared(st, spa, 0),
+					"shield (skill %d): from turn %d the planner no longer filters England" % [skill, last + 1])
+			else:
+				_check(not hits.is_empty(), "shield control (skill %d): without the setting Spain attacks the emptied Jamaica (%s)" % [skill, str(hits.slice(0, 2))])
 
 
 ## Calls to arms: created for every ally the turn a war starts; an AI ally
