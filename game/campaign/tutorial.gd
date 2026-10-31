@@ -52,6 +52,9 @@ var _shown_n := -1
 var _shown_met := false
 var _gate_on := false     # the End turn button is held by a lesson
 var _shown_f := -2        # the seat the card was built for
+var _scroll_n := 0
+var _scroll_key := ""      # the dialog row last scrolled into view for the pointer
+var _strip := false       # the card is the compact strip over a popup the lesson teaches
 var _as := -2             # a seat to read instead of the screen's (the battle script of a seat that is not the planner)
 
 
@@ -364,6 +367,29 @@ func on_end() -> void:
 		vd["done"] = 1
 
 
+## Pending battle `b` is the one the lessons script (lesson 6 at the seat's target): it is fought, never auto-resolved.
+func is_lesson_battle(b: Dictionary) -> bool:
+	if s.st.is_empty() or not is_tutorial(s.st):
+		return false
+	for h in CRules.battle_humans(s.st, b):
+		_as = int(h)
+		var yes := on() and lesson_n() == BATTLE_LESSON and int(b.get("r", -1)) == _sv()
+		_as = -2
+		if yes:
+			return true
+	return false
+
+
+## The pending battles dialog is open over the lesson's battle (the card stays as a strip, the pointer on Fight).
+func battle_lesson_bid() -> int:
+	if card == null or s.f < 0 or not s.dialog_open() or not str(s.dialog_title.text).begins_with("Pending battles"):
+		return -1
+	for b in CTurn.pending_for(s.st):
+		if is_lesson_battle(b):
+			return int(b["id"])
+	return -1
+
+
 ## The battle tutorial's script for the pending battle `b`, or null (the tutorial is off, another lesson, another battle).
 func battle_script(b: Dictionary):
 	if s.st.is_empty() or not is_tutorial(s.st):
@@ -407,14 +433,19 @@ func refresh() -> void:
 			_advance(n + 1)
 		vd["done"] = 0 if n != BATTLE_LESSON else int(vd["done"])
 	n = lesson_n()
-	var show: bool = s.f >= 0 and str(s.st["phase"]) == "plan" and not s.dialog_open() and not s.cover.visible \
-			and CTurn.pending_for(s.st).is_empty() and s.battle == null
+	var fight := battle_lesson_bid() >= 0
+	var strip := popup_lesson() or fight
+	var show: bool = s.f >= 0 and (str(s.st["phase"]) == "plan" or fight) and (not s.dialog_open() or strip) and not s.cover.visible \
+			and (CTurn.pending_for(s.st).is_empty() or fight) and s.battle == null
 	card.visible = show
 	if not show:
+		_strip = false
+		_scroll_key = ""
 		gate_end_button()
 		return
 	var m := n <= Howto.LESSONS and met(n)
 	if n != _shown_n:
+		_strip = false
 		_shown_n = n
 		_shown_met = false
 		card.clear_buttons()
@@ -428,15 +459,52 @@ func refresh() -> void:
 			card.add_button("skip", Howto.text("ui_skip"))
 			card.add_button("leave", Howto.text("ui_leave"))
 		card.position = Vector2(8.0, s.TOP_H + 6.0)
+	if strip != _strip:
+		_strip = strip
+		_scroll_key = ""
+		_shown_met = not m   # (the objective line is set again below)
+		card.set_strip(strip, strip_width())
 	if n <= Howto.LESSONS:
 		if m != _shown_met:
 			_shown_met = m
-			card.set_met(m, Howto.text("ui_objective") + tx("lesson_%d_obj" % n) if not m else "Done. " + tx("lesson_%d_obj" % n) + ". Now end the turn.")
+			var line := Howto.text("ui_objective") + tx("lesson_%d_obj" % n)
+			if fight:
+				line = tx("lesson_6_fight")
+			elif m:
+				line = tx("lesson_%d_open" % n) if strip else "Done. " + tx("lesson_%d_obj" % n) + ". Now end the turn."
+				if n == 9:
+					line = tx("lesson_9_done")
+			card.set_met(m, line)
 		if card.buttons.has("skip"):
 			(card.buttons["skip"] as Button).visible = not m
 	card.position = Vector2(8.0, s.TOP_H + 6.0)
 	pointer.visible = true
 	gate_end_button()
+
+
+## The open dialog is the popup the current lesson teaches (lesson 2 the army's Recruit list, lesson 3 the Build list,
+## lesson 8 Diplomacy).
+func popup_lesson() -> bool:
+	if not on() or s.f < 0 or not s.dialog_open() or s.panels == null:
+		return false
+	var n := lesson_n()
+	if n == 8:
+		return s.dialog_title.text == "Diplomacy"
+	var pu: Dictionary = s.panels._popup
+	if pu.is_empty() or s.dialog_title.text != str(pu.get("title", "")):
+		return false
+	return (n == 2 and str(pu["kind"]) == "army") or (n == 3 and str(pu["kind"]) == "build")
+
+
+func strip_width() -> float:
+	return clampf(s._vp().x - 40.0, 240.0, 760.0)
+
+
+## The height the screen leaves free at the top of the dialog's room while the strip shows (0 otherwise).
+func reserve_top() -> float:
+	if card == null or not card.visible or not _strip:
+		return 0.0
+	return s.TOP_H + 6.0 + card.get_combined_minimum_size().y + 6.0
 
 
 func _advance(n: int) -> void:
@@ -562,7 +630,20 @@ func _cmd_button(nm: String) -> Variant:
 func _dialog_button(nm: String) -> Variant:
 	if not s.dialog_open():
 		return null
-	return TutorPointer.center_of(s.dialog.find_child(nm, true, false) as Control)
+	var c := s.dialog.find_child(nm, true, false) as Control
+	if c == null:
+		return null
+	if s.dialog_scroll.is_ancestor_of(c):
+		# a row below the fold: scroll it into view once, and show no ring while it is clipped
+		if nm != _scroll_key:
+			_scroll_key = nm
+			_scroll_n = 0
+		if not s.dialog_scroll.get_global_rect().has_point(c.get_global_rect().get_center()):
+			if _scroll_n < 6:   # (a few tries: the row is laid out a frame or two after the list is drawn)
+				_scroll_n += 1
+				s.dialog_scroll.call_deferred("ensure_control_visible", c)
+			return null
+	return TutorPointer.center_of(c)
 
 
 func _army_pt() -> Variant:
@@ -583,11 +664,21 @@ func _fleet_pt() -> Variant:
 
 ## Where the pointer is now (a screen point) or null.
 func _target() -> Variant:
-	if not on() or card == null or not card.visible or s.dialog_open():
+	if not on() or card == null or not card.visible or (s.dialog_open() and not _strip):
 		return null
 	var n := lesson_n()
 	if n > Howto.LESSONS:
 		return null
+	if _strip:
+		var fb := battle_lesson_bid()
+		if fb >= 0:
+			return _dialog_button("fight_%d" % fb)
+		if met(n):
+			return _dialog_button("dlg_Close")
+		if n == 8:
+			var pk := str(profile(s.st, seat()).get("partner", "dutch"))
+			return _dialog_button("dip_trade_" + pk) if s.dialog.find_child("dip_trade_" + pk, true, false) != null else _dialog_button("dip_press_" + pk)
+		return _dialog_button("recruit_musketeers" if n == 2 else "build_range")
 	if met(n):
 		return TutorPointer.center_of(s.end_button)
 	var a := _army()

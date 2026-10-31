@@ -2744,7 +2744,9 @@ func _dip_detail(ps: Dictionary, f: int, g: int, d: int, team: bool) -> Control:
 		if d == CState.WAR:
 			acts.add_child(_dip_button("Offer peace", "peace", {"t": "propose", "to": g, "what": "peace"}))
 		if d == CState.PEACE:
-			acts.add_child(_dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"}))
+			var tb := _dip_button("Offer trade", "trade", {"t": "propose", "to": g, "what": "trade"})
+			tb.name = "dip_trade_%s" % gk
+			acts.add_child(tb)
 		if d == CState.TRADE:
 			var cb := _dip_button("Cancel trade", "trade_end", {"t": "propose", "to": g, "what": "cancel_trade"})
 			cb.name = "cancel_trade_%s" % gk

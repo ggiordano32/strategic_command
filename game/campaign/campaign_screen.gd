@@ -726,7 +726,7 @@ func _next_step() -> void:
 		var seen := int(data["session"]["seen"].get(str(f), -1))
 		# Setting "always auto-resolve": no choice dialog.
 		var then := func(): panels.show_battles()
-		if str(st["settings"].get("autoresolve", "ask")) == "auto":
+		if str(st["settings"].get("autoresolve", "ask")) == "auto" and not tutorial.is_lesson_battle(pending[0]):
 			var bid := int(pending[0]["id"])
 			then = func(): auto_resolve(bid)
 		if seen < int(st["turn"]) and int(st["turn"]) > 0:
@@ -1611,6 +1611,9 @@ func show_dialog(title: String, content: Control, buttons: Array, width: float =
 	dialog.visible = true
 	dialog_kind = ""
 	(dialog.get_meta("dim") as Control).visible = true
+	if tutorial != null:
+		tutorial.refresh()   # (a lesson over this popup shows its strip, which the dialog leaves room for)
+		_fit_dialog()
 	call_deferred("_center_dialog")
 	_restore_scroll(dialog_scroll, keep, _dlg_gen, true)
 
@@ -1651,15 +1654,18 @@ func _fit_dialog() -> void:
 	dialog_scroll.custom_minimum_size.y = 0.0
 	dialog.reset_size()
 	var overhead := dialog.get_combined_minimum_size().y
-	var room := _vp().y - 16.0 - overhead
+	var top := tutorial.reserve_top() if tutorial != null else 0.0
+	var room := _vp().y - 16.0 - overhead - top
 	dialog_scroll.custom_minimum_size.y = maxf(minf(want, minf(float(dialog_scroll.get_meta("max_h", 400.0)), room)), 0.0)
 	dialog.reset_size()
-	dialog.position = (_vp() - dialog.size) * 0.5
+	dialog.position = Vector2((_vp().x - dialog.size.x) * 0.5, top + (_vp().y - top - dialog.size.y) * 0.5)
 
 
 func close_dialog() -> void:
 	dialog.visible = false
 	(dialog.get_meta("dim") as Control).visible = false
+	if tutorial != null:
+		tutorial.refresh()
 
 
 func dialog_open() -> bool:

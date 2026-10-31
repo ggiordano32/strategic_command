@@ -1092,6 +1092,24 @@ two guards in `cdip.gd`; no `CState.VERSION` bump, no pin moved.
 - *Open still.* A playtest; the two-player lessons share the tutorial battle but France's board has not been played through by a
   person; a second human cannot join a one-human online campaign today, so that ending is a guard, not a flow.
 
+
+**Lessons inside a popup (2026-10-30, view only).** The owner: recruiting should highlight the unit and then say to end the turn.
+Lessons 2 (the army's Recruit list), 3 (the Build list) and 8 (Diplomacy) are done inside a dialog, and the card and ring used to
+vanish while it was open. Now `Tutorial.popup_lesson()` keeps them: the card becomes a compact **strip** (`TutorCard.set_strip`:
+title and objective line only, no body or buttons, above the dialog's dim) under the top bar, and `show_dialog` / `_fit_dialog`
+leave its height free (`Tutorial.reserve_top()`: the room shrinks by it and the dialog is centred below it; no overlap at 1280 x 720
+and 844 x 390). `show_dialog` and `close_dialog` call `tutorial.refresh()` so the strip follows the dialog. The ring: lesson 2 on
+the + of Musketeers (`recruit_musketeers`), lesson 3 on the Range row (`build_range`), lesson 8 on the partner's header
+(`dip_press_<key>`, the key from the seat's profile) and, once it is open, on its Offer trade button (`dip_trade_<key>`); a target
+below the fold is scrolled into view (`_dialog_button`, a few tries) and no ring shows while it is clipped. Once the objective holds
+the ring moves to the dialog's Close button (`dlg_Close`) and the strip reads "Done: ... Close the list, then press End turn"
+(howto `lesson_N_open`); after the dialog closes the card is whole again and the ring is on End turn. **The battle choice:** with the
+lesson-6 battle pending (`is_lesson_battle`) the Pending battles dialog keeps the strip ("Press Fight. We walk through the battle
+step by step."), the ring is on `fight_<id>`, Auto-resolve is disabled with a tip, and the setting "always auto-resolve" does not
+skip the dialog for that battle (`_next_step`). Lesson 9's words say the army boards at the end of the turn and the fleet waits for
+it (the rule is another change) and its met line reads "The army boards when the turn ends, then the fleet sails." Tests:
+`tests/tutorial_test.gd` plays lessons 2, 3 and 8 and the battle choice through the real buttons; `tests/tutorial_shots.gd` takes
+the pictures.
 ### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
 
 The owner: "It's crazy hard to assault cities as the miskito. They have no

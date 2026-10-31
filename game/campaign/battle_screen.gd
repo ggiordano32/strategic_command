@@ -23,6 +23,7 @@ extends RefCounted
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CRules := preload("res://campaign/crules.gd")
+const Howto := preload("res://game/campaign/howto.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const UT := preload("res://sim/unit_types.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -357,6 +358,9 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var bid := int(b["id"])
 	var ab := Kit.icon_button("Auto-resolve", "end_turn", func(): s.auto_resolve(bid), 130)
 	ab.name = "auto_%d" % bid
+	if s.tutorial != null and s.tutorial.is_lesson_battle(b):
+		ab.disabled = true   # the tutorial's battle is the lesson: Fight only
+		Kit.tip(ab, "", Howto.text("lesson_6_auto"))
 	h.add_child(ab)
 	var fb := Kit.icon_button("Fight", "battles", func(): s.fight(bid), 110)
 	fb.name = "fight_%d" % bid

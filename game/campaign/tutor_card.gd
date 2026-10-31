@@ -59,6 +59,15 @@ func add_button(key: String, label: String) -> Button:
 	return b
 
 
+## The compact strip (a lesson kept over its popup): only the title and the objective line, the objective wrapped at `width`.
+func set_strip(on: bool, width: float = 0.0) -> void:
+	text_label.visible = not on
+	_row.visible = not on
+	obj_label.custom_minimum_size.x = width if on else 0.0
+	z_index = 150 if on else 0   # above the dialog's dim, below the pointer
+	reset_size()
+
+
 func clear_buttons() -> void:
 	for k in buttons:
 		(buttons[k] as Button).queue_free()

@@ -298,6 +298,11 @@ func _army_id() -> int:
 	return best
 
 
+## The pointer's last drawn point is at the centre of control c.
+func _ptr_at(c: Control) -> bool:
+	return c != null and cs.tutorial.pointer.showing and cs.tutorial.pointer.point.distance_to(c.get_global_rect().get_center()) < 2.0
+
+
 func _card_text() -> String:
 	return str(cs.tutorial.card.text_label.text) if cs.tutorial.card.visible else ""
 
@@ -335,14 +340,45 @@ func _run_lessons() -> void:
 	await _close_dialogs()
 	# 2 recruiting
 	await _lesson(2, func():
-		var aid := _army_id()
-		cs.add_order({"t": "recruit", "r": pr, "unit": "musketeers", "army": aid})
+		cs.select_army(_army_id())
+		await _frames(3)
+		_check(_ptr_at(cs.cmd_bar.find_child("act_recruit", true, false)), "lesson 2: the pointer is on the Recruit button")
+		(cs.cmd_bar.find_child("act_recruit", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(cs.dialog_open() and tu.card.visible and tu.popup_lesson(), "lesson 2: the card stays with the recruit list open")
+		_check(not tu.card.text_label.visible and not tu.card.get_global_rect().intersects(cs.dialog.get_global_rect()), "lesson 2: the strip and the list do not overlap")
+		_check(tu.card.get_global_rect().end.y <= cs.dialog.position.y and cs.dialog.get_global_rect().end.y <= cs._vp().y, "lesson 2: the list sits below the strip, on the screen")
+		_check(_ptr_at(cs.dialog.find_child("recruit_musketeers", true, false)), "lesson 2: the pointer is on + of Musketeers")
+		(cs.dialog.find_child("recruit_musketeers", true, false) as Button).pressed.emit()
+		await _frames(6)
 		_check(not tu.met(2), "lesson 2: one musketeer company is not enough")
-		cs.add_order({"t": "recruit", "r": pr, "unit": "musketeers", "army": aid}))
+		(cs.dialog.find_child("recruit_musketeers", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(tu.met(2) and tu.card.obj_label.text.contains(Howto.text("lesson_2_open")), "lesson 2: the strip says to close the list and end the turn")
+		_check(_ptr_at(cs.dialog.find_child("dlg_Close", true, false)), "lesson 2: the pointer is on Close")
+		(cs.dialog.find_child("dlg_Close", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(not cs.dialog_open() and tu.card.text_label.visible and tu.card.obj_label.text.contains("Now end the turn"), "lesson 2: the list closed, the card is whole again and says end the turn")
+		_check(_ptr_at(cs.end_button), "lesson 2: the pointer is on End turn"))
 	await _end_turn()
 	await _close_dialogs()
 	# 3 building
-	await _lesson(3, func(): cs.add_order({"t": "build", "r": pr, "chain": Tutorial._chain("range")}))
+	await _lesson(3, func():
+		cs.select_region(pr)
+		await _frames(3)
+		_check(_ptr_at(cs.cmd_bar.find_child("act_build", true, false)), "lesson 3: the pointer is on Build")
+		(cs.cmd_bar.find_child("act_build", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(cs.dialog_open() and tu.card.visible and tu.popup_lesson(), "lesson 3: the card stays with the build list open")
+		_check(not tu.card.get_global_rect().intersects(cs.dialog.get_global_rect()), "lesson 3: the strip and the list do not overlap")
+		_check(_ptr_at(cs.dialog.find_child("build_range", true, false)), "lesson 3: the pointer is on the Range row")
+		(cs.dialog.find_child("build_range", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(tu.met(3) and tu.card.obj_label.text.contains(Howto.text("lesson_3_open")), "lesson 3: the strip says to close the list and end the turn")
+		_check(_ptr_at(cs.dialog.find_child("dlg_Close", true, false)), "lesson 3: the pointer is on Close")
+		(cs.dialog.find_child("dlg_Close", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(not cs.dialog_open() and _ptr_at(cs.end_button), "lesson 3: the list closed, the pointer is on End turn"))
 	await _end_turn()
 	await _close_dialogs()
 	# 4 moving
@@ -361,6 +397,7 @@ func _run_lessons() -> void:
 	await _end_turn()
 	await _close_dialogs()
 	_check(not CTurn.pending_for(cs.st).is_empty(), "the assault leaves a battle to fight")
+	await _battle_choice()
 	await _battle_tutorial()
 	await _close_dialogs()
 	_check(CState.owner(cs.st, sv) == eng, "Sevilla la Nueva is English after the battle")
@@ -373,7 +410,27 @@ func _run_lessons() -> void:
 	await _end_turn()
 	await _close_dialogs()
 	# 8 diplomacy
-	await _lesson(8, func(): cs.add_order({"t": "propose", "to": CData.faction_index("dutch"), "what": "trade"}))
+	await _lesson(8, func():
+		var dip: Button = null
+		for bb in cs.top_box.get_children():
+			if bb is Button and (bb as Button).text == "Diplomacy":
+				dip = bb
+		_check(dip != null and _ptr_at(dip), "lesson 8: the pointer is on the Diplomacy button")
+		dip.pressed.emit()
+		await _frames(8)
+		_check(cs.dialog_open() and tu.card.visible and tu.popup_lesson(), "lesson 8: the card stays with Diplomacy open")
+		_check(not tu.card.get_global_rect().intersects(cs.dialog.get_global_rect()), "lesson 8: the strip and Diplomacy do not overlap")
+		_check(_ptr_at(cs.dialog.find_child("dip_press_dutch", true, false)), "lesson 8: the pointer is on the Dutch")
+		cs.dialog.find_child("dip_press_dutch", true, false).pressed.emit()
+		await _frames(10)
+		_check(not tu.met(8) and _ptr_at(cs.dialog.find_child("dip_trade_dutch", true, false)), "lesson 8: expanded, the pointer is on Offer trade")
+		(cs.dialog.find_child("dip_trade_dutch", true, false) as Button).pressed.emit()
+		await _frames(10)
+		_check(tu.met(8) and tu.card.obj_label.text.contains(Howto.text("lesson_8_open")), "lesson 8: the strip says to close Diplomacy and end the turn")
+		_check(_ptr_at(cs.dialog.find_child("dlg_Close", true, false)), "lesson 8: the pointer is on Close")
+		(cs.dialog.find_child("dlg_Close", true, false) as Button).pressed.emit()
+		await _frames(6)
+		_check(not cs.dialog_open() and _ptr_at(cs.end_button), "lesson 8: Diplomacy closed, the pointer is on End turn"))
 	await _end_turn()
 	await _close_dialogs()
 	# 9 the sea
@@ -402,6 +459,30 @@ func _run_lessons() -> void:
 
 
 # --------------------------------------------------------- battle tutorial ---
+
+## Lesson 6 with the battle pending: the Battles dialog keeps the strip, Auto-resolve is off, the pointer is on Fight,
+## and "always auto-resolve" does not skip the choice.
+func _battle_choice() -> void:
+	var tu = cs.tutorial
+	var b: Dictionary = CTurn.pending_for(cs.st)[0]
+	var bid := int(b["id"])
+	_check(tu.is_lesson_battle(b), "lesson 6: the pending battle is the lesson's")
+	cs.panels.show_battles()
+	await _frames(6)
+	var ab := cs.dialog.find_child("auto_%d" % bid, true, false) as Button
+	var fb := cs.dialog.find_child("fight_%d" % bid, true, false) as Button
+	_check(ab != null and fb != null and ab.disabled and not fb.disabled, "lesson 6: Auto-resolve is disabled, Fight is enabled")
+	_check(tu.card.visible and tu.card.obj_label.text.contains(Howto.text("lesson_6_fight")), "lesson 6: the strip says to press Fight")
+	_check(_ptr_at(fb), "lesson 6: the pointer is on Fight")
+	cs.close_dialog()
+	cs.st["settings"]["autoresolve"] = "auto"
+	cs._next_step()
+	await _frames(6)
+	_check(cs.dialog_open() and CTurn.pending_for(cs.st).size() > 0, "lesson 6: always auto-resolve does not resolve the lesson's battle")
+	cs.st["settings"]["autoresolve"] = "ask"
+	cs.close_dialog()
+	await _frames(2)
+
 
 func _battle_tutorial() -> void:
 	var b: Dictionary = CTurn.pending_for(cs.st)[0]
@@ -433,7 +514,11 @@ func _battle_tutorial() -> void:
 		await process_frame
 		if sim.phase == BattleSim.PHASE_BATTLE:
 			break
-	await _frames(20)   # (the battle's card timer moves the step on)
+	for k in 600:   # (the card's timer is wall-clock: wait for the step, not a frame count)
+		if tb.step == 2:
+			break
+		await process_frame
+	await _frames(2)
 	_check(sim.phase == BattleSim.PHASE_BATTLE and tb.step == 2, "the battle starts: step 2 (move it forward)")
 	_check(tb.card.text_label.text == Howto.step(2), "step 2: the card shows its words")
 	# 2 move forward
