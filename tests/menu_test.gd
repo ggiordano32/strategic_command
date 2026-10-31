@@ -644,7 +644,7 @@ func _options_page() -> void:
 	# Confirm orders shares the UI size row (one capsule beside the other, so the page keeps its height); the stored value is
 	# [ui] confirm_orders, "auto" with nothing stored; the Controls page lists the placement tool.
 	var cs_row = rows.seg.get("confirm_orders")
-	_check(cs_row != null and cs_row.get_parent() == rows.seg["ui_size"].get_parent() and cs_row.values == ["auto", "on", "off"],
+	_check(cs_row != null and cs_row.get_parent().get_parent() == rows.seg["ui_size"].get_parent().get_parent() and cs_row.values == ["auto", "on", "off"],
 		"Options: Confirm orders is Auto / On / Off beside UI size")
 	cs_row.button_for("on").pressed.emit()
 	await _frames(1)

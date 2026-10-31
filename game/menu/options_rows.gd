@@ -39,6 +39,7 @@ var _slider_h := {}      # audio key -> the slider + value box (re-parented betw
 var _slider_row := {}    # audio key -> the stacked row of that slider
 var _slider_unit := {}   # audio key -> the unit of the compact row
 var _slider_compact: Control = null
+var units: Array = []    # the caption units of the shared rows
 var level := 0           # fit(): 0 full, 1 tight spacing, 2 + sliders side by side, 3 + no description lines
 
 
@@ -48,7 +49,7 @@ func build(parent: Control, o: Dictionary) -> void:
 	_building = true
 	var title: bool = bool(o.get("title", false))
 	_section(parent, "Display", false)
-	_choice(parent, "ui_size", "UI size", "Size of the buttons and text. The second capsule, Confirm orders: Go before a tap orders.", [["S", "S"], ["M", "M"], ["L", "L"]], UiScale.size_name(),
+	_choice(parent, "ui_size", "UI size", "Size of the buttons and text.", [["S", "S"], ["M", "M"], ["L", "L"]], UiScale.size_name(),
 		"UI size", "Small, Medium or Large buttons and text. Large is easier on a phone or a tablet.", func(v):
 			UiScale.set_size_name(_win(), str(v))
 			_call("on_size"))
@@ -69,7 +70,7 @@ func build(parent: Control, o: Dictionary) -> void:
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
 	_section(parent, "Looks", true)
-	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter. The view: Top, or Oblique from the table's edge. Motion: the dive and the die.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
+	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
 		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
 	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
@@ -189,6 +190,15 @@ func _apply_level(lv: int) -> void:
 	for k in descs:
 		var d := descs[k] as Label
 		d.visible = lv < 3
+	for u in units:
+		var bu := u as BoxContainer
+		bu.vertical = lv < 3
+		bu.add_theme_constant_override("separation", 2 if lv < 3 else 6)
+		var c0 := bu.get_child(0) as Label
+		if str(c0.name).begins_with("caption_") and c0.modulate.a == 0.0:
+			c0.visible = lv < 3   # (the blank line over a row's own capsule)
+		c0.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		(bu.get_child(1) as Control).size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var side := lv >= 2 and _slider_compact != null
 	for k in _slider_h:
 		var h := _slider_h[k] as Control
@@ -269,6 +279,8 @@ func _choice(parent: Control, key: String, label: String, desc: String, options:
 func _beside(row_key: String, key: String, options: Array, value, tip_title: String, tip_text: String, cb: Callable) -> void:
 	var first := seg[row_key] as Control
 	var host := first.get_parent()
+	if str(host.name).begins_with("cap_"):
+		host = host.get_parent()   # (the capsule sits in its caption unit, inside the pair)
 	var pair: Container = Kit.hbox(10)
 	if bool(_o.get("narrow", false)):
 		pair = Kit.flow(10)   # (narrow: the capsules wrap)
@@ -276,18 +288,42 @@ func _beside(row_key: String, key: String, options: Array, value, tip_title: Str
 		pair = host as Container   # (a third control on a row already shared: it joins the pair)
 	else:
 		pair.size_flags_vertical = first.size_flags_vertical
-		pair.size_flags_horizontal = first.size_flags_horizontal
+		# (a flow shrunk to its minimum is only as wide as its widest child, so it would wrap every unit: narrow fills the row's width)
+		pair.size_flags_horizontal = Control.SIZE_FILL if bool(_o.get("narrow", false)) else first.size_flags_horizontal
 		pair.set_meta("beside", true)
 		host.add_child(pair)
 		host.move_child(pair, first.get_index())
-		first.reparent(pair, false)
+		var u0 := _unit()   # (the row's own capsule: a blank caption line keeps it level with the captioned ones; the row label names it)
+		u0.name = "cap_" + row_key
+		var blank := Kit.label(" ", 12, Kit.COL_DIM)   # (a blank caption line keeps the first capsule level with the captioned ones, wide or narrow)
+		blank.modulate.a = 0.0
+		blank.name = "caption_" + row_key
+		u0.add_child(blank)
+		pair.add_child(u0)
+		first.reparent(u0, false)
 	var sg := Kit.segmented(options, value, Callable(), "%s_%s" % [str(_o["prefix"]), key])
 	sg.changed.connect(func(v):
 		if not _building:
 			cb.call(v))
 	Kit.tip(sg, tip_title, tip_text)
 	seg[key] = sg
-	pair.add_child(sg)
+	var unit := _unit()   # caption over capsule: the unit wraps as one on a narrow flow
+	unit.name = "cap_" + key
+	var cap := Kit.label(tip_title, 12, Kit.COL_DIM)
+	cap.name = "caption_" + key
+	unit.add_child(cap)
+	unit.add_child(sg)
+	pair.add_child(unit)
+
+
+## A caption unit: caption over capsule (wraps as one on a narrow flow); on the shortest wide page (level 3) the caption sits
+## left of its capsule instead, so the row keeps its height.
+func _unit() -> BoxContainer:
+	var u := BoxContainer.new()
+	u.vertical = true
+	u.add_theme_constant_override("separation", 2)
+	units.append(u)
+	return u
 
 
 func _toggle(parent: Control, key: String, label: String, desc: String, on: bool, tip_title: String, tip_text: String, cb: Callable) -> void:

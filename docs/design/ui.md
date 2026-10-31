@@ -1394,6 +1394,18 @@ not follow units that stand on a wall walk; the toolbar's Run does not know the 
 a unit that cannot stand on the spot (the sim's refusal shows after Go as ever); the hold guard is touch only and does not
 cover line drags; a short phone playtest should decide whether 300 ms and 0.25 s are right.
 
+
+**The shared capsules are captioned (2026-10-31, view only).** The owner's phone shot of Options showed S M L and then Auto On Off
+with nothing naming the second capsule (the description line that did was dropped on short screens). Every capsule placed with
+`OptionsRows._beside` now sits in a caption unit: a 12 px `COL_DIM` label (its `tip_title`: Confirm orders, Battle view, Table
+motion, Crest ghost) over the capsule. The row's own capsule (S M L, Diorama / Painterly) sits in a unit too, so the capsules stand level: its caption line is blank, wide
+or narrow (the row label names it; in narrow mode it sits right under that label). In narrow mode the pair is a `Kit.flow` filling
+the row's width (a flow shrunk to its minimum is only as wide as its widest child and wrapped every unit onto its own line), so the
+units sit side by side when they fit and wrap as wholes when they do not. At fit level 3 (the shortest
+wide page) the caption moves to the left of its capsule (the unit turns horizontal) so the row keeps its height and
+`menu_test`'s 1024 x 576 no-scroll check holds. The captions are not in `descs`, so they stay at every level; the shared rows'
+description lines lost the sentences that only named the capsules.
+
 ### Rome emblems (as built, 2026-10-30)
 
 The owner: "the roman side needs symbols for their flags and armies. I think it is still only color right now." Cause:
