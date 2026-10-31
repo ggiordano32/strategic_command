@@ -4706,6 +4706,58 @@ func _rome_fleets() -> void:
 			break
 		g = CTurn.resolve_turn(g, [CTurn.submission(g, rome, [])])
 	_check(landed, "Rome fleets: an army embarked at Rome and landed on Corsica (aboard %s, landed %s)" % [aboard, landed])
+	# A fleet waits for an army marching to board it (2026-10-30); a direct embark still sails with its army.
+	var wst := CState.copy(st)
+	var wf: Dictionary = CFleet.fleets_of(wst, rome)[0]
+	var wa: Dictionary = CState.armies_of(wst, rome)[0]
+	wa["units"] = (wa["units"] as Array).slice(0, 3)
+	var wfc := CFleet.cell(wf)
+	var wstart := -1
+	for c in CGrid.count():
+		if CGrid.passable(c) and CGrid.cheb(c, wfc) == 3 and not CFleet.boarding_cells(wst, wf).has(c):
+			wstart = c
+			break
+	var wbeach := -1
+	for c in CFleet.boarding_cells(wst, wf):
+		if CGrid.passable(c) and (wbeach < 0 or CGrid.cheb(c, wstart) < CGrid.cheb(wbeach, wstart)):
+			wbeach = c
+	CState.place(wa, wstart)
+	var wfar := CFleet.cell(CFleet.fleet(s2, int(rf["id"])))
+	var wo: Array = [{"t": "move", "army": int(wa["id"]), "x": CGrid.cx(wbeach), "y": CGrid.cy(wbeach), "mode": CData.MODE_SIEGE, "persist": 1, "fleet": int(wf["id"])},
+		{"t": "fmove", "fleet": int(wf["id"]), "x": CGrid.cx(tgt), "y": CGrid.cy(tgt), "persist": 1}]
+	var wg := CTurn.resolve_turn(wst, [CTurn.submission(wst, rome, wo)])
+	var waited := false
+	for e in wg["events"]:
+		if str(e["k"]) == "fleet_waits" and int(e["fleet"]) == int(wf["id"]) and int(e["army"]) == int(wa["id"]):
+			waited = true
+	_check(wstart >= 0 and wbeach >= 0 and waited and CFleet.cell(CFleet.fleet(wg, int(wf["id"]))) == wfc and CFleet.fleet(wg, int(wf["id"])).has("dest_x"),
+		"boarding wait: the fleet stays at its cell with the voyage stored while the army marches (waits %s)" % waited)
+	var wturns := 0
+	while CState.carried_army(wg, int(wa["id"])).is_empty() and wturns < 6:
+		wg = CTurn.resolve_turn(wg, [CTurn.submission(wg, rome, [])])
+		wturns += 1
+	var wcell := CFleet.cell(CFleet.fleet(wg, int(wf["id"])))
+	_check(not CState.carried_army(wg, int(wa["id"])).is_empty() and wcell == wfc,
+		"boarding wait: the army boards after %d more turns, the fleet still at its cell" % wturns)
+	wg = CTurn.resolve_turn(wg, [CTurn.submission(wg, rome, [])])
+	_check(CFleet.cell(CFleet.fleet(wg, int(wf["id"]))) != wfc and not CState.carried_army(wg, int(wa["id"])).is_empty(),
+		"boarding wait: the next turn the fleet sails with the army aboard")
+	var wj := CState.from_json(CState.to_json(wg))
+	_check(CState.hash_text(wj) == CState.hash_text(wg), "boarding wait: the state round-trips JSON")
+	# A direct embark with an fmove in the same turn is unchanged: it sails with the army.
+	var dst := CState.copy(st)
+	var df: Dictionary = CFleet.fleets_of(dst, rome)[0]
+	var da: Dictionary = CState.armies_of(dst, rome)[0]
+	da["units"] = (da["units"] as Array).slice(0, 3)
+	CState.place(da, CGrid.site(lat))
+	var dg := CTurn.resolve_turn(dst, [CTurn.submission(dst, rome, [{"t": "embark", "army": int(da["id"]), "fleet": int(df["id"])},
+		{"t": "fmove", "fleet": int(df["id"]), "x": CGrid.cx(tgt), "y": CGrid.cy(tgt), "persist": 1}])])
+	var dwait := false
+	for e in dg["events"]:
+		if str(e["k"]) == "fleet_waits":
+			dwait = true
+	_check(not dwait and CFleet.cell(CFleet.fleet(dg, int(df["id"]))) != CFleet.cell(df) and not CState.carried_army(dg, int(da["id"])).is_empty(),
+		"boarding wait: a direct embark and a voyage in one turn still sails with the army")
 	# A sea battle: a Roman fleet (quinquereme with the corvus) meets a Punic one.
 	var open := -1
 	for c in CGrid.count():

@@ -206,6 +206,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 			if not fseen.has(int(fl["id"])) and CState.is_human(st, int(fl["f"])) and fl.has("dest_x"):
 				var vy := CFleet.voyage(fl)
 				fm.append([int(fl["id"]), int(vy[0]), int(fl["f"]), 1, int(vy[1]), int(fl.get("dk", -1))])
+		fm = _defer_boarding_fleets(st, subs, fm)
 		CFleet.execute_moves(st, fm)
 	if CState.grid_on(st):
 		# Version 6: cells and targets; the players' armies still marching to
@@ -354,3 +355,49 @@ static func pending_for(st: Dictionary, f: int = -1) -> Array:
 		if (f < 0 and not hs.is_empty()) or hs.has(f):
 			out.append(b)
 	return out
+
+
+## A fleet does not sail in a turn in which one of its owner's armies marches to
+## board it (a march with "fleet" this turn, or a stored dest_fleet one): the
+## voyage is stored instead (the fleet sails next turn, once the army is
+## aboard) and the event fleet_waits is recorded. Returns the moves left.
+static func _defer_boarding_fleets(st: Dictionary, subs: Array, fm: Array) -> Array:
+	if not CState.grid_on(st) or fm.is_empty():
+		return fm
+	# [fleet id, faction, army id] of every boarding march, in array order.
+	var marchers: Array = []
+	for s in subs:
+		for o in s["orders"]:
+			if str(o.get("t", "")) == "move" and int(o.get("fleet", -1)) >= 0:
+				var a := CState.army(st, int(o.get("army", -1)))
+				if not a.is_empty() and int(a["f"]) == int(s["f"]):
+					marchers.append([int(o["fleet"]), int(s["f"]), int(a["id"])])
+	for a in st["armies"]:
+		if int(a.get("dest_fleet", -1)) >= 0 and int(a.get("dest_x", -1)) >= 0 and CState.is_human(st, int(a["f"])):
+			marchers.append([int(a["dest_fleet"]), int(a["f"]), int(a["id"])])
+	if marchers.is_empty():
+		return fm
+	var kept: Array = []
+	for m in fm:
+		var army := -1
+		for w in marchers:
+			if int(w[0]) == int(m[0]) and int(w[1]) == int(m[2]):
+				army = int(w[2])
+				break
+		var fl := CFleet.fleet(st, int(m[0]))
+		if army < 0 or fl.is_empty() or int(fl["f"]) != int(m[2]):
+			kept.append(m)
+			continue
+		if not fl.has("dest_x") or CFleet.voyage(fl)[0] != int(m[1]):
+			# Store the voyage so it is not lost (a stored one to the same cell is kept as it is).
+			fl.erase("tgt")
+			fl.erase("join")
+			fl.erase("dk")
+			fl["dest_x"] = CGrid.cx(int(m[1]))
+			fl["dest_y"] = CGrid.cy(int(m[1]))
+			if m.size() > 4 and int(m[4]) >= 0:
+				fl["tgt"] = int(m[4])
+			if m.size() > 5 and int(m[5]) >= 0:
+				fl["dk"] = int(m[5])
+		CRules.event(st, {"k": "fleet_waits", "f": int(m[2]), "fleet": int(m[0]), "army": army})
+	return kept

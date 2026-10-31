@@ -3285,7 +3285,7 @@ func _event_color(e: Dictionary, f: int) -> Color:
 		"sea_battle":
 			var won2 := (int(e["won"]) == 0 and (e["att"] as Array).has(f)) or (int(e["won"]) == 1 and (e["def"] as Array).has(f))
 			return Kit.COL_GOOD if won2 else Kit.COL_BAD
-		"ship_built", "landed", "embarked":
+		"ship_built", "landed", "embarked", "fleet_waits":
 			return Kit.COL_GOOD
 		"blockade", "sack":
 			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f else Kit.COL_GOLD)
@@ -3543,6 +3543,10 @@ func event_text(e: Dictionary, f: int) -> String:
 			return "A %s was launched at %s." % [str(CData.ship_row(str(e["ship"])).get("name", e["ship"])).to_lower(), city.call(e["r"])]
 		"embarked":
 			return "An army went aboard ship at %s." % city.call(e["r"])
+		"fleet_waits":
+			if int(e["f"]) != f:
+				return ""
+			return "A fleet of ours waits for an army marching to board it, then sails."
 		"landed":
 			return "An army landed in %s." % CData.REGIONS[int(e["r"])]["name"] if int(e["r"]) >= 0 else "An army landed."
 		"canoes_sunk":
@@ -4353,10 +4357,24 @@ func fleet_panel(box: VBoxContainer, id: int) -> void:
 				txt = "Sails to land the troops in %s (%s); the landing ends their turn." % [CData.REGIONS[CGrid.region(int(p["goal"]))]["name"], when]
 			else:
 				txt = "Sails %s (arrives %s)." % [sea_place(CGrid.cx(int(p["goal"])), CGrid.cy(int(p["goal"]))), when]
+		if _boarding_army(id) >= 0:
+			txt = "Waits this turn for the army to board, then sails. " + txt
 		box.add_child(Kit.label(txt, Kit.FONT, Kit.COL_GOOD, true))
 	else:
 		box.add_child(Kit.label("Tap the sea to sail, a lit beach to land the troops aboard, an enemy fleet to attack, your own fleet to join it.", Kit.FONT_SMALL, Kit.COL_DIM, true))
 	# (Cancel voyage, Board and Join are on the command bar.)
+
+
+## The id of an army of ours marching to board fleet fid (a stored dest_fleet
+## march, or a move order with "fleet" among the pending orders); -1 if none.
+func _boarding_army(fid: int) -> int:
+	for a in (s.ps as Dictionary)["armies"]:
+		if int(a["f"]) == s.f and int(a.get("dest_fleet", -1)) == fid and int(a.get("dest_x", -1)) >= 0:
+			return int(a["id"])
+	for o in s.orders:
+		if str(o.get("t", "")) == "move" and int(o.get("fleet", -1)) == fid:
+			return int(o.get("army", -1))
+	return -1
 
 
 ## The city's shipyard (a pack with ships, a port of ours): what is being
