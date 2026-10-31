@@ -34,6 +34,7 @@ signal withdraw_all_pressed
 signal group_pressed(kind: String)
 signal ability_pressed(ab: int)   # an armed ability chip tapped again (UT.AB_*): battle.gd cancels the pick
 signal ability_set(ab: int, state: int)   # a row of an ability chip's options: UT.AB_AUTO / AB_HOLD / AB_NOW
+signal toggle_set(key: String, value: int)   # a row of a two-state chip's options: SET that value on every eligible selected unit (never a flip)
 signal stance_set(stance: int)    # a row of the Stance options: 0 Line, 1 Cover, 2 Hold street
 signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
@@ -130,6 +131,7 @@ var ammo_kinds: Array = []        # [standard, special] ammunition words of the 
 var _opt_chip: AbilityChip = null # the chip whose options are open
 var _opt_cur := -1                # that chip's current state value when it opened
 var _cur_val := {}                # chip key -> current state value (1 on / 0 off, stance 0..2), set by set_selection
+var chip_mixed := {}              # chip key -> true when the eligible selected units disagree (battle.gd sets it before set_selection)
 var _toggle_emit := {}            # multi-state toggle chip -> Callable that emits its old signal (one press = one flip)
 var ab_chips := {}                # UT.AB_* -> its chip
 var _chip_order: Array = []       # every chip, in the bar's fixed order
@@ -1366,6 +1368,10 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 	ammo_button.set_state(ammo_word)
 	forage_button.set_state("on" if forage > 0 else "off")
 	release_button.set_state("tap an enemy" if release_armed else "%d dogs" % maxi(dogs, 0))
+	for pair in [[run_button, "run"], [fire_button, "fire"], [skirm_button, "skirmish"], [bounds_button, "bounds"],
+			[deploy_button, "deploy"], [refill_button, "refill"], [ammo_button, "ammo"], [forage_button, "forage"]]:
+		if chip_mixed.get(pair[1], false):
+			(pair[0] as AbilityChip).set_state("mixed")
 	_cur_val = {"run": 1 if run > 0 else 0, "fire": 1 if fire > 0 else 0, "skirmish": 1 if skirm > 0 else 0,
 		"stance": clampi(stance, 0, 2), "bounds": 1 if bounds > 0 else 0, "deploy": 1 if deploy > 0 else 0,
 		"refill": 1 if refill > 0 else 0, "forage": 1 if forage > 0 else 0, "ammo": 1 if ammo > 0 else 0,
@@ -2144,7 +2150,7 @@ func _open_options(c: AbilityChip) -> void:
 		BTheme.plate(row, true, false, false)
 		if str(r[1]) != "":
 			Kit.set_icon(row, str(r[1]))
-		row.current = int(r[2]) == _opt_cur
+		row.current = int(r[2]) == _opt_cur and not (c.ab < 0 and bool(chip_mixed.get(c.key, false)))
 		row.set_pressed_no_signal(row.current)
 		row.custom_minimum_size = Vector2(0.0, AbilityChip.H)
 		row.pressed.connect(AudioFx.click)
@@ -2174,9 +2180,11 @@ func _close_options() -> void:
 func _choose_option(c: AbilityChip, value: int) -> void:
 	var cur := _opt_cur
 	_close_options()
-	if value == cur:
+	if _toggle_emit.has(c) and c.key != "stance" and c.key != "release":
+		toggle_set.emit(c.key, value)   # (no early return: a mixed selection reads as the max; battle.gd skips a no-op)
+	elif value == cur:
 		return
-	if c.ab >= 0:
+	elif c.ab >= 0:
 		ability_set.emit(c.ab, value)
 	elif c.key == "stance":
 		stance_set.emit(value)
@@ -2279,7 +2287,7 @@ func _open_explain(c: AbilityChip) -> void:
 	if rows.size() > 1:
 		var cur := _ability_cur(c) if c.ab >= 0 else int(_cur_val.get(c.key, 0))
 		for r in rows:
-			var now := int(r[2]) == cur
+			var now: bool = int(r[2]) == cur and not (c.ab < 0 and bool(chip_mixed.get(c.key, false)))
 			var l := Kit.label(str(r[0]) + ("  (now)" if now else ""), 14, Kit.COL_GOLD if now else Kit.COL_BONE)
 			l.name = "ex_row_%d" % int(r[2])
 			if str(r[1]) != "":

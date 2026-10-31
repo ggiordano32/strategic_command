@@ -462,6 +462,7 @@ func _ready() -> void:
 	hud.fire_pressed.connect(_toggle_fire)
 	hud.skirmish_pressed.connect(_toggle_skirmish)
 	hud.stance_set.connect(_set_stance)
+	hud.toggle_set.connect(_set_toggle)
 	hud.bounds_pressed.connect(_toggle_bounds)
 	hud.occupy_pressed.connect(_toggle_occupy)
 	hud.waypoints_pressed.connect(_toggle_waypoints)
@@ -1865,6 +1866,7 @@ func _refresh_actions() -> void:
 	hud.set_abilities(_ability_info())
 	if not selection.is_empty() and sim.phase == BattleSim.PHASE_BATTLE and interactive:
 		Tips.show("first_chip")
+	hud.chip_mixed = _chip_mixed()
 	hud.set_selection(selection, run, fire, skirm, deploy, refill, ammo, ammo_word, forage, dogs, release_armed, stance, bounds, occupy)
 	hud.occupy_button.set_pressed_no_signal(occupy_mode and occupy == 0)
 	hud.waypoints_button.visible = not selection.is_empty() and not only_fixed and sim.phase == BattleSim.PHASE_BATTLE
@@ -2047,6 +2049,86 @@ func _toggle_run() -> void:
 			any_off = true
 	for u in selection:
 		_queue(BattleSim.make_run_order(0, u, 1 if any_off else 0))
+	_refresh_actions()
+
+
+## The eligible selected units of a two-state chip (the same rule as its toggle), as unit indices.
+func _toggle_units(key: String) -> Array[int]:
+	var out: Array[int] = []
+	for u in selection:
+		var ok := false
+		match key:
+			"run":
+				ok = true
+			"fire":
+				ok = UT.stat(sim.u_type[u], "m_ammo") > 0
+			"skirmish":
+				ok = _skirmisher(u)
+			"bounds":
+				ok = BattleSim.stance_ok(sim.u_type[u])
+			"deploy":
+				ok = UT.cls(sim.u_type[u]) == UT.CLS_ART
+			"refill":
+				ok = _refiller(u)
+			"ammo":
+				ok = sim.spec_kind(u) >= 0
+			"forage":
+				ok = sim.u_state[u] == BattleSim.U_READY and UT.cls(sim.u_type[u]) == UT.CLS_MISSILE \
+					and (BattleSim.forage_refusal(sim, u) == "" or orders.value(u, "forage") != 0)
+		if ok:
+			out.append(u)
+	return out
+
+
+## A unit's predicted value (0 / 1) of a two-state chip.
+func _toggle_val(key: String, u: int) -> int:
+	match key:
+		"run": return 1 if orders.value(u, "run") != 0 else 0
+		"fire": return 1 if orders.value(u, "fire") != 0 else 0
+		"skirmish": return 1 if orders.value(u, "skirm") != 0 else 0
+		"bounds": return 1 if bounds_mode or orders.value(u, "bound") != 0 else 0
+		"deploy": return 1 if orders.value(u, "deploy") != 0 else 0
+		"refill": return 1 if orders.value(u, "refill") != 0 else 0
+		"ammo": return 1 if orders.value(u, "akind") != 0 else 0
+		"forage": return 1 if orders.value(u, "forage") != 0 else 0
+	return 0
+
+
+## Chip key -> true where the eligible selected units disagree (the chip reads "mixed").
+func _chip_mixed() -> Dictionary:
+	var out := {}
+	for key in ["run", "fire", "skirmish", "bounds", "deploy", "refill", "ammo", "forage"]:
+		var seen := 0
+		for u in _toggle_units(key):
+			seen |= 1 << _toggle_val(key, u)
+		if seen == 3:
+			out[key] = true
+	return out
+
+
+## A row of a two-state chip's options: SET `value` on every eligible selected unit (the keyboard / one-tap
+## toggles above still flip). Units already there get no order.
+func _set_toggle(key: String, value: int) -> void:
+	var v := 1 if value != 0 else 0
+	if key == "bounds":
+		bounds_mode = v == 1   # (a mode for the next move orders, as _toggle_bounds)
+		_refresh_actions()
+		return
+	for u in _toggle_units(key):
+		if _toggle_val(key, u) == v:
+			continue
+		match key:
+			"run": _queue(BattleSim.make_run_order(0, u, v))
+			"fire": _queue(BattleSim.make_fire_order(0, u, v))
+			"skirmish": _queue(BattleSim.make_skirmish_order(0, u, v))
+			"deploy": _queue(BattleSim.make_deploy_order(0, u, v))
+			"refill": _queue(BattleSim.make_refill_order(0, u, v))
+			"ammo": _queue({"type": BattleSim.ORDER_AMMO, "unit": u, "on": v})
+			"forage": _queue({"type": BattleSim.ORDER_FORAGE, "unit": u, "on": v})
+	if key == "ammo":
+		_count("ammo")
+	elif key == "forage":
+		_count("forage")
 	_refresh_actions()
 
 
