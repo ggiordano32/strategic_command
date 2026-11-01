@@ -4099,8 +4099,13 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if e.pressed:
 		_last_touch = not is_mouse
 		if hud.is_over_ui(e.position):
-			_count("touch_on_ui")
-			return
+			# A finger over the HUD never starts a one-finger action, but a
+			# second finger landing there (a thumb on the chip rows) while one
+			# is on the field still joins the pinch / pan.
+			if is_mouse or _touches.is_empty() or _touches.has(e.index):
+				_count("touch_on_ui")
+				return
+			_count("touch_on_ui_joins_gesture")
 		if not is_mouse:
 			_mouse_add = false
 			_mouse_alt = false
@@ -4490,6 +4495,10 @@ func _update_pinch() -> void:
 
 
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
+	# The canvas transform lags camera.position until the camera's next scroll
+	# update: refresh it first, or a pan made just before (the two-finger
+	# midpoint in _update_pinch) is read as zoom drift and undone.
+	camera.force_update_scroll()
 	var before := _screen_to_board(screen_pos)
 	var z := clampf(camera.zoom.x * factor, ZOOM_MIN, ZOOM_MAX)
 	camera.zoom = Vector2(z, z)

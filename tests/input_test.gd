@@ -88,6 +88,12 @@ func _initialize() -> void:
 		_step_two_pan_move,
 		_step_two_pan_end,
 		_step_check_two_pan_keeps,
+		_step_hud_pan_begin,
+		_step_hud_pan_move,
+		_step_hud_pan_end,
+		_step_check_hud_pan,
+		_step_after_pan_tap,
+		_step_check_after_pan_tap,
 		_step_two_tap,
 		_step_check_two_tap,
 		_step_tap_card,
@@ -781,8 +787,13 @@ func _step_select_for_two() -> void:
 	battle._select(u_inf)
 
 
+var _pan_cam0 := Vector2.ZERO
+
+
 func _step_two_pan_begin() -> void:
 	_no_double_tap()
+	battle.camera.force_update_scroll()
+	_pan_cam0 = battle.camera.position
 	var c := _vp_to_window(Vector2(500, 260))
 	_touch(0, c - Vector2(50, 0), true)
 	_touch(1, c + Vector2(50, 0), true)
@@ -802,6 +813,93 @@ func _step_two_pan_end() -> void:
 
 func _step_check_two_pan_keeps() -> void:
 	_check(battle.selection.size() == 1, "two-finger pan does not deselect")
+	# Both fingers moved 40 px down (viewport): the board follows the midpoint 1:1
+	# (2026-11-01: _zoom_at read a stale canvas transform and undid most of the pan).
+	var d := battle.camera.position - _pan_cam0
+	var want := -40.0 / root.get_final_transform().get_scale().y / battle.camera.zoom.x   # (40 window px)
+	_check(absf(d.y - want) < 1.0 / battle.camera.zoom.x and absf(d.x) < 1.0 / battle.camera.zoom.x,
+		"two-finger pan with a unit selected moves the camera with the midpoint (%.1f, want %.1f)" % [d.y, want])
+
+
+## Second finger over the HUD while the first is on the field (a thumb on the chip rows): it joins the pan.
+## The events go straight to the battle's handler, as they would after passing the HUD's pass-through panels.
+var _hud_p0 := Vector2.ZERO
+var _hud_p1 := Vector2.ZERO
+var _hud_orders := 0
+
+
+func _bt(idx: int, pos: Vector2, pressed: bool) -> void:
+	var e := InputEventScreenTouch.new()
+	e.index = idx
+	e.position = pos
+	e.pressed = pressed
+	battle._unhandled_input(e)
+
+
+func _bd(idx: int, pos: Vector2) -> void:
+	var e := InputEventScreenDrag.new()
+	e.index = idx
+	e.position = pos
+	battle._unhandled_input(e)
+
+
+func _step_hud_pan_begin() -> void:
+	_no_double_tap()
+	battle.camera.force_update_scroll()
+	_pan_cam0 = battle.camera.position
+	_hud_orders = battle.sim._order_seq
+	_hud_p0 = Vector2(500, 260)
+	_hud_p1 = Vector2(-1, -1)
+	var vr := battle.get_viewport_rect()
+	for c in battle.hud._ui_controls:
+		if c.visible and c.is_visible_in_tree():
+			var r: Rect2 = c.get_global_rect().intersection(vr)
+			if r.size.x > 4 and r.size.y > 4 and r.get_center().y > vr.size.y * 0.5:
+				_hud_p1 = r.get_center()
+				break
+	_check(_hud_p1.x >= 0.0 and battle.hud.is_over_ui(_hud_p1), "a HUD point for the thumb (%s)" % str(_hud_p1))
+	_bt(0, _hud_p0, true)
+	_bt(1, _hud_p1, true)
+
+
+func _step_hud_pan_move() -> void:
+	for k in range(1, 4):
+		_bd(0, _hud_p0 + Vector2(10 * k, 0))
+		_bd(1, _hud_p1 + Vector2(10 * k, 0))
+
+
+func _step_hud_pan_end() -> void:
+	_check(battle._gesture_multi and not battle.overlay.preview_on, "a second finger over the HUD joins the gesture (no order line)")
+	_bt(0, _hud_p0 + Vector2(30, 0), false)
+	_bt(1, _hud_p1 + Vector2(30, 0), false)
+
+
+func _step_check_hud_pan() -> void:
+	var d := battle.camera.position - _pan_cam0
+	var want := -30.0 / battle.camera.zoom.x
+	_check(absf(d.x - want) < 1.0 / battle.camera.zoom.x and absf(d.y) < 1.0 / battle.camera.zoom.x,
+		"two-finger pan with the second finger over the HUD moves the camera (%.1f, want %.1f)" % [d.x, want])
+	_check(battle.sim._order_seq == _hud_orders and battle.selection.size() == 1, "the HUD-thumb pan issues no order and keeps the selection")
+	# A lone finger over the HUD still starts nothing on the field.
+	_bt(0, _hud_p1, true)
+	_check(battle._touches.is_empty(), "a single finger over the HUD does not join the field")
+	_bt(0, _hud_p1, false)
+
+
+## After the pan (and the 300 ms stray-tap guard) the next single finger is a normal tap.
+func _step_after_pan_tap() -> void:
+	_no_double_tap()
+	battle._multi_end_ms = -100000
+	battle._select(-1)
+	_focus(battle.sim.u_cx[u_inf], battle.sim.u_cy[u_inf])
+	var p := _unit_screen(u_inf)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_check_after_pan_tap() -> void:
+	_check(not battle._gesture_multi and battle._touches.is_empty(), "the next single finger after a pan is not a multi gesture")
+	_check(battle.selected == u_inf, "a tap after a two-finger pan selects (selected=%d, want %d)" % [battle.selected, u_inf])
 
 
 func _step_two_tap() -> void:

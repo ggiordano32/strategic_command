@@ -398,6 +398,20 @@ selecting or ordering anything.
 - Two-finger tap deselects all (touch, battle only): both fingers down within
   120 ms, both up within 250 ms of the first touch, each moved under 12 px;
   pinch / pan motion cancels it (`TWO_TAP_*` in `game/battle.gd`).
+- Two-finger pan on the phone (2026-11-01; the owner: "2 finger panning does
+  not work", pinch zoom did). Cause, reproduced in engine: `_update_pinch`
+  moves `camera.position` by the midpoint's travel, then calls `_zoom_at`,
+  which read its anchor (`before`) through the canvas transform, still the
+  one from before the pan (Camera2D refreshes its scroll at its next update),
+  and its forced `after`: `before - after` was the pan, reversed, so most of
+  it was undone every event (measured 23-51 % of the finger travel, jittery).
+  Not the browser: the default 4.7 shell already has `user-scalable=no` and
+  `touch-action: none`. Fix: `_zoom_at` calls `camera.force_update_scroll()`
+  before reading `before` (the pan now follows the midpoint 1:1). And a
+  second finger landing over the HUD (a thumb on the chip rows) while one is
+  on the field now joins the pinch / pan (counter
+  `touch_on_ui_joins_gesture`); a lone finger over the HUD still starts
+  nothing on the field. input_test checks both and the tap after a pan.
 - Group move: three fingers on the screen with units selected; after 24 px
   of movement or 8 degrees of twist a ghost of every unit's destination
   (real frontage, depth and facing) follows the touches' centre and twist;
