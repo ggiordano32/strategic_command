@@ -219,6 +219,7 @@ One bullet per open item pulled from the rows' **Open:** texts; the bracket name
 - Faction mark on the battle HUD; story panel swatches are gauges, not factions. [paragraph "West faction emblems"]
 
 ### Art
+- Siege equipment in oblique (2026-11-01, view only; `docs/design/art_pipeline.md` "(2026-11-01) Siege equipment in oblique"): the owner, "some of the siege units do not have oblique sprites so they are flat": the West unit rows all had sets; the flat pieces were the ladders, poles, ram, tower, mantlets and wagon, drawn on the ground plane. `game/siege_gear_ob.gd` stands them up as shaded boxes and bars in the oblique view (ladders leaning to the walkway, bundles on shoulders, wrecks low); no atlas change. Open: boxes not painted art; the owner's eye.
 - Rome emblems (2026-10-30, landed, view only; `docs/design/ui.md` "Rome emblems (as built)"): the owner, "the roman side needs symbols for their flags and armies. I think it is still only color right now": `FactionEmblem.KEYS` had only the West, so Rome's eight factions fell back to the colour swatch and a colour-only pennant everywhere outside the painted menu crests. Eight emblems drawn in code after the painted crests: rome a gold eagle on red, carthage an elephant with a palm on purple, macedon the Vergina sun on cream, epirus an eagle over the Molossian hound on orange, greeks a Corinthian helmet on blue, syracuse dolphins round a ship on teal, iberians a falcata and round shield on brown, gauls a boar under a carnyx on green; below 22 px the ink edges drop so the silhouette reads on the 13 px standard. Every caller maps by key (`Kit.faction_mark`, the overworld standards, `tabletop_marks.draw_standard`), so cards, Diplomacy, Realm, the overworld pennants and the battle standards pick them up with no other change; the painted crests still win in the menu under the painted setting. `tests/emblem_gallery.gd` renders both packs; the West emblems unchanged. Open: the drawings are approximations (the elephant's palm, the dolphins at 16 px, the hound): a painted pass through the crest pipeline would do them better; only the eagle and the hound were checked on real standards.
 - Crests: Dutch / Miskito lose their flag blue and turtle green in the 3-colour flatten; Rome's references are plain shields. [row "Faction crests"]
 - West icons: 16 px legibility of the buccaneers (26) and pistoleers (28) on the tablet. [row "West icons"]
@@ -382,6 +383,7 @@ behind the N-player campaign.
 
 ## History
 
+- `docs/history/2026-11.md`: the dated rows from 2026-11-01 on, newest first (today's rows go to the top of its table).
 - `docs/history/2026-10.md`: every dated row and paragraph of the old STATUS (2026-10-04 to 2026-10-22), newest first: the old "Where we are" table, "In progress right now", the session notes, the West pack slices, the sea passes.
 - `docs/history/overview.md`: the undated general sections of the old STATUS (old header paragraph, milestone definitions, the tuning backlog, the old open items, the first-milestone rows).
 - Older months: none (the project started in October 2026).

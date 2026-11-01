@@ -1165,6 +1165,27 @@ campaign/` empty), no hash, no lockstep input. Code: `game/battlekit_shadow.gd` 
   and the kit shadow rows on the Tab S7 (no measurement); the tray lift is a whole-card shift, so a unit on a stair shows its tray at
   the walk's height while the men are still climbing.
 
+#### (2026-11-01) Siege equipment in oblique
+
+The owner, playing the Itza in the oblique view: "some of the siege units do not have oblique sprites so they are flat". The unit rows were not
+the cause: every West row has a set (`musketeers2`, `w_pikemen2` and `cuirassiers` inherit their base row's `sprite_set`, the four gun rows use set 25
+`w_crew` and engine set 26 `cannon`, all in `assets/sprites_ob/manifest.json`, which is keyed by spec unit, not by row). The flat pieces were the
+**siege equipment** (`q_*` pieces: ladder sets, scaling poles, the ram, the siege tower, mantlets, the ammunition wagon), which `overlay.gd`
+`_draw_siege_gear` draws as lines and polygons on the ground plane, so the oblique view squashed them onto the board; the wagon came from the
+top-down prop sprites. Route (b), upright solids, was taken over new Blender spec units (route a): the procedural drawer is a handful of
+polygons, the pieces are boxes and bars, and no atlas grows (the oblique pack is 12 MB for the web download; this adds none). New
+`game/siege_gear_ob.gd` (view only, `sim/` and `campaign/` untouched, no hash, no lockstep input; the top view draws exactly as before)
+projects each piece's metres to the board with the view's own constants (ground y x `OBLIQUE_COS`, height x `OBLIQUE_SIN` x px/m) and draws it
+as an upright group at its ground point (`BoardView.up_xf`, as the markers): a planted ladder leans from its foot (`set_ladder_foot`) toward
+the stretch (`ws_dir`) and its top clears the walkway (`sim.wall_h` + 0.9 m, poles + 1.6 m); a bundle lies at 0.2 m or rides at 1.7 m on the
+carriers' shoulders; the ram is a shaded box with its hanging beam and iron head; the tower is a box `sim.wall_h` + 2.6 m high with storey
+lines, its drawbridge down on the walkway when planted and a raised flap while it moves; a mantlet is a plank screen its panel line long with
+seams and two props; a wrecked piece is low and dark with a cross; the wagon is a box with canvas hoops, wheels and its horses as blocks (its
+stock bar stays flat). Faces are shaded by the key light and sorted far to near; pieces are drawn far to near too. Known: pieces are boxes, not
+painted figures (the wagon sprite and the draft horses of the top view are not used in oblique); a burning piece keeps `_draw_fires`' flame over
+its ground point; a tower's drawbridge face is behind its box seen from the south. `tests/oblique_siege_shot.gd` places the pieces by hand
+before a wall (planted, on the ground, carried and wrecked) and saves three 1280x720 shots.
+
 ### Pass 4, painted figures (as built, 2026-10-30)
 
 Art half (`tools/`, the two sheet sets, one loader in `game/kit_ob.gd`); `sim/` and `campaign/` untouched, the generated tables did not change.

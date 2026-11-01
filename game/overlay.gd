@@ -15,6 +15,8 @@ const LastSeen := preload("res://game/last_seen.gd")
 const Marks := preload("res://game/tabletop_marks.gd")
 const CData := preload("res://campaign/cdata.gd")
 const BoardView := preload("res://game/board_view.gd")
+const SiegeGearOb := preload("res://game/siege_gear_ob.gd")
+var _siege_ob := SiegeGearOb.new()
 const Traits := preload("res://game/unit_traits.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
@@ -2398,8 +2400,8 @@ func _gear_angle(q: int) -> float:
 ## (walk frames while it moves, the wreck = the death's last frame) and the
 ## wagon's horses ahead of it (dead ones lying, the death's last frame).
 func _draw_props() -> void:
-	if sim == null or _props_tex == null:
-		return
+	if sim == null or _props_tex == null or BoardView.oblique:
+		return  # (the oblique view stands the wagons up: siege_gear_ob.gd)
 	var vr := _view_rect().grow(px_per_m * 8.0)
 	for q in sim.n_eq:
 		if sim.q_kind[q] != BattleSim.EQ_WAGON:
@@ -2450,6 +2452,12 @@ func _draw_prop(prop: String, act: int, fr: int, c: Vector2, ang: float) -> void
 
 
 func _draw_siege_gear(lw: float) -> void:
+	if BoardView.oblique:
+		_siege_ob.draw_all(self, sim, px_per_m, lw, _gear_angle)
+		for q in sim.n_eq:
+			if sim.q_kind[q] == BattleSim.EQ_WAGON and sim.q_state[q] != BattleSim.Q_WRECKED and not is_nan(_gear_angle(q)):
+				_draw_wagon_stock(q, to_px(sim.q_x[q], sim.q_y[q]), lw)
+		return
 	var wood := Color(0.55, 0.38, 0.2, 1.0)
 	var dark := Color(0.2, 0.12, 0.05, 0.95)
 	for q in sim.n_eq:
