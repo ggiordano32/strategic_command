@@ -355,7 +355,7 @@ func _mean_diff(r: int) -> PackedFloat32Array:
 ## plaza (1), the rest of the town's band left green between (0); empty for any other map.
 func _west_built(vw: int, vh: int) -> PackedByteArray:
 	var out := PackedByteArray()
-	if sim.city_on == 0 or not (sim.map_info is Dictionary) or int((sim.map_info.get("city", {}) as Dictionary).get("west", 0)) == 0:
+	if sim.city_on == 0 or not (sim.map_info is Dictionary) or not MapGen.west_kit(sim.map_info.get("city", {})):
 		return out
 	out.resize(vw * vh)
 	var veg: PackedByteArray = sim.veg

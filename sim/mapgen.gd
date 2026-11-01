@@ -286,6 +286,8 @@ static func city_params(c: Dictionary) -> Dictionary:
 		out["towers"] = int(c["towers"])  # (read by the sim: 0 = no tower engines; not the map's)
 	if int(c.get("west", 0)) != 0:
 		out["west"] = 1  # (the West pack: an open town, phase W; is_west)
+	if int(c.get("wring", 0)) != 0:
+		out["wring"] = 1  # (a ring village with the West's buildings: _wr_fill; the native lesson only)
 	if c.get("tp") is Dictionary and int((c["tp"] as Dictionary).get("v", 0)) == 1:
 		out["tp"] = c["tp"]  # (a campaign town's shared plan: the map is built from it, tp_geom)
 	return out
@@ -992,7 +994,8 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 			_gate_raster(obs, keep, ow, oh, gates[g], g, ed, t, 0, towers)
 	# Plaza and main streets.
 	var streets: Array = []
-	var msw: int = [3, 4, 4][level]
+	var wr := int(p.get("wring", 0)) != 0   # (the West's buildings in the ring: _wr_fill)
+	var msw: int = [3, 4, 4][level] if not wr else WR_STREET
 	if walls > 0:
 		for gd in gates:
 			streets.append([int(gd["ix"]), int(gd["iy"]), px, py, msw])
@@ -1010,7 +1013,7 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 	occ.resize(ow * oh)
 	occ.fill(0)
 	var buildings: Array = []
-	var lm := _landmarks(p, px, py, hs, msw, gates, cx, cy, r0, false)
+	var lm := _landmarks(p, px, py, hs, msw, gates, cx, cy, r0, false) if not wr else []
 	for b in lm:
 		var a: Array = b
 		if _rect_free(inside, keep, occ, ow, oh, a[1], a[2], a[3], a[4]):
@@ -1066,13 +1069,28 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 					var hy1 := ly1 - inset - (jy if level == 0 else jy / 2)
 					if hx1 - hx0 < 4 or hy1 - hy0 < 4:
 						continue
-					if _rect_free(inside, keep, occ, ow, oh, hx0, hy0, hx1, hy1):
+					if not wr and _rect_free(inside, keep, occ, ow, oh, hx0, hy0, hx1, hy1):
 						_mark_rect(occ, ow, oh, hx0, hy0, hx1, hy1)
 						var hst := _house_style(p, inside, ow, oh, cx, cy, (hx0 + hx1) / 2, (hy0 + hy1) / 2)
 						buildings.append([hx0, hy0, hx1, hy1, B_HOUSE, hst, SH_RECT])
+	# (The ring's draws above are made either way, so the fields below are the same.)
+	var wc: Dictionary = {}
+	var wextra := PackedInt32Array()
+	if wr:
+		var own := PackedInt32Array()
+		own.resize(ow * oh)
+		own.fill(0)
+		var blk := PackedByteArray()
+		blk.resize(ow * oh)
+		blk.fill(0)
+		wc = {"ow": ow, "oh": oh, "inside": inside, "keep": keep, "blk": blk, "own": own, "obs": obs, "hgt": {},
+			"buildings": buildings, "props": [], "lowwalls": [], "rng": _rng(int(p["seed"]) * 29 + 7),
+			"founder": int(p["founder"])}
+		wextra = _wr_fill(wc, px, py, hs, streets, cx, cy, r0)
 	for b in buildings:
 		var a: Array = b
-		_set_rect(obs, ow, oh, a[0], a[1], a[2], a[3], C_BUILDING)
+		if not wr:
+			_set_rect(obs, ow, oh, a[0], a[1], a[2], a[3], C_BUILDING)  # (_w_put marks its own cells)
 	# Vegetation bits: urban, roads, plaza (4 m cells sample their centre).
 	var veg: PackedByteArray = out["veg"]
 	var vw: int = out["vw"]
@@ -1113,6 +1131,8 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 		var fw := 2 * _rr(rng, 10, 20)
 		var fh := 2 * _rr(rng, 8, 16)
 		var kind := 1 + _r(rng, 2)
+		if wr:
+			kind = 2  # (the lesson's village: garden plots, no Mediterranean orchards)
 		if k >= nf or level == 2 or walls >= 2:
 			continue
 		var fx := cx + FM.cos_a(a) * dist / FM.TRIG_ONE
@@ -1128,7 +1148,7 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 	excl.append([att_x - 40, cy, att_x + 40, att_y + 120])
 	excl.append([w_m * 10 / 100, att_y - 20, w_m * 90 / 100, h_m])
 	var nav_nodes := _nav_graph(obs, ow, oh, w_m, h_m, vx, vy, en_x, en_y, ee_x, ee_y, elen, gates,
-		cx, cy, r0, t, tow_r, px, py, hs, streets, street_xs, street_ys, inside, walls, PackedInt32Array())
+		cx, cy, r0, t, tow_r, px, py, hs, streets, street_xs, street_ys, inside, walls, wextra)
 	out["obs"] = obs
 	out["ow"] = ow
 	out["oh"] = oh
@@ -1152,6 +1172,10 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 		"gate_hp": GATE_HP[walls], "plan": PLAN_RING, "site": SITE_PLAIN, "coast": 0, "ditch": 0,
 		"sea": {}, "palisade": 1 if level == 0 and walls > 0 else 0, "enclosed": 0,
 		"founder": int(p["founder"]), "owner": int(p["owner"]), "banner": int(p["banner"])}
+	if wr:
+		lay["wring"] = 1   # (the view draws the West's pieces: game/battlekit.gd _build_west)
+		lay["props"] = wc["props"]
+		lay["lowwalls"] = wc["lowwalls"]
 	out["city"] = lay
 	# Orchards are trees; fields are a view bit.
 	for f in fields:
@@ -1163,6 +1187,235 @@ static func _city_ring(p: Dictionary, w_m: int, h_m: int, out: Dictionary, excl:
 				for i in range(maxi(int(a[0]) / 4, 0), mini(int(a[2]) / 4 + 1, vw)):
 					veg[j * vw + i] |= V_FIELD
 	return lay
+
+
+# ------------------------------- the native lesson's village (2026-11-01) --
+# docs/design/siege_and_towns.md "The native lesson's village (as built, 2026-11-01)". A ring village
+# (PLAN_RING: its timber palisade, wooden gates, streets and plaza as the ring lays them) whose lots hold
+# the West's building records (sim/mapgen.gd _w_put: quads with height and material) instead of the
+# antiquity block grid: city key "wring": 1, Scenarios.native_lesson only. A chapel, the alcalde's house,
+# a tavern and a store face the plaza; houses and a shop line the streets; houses, then shacks, face the
+# plaza from the back lots, thinning toward the palisade; wings, lean-tos, yard walls and goods as in the
+# West's towns. Its own RNG; the ring's draws are made as before, so the fields outside lie where they did.
+const WR_STREET := 4        # a street's half width kept clear (gate to plaza; drawn 4 m wide)
+const WR_GAP := 2           # a front this far off a street or the plaza
+const WR_LATTICE := 8          # the back lots: a candidate every this many metres
+const WR_NODE := 10         # street graph nodes over the open ground inside, this far apart
+
+
+## Puts a building whose front's middle is at (mx, my) m, its depth along the unit vector (nx, ny) (Q12)
+## away from the street: front fw m, depth fd m (_w_put's rules). Returns [record, front-left x cm, y cm,
+## ux, uy] or [].
+static func _wr_put(wc: Dictionary, mx: int, my: int, nx: int, ny: int, fw: int, fd: int, kd: int, hd: int,
+		mat: int) -> Array:
+	var ux := ny
+	var uy := -nx
+	var fx := mx * 100 - ux * fw * 50 / FM.TRIG_ONE
+	var fy := my * 100 - uy * fw * 50 / FM.TRIG_ONE
+	var rec := _w_put(wc, fx, fy, ux, uy, nx, ny, fw, fd, kd, hd, mat, -1)
+	if rec.is_empty():
+		return []
+	return [rec, fx, fy, ux, uy]
+
+
+## A prop `back` m in front of a placed building's front (pl from _wr_put, front fw m), `along` m off its
+## middle; turned along the front.
+static func _wr_goods(wc: Dictionary, pl: Array, fw: int, kind: int, along: int, back: int) -> void:
+	var fx: int = pl[1]
+	var fy: int = pl[2]
+	var ux: int = pl[3]
+	var uy: int = pl[4]
+	var mx := fx + ux * (fw * 50 + along * 100) / FM.TRIG_ONE
+	var my := fy + uy * (fw * 50 + along * 100) / FM.TRIG_ONE
+	# (In front: against n, which is (-uy, ux).)
+	_w_prop(wc, kind, (mx - (-uy) * back * 100 / FM.TRIG_ONE) / 100, (my - ux * back * 100 / FM.TRIG_ONE) / 100,
+		FM.atan2_a(uy, ux))
+
+
+## Fills the ring village's lots with the West's buildings (wc: _w_put's grids over the ring's obs,
+## inside and keep). Returns the extra street graph nodes (x, y pairs) over the open ground inside.
+static func _wr_fill(wc: Dictionary, px: int, py: int, hs: int, streets: Array, cx: int, cy: int,
+		r0: int) -> PackedInt32Array:
+	var rng: PackedInt32Array = wc["rng"]
+	var founder: int = wc["founder"]
+	var one := FM.TRIG_ONE
+	# The plaza's sides (west, east, north, south): front middle and the outward unit vector.
+	var sides: Array = [[px - hs - WR_GAP, py, -one, 0], [px + hs + WR_GAP, py, one, 0],
+		[px, py - hs - WR_GAP, 0, -one], [px, py + hs + WR_GAP, 0, one]]
+	# Landmarks on the plaza: [kind, front, depth, height dm, sides in preference order]; each the first
+	# side and place along it (the middle, then either corner) where it fits.
+	var lms: Array = [[B_TEMPLE, 9, 15, 85, [2, 0, 1, 3]], [B_GOVERNOR, 13, 10, 68, [0, 1, 3, 2]],
+		[B_TAVERN, 10, 8, 58, [1, 3, 0, 2]], [B_STORE, 8, 7, 46, [3, 1, 0, 2]]]
+	for lm in lms:
+		var a: Array = lm
+		var kd: int = a[0]
+		var fw: int = a[1]
+		var fd: int = a[2]
+		var pl: Array = []
+		for si in a[4]:
+			var sd: Array = sides[int(si)]
+			var nx: int = sd[2]
+			var ny: int = sd[3]
+			var s := hs - fw / 2
+			for off in [0, -s, s, -s - 3, s + 3]:
+				if not pl.is_empty():
+					break
+				# (Along the side: u = (ny, -nx).)
+				var mx: int = int(sd[0]) + ny * int(off) / one
+				var my: int = int(sd[1]) - nx * int(off) / one
+				pl = _wr_put(wc, mx, my, nx, ny, fw, fd, kd, int(a[3]), _w_mat(rng, kd, founder))
+			if not pl.is_empty():
+				break
+		if pl.is_empty():
+			continue
+		if kd == B_TAVERN:
+			_wr_goods(wc, pl, fw, P_BARRELS, -fw / 2 + 2, 2)
+			_wr_goods(wc, pl, fw, P_BARRELS, fw / 2 - 1, 2)
+		elif kd == B_STORE:
+			_wr_goods(wc, pl, fw, P_CRATES, -fw / 2 + 1, 2)
+			_wr_goods(wc, pl, fw, P_CART, fw / 2 + 2, 3)
+		elif kd == B_GOVERNOR:
+			var idx: int = (wc["buildings"] as Array).size() - 1
+			_w_extras(wc, pl[0], idx, pl[1], pl[2], pl[3], pl[4], -int(pl[4]), int(pl[3]), fw, fd, kd, 10, 0, 0, 1,
+				pl[3], pl[4])
+	# The guardhouse (Barracks) inside the main gate, beside its street, facing it.
+	if not streets.is_empty():
+		var g0: Array = streets[0]
+		var gdx := int(g0[2]) - int(g0[0])
+		var gdy := int(g0[3]) - int(g0[1])
+		var ga := FM.atan2_a(gdy, gdx)
+		for sg in [1, -1]:
+			var gside: int = sg
+			var na := (ga + 256 * gside) & 1023
+			var off := WR_STREET + WR_GAP
+			var mx := int(g0[0]) + FM.cos_a(ga) * 14 / one + FM.cos_a(na) * off / one
+			var my := int(g0[1]) + FM.sin_a(ga) * 14 / one + FM.sin_a(na) * off / one
+			var pl := _wr_put(wc, mx, my, FM.cos_a(na), FM.sin_a(na), 11, 7, B_BARRACKS, 55, MAT_STONE)
+			if not pl.is_empty():
+				_wr_goods(wc, pl, 11, P_CRATES, -3, 2)
+				break
+	# The streets (gate to plaza): lots both sides, houses and a shop near the plaza, houses and shacks
+	# toward the gate, a little turned, uneven gaps and setbacks.
+	for st in streets:
+		var sa: Array = st
+		var ax := int(sa[2])
+		var ay := int(sa[3])
+		var ddx := int(sa[0]) - ax
+		var ddy := int(sa[1]) - ay
+		var l := maxi(FM.approx_len(ddx, ddy), 1)
+		var da := FM.atan2_a(ddy, ddx)
+		for sg in [1, -1]:
+			var side: int = sg
+			var s := hs + 3 + _r(rng, 3)
+			while s < l - 10:
+				var f := s * 100 / l
+				var r := _r(rng, 100)
+				var kd := B_HOUSE
+				if f < 60:
+					kd = B_SHOP if r < 22 else B_HOUSE
+				elif r < 45:
+					kd = B_SHACK
+				var sz := _w_size(rng, kd)
+				var mat := _w_mat(rng, kd, founder)
+				var rot := _rr(rng, -10, 10)
+				var sb := _r(rng, 2) + f / 50
+				var gap := _rr(rng, 1, 3) + f / 30
+				var roll := _r(rng, 100)
+				var done := false
+				for tries in 2:
+					var fw := sz.x if tries == 0 else sz.x * 3 / 4
+					var fd := sz.y if tries == 0 else sz.y * 3 / 4
+					var c := s + fw / 2
+					var qx := ax + FM.cos_a(da) * c / one
+					var qy := ay + FM.sin_a(da) * c / one
+					var na := (da + 256 * side + rot) & 1023
+					var off := WR_STREET + WR_GAP + sb
+					var mx := qx + FM.cos_a((da + 256 * side) & 1023) * off / one
+					var my := qy + FM.sin_a((da + 256 * side) & 1023) * off / one
+					var nx := FM.cos_a(na)
+					var ny := FM.sin_a(na)
+					var pl := _wr_put(wc, mx, my, nx, ny, fw, fd, kd, sz.z, mat)
+					if not pl.is_empty():
+						var idx: int = (wc["buildings"] as Array).size() - 1
+						_w_extras(wc, pl[0], idx, pl[1], pl[2], pl[3], pl[4], nx, ny, fw, fd, kd, roll, 0, 0, 1, pl[3], pl[4])
+						if kd == B_SHOP or roll >= 75:
+							_wr_goods(wc, pl, fw, P_CRATES if roll % 3 == 0 else (P_BARRELS if roll % 3 == 1 else P_CART),
+								fw / 2 - 1, 2)
+						s += fw + gap
+						done = true
+						break
+				if not done:
+					s += 3
+	# The back lots: a lattice over the village, each a house or a shack facing the plaza, built less
+	# often and poorer toward the palisade.
+	var ext := r0 * 112 / 100
+	var gy := cy - ext
+	while gy <= cy + ext:
+		var gx := cx - ext
+		while gx <= cx + ext:
+			var jx := gx + _rr(rng, -3, 3)
+			var jy := gy + _rr(rng, -3, 3)
+			var r := _r(rng, 100)
+			var r2 := _r(rng, 100)
+			var turn := _rr(rng, -14, 14)
+			var roll := _r(rng, 100)
+			gx += WR_LATTICE
+			var dx := jx - px
+			var dy := jy - py
+			var f := FM.approx_len(dx, dy) * 100 / maxi(r0, 1)
+			if f > 110 or r >= 100 - f / 2:
+				continue
+			var kd := B_HOUSE
+			if f >= 72:
+				kd = B_SHACK if r2 < 75 else B_HOUSE
+			elif f >= 45:
+				kd = B_SHACK if r2 < 45 else B_HOUSE
+			var sz := _w_size(rng, kd)
+			var mat := _w_mat(rng, kd, founder)
+			var na := (FM.atan2_a(dy, dx) + turn + (_rr(rng, -14, 14) if f >= 60 else 0)) & 1023
+			var nx := FM.cos_a(na)
+			var ny := FM.sin_a(na)
+			for tries in 3:
+				var fw := sz.x if tries == 0 else sz.x * (4 - tries) / 4
+				var fd := sz.y if tries == 0 else sz.y * (4 - tries) / 4
+				if fw < 4 or fd < 4:
+					break
+				# (The lot's middle on the lattice point: the front half its depth toward the plaza.)
+				var pl := _wr_put(wc, jx - nx * fd / 2 / one, jy - ny * fd / 2 / one, nx, ny, fw, fd, kd, sz.z, mat)
+				if not pl.is_empty():
+					var idx: int = (wc["buildings"] as Array).size() - 1
+					_w_extras(wc, pl[0], idx, pl[1], pl[2], pl[3], pl[4], nx, ny, fw, fd, kd, roll, 0, 0, 1, pl[3], pl[4])
+					if roll >= 70:
+						_wr_goods(wc, pl, fw, P_BARRELS if roll % 2 == 0 else P_CRATES, fw / 2 - 1, 2)
+					break
+		gy += WR_LATTICE
+	# A cart inside the main gate, beside the street.
+	if not streets.is_empty():
+		var s0: Array = streets[0]
+		var gdx := int(s0[2]) - int(s0[0])
+		var gdy := int(s0[3]) - int(s0[1])
+		var gl := maxi(FM.approx_len(gdx, gdy), 1)
+		var qx := int(s0[0]) + gdx * 10 / gl - gdy * (WR_STREET + 2) / gl
+		var qy := int(s0[1]) + gdy * 10 / gl + gdx * (WR_STREET + 2) / gl
+		_w_prop(wc, P_CART, qx, qy, FM.atan2_a(gdy, gdx))
+	# Street graph nodes over the open ground inside (the back lots are no grid: a man in a yard sees one).
+	var out := PackedInt32Array()
+	var ow: int = wc["ow"]
+	var oh: int = wc["oh"]
+	var inside: PackedByteArray = wc["inside"]
+	var obs: PackedByteArray = wc["obs"]
+	var ny2 := cy - ext
+	while ny2 <= cy + ext:
+		var nx2 := cx - ext
+		while nx2 <= cx + ext:
+			if nx2 >= 0 and ny2 >= 0 and nx2 / 2 < ow and ny2 / 2 < oh:
+				var c := (ny2 / 2) * ow + nx2 / 2
+				if inside[c] != 0 and obs[c] == C_OPEN:
+					out.append(nx2)
+					out.append(ny2)
+			nx2 += WR_NODE
+		ny2 += WR_NODE
+	return out
 
 
 ## Landmarks by the plaza and the main gate from the buildings present:
@@ -3546,6 +3799,13 @@ const F_WALLS := 2                           # the sim's wall level for the fort
 const F_DITCH_GAP := 2                       # the ditch this far beyond the wall's outer face ...
 const F_DITCH := 6                           # ... and this wide (land side; a causeway at each gate)
 const B_MAGAZINE := 17                       # the fort's powder magazine (stone, vaulted)
+
+
+## The view draws a layout with the West's kit (houses, props, yard walls, earth streets, palms): a West
+## open town ("west") or the native lesson's ring village ("wring", _wr_fill). View only: the sim reads
+## "west" alone (wt_on), so a ring village keeps the ring's rules.
+static func west_kit(lay: Dictionary) -> bool:
+	return int(lay.get("west", 0)) != 0 or int(lay.get("wring", 0)) != 0
 
 
 ## A West European open town (phase W) rather than a walled plan.

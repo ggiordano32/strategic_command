@@ -455,7 +455,9 @@ static func _sorted_by_y(data: PackedFloat32Array, a: int, b: int) -> PackedFloa
 	var keys := PackedInt64Array()
 	keys.resize(b - a)
 	for i in range(a, b):
-		keys[i - a] = int(data[i * 16 + 13] * 16.0) * 65536 + (i - a)
+		# (Offset so a tree drawn just above the field's top edge keeps a positive key: a negative one gave a
+		# negative index below and the tree was dropped, the MultiMesh shorter than the count.)
+		keys[i - a] = (int(data[i * 16 + 13] * 16.0) + (1 << 24)) * 65536 + (i - a)
 	keys.sort()
 	var out := data.slice(0, a * 16)
 	for kk in keys:
@@ -603,7 +605,7 @@ func _kit_material(mat: ShaderMaterial) -> void:
 	for q in Atlas.NAMES.size():
 		idx[Atlas.NAMES[q]] = q
 	var tropic: bool = CData.pack == "west" or "--tropic" in OS.get_cmdline_user_args()
-	if sim != null and sim.map_info is Dictionary and int((sim.map_info.get("city", {}) as Dictionary).get("west", 0)) != 0:
+	if sim != null and sim.map_info is Dictionary and MapGen.west_kit(sim.map_info.get("city", {})):
 		tropic = true  # (a West town on the battle map, phase W: palms whatever the pack)
 	var rows: Array = [
 		["tree_broad_a", "tree_broad_b", "tree_broad_c", "tree_broad_a"],

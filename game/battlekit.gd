@@ -178,7 +178,7 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 			culture = clampi(int(str(a).get_slice("=", 1)), 0, 7)
 			cul_override = culture
 	_timber = int(lay.get("palisade", 0)) != 0 or "--kit-palisade" in OS.get_cmdline_user_args()   # (testing: a timber ring)
-	if int(lay.get("west", 0)) != 0:
+	if MapGen.west_kit(lay):
 		tropic = true
 		_build_west()
 	else:
@@ -496,6 +496,7 @@ func _build_houses() -> void:
 ## goods in the streets, the jetties.
 func _build_west() -> void:
 	var founder := clampi(int(lay.get("founder", 0)), 0, 7)
+	var wring := int(lay.get("wring", 0)) != 0
 	var bi := -1
 	for b in lay.get("buildings", []):
 		bi += 1
@@ -532,7 +533,8 @@ func _build_west() -> void:
 			var ratio := maxf(fw, fh) / maxf(minf(fw, fh), 0.1)
 			if founder == MapGen.CUL_LATIN and h % 2 == 0:
 				pname = "house_flat_s" if fw < 9.5 and fh < 8.0 else "house_flat_m"
-			elif ratio < 1.14:
+			elif ratio < 1.14 or (wring and founder == MapGen.CUL_LATIN):
+				# (The native lesson's Spanish village: flat roofs and hips, no gables.)
 				pname = "house_hip_s" if fw < 9.0 else "house_hip_m"
 			elif ratio < 1.5:
 				pname = "house_gable_s" if fw < 9.5 else "house_gable_m"

@@ -2035,6 +2035,78 @@ walls' heights in `_land_heights`, `CLR_MARGIN_W`), `sim/scenarios.gd`
 - **Measured.** See docs/STATUS.md (the pathing probe, the cover probe,
   set-up and tick cost).
 
+### The native lesson's village (as built, 2026-11-01)
+
+Why (the owner: "take a shot at the native lesson's village look"): the lesson
+(`tutorial_native`, campaign_rules.md "The native way") storms a Spanish
+palisade village, but the map was the antiquity ring plan with Roman-era
+houses on a block grid, a cobbled plaza and Mediterranean orchards. The
+West's own walls-1 town is an open town with no gate to burn (`is_west`
+diverts a ring-plan "west" town with walls < 3 to `_city_west`), and the
+lesson's step 3 needs a burnable walls-1 gate, so the ring stays and only
+its inside changes.
+
+- **Which map.** City key `"wring": 1` (copied by `city_params`; set only by
+  `Scenarios.native_lesson`). Every other map's dictionary lacks it, so
+  their layouts, the campaign pins, the custom battles and the battle
+  hashes are as they were.
+- **What stays.** `_city_ring` lays the palisade, its towers, the two
+  wooden gates, the ring road, the plaza and the gate-to-plaza streets as
+  before, and makes all its random draws in the same order (the block
+  grid's draws are made and their houses not placed), so the gates, the
+  fields outside and the attackers' ground are where they were. The
+  streets are 4 m (`WR_STREET` 4: 8 m kept clear) rather than 3.
+- **What fills it (`_wr_fill`, its own RNG `seed * 29 + 7`).** West building
+  records (`_w_put`: quads with height dm and material, `W_PAD` 3 m between
+  buildings, cells within 0.6 m of the drawn outline): on the plaza, each
+  facing it from the first side and place along it that takes it, a
+  chapel (B_TEMPLE, the shrine slot, 9 x 15 m, stone), the alcalde's house
+  (B_GOVERNOR 13 x 10 m with its wing), a tavern (barrels at its door) and
+  a store (crates and a cart); a guardhouse (B_BARRACKS, stone, crates)
+  inside the main gate beside its street; lots along both streets (houses
+  and a shop near the plaza, houses and shacks toward the gates, turned up
+  to 3.5 degrees, uneven gaps and setbacks, now and then goods at the
+  door); then the back lots, a jittered 8 m lattice (`WR_LATTICE`) of
+  candidates, each a house or a shack facing the plaza, built less often
+  and poorer toward the palisade (houses inside 45 % of the radius, then
+  45 % shacks, beyond 72 % three shacks in four), with the West's extras
+  (`_w_extras`: wings, lean-tos, yard walls). Materials by `_w_mat` for a
+  Spanish founder. A cart inside the main gate. Seed 1671: 21 buildings
+  (chapel, alcalde's house, tavern, store, shop, guardhouse, 9 houses,
+  6 shacks), 7 props, 3 yard walls. The fields outside are all garden
+  plots (no orchard rows).
+- **The sim.** It reads the layout as a ring village: `"west"` is not set,
+  so `wt_on` stays 0 (no street give-up, no cover by material, no
+  occupiable houses) and every house is a full `BUILD_H` block; the
+  building records are quads (`SH_QUAD`, which the sim already reads for
+  Rome's plan towns); props and yard walls are rock cells of their own
+  heights (`_land_heights` reads `props` / `lowwalls` on any map). The
+  street graph gets extra nodes on a 10 m lattice (`WR_NODE`) over the open
+  ground inside, since the back lots are no grid. The lesson's balance:
+  see campaign_rules.md "The native lesson's village".
+- **The view.** `MapGen.west_kit(lay)` ("west" or "wring") picks the West's
+  kit where only the look is concerned: `battlekit.gd` `_build_west` (the
+  houses in the Spanish manner, here flat roofs and hips only, no gables;
+  the chapel, alcalde's house, tavern, store, shop, shack, lean-to, yard
+  wall, prop pieces; the well and stalls on the plaza), `city_streets.gd`
+  (packed-earth streets and yards; the plaza packed earth too, not paved),
+  `terrain_layer.gd` `_west_built` (trodden ground only near houses and
+  roads) and `tree_layer.gd` (palms). The ring's palisade and gates are
+  drawn as on every ring map (`_build_instances`: `west_fort` reads
+  "west" alone). No open-town-only key ("top", "bot", "botv", "hw", "fort",
+  "wwalls", "pieces") is read on this path: `_west_fort` and `_west_stakes`
+  find no fort and no stakes records and return.
+- **Also.** `tree_layer.gd` `_sorted_by_y` gave a tree drawn above the
+  field's top edge a negative sort key, so it was dropped in the oblique
+  view and the MultiMesh was shorter than the count (the Low graphics
+  setting's visible count then failed, "p_count > instance_count", first
+  seen on this map, which has no orchard rows to hide it); the key is now
+  offset.
+- **Not built (open).** The ring's outline is still the antiquity
+  polygon with round palisade towers; the chapel is the West's church
+  piece (no bell gable of its own); no fences round the garden plots, no
+  banana or plantain rows; the ground is the green palette.
+
 ### Balance pass T (as built, 2026-10-16)
 
 The change pass after the measurement report (scratchpad `balT/MEASURE.md`;

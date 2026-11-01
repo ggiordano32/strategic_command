@@ -1193,6 +1193,26 @@ or tower also." A second guided battle, standalone (no campaign), view and scena
   card. `menu_test` expects three Campaign cards. A card set before its label had wrapped stood screen-tall (both battle
   scripts' step 1): `tutor_card.gd` `setup` now resizes once more after the layout.
 
+**The native lesson's village (as built, 2026-11-01).** The owner: "take a shot at the native lesson's village look". The
+village was the antiquity ring with Roman-era houses on a block grid, a cobbled plaza and orchards, and the soldiers wore
+the fallback side colours. Now the scenario's city has `"wring": 1`: `MapGen._city_ring` keeps its palisade, two wooden
+gates (step 3's fire arrows still burn one), ring road, streets and plaza, and its random draws, so the gates, the fields
+and the deployment are where they were; `_wr_fill` fills the inside with the West's building records: a chapel (the
+shrine slot), the alcalde's house, a tavern and a store facing the plaza, a guardhouse inside the main gate, houses and a
+shop along the two streets, then houses and shacks in the back lots facing the plaza, thinning and poorer toward the
+palisade, with wings, lean-tos, yard walls, barrels, crates and carts; the plaza is packed earth, the fields outside garden
+plots, the trees palms (seed 1671: 21 buildings, 7 props, 3 yard walls). The view draws them with the West's kit in the
+Spanish manner (flat roofs and hips). The sim keeps the ring's rules (no "west": no cover by material, no street give-up,
+no house garrisons); the houses are obstacles and the props and yard walls low cover, so the fight inside changes a
+little. Measured with the battle AI playing the war party (`tests/native_lesson_probe.gd`, seeds 7000-7007): before,
+Average 7 of 8 (the loss at 629 s), Easy 8 of 8; after, Average 7 of 8 (the same seed lost, at 549 s), Easy 8 of 8;
+battles of 4.6 to 8.5 minutes; the fire company now sets some houses alight. The soldiers wear their factions' colours:
+`Scenarios.west_factions` adds `"unit_faction"` (the campaign faction index per sim unit, `WEST_SIDES`: the Miskito and
+New Spain here, also for `west_harbour_assault` and Tayasal's New Spain and Itza) when the West pack is active;
+`main.gd` switches to the West pack for those three ids and `battle.gd` copies the key into `Battle.unit_faction`
+(view only: the sim never reads it). The mechanism: siege_and_towns.md "The native lesson's village (as built,
+2026-11-01)".
+
 ### Native siege, and the natives' buildings (plan, 2026-10-29; agreed with the owner 2026-10-28)
 
 The owner: "It's crazy hard to assault cities as the miskito. They have no

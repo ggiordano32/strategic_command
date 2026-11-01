@@ -305,6 +305,8 @@ func _ready() -> void:
 	BoardView.web_top = OS.has_feature("web") and not ObliquePack.sheets_present()
 	sim = BattleSim.new()
 	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
+	if unit_faction.is_empty() and scn.get("unit_faction") is Array:
+		unit_faction = scn["unit_faction"]  # (the West scenarios' factions: Scenarios.west_factions; view only)
 	if terrain_kind >= 0 and scn.has("terrain"):
 		scn["terrain"]["kind"] = terrain_kind
 	var gr := ground

@@ -2075,6 +2075,13 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 			CData.use_pack("west")
 			b.side_name_fkeys = ["miskito", "new_spain"]
 		Tips.suppress = true
+	elif Scenarios.WEST_SIDES.has(id) and CData.has_pack("west"):
+		# (The harbour assault and Tayasal: the West's names and the factions' colours, Scenarios.west_factions;
+		# the pack put back at the end.)
+		if _names_keep_pack == "":
+			_names_keep_pack = CData.pack
+		CData.use_pack("west")
+		b.side_name_fkeys = Scenarios.WEST_SIDES[id]
 	_last_siege = []
 	_last_id = id
 	_last_seed = sd

@@ -10,6 +10,7 @@ extends RefCounted
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
+const CData := preload("res://campaign/cdata.gd")
 const FM := preload("res://sim/fixed_math.gd")
 
 const FACE_UP := 768    # -y
@@ -239,11 +240,11 @@ static func make(id: String) -> Dictionary:
 		"west_fort_storm":
 			return fort_storm()
 		"tutorial_native":
-			return native_lesson()
+			return west_factions(native_lesson(), id)
 		"west_harbour_assault":
-			return harbour_assault()
+			return west_factions(harbour_assault(), id)
 		"tayasal":
-			return tayasal()
+			return west_factions(tayasal(), id)
 	var sc := _make(id)
 	if id in PLAYABLE:
 		sc["terrain"] = {"kind": Terrain.K_RANDOM}
@@ -1752,7 +1753,8 @@ static func native_lesson(ai_sides: Array = [1]) -> Dictionary:
 		dfn.append([UT.index_of(str(e[0])), int(e[1])])
 	var terr := {"kind": Terrain.K_FLAT, "seed": 1671 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_GREEN],
 		"ground": MapGen.PAL_GREEN}
-	var city := {"seed": 1671, "level": 0, "walls": 1, "bld": [1, 2, 4]}
+	# ("wring": the ring's palisade, gates and plaza with the West's buildings inside: MapGen._wr_fill.)
+	var city := {"seed": 1671, "level": 0, "walls": 1, "bld": [1, 2, 4], "wring": 1}
 	var r := settlement(city, terr, att, dfn, 1, ai_sides)
 	var sc: Dictionary = r["scenario"]
 	for k in (r["order"] as Array).size():
@@ -1761,6 +1763,29 @@ static func native_lesson(ai_sides: Array = [1]) -> Dictionary:
 			sc["units"][k]["ak"] = UT.ammo_index(str(NATIVE_ARMY[int(o[1])][2]))
 	sc["deploy_time"] = -1
 	sc["ai_skill"] = [0, 0]
+	return sc
+
+
+## The West scenarios' sides as campaign factions (side 0, side 1): their figures wear those factions'
+## colours (game/soldier_layer.gd palette_row_of) and the HUD reads their names (game/main.gd switches to the
+## West pack for these ids and sets Battle.side_name_fkeys).
+const WEST_SIDES := {"tutorial_native": ["miskito", "new_spain"], "west_harbour_assault": ["miskito", "new_spain"],
+	"tayasal": ["new_spain", "itza"]}
+
+
+## Adds "unit_faction" to a West scenario (WEST_SIDES): the campaign faction index of every sim unit, in
+## the scenario's unit order, resolved in the active pack (CData.faction_index); game/battle.gd copies it into
+## Battle.unit_faction. Left out when the West pack is not active (the figures keep their side colours). View
+## only: the sim never reads it (no battle hash).
+static func west_factions(sc: Dictionary, id: String) -> Dictionary:
+	if CData.pack != "west" or not WEST_SIDES.has(id):
+		return sc
+	var keys: Array = WEST_SIDES[id]
+	var fi: Array = [CData.faction_index(str(keys[0])), CData.faction_index(str(keys[1]))]
+	var uf: Array = []
+	for u in sc["units"]:
+		uf.append(int(fi[int((u as Dictionary)["side"]) & 1]))
+	sc["unit_faction"] = uf
 	return sc
 
 

@@ -55,7 +55,7 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 	var zone := PackedByteArray()
 	zone.resize(w * h)
 	var marked := PackedInt32Array()
-	var west0 := int(lay.get("west", 0)) != 0
+	var west0 := MapGen.west_kit(lay)
 	# (A West town: how deep a lane cell lies inside its yard, in cells, rounded at the corners, so the yard's
 	# edge fades out over LANE_FEATHER instead of stopping at a square.)
 	var depth := PackedByteArray()
@@ -89,8 +89,10 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 						marked.append(i)
 					zone[i] = 2
 	# (A West town, phase W: sandy earth streets, the plaza paved, zone 3.)
-	var west := int(lay.get("west", 0)) != 0
-	_fill(zone, marked, w, h, org, Rect2(float(int(ag[0])) - ahs, float(int(ag[1])) - ahs, ahs * 2.0, ahs * 2.0), 3 if west else 2)
+	var west := MapGen.west_kit(lay)
+	# (The native lesson's ring village: a beaten-earth plaza like its streets, zone 2.)
+	var plz := 3 if west and int(lay.get("wring", 0)) == 0 else 2
+	_fill(zone, marked, w, h, org, Rect2(float(int(ag[0])) - ahs, float(int(ag[1])) - ahs, ahs * 2.0, ahs * 2.0), plz)
 	# Paint.
 	var paved := style != 3 and style != 5 and not west
 	var px := PackedByteArray()
