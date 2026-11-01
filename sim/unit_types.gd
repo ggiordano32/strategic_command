@@ -702,11 +702,11 @@ const TIERS: Array[Dictionary] = [
 	{"key": "cav3", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Guard Cavalry", "short": "Guard Cav",
 		"blurb": "Armoured noble horsemen.", "add": {"charge": 10}},
 	# Faction elites.
-	{"key": "principes", "role": "line", "base": HEAVY, "tier": 2, "name": "Principes", "short": "Principes",
+	{"key": "principes", "sprite_set": 46, "role": "line", "base": HEAVY, "tier": 2, "name": "Principes", "short": "Principes",
 		"blurb": "Roman citizens in their prime, the second line of the legion."},
-	{"key": "extraordinarii", "role": "line", "base": HEAVY, "tier": 3, "name": "Extraordinarii", "short": "Extraord.",
+	{"key": "extraordinarii", "sprite_set": 46, "role": "line", "base": HEAVY, "tier": 3, "name": "Extraordinarii", "short": "Extraord.",
 		"blurb": "Picked men of the Italian allies, kept at the consul's hand.", "add": {"morale": 20}},
-	{"key": "triarii", "role": "line", "base": SPEAR, "tier": 3, "name": "Triarii", "short": "Triarii",
+	{"key": "triarii", "sprite_set": 47, "role": "line", "base": SPEAR, "tier": 3, "name": "Triarii", "short": "Triarii",
 		"blurb": "The legion's oldest veterans, kneeling behind their shields in the third line: 'it has come to the triarii'.",
 		"add": {"morale": 60, "defence": 2}},
 	{"key": "phalangites", "role": "line", "base": PIKE, "tier": 2, "name": "Phalangites", "short": "Phalangite",
@@ -719,12 +719,12 @@ const TIERS: Array[Dictionary] = [
 		"blurb": "Pyrrhus's royal pikemen from Chaonia.", "add": {"attack": 2}},
 	{"key": "agema", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Agema", "short": "Agema",
 		"blurb": "The royal guard cavalry of Epirus.", "add": {"defence": 2}},
-	{"key": "sacred_band", "role": "line", "base": SPEAR, "tier": 3, "name": "Sacred Band", "short": "Sacred Band",
+	{"key": "sacred_band", "sprite_set": 48, "role": "line", "base": SPEAR, "tier": 3, "name": "Sacred Band", "short": "Sacred Band",
 		"blurb": "Carthage's citizen elite: wealthy, heavily armoured spearmen sworn to stand.",
 		"add": {"armour": 2, "morale": 60}, "price_add": 15},
-	{"key": "hoplites", "role": "line", "base": SPEAR, "tier": 2, "name": "Hoplites", "short": "Hoplites",
+	{"key": "hoplites", "sprite_set": 48, "role": "line", "base": SPEAR, "tier": 2, "name": "Hoplites", "short": "Hoplites",
 		"blurb": "Greek citizen spearmen with the big round aspis.", "add": {"mshield": 5}},
-	{"key": "picked_hoplites", "role": "line", "base": SPEAR, "tier": 3, "name": "Picked Hoplites", "short": "Picked Hopl.",
+	{"key": "picked_hoplites", "sprite_set": 48, "role": "line", "base": SPEAR, "tier": 3, "name": "Picked Hoplites", "short": "Picked Hopl.",
 		"blurb": "Epilektoi: the city's chosen, full-time hoplites.", "add": {"mshield": 5}},
 	{"key": "cretans", "role": "missile", "base": ARCHER, "tier": 3, "name": "Cretan Archers", "short": "Cretans",
 		"blurb": "The most sought-after mercenary bowmen of the Greek world.", "add": {"m_damage": 8}},
@@ -2489,6 +2489,8 @@ static func _derived(row0: Dictionary, b: int, line: String, size: int, t: Dicti
 	row["desc"] = str(t["blurb"]) + " " + str(row0["desc"])
 	if t.has("role"):
 		row["role"] = t["role"]
+	if t.has("sprite_set"):
+		row["sprite_set"] = t["sprite_set"]  # (view only: a tier row may draw its own set)
 	row["base"] = b
 	row["tier"] = tier
 	row["line"] = line

@@ -2098,9 +2098,99 @@
         {"n": "pot.L", "shape": "sphere", "bone": "hips", "mat": "stone", "pos": [0.02, 0.27, 0.95], "r": 0.08},
         {"n": "pot.R", "shape": "sphere", "bone": "hips", "mat": "stone", "pos": [0.02, -0.27, 0.95], "r": 0.08}
       ]
+    },
+    "legionaries": {
+      "name": "Legionaries",
+      "look": "Republican legionary: Montefortino helmet with a crest knob, big oval scutum with a boss, mail shirt, pilum, gladius at the hip",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "render_box": [
+        -2.25,
+        1.75,
+        -1.25,
+        1.25
+      ],
+      "parts": [
+        {"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.0, 1.0, 0.95]},
+        {"n": "neckguard", "shape": "box", "bone": "head", "mat": "accent", "pos": [-0.16, 0, 1.62], "size": [0.1, 0.3, 0.05], "rot": [0, 25, 0]},
+        {"n": "cheek", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.02, 0, 1.58], "size": [0.2, 0.34, 0.1], "bevel": 0.02},
+        {"n": "knob", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.88], "r": 0.06},
+        {"n": "crest_disc", "shape": "cyl", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.84], "r": 0.09, "len": 0.04, "verts": 10, "rot": [90, 0, 0]},
+        {"n": "mail", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.3], "size": [0.34, 0.54, 0.46], "bevel": 0.06},
+        {"n": "mail_cape", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.46], "size": [0.32, 0.6, 0.1], "bevel": 0.03},
+        {"n": "mail_skirt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0, 0, 0.99], "size": [0.36, 0.5, 0.1], "bevel": 0.03},
+        {"n": "shield_rim", "shape": "sphere", "bone": "forearm.L", "mat": "secondary", "pos": [0.46, 0.2, 1.0], "r": 0.5, "scale": [0.1, 0.88, 1.28], "verts": 14, "rot": [0, -22, 0]},
+        {"n": "shield", "shape": "sphere", "bone": "forearm.L", "mat": "primary", "pos": [0.5, 0.2, 1.0], "r": 0.5, "scale": [0.1, 0.8, 1.2], "verts": 14, "rot": [0, -22, 0]},
+        {"n": "boss", "shape": "sphere", "bone": "forearm.L", "mat": "accent", "pos": [0.56, 0.2, 1.02], "r": 0.11, "scale": [0.8, 1, 1]},
+        {"n": "spine_rib", "shape": "box", "bone": "forearm.L", "mat": "accent", "pos": [0.56, 0.2, 1.02], "size": [0.03, 0.07, 1.0], "rot": [0, -22, 0]},
+        {"n": "pilum", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [0.1, -0.29, 1.07], "b": [1.1, -0.29, 1.1], "t": 0.05},
+        {"n": "pilum_shank", "shape": "limb", "bone": "forearm.R", "mat": "metal", "a": [1.1, -0.29, 1.1], "b": [1.62, -0.29, 1.11], "t": 0.025},
+        {"n": "pilum_head", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [1.6, -0.29, 1.11], "b": [1.76, -0.29, 1.115], "r": 0.04},
+        {"n": "gladius_scab", "shape": "limb", "bone": "hips", "mat": "leather", "a": [0.1, -0.26, 1.0], "b": [0.42, -0.26, 0.86], "t": [0.05, 0.07]},
+        {"n": "gladius_hilt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0.07, -0.26, 1.02], "size": [0.06, 0.1, 0.06]},
+        {"n": "caliga.L", "shape": "box", "bone": "shin.L", "mat": "leather", "pos": [0.03, 0.12, 0.16], "size": [0.2, 0.16, 0.28], "mirror": 1}
+      ]
+    },
+    "triarii": {
+      "name": "Triarii",
+      "look": "Roman veteran: Montefortino helmet with a tall black plume, mail, oval scutum, long hasta, greaves",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "render_box": [
+        -2.5,
+        3.0,
+        -1.25,
+        1.25
+      ],
+      "parts": [
+        {"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.0, 1.0, 0.95]},
+        {"n": "neckguard", "shape": "box", "bone": "head", "mat": "accent", "pos": [-0.16, 0, 1.62], "size": [0.1, 0.3, 0.05], "rot": [0, 25, 0]},
+        {"n": "cheek", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.02, 0, 1.58], "size": [0.2, 0.34, 0.1], "bevel": 0.02},
+        {"n": "knob", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.88], "r": 0.05},
+        {"n": "plume", "shape": "box", "bone": "head", "mat": "dark", "pos": [-0.02, 0, 2.06], "size": [0.1, 0.08, 0.4], "bevel": 0.03},
+        {"n": "plume_top", "shape": "sphere", "bone": "head", "mat": "dark", "pos": [-0.02, 0, 2.28], "r": 0.07, "scale": [1.2, 0.8, 1.0]},
+        {"n": "mail", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.3], "size": [0.34, 0.54, 0.46], "bevel": 0.06},
+        {"n": "mail_cape", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.46], "size": [0.32, 0.6, 0.1], "bevel": 0.03},
+        {"n": "mail_skirt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0, 0, 0.99], "size": [0.36, 0.5, 0.1], "bevel": 0.03},
+        {"n": "shield_rim", "shape": "sphere", "bone": "forearm.L", "mat": "secondary", "pos": [0.46, 0.2, 1.0], "r": 0.5, "scale": [0.1, 0.82, 1.2], "verts": 14, "rot": [0, -22, 0]},
+        {"n": "shield", "shape": "sphere", "bone": "forearm.L", "mat": "primary", "pos": [0.5, 0.2, 1.0], "r": 0.5, "scale": [0.1, 0.74, 1.12], "verts": 14, "rot": [0, -22, 0]},
+        {"n": "boss", "shape": "sphere", "bone": "forearm.L", "mat": "accent", "pos": [0.56, 0.2, 1.02], "r": 0.1, "scale": [0.8, 1, 1]},
+        {"n": "greave.L", "shape": "limb", "bone": "shin.L", "mat": "accent", "a": [0.03, 0.12, 0.44], "b": [0.0, 0.12, 0.14], "t": 0.15, "mirror": 1},
+        {"n": "spear", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.95, -0.29, 1.04], "b": [1.7, -0.29, 1.12], "t": 0.06},
+        {"n": "spearhead", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [1.68, -0.29, 1.12], "b": [2.02, -0.29, 1.13], "r": 0.06},
+        {"n": "butt", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [-0.93, -0.29, 1.04], "b": [-1.08, -0.29, 1.03], "r": 0.04}
+      ]
+    },
+    "hoplites": {
+      "name": "Hoplites",
+      "look": "Greek hoplite: bronze muscle cuirass, Corinthian helmet with a horsehair crest, big round aspis, dory, greaves",
+      "rig": "humanoid",
+      "body": "humanoid",
+      "render_box": [
+        -2.5,
+        3.0,
+        -1.25,
+        1.25
+      ],
+      "parts": [
+        {"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.01, 0, 1.66], "r": 0.18, "scale": [1.1, 1.0, 1.0]},
+        {"n": "faceplate", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.13, 0, 1.58], "size": [0.1, 0.28, 0.22], "bevel": 0.03},
+        {"n": "spear", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.95, -0.29, 1.04], "b": [1.7, -0.29, 1.12], "t": 0.06},
+        {"n": "spearhead", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [1.68, -0.29, 1.12], "b": [2.02, -0.29, 1.13], "r": 0.06},
+        {"n": "butt", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [-0.93, -0.29, 1.04], "b": [-1.08, -0.29, 1.03], "r": 0.04},
+        {"n": "crest", "shape": "box", "bone": "head", "mat": "secondary", "pos": [-0.04, 0, 1.92], "size": [0.5, 0.09, 0.2], "bevel": 0.04},
+        {"n": "crest_tail", "shape": "box", "bone": "head", "mat": "secondary", "pos": [-0.3, 0, 1.78], "size": [0.08, 0.08, 0.32], "bevel": 0.03},
+        {"n": "cuirass", "shape": "box", "bone": "spine", "mat": "bronze", "pos": [0, 0, 1.3], "size": [0.33, 0.53, 0.44], "bevel": 0.08},
+        {"n": "cuirass_pec", "shape": "sphere", "bone": "spine", "mat": "bronze", "pos": [0.1, 0, 1.4], "r": 0.2, "scale": [0.6, 1.3, 0.7]},
+        {"n": "pteryges", "shape": "box", "bone": "hips", "mat": "linen", "pos": [0, 0, 0.97], "size": [0.36, 0.5, 0.14], "bevel": 0.03},
+        {"n": "shield_rim", "shape": "cyl", "bone": "forearm.L", "mat": "bronze", "pos": [0.44, 0.22, 1.1], "r": 0.62, "len": 0.06, "verts": 16, "rot": [0, 58, 0]},
+        {"n": "shield", "shape": "cyl", "bone": "forearm.L", "mat": "primary", "pos": [0.47, 0.22, 1.1], "r": 0.54, "len": 0.06, "verts": 16, "rot": [0, 58, 0]},
+        {"n": "emblem", "shape": "cyl", "bone": "forearm.L", "mat": "accent", "pos": [0.5, 0.22, 1.1], "r": 0.2, "len": 0.05, "verts": 12, "rot": [0, 58, 0]},
+        {"n": "greave.L", "shape": "limb", "bone": "shin.L", "mat": "bronze", "a": [0.03, 0.12, 0.44], "b": [0.0, 0.12, 0.14], "t": 0.15, "mirror": 1}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
   "oblique": {"_doc": "Pass 3 (tabletop): every unit in 8 directions of its facing at this elevation, ground plane at px_per_m; build.py --oblique, pack.py --oblique -> assets/sprites_ob/", "elevation_deg": 40, "directions": 8},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman", "torch_raiders"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman", "torch_raiders", "legionaries", "triarii", "hoplites"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
 }

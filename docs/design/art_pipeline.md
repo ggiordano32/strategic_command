@@ -1412,3 +1412,39 @@ terrain texture and the lift field), `game/terrain.gdshader` (steps, shadows), `
   (all 200 m/s; bows 45, slings 40, bolts 50-55, guns are `CLS_ART` and keep their stone look). Before, they fell through to the javelin look and its arc. The ball is a dark
   dot with a short pale streak (3 m quad, head at uv.x 0.9) and an almost flat arc (hk 0.01). Arrows, javelins, bolts, stones and sling bullets are unchanged. Aid:
   `tests/shots_over_hill.gd` (a line shoots across a ridge or hill, paused with shots at mid-flight).
+
+### Rome and Greek figure sets (as built, 2026-11-01)
+
+The owner: "Update the Roman oblique images". Every Rome row drew from the 13 generic antiquity sets, so the Roman elites looked like the generic swordsmen
+and the Greek hoplites like the generic spearmen, in both views. Three sets are appended after `torch_raiders` (set ids 46-48; every earlier id and every
+row's index unchanged; `atlas.sets` now 48 of the 63 the 6-bit field holds), each a copy of the nearest set's spec entry with the same rig, actions, frame
+counts, fps and render_box (the pose and table shape unchanged), built within the existing part vocabulary (no new mesh code):
+
+- **46 `legionaries`** (from heavy_swords; rows principes, extraordinarii): Montefortino helmet (a dome, neck guard, cheek box, a crest knob and disc on top),
+  mail shirt, cape and skirt (boxes in the `metal` material over the red tunic), the big oval scutum, pilum and gladius, caligae. The oval scutum is a flattened
+  sphere (the `sphere` part's `scale`; the `scutum` part is a bent rectangle and has no oval form), team-coloured face, secondary rim, boss and a vertical rib
+  in the accent. The pilum (wood shaft, thin iron shank, cone head, 1.75 m) is on `forearm.R` where the sword was, so it follows the attack pose; the gladius is a
+  static scabbard and hilt at the right hip (`hips`).
+- **47 `triarii`** (from spearmen; row triarii): the same Montefortino and mail, with a tall black plume (a box and a rounded top, `dark`), a smaller oval
+  scutum, greaves (accent limbs on the shins), the long hasta of the spearmen's overarm pose.
+- **48 `hoplites`** (from spearmen; rows hoplites, picked_hoplites, sacred_band): bronze muscle cuirass (a box with a pectoral ellipsoid, the `bronze` material),
+  pteruges, the Corinthian helmet of the source set with a longer horsehair crest and a tail down the neck, a bigger round aspis (bronze rim, team face, accent
+  device disc), bronze greaves, the dory.
+- Fixed meshes: the helmets are domes with boxes (no true Montefortino or Corinthian profile), the shields a flattened sphere (scutum) and a 16-sided disc
+  (aspis), so the difference from the generic sets is colour, size, crest and plume, the mail and bronze, and the shield outline; the faction palette still
+  decides the red and the secondary colour.
+- Wiring: `"sprite_set": 46 / 47 / 48` on the six rows in `sim/unit_types.gd`; `_derived` now copies a tier row's own `sprite_set` over the base's (before, a
+  tier row's own field was ignored). View only: the sim never reads `sprite_set` (grep), `determinism_test` unchanged.
+- Build: the packer repacks the whole atlas from the frames, so all 48 units were re-rendered (top about 3.5 min, oblique about 12 min with three Blender
+  processes) and both packs rewritten; the existing sets' rects in the tables moved (262 of 288 entries) and 18 entries changed size by a pixel or two (the
+  re-render noise the README mentions); all tests pass. The imported copies under `.godot` are older than the files until the project's next import.
+- Sizes before / after: top-down atlas 1024x2564 -> 1024x2732, shade 1,026,929 -> 1,082,605 B, mask 461,332 -> 495,711 B (+6.1 %), manifest 161,502 ->
+  166,956 B. Oblique atlas 4096x5248 -> 4096x5648, shade 6,719,382 -> 7,043,598 B, mask 2,709,769 -> 2,901,566 B (+5.5 %), manifest 1,019,523 -> 1,081,760 B
+  (`oblique.pck` not rebuilt here; about 0.6 MB more of the 12 MB).
+- **Audit (before the build).** Contact sheet of principes, triarii, hoplites, cav, cav2, cav3, bodyguard, scorpions, tower_bolt and tower_stone in the oblique
+  view: all stand upright and face the 8 directions. The earlier claim that scorpions and the tower engines lack oblique sets was wrong: engine sets 13 bolt,
+  14 stone and 15 scorpion are in `assets/sprites_ob` and draw through the same engine path as any battery (a tower engine is an ordinary engine of a `fixed`
+  CLS_ART row; the soldier layer has no special case). Not staged on a walls-3 town (the engines drawn on flat ground; the path is the same). No mapping gap,
+  nothing fixed. What drew wrong was only the look: the Rome cav rows are the generic shock_cavalry (not changed here).
+- Aids: `tests/rome_audit_shot.gd` (the contact sheet of those rows, `--top` for the top view), `tests/rome_battle_shot.gd` (principes against hoplites, 40 a
+  side; `--view=top`); both load the atlases from the files (the imported copies are stale until the next import).
