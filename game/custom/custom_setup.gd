@@ -556,7 +556,8 @@ static func summary(st: Dictionary) -> Dictionary:
 # "start": "ns" | "gauge0" (your fleet upwind) | "gauge1" (downwind)}. Side 0
 # is Player 1's, side 1 the battle AI's (solo only). Built for sim/sea_sim.gd.
 
-const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe", "fire_ship"]
+const SEA_SHIPS: Array[String] = ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe", "fire_ship",
+	"piragua", "great_canoe", "fire_canoe"]
 ## (R2, Rome's navy) Rome's setting: the oared galleys and the merchantman.
 const SEA_SHIPS_ROME: Array[String] = ["lembos", "trireme", "quinquereme", "quinquereme_p", "corbita"]
 const SEA_MAX := 8

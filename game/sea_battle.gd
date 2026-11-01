@@ -384,7 +384,7 @@ func _events() -> void:
 				_msg("Her crew take to the boat.", Color(0.9, 0.85, 0.75))
 				_fx.append(["boat", _pos(a), 0.0, a, int(sim.heading(a))])
 			SeaSim.EV_FS_CONTACT:
-				_msg("The fire ship grapples %s: she is ablaze!" % _name(c), Color(1, 0.45, 0.2))
+				_msg("The %s grapples %s: she is ablaze!" % [ST.name_of(sim.s_type[a]).to_lower(), _name(c)], Color(1, 0.45, 0.2))  # (the fire ship / canoe)
 				AudioFx.play("burst", 0.8, 0.0, "art")
 
 
@@ -767,11 +767,11 @@ func _draw_pos(s: int) -> Vector2:
 
 func _draw_rig(s: int, xf: Transform2D, ln: float, bm: float, lw: float) -> void:
 	var ty := sim.s_type[s]
-	var key := str(ST.row(ty)["key"])
+	var one := ST.masts(ty) == 1   # (the sloop's fore-and-aft rig)
 	var masts: Array = [0.3, 0.02, -0.25]
-	if key == "sloop":
+	if one:
 		masts = [0.12]
-	elif key == "brigantine":
+	elif ST.masts(ty) == 2:
 		masts = [0.22, -0.12]
 	var rig := float(sim.s_rig[s]) / maxi(sim.s_rig0[s], 1)
 	var furled := sim.s_sail[s] == 0 or sim.u_state[s] != SeaSim.S_SAIL
@@ -787,7 +787,7 @@ func _draw_rig(s: int, xf: Transform2D, ln: float, bm: float, lw: float) -> void
 			# Shot away: a stump and wreckage alongside.
 			_ships.draw_circle(mp, bm * 0.1, Color(0.2, 0.13, 0.08))
 			continue
-		if key == "sloop":
+		if one:
 			# The boom swings to leeward.
 			var off := absi(FM.angle_diff(h, sim.w_from))
 			var swing := clampf((512 - off) * 0.45, 20.0, 230.0) * TAU / 1024.0

@@ -32,11 +32,15 @@ static var _headings := {}   # fleet id -> last heading 0..7
 const SITE_MIN_ZOOM := 0.55
 const SHIP_MIN_ZOOM := 0.35
 const TILE_M := 58.0           # a base tile's width in metres (the sprites' scale)
-const SHIP_RANK := ["ship_of_the_line", "galleon", "quinquereme", "quinquereme_p", "frigate", "corbita", "trireme", "brigantine", "sloop", "lembos", "war_canoe"]
+const SHIP_RANK := ["ship_of_the_line", "galleon", "quinquereme", "quinquereme_p", "frigate", "corbita", "trireme", "brigantine", "sloop",
+	"great_canoe", "lembos", "piragua", "war_canoe", "fire_canoe"]
 ## (R3, Rome's navy) Rome's galleys have their own oared sprites (ship_lembos / trireme / quinquereme / quinquereme_p:
 ## banks of oars, a bronze ram, one mast with the sail furled, the corvus on the quinquereme; tools/structures
 ## gen_spec.py `galley_parts`); only the merchantman still stands in as the galleon.
-const SHIP_LOOK := {"corbita": "galleon"}
+## (2026-11-01) The natives' piragua, great canoe and fire canoe have no sprite of their own: the war canoe's,
+## the great canoe drawn SHIP_SCALE larger.
+const SHIP_LOOK := {"corbita": "galleon", "piragua": "war_canoe", "great_canoe": "war_canoe", "fire_canoe": "war_canoe"}
+const SHIP_SCALE := {"great_canoe": 1.35}
 const SHIP_K := 1.0
 
 var overlay: Node2D
@@ -335,6 +339,7 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	if types.is_empty():
 		return
 	types.sort_custom(func(a, b): return SHIP_RANK.find(a) < SHIP_RANK.find(b))
+	var big := float(SHIP_SCALE.get(str(types[0]), 1.0))
 	for i in types.size():
 		types[i] = SHIP_LOOK.get(str(types[i]), str(types[i]))
 	var mp: Vector2 = overlay.cell_point(CFleet.cell(fl))
@@ -343,7 +348,7 @@ func _ship(fl: Dictionary, c: Vector2, pxm: float, table: Dictionary, shade: Tex
 	var bob := 0.0 if Quality.is_low() else SeaWaves.height(mp, tt) * amp * 1.6 * pxm * 3.0
 	var h := _heading(fl)
 	var pos := c + Vector2(0, bob)
-	var sc := pxm
+	var sc := pxm * big
 	var dkr := CFleet.docked(fl)
 	if dkr >= 0:
 		# (Docking) a ship at the quay: sails furled (nothing in the wind), no wake, no bob, a line to the town.

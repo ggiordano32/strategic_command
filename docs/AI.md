@@ -4306,3 +4306,30 @@ Choctaw, Valladolid, Darien x walls 1-2 x 16 seeds, the West set defending): att
 the gate's median fall 54 -> 65 s (one company fewer at it); walls 2 identical (stone). `native_walls_itza`
 identical (no torch raiders). Test: `tests/roles_sim_test.gd --only=native` (two torch raider units at a walls-1
 oppidum gate: the second batters a stretch, breached before the gate falls).
+
+## 52. The natives buy their new vessels and raise the Canoe yard (2026-11-01)
+
+The native vessels (`docs/design/campaign_rules.md` "Native vessels (as built, 2026-11-01)"). Code: `campaign/cai_fleet.gd`
+`_build`, `_ship_value`, `_yard_up`; data `west_ships.gd` `AI_YARD_UP` (["itza", "miskito"]); the sea AI's dugout think in
+`sim/sea_sim.gd` (`docs/design/sea.md` "The dugouts close and board"). No new state.
+
+- **What to buy.** `_ship_value(row, transport, f)`: a transport is valued by places then guns, as before; a warship by guns
+  then places, as before, except for the factions of the pack's `AI_YARD_UP`, valued by the formula's power at full strength
+  (`CFleet.ship_power`) then places. The dugouts board rather than shoot: by guns the war canoe (2) would beat the piragua
+  (1) forever. Everyone else (the Europeans, the Brethren, Rome's galleys, all `guns` 0) keeps the old order, so the Rome pins
+  and the Easy golden do not move. Fire rows are still skipped (the fire canoe as the fire ship).
+- **The yard.** For an `AI_YARD_UP` faction, before buying, `_yard_up` raises the Shipyard of its best port (the ports sorted
+  as before: yard level, capital, value) a level, instead of a ship that turn, when a row of its people (not a fire row,
+  `CDip.ship_why` passing, `CData.ship_yard` above the port's level) is worth more in the turn's mode than the best its yards
+  build now (money aside), and `build_info` allows the level within the treasury above half the reserve (the natives' money
+  above the whole reserve rarely reaches a level 2's 1,000; with the whole treasury the Miskito were eliminated in 10 more
+  seeds of 72 at format 6). It runs also when the money above the reserve is gone (the rest of `_build` then stops). A native
+  Canoe yard needs no town or city (`YARD_ANY_LEVEL`, the owner's call), so the Miskito's village ports reach 2 and 3.
+- **Fire canoes in battle.** Nothing new: the battle AI's fire-ship play (M_FIRE) keys on `ST.is_fire`.
+
+Measured (West campaign sim, 72 seeds x 60 turns, format 6 / 10, before the native vessels -> as built): Itza alive 65 / 60
+-> 62 / 63, Miskito 60 / 65 -> 66 / 63; best Canoe yard 3 at the end: Itza 0 -> 15 / 15 seeds, Miskito 0 -> 8 / 4 (Canoe yard 2:
+Miskito 1 / 3 -> 46 / 46); launched: Itza piraguas 41 / 41, great canoes 8 / 10, war canoes 790 -> 388 / 540 -> 349; Miskito
+piraguas 15 / 15, brigantines 6 / 2, sloops 378 -> 348 / 340 -> 281. Test: `campaign_test` `_native_vessels` (the AI Itza at a
+Canoe yard 3 with no fleet order a great canoe; at a Canoe yard 1 in a town they raise it to 2; a European faction never
+raises by this rule; a Miskito village raises its Canoe yard to 3, an English village's Shipyard 2 needs a town).

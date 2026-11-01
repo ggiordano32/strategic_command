@@ -71,6 +71,7 @@ var watch: Array = []         # [faction, [regions at 15, 30, 60], eliminated at
 var knobs: Array = []         # --knob=: [level, knob id, value]
 var dg := {}                  # watched faction -> battle / capture tallies (this seed)
 var dg_all := {}              # the same summed over the seeds, per watched faction
+var ship_kinds := {}          # "faction:ship" -> ships launched this seed (the SHIPS_JSON line)
 var bu_all := {}              # faction -> build-up sums over the seeds (_buildup)
 var built := []               # buildings finished per chain (this seed)
 var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
@@ -225,6 +226,7 @@ func _run(sd: int, verbose: bool) -> String:
 		var dead_at := {}  # faction -> turn eliminated (every faction)
 		var crossings := 0  # armies that ended a turn on another landmass (sea lanes, or landed from a fleet)
 		var last_land := _army_lands(st)  # army id -> landmass last seen on land (aboard a fleet: kept)
+		ship_kinds = {}
 		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0}
 		var amph := [0, 0, 0]  # army-turns amphibious, afloat at the end of a turn, captures by an army that was afloat the turn before
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
@@ -248,6 +250,9 @@ func _run(sd: int, verbose: bool) -> String:
 					crossings += 1
 				last_land[id] = land1[id]
 			for e in st["events"]:
+				if int(e["turn"]) == t and str(e["k"]) == "ship_built":
+					var bk := "%s:%s" % [str(CData.FACTIONS[int(e["f"])]["key"]) if int(e["f"]) >= 0 else "indep", str(e.get("ship", ""))]
+					ship_kinds[bk] = int(ship_kinds.get(bk, 0)) + 1
 				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
 					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
 				if int(e["turn"]) == t and str(e["k"]) == "captured" and CData.ships_on():
@@ -344,6 +349,33 @@ func _run(sd: int, verbose: bool) -> String:
 				int(sx.get("capt_drowned", 0)), int(sx.get("capt_escaped", 0)), int(sx.get("max_fame", 0)), int(sx.get("bounties", 0)),
 				", ".join(caps), int(sx.get("galleons_named", 0)), int(sx.get("galleons_taken", 0)), int(sx.get("galleons_lost", 0)),
 				int(sx.get("treasure_sunk", 0))])
+		if st.has("fleets"):
+			# Native vessels (2026-11-01): per seed one JSON line, ships launched by faction:kind over the
+			# run, ships afloat by faction:kind at the end, the natives alive and their best Shipyard level.
+			var afloat := {}
+			for fl in st["fleets"]:
+				var fkk := str(CData.FACTIONS[int(fl["f"])]["key"]) if int(fl["f"]) >= 0 else "indep"
+				for sh in fl["ships"]:
+					var ak := "%s:%s" % [fkk, str(sh["t"])]
+					afloat[ak] = int(afloat.get(ak, 0)) + 1
+			var nat := {}
+			for nk in ["itza", "miskito"]:
+				var nf := CData.faction_index(nk)
+				if nf >= 0:
+					nat[nk] = {"alive": 1 if CState.alive(st, nf) else 0, "regions": CState.regions_of(st, nf).size(),
+						"yard": _best(st, nf, CData.SHIPYARD)}
+			var kl: Array = ship_kinds.keys()
+			kl.sort()
+			var built_s := {}
+			for k in kl:
+				built_s[k] = ship_kinds[k]
+			var al: Array = afloat.keys()
+			al.sort()
+			var afl_s := {}
+			for k in al:
+				afl_s[k] = afloat[k]
+			print("SHIPS_JSON " + JSON.stringify({"seed": 1000 + sd * 77, "built": built_s, "afloat": afl_s, "natives": nat,
+				"sea_battles": int(fl_ev["sea_battle"])}))
 		_buildup(st)
 		var open_now: Array = []
 		for x in st.get("sieges", []):

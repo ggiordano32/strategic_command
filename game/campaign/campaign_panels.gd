@@ -862,7 +862,7 @@ func _buildings(box: VBoxContainer, r: int) -> void:
 		var name := "%s %d" % [cname, cur] if cur > 0 else cname
 		var l := Kit.icon_label(name, CData.chain_icon(c, f), Kit.FONT, Color.WHITE if cur > 0 else Kit.COL_DIM)
 		l.custom_minimum_size.x = 104 + UiIcons.px_for(Kit.FONT) + Kit.ICON_GAP
-		l.tooltip_text = str(ch["desc"])
+		l.tooltip_text = CData.chain_desc(c, f)
 		h.add_child(l)
 		if not bld.is_empty() and int(bld[0]) == c:
 			var t := Kit.label("-> %d: %d turn%s left" % [int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"], Kit.FONT_SMALL, Kit.COL_GOOD, true)
@@ -4387,7 +4387,8 @@ func _shipyard(box: VBoxContainer, r: int) -> void:
 	if CFleet.dock(r) < 0:
 		return
 	var yard := CState.building(ps, r, CData.SHIPYARD)
-	var sec := Kit.section("Ships (Shipyard %d)" % yard if yard > 0 else "Ships (no Shipyard)", "ship")
+	var yname := CData.chain_name(CData.SHIPYARD, f)
+	var sec := Kit.section("Ships (%s %d)" % [yname, yard] if yard > 0 else "Ships (no %s)" % yname, "ship")
 	sec.name = "shipyard_section"
 	box.add_child(sec)
 	var sq: Array = ps["regions"][r].get("sq", [])
@@ -4410,7 +4411,7 @@ func _shipyard(box: VBoxContainer, r: int) -> void:
 		h.add_child(nm)
 		var sub := "%s, carries %d, pace %d%s; upkeep %d" % [CFleet.arms_text(row), int(row["cap"]), int(row["speed"]) / 10,
 			", coastal" if int(row["coastal"]) != 0 else "", int(row["upkeep"])]
-		h.add_child(Kit.label(sub if why == "" or why == "not enough money" or why == "already launching a ship" else why,
+		h.add_child(Kit.label(sub if why == "" or why == "not enough money" or why == "already launching a ship" else CData.local_text(why, f),
 			Kit.FONT_SMALL, Kit.COL_DIM, true))
 		var bb := Kit.icon_button("%d" % int(row["cost"]), "plus", func(): s.add_order({"t": "ship", "r": r, "ship": key}), 70)
 		bb.name = "ship_" + key
@@ -4436,7 +4437,7 @@ func ship_tab(r: int) -> Array:
 	var ps: Dictionary = s.ps
 	if not CFleet.on(ps) or CFleet.dock(r) < 0 or CState.owner(ps, r) != s.f:
 		return [false, ""]
-	return [true, "" if CState.building(ps, r, CData.SHIPYARD) > 0 else "needs a Shipyard"]
+	return [true, "" if CState.building(ps, r, CData.SHIPYARD) > 0 else "needs a " + CData.chain_name(CData.SHIPYARD, s.f)]
 
 
 ## The tab a city's Recruit opens: Army, but Shipyard when there is nothing to
@@ -4455,7 +4456,7 @@ func _raise_tabs(v: VBoxContainer, r: int) -> void:
 	var cur := str(_raise.get("tab", "army"))
 	var h := Kit.hbox(6)
 	h.name = "raise_tabs"
-	for t in [["army", "Army", "raise"], ["ship", "Shipyard", "shipyard"]]:
+	for t in [["army", "Army", "raise"], ["ship", CData.chain_name(CData.SHIPYARD, s.f), "shipyard"]]:
 		var key: String = t[0]
 		var off: bool = key == "ship" and str(st[1]) != ""
 		var b := Kit.icon_button(str(t[1]), str(t[2]), func():
@@ -4500,13 +4501,15 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 	var yard := CState.building(ps, r, CData.SHIPYARD)
 	var money := int(ps["factions"][f]["treasury"])
 	var picked := str(_raise.get("ship", ""))
-	var batch := ""
+	var batches: Array = []
 	var fk0 := str(CData.FACTIONS[f]["key"])
 	for row0 in CData.ship_rows():
-		if (row0["factions"] as Array).has(fk0) and int(row0.get("launch", 1)) > 1 and batch == "":
-			batch = "%s: %d a turn" % [str(row0["name"]).to_lower(), int(row0["launch"])]
-	v.add_child(Kit.label("Choose a ship: it is built at the Shipyard (%s) and launched into the harbour at the end of the turn; %s." % [
-		"level %d" % yard if yard > 0 else "none yet", "one ship a turn" if batch == "" else "one ship a turn; " + batch], Kit.FONT_SMALL, Kit.COL_DIM, true))
+		if (row0["factions"] as Array).has(fk0) and int(row0.get("launch", 1)) > 1:
+			batches.append("%s: %d a turn" % [str(row0["name"]).to_lower(), int(row0["launch"])])
+	var batch := ", ".join(batches)
+	v.add_child(Kit.label("Choose a ship: it is built at the %s (%s) and launched into the harbour at the end of the turn; %s." % [
+		CData.chain_name(CData.SHIPYARD, f), "level %d" % yard if yard > 0 else "none yet",
+		"one ship a turn" if batch == "" else "one ship a turn, or a batch of one kind: " + batch], Kit.FONT_SMALL, Kit.COL_DIM, true))
 	for g in _sq_groups(rs.get("sq", [])):
 		var gk := str(g[0])
 		var h := Kit.hbox(6)
@@ -4530,12 +4533,19 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 		if on:
 			cost = int(row["cost"])
 			picked_name = str(row["name"])
-		var sr := Kit.ShipRow.new(row, _fc(f), str(int(row["cost"])))
+		var srow := row
+		if CData.ship_yard(row, f) != int(row["yard"]):
+			srow = row.duplicate()
+			srow["yard"] = CData.ship_yard(row, f)  # (the faction's own yard level: the Miskito's brigantine)
+		var sr := Kit.ShipRow.new(srow, _fc(f), str(int(row["cost"])), CData.chain_name(CData.SHIPYARD, f))
 		sr.name = "ship_" + key
 		sr.selected = on
 		var blocked := why != "" and why != "not enough money"
+		var al = (row.get("ally", {}) as Dictionary).get(fk)
+		if al != null:
+			sr.sub_text += "  -  while trading with or allied to " + CDip.ally_names(al)  # (the hull's treaty condition)
 		if why != "":
-			sr.sub_text = why
+			sr.sub_text = CData.local_text(why, f)
 			sr.sub_col = Kit.COL_DIM if not blocked else Kit.COL_BAD
 		if blocked and not on:
 			sr.modulate = Color(1, 1, 1, 0.82)
@@ -4565,7 +4575,7 @@ func _ship_tab(v: VBoxContainer, r: int) -> void:
 		Kit.FONT, Kit.COL_GOLD if picked != "" else Kit.COL_DIM, true)
 	tl.name = "ship_total"
 	v.add_child(tl)
-	s.show_dialog("Shipyard at %s" % CData.REGIONS[r]["city"], v,
+	s.show_dialog("%s at %s" % [CData.chain_name(CData.SHIPYARD, f), CData.REGIONS[r]["city"]], v,
 		[["Cancel", func():
 			_raise = {}
 			s.close_dialog()], ["Build ship", func():
@@ -4609,16 +4619,23 @@ func _unlock_line(c: int, f: int, lvl: int, info: Dictionary) -> String:
 			names.append(UT.ammo_text(ai, "name").to_lower() if ai >= 0 else key.substr(5))
 		elif UT.index_of(key) >= 0:
 			names.append(CData.unit_name(key, f))
+	if c == CData.SHIPYARD and f >= 0:
+		# (2026-11-01) The ships of the faction's people that need this level (a treaty condition named).
+		var fk := str(CData.FACTIONS[f]["key"])
+		for row in CData.ship_rows():
+			if (row["factions"] as Array).has(fk) and CData.ship_yard(row, f) == lvl:
+				var al = (row.get("ally", {}) as Dictionary).get(fk)
+				names.append(str(row["name"]) + ("" if al == null else " (trading with or allied to %s)" % CDip.ally_names(al)))
 	if names.is_empty():
 		if c == CData.BARRACKS or c == CData.RANGE or c == CData.STABLES or c == CData.WORKSHOP:
 			return "Effect: faster replenishment"
-		return "Effect: " + str(CData.CHAINS[c]["desc"]).get_slice(";", 0)
+		return "Effect: " + CData.chain_desc(c, f).get_slice(";", 0)
 	return "Unlocks: " + ", ".join(names)
 
 
 ## The tooltip of chain c's build button: its text and what level lvl unlocks.
 func _chain_tip(c: int, f: int, lvl: int, info: Dictionary) -> String:
-	return "%s\n%s" % [str(CData.CHAINS[c]["desc"]), _unlock_line(c, f, lvl, info)]
+	return "%s\n%s" % [CData.chain_desc(c, f), _unlock_line(c, f, lvl, info)]
 
 
 ## The Build popup: the queue on top (Cancel), then a row per building chain.
@@ -4677,7 +4694,7 @@ func show_build(r: int) -> void:
 		b.tooltip_text = _chain_tip(c, f, nxt, info)
 		col.add_child(b)
 		var desc := _unlock_line(c, f, nxt, info) if cur < int(ch["levels"]) and not capped else \
-			("Nothing of yours needs a higher level" if capped else str(ch["desc"]).get_slice(";", 0))
+			("Nothing of yours needs a higher level" if capped else CData.chain_desc(c, f).get_slice(";", 0))
 		if why != "" and not building and not capped:
 			desc = "%s  -  %s" % [why, desc]
 		var dl := Kit.label(desc, Kit.FONT_SMALL, Kit.COL_BAD if why != "" and not building and not capped and cur < int(ch["levels"]) else Kit.COL_DIM, true)

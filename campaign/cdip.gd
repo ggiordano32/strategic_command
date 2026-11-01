@@ -541,11 +541,44 @@ static func line_why(st: Dictionary, f: int, line: String) -> String:
 	var lines: Dictionary = CData.TREATY_LINES[fk]
 	if not lines.has(line):
 		return ""
-	for gk in lines[line]:
+	if _trades_with(st, f, lines[line]):
+		return ""
+	return TREATY_LINE_WHY
+
+
+## Faction f trades with (or is allied to) one of the faction keys `keys` alive.
+static func _trades_with(st: Dictionary, f: int, keys: Array) -> bool:
+	for gk in keys:
 		var g := CData.faction_index(str(gk))
 		if g >= 0 and g != f and CState.alive(st, g) and CState.dip(st, f, g) >= CState.TRADE:
-			return ""
-	return TREATY_LINE_WHY
+			return true
+	return false
+
+
+## (Native vessels, 2026-11-01) The treaty lines' rule for a ship row: "" when faction f may build ship row
+## `row` as far as treaties go, else why not. A row's optional "ally" (faction key -> faction keys) binds
+## only the factions it lists: they build the hull while they trade with or are allied to one of those
+## (the Miskito's brigantine and England). Before format 10 (no treaties) nothing is refused, as for the lines.
+static func ship_why(st: Dictionary, f: int, row: Dictionary) -> String:
+	if f < 0 or not row.has("ally"):
+		return ""
+	var al = (row["ally"] as Dictionary).get(str(CData.FACTIONS[f]["key"]))
+	if al == null or not on(st):
+		return ""
+	if _trades_with(st, f, al):
+		return ""
+	return "needs a trade agreement or alliance with " + ally_names(al)
+
+
+## "England", "England or France": the faction names of the keys, in their order.
+static func ally_names(keys: Array) -> String:
+	var nm: Array = []
+	for gk in keys:
+		var g := CData.faction_index(str(gk))
+		nm.append(CData.faction_name(g) if g >= 0 else str(gk))
+	if nm.size() <= 1:
+		return "".join(nm)
+	return ", ".join(nm.slice(0, nm.size() - 1)) + " or " + str(nm[-1])
 
 
 static func unit_why(st: Dictionary, f: int, key: String) -> String:

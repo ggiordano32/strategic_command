@@ -27,6 +27,12 @@ extends RefCounted
 ##   board       boarding quality %
 ##   fire        1: a fire ship (no guns; sailed at the enemy, lit, abandoned
 ##               by her skeleton crew; she sets alight whatever she touches)
+##   masts       (optional, sailing rows) masts for the deck melee's cells and
+##               the drawing: 1 (the sloop), 2 (the brigantine, the fire ship),
+##               default 3; rowed rows have none
+##   canoe       (optional) 1: a native dugout (the war canoe, the piragua, the
+##               great canoe, the fire canoe): rowed, but never a war galley
+##               (is_galley) even without guns
 ## Galleys (Rome's navy, R1; docs/design/sea.md "Rome's navy"), 0 on every
 ## sailing row and the war canoe:
 ##   ram         hull damage quality of her bronze ram (0: none); a blow does
@@ -43,10 +49,10 @@ extends RefCounted
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "len": 20, "beam": 6, "vmax": 95, "turn": 90, "irons": 42, "tack": 25,
 		"guns": 4, "gun": 4, "range": 220, "hull": 300, "crew": 60, "rig": 200, "reload": 10, "draft": 0, "oars": 0,
-		"board": 105, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
+		"board": 105, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "masts": 1},
 	{"key": "brigantine", "name": "Brigantine", "len": 26, "beam": 7, "vmax": 88, "turn": 72, "irons": 50, "tack": 30,
 		"guns": 7, "gun": 5, "range": 240, "hull": 450, "crew": 90, "rig": 280, "reload": 11, "draft": 0, "oars": 0,
-		"board": 105, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
+		"board": 105, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "masts": 2},
 	{"key": "frigate", "name": "Frigate", "len": 40, "beam": 10, "vmax": 82, "turn": 55, "irons": 62, "tack": 35,
 		"guns": 15, "gun": 8, "range": 280, "hull": 700, "crew": 200, "rig": 420, "reload": 12, "draft": 1, "oars": 0,
 		"board": 100, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
@@ -58,12 +64,12 @@ const ROWS: Array[Dictionary] = [
 		"oars": 0, "board": 100, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
 	{"key": "war_canoe", "name": "War canoe", "len": 13, "beam": 3, "vmax": 98, "turn": 120, "irons": 0, "tack": 0,
 		"guns": 1, "gun": 3, "range": 120, "hull": 100, "crew": 40, "rig": 0, "reload": 8, "draft": 0, "oars": 1,
-		"board": 120, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
+		"board": 120, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "canoe": 1},
 	# (N3c) An old hull filled with tar, brimstone and brushwood, crewed by a
 	# dozen volunteers who light her and take to the boat.
 	{"key": "fire_ship", "name": "Fire ship", "len": 22, "beam": 6, "vmax": 95, "turn": 70, "irons": 50, "tack": 30,
 		"guns": 0, "gun": 0, "range": 0, "hull": 420, "crew": 14, "rig": 180, "reload": 10, "draft": 0, "oars": 0,
-		"board": 60, "fire": 1, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
+		"board": 60, "fire": 1, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "masts": 2},
 	# (R1, Rome's navy) Oared war galleys: no guns; deck missiles before
 	# contact, the ram, and (Rome's quinquereme) the corvus.
 	{"key": "lembos", "name": "Lembos", "len": 20, "beam": 4, "vmax": 100, "turn": 110, "irons": 0, "tack": 0,
@@ -82,6 +88,18 @@ const ROWS: Array[Dictionary] = [
 	{"key": "corbita", "name": "Corbita", "len": 28, "beam": 9, "vmax": 55, "turn": 40, "irons": 60, "tack": 40,
 		"guns": 0, "gun": 0, "range": 0, "hull": 300, "crew": 30, "rig": 300, "reload": 10, "draft": 0, "oars": 0,
 		"board": 60, "ram": 0, "corvus": 0, "marines": 0, "dash": 0},
+	# (2026-11-01) The natives' heavier dugouts (campaign/data/west_ships.gd): appended, so every older row
+	# keeps its index (a battle's s_type). The piragua between the war canoe and the sloop, the great canoe a
+	# trunk as long as a galley with no gun, the fire canoe the fire ship's numbers in a dugout.
+	{"key": "piragua", "name": "Piragua", "len": 18, "beam": 3, "vmax": 100, "turn": 110, "irons": 0, "tack": 0,
+		"guns": 1, "gun": 3, "range": 120, "hull": 180, "crew": 60, "rig": 1, "reload": 8, "draft": 0, "oars": 1,
+		"board": 160, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "canoe": 1},
+	{"key": "great_canoe", "name": "Great canoe", "len": 24, "beam": 3, "vmax": 92, "turn": 100, "irons": 0, "tack": 0,
+		"guns": 0, "gun": 0, "range": 0, "hull": 260, "crew": 80, "rig": 0, "reload": 8, "draft": 0, "oars": 1,
+		"board": 150, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "canoe": 1},
+	{"key": "fire_canoe", "name": "Fire canoe", "len": 13, "beam": 3, "vmax": 95, "turn": 70, "irons": 0, "tack": 0,
+		"guns": 0, "gun": 0, "range": 0, "hull": 60, "crew": 10, "rig": 0, "reload": 10, "draft": 0, "oars": 1,
+		"board": 60, "fire": 1, "ram": 0, "corvus": 0, "marines": 0, "dash": 0, "canoe": 1},
 ]
 
 const CHAIN_RANGE_PCT := 80
@@ -148,9 +166,18 @@ static func is_fire(i: int) -> bool:
 
 
 ## (R1) A war galley: rowed, no guns (her fight is the missiles, the ram and
-## the boarding). Not the war canoe (she has a swivel gun).
+## the boarding). Not a native dugout ("canoe": the war canoe, the piragua,
+## the great canoe and the fire canoe fight as the war canoe always did).
 static func is_galley(i: int) -> bool:
-	return stat(i, "oars") != 0 and stat(i, "guns") == 0
+	return stat(i, "oars") != 0 and stat(i, "guns") == 0 and stat(i, "canoe") == 0
+
+
+## Masts of a sailing row (the deck melee's cells, the drawing): 0 rowed.
+static func masts(i: int) -> int:
+	if stat(i, "oars") != 0:
+		return 0
+	var m := stat(i, "masts")
+	return m if m > 0 else 3
 
 
 static func index_of(key: String) -> int:

@@ -307,10 +307,12 @@ const UNIT_NAMES := {
 ## barracks and workshops; the Europeans and the Brethren keep the chains' own words. The farm is the
 ## faction's own (CHAIN_NAMES_F over it): the Itza's milpa, the Miskito's gardens. Rows not listed keep
 ## the chain's name and icon (the Walls' icon "palisade" is the existing stakes glyph). The Canoe yard is the
-## natives' Shipyard (war canoes come from it; owner 2026-10-29); the Workshop, the Itza's wagon only, is the Craft house.
+## natives' Shipyard (war canoes come from it; owner 2026-10-29), with its own text (what each level builds,
+## 2026-11-01); the Workshop, the Itza's wagon only, is the Craft lodge (2026-11-01; the Craft house before).
 const CHAIN_NAMES := {
 	CELTIC: {"barracks": ["War lodge", "Lodge", "lodge"], "range": ["Hunting ground", "Hunting", "hunting"],
-		"workshop": ["Craft house", "Craft", "workshop"], "shipyard": ["Canoe yard", "Canoes", "canoe_yard"],
+		"workshop": ["Craft lodge", "Craft", "workshop"],
+		"shipyard": ["Canoe yard", "Canoes", "canoe_yard", "War canoes from any port, no yard needed; level 1 the Miskito's sloops; level 2 piraguas and fire canoes; level 3 the Itza's great canoes and the Miskito's brigantines (while they trade with or are allied to England); faster repairs in port"],
 		"market": ["Trading post", "Post", "trading_post"], "walls": ["Palisade", "Palisade", "palisade"]},
 }
 ## Building levels limited to what a faction's own units, ammunition and characters need (CData.chain_levels):

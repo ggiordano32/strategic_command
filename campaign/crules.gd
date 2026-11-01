@@ -234,7 +234,7 @@ static func build_info(st: Dictionary, f: int, r: int, c: int) -> Dictionary:
 	if nxt > CData.chain_cap(f, c):  # (no unit, ammunition or character of f's needs this level)
 		return {"why": "nothing of yours needs it", "max": 1}
 	var unl := CData.chain_unlocks(f, c, nxt)  # (what this level opens for f: unit rows, characters, "ammo:<kind>")
-	if nxt > int(rs["level"]) + 1:
+	if nxt > int(rs["level"]) + 1 and not (c == CData.SHIPYARD and CData.yard_any_level(f)):
 		return {"why": "needs a %s" % CData.LEVEL_NAMES[nxt - 1].to_lower(), "level": nxt, "unlocks": unl}
 	if not CState.siege_at(st, r).is_empty():
 		return {"why": "besieged", "level": nxt, "unlocks": unl}

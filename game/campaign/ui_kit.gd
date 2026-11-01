@@ -1156,17 +1156,18 @@ class ShipRow extends PressRow:
 			sub_text = v
 			queue_redraw()
 
-	func _init(p_row: Dictionary, p_col: Color, p_right: String = "") -> void:
+	func _init(p_row: Dictionary, p_col: Color, p_right: String = "", p_yard: String = "Shipyard") -> void:
 		row = p_row
 		col = p_col
 		right_text = p_right
 		toggle = false
-		sub_text = sub_line(p_row)
+		sub_text = sub_line(p_row, p_yard)
 		size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		mouse_filter = Control.MOUSE_FILTER_STOP
 
-	static func sub_line(r: Dictionary) -> String:
-		var t := "upkeep %d  -  Shipyard %d" % [int(r.get("upkeep", 0)), int(r.get("yard", 0))]
+	## p_yard: the Shipyard's name for the buyer's people (CData.chain_name: the natives' Canoe yard).
+	static func sub_line(r: Dictionary, p_yard: String = "Shipyard") -> String:
+		var t := "upkeep %d  -  %s %d" % [int(r.get("upkeep", 0)), p_yard, int(r.get("yard", 0))]
 		if int(r.get("coastal", 0)) == 1:
 			t += "  -  coastal"
 		if int(r.get("oars", 0)) == 1:

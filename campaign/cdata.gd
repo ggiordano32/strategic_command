@@ -110,7 +110,8 @@ static var AI_LIVE_MIX := 0
 ## View-only display names (west.gd UNIT_NAMES): faction key -> unit key -> [name, short].
 static var UNIT_NAMES: Dictionary = {}
 ## View-only building names (west.gd CHAIN_NAMES by culture, CHAIN_NAMES_F by faction key over it):
-## chain key -> [name, short, icon key]. See chain_name / chain_short / chain_icon.
+## chain key -> [name, short, icon key] or [name, short, icon key, desc] (the chain's text for that people).
+## See chain_name / chain_short / chain_icon / chain_desc.
 static var CHAIN_NAMES: Dictionary = {}
 static var CHAIN_NAMES_F: Dictionary = {}
 ## The factions (keys) whose building levels are limited to what their own units, ammunition and
@@ -505,6 +506,22 @@ static func ship_index(key: String) -> int:
 	return int(_ship_idx.get(key, -1))
 
 
+## The Shipyard level faction f needs for ship row `row`: the row's "yard", or its "yard_f" entry for the
+## faction's key (2026-11-01: the Miskito's brigantine at the Canoe yard 3, England's at the Shipyard 1).
+static func ship_yard(row: Dictionary, f: int) -> int:
+	if f >= 0 and row.has("yard_f"):
+		var y = (row["yard_f"] as Dictionary).get(str(FACTIONS[f]["key"]))
+		if y != null:
+			return int(y)
+	return int(row["yard"])
+
+
+## (2026-11-01, owner) Faction f's Shipyard needs no town or city for its levels (west_ships.gd YARD_ANY_LEVEL:
+## the natives' Canoe yard is a beach and a shed); every other chain, and everyone else's Shipyard, keeps the rule.
+static func yard_any_level(f: int) -> bool:
+	return f >= 0 and (ship_const("YARD_ANY_LEVEL", []) as Array).has(str(FACTIONS[f]["key"]))
+
+
 ## Ship row `key` ({} unknown).
 static func ship_row(key: String) -> Dictionary:
 	var i := ship_index(key)
@@ -665,6 +682,12 @@ static func chain_short(c: int, f: int) -> String:
 
 static func chain_icon(c: int, f: int) -> String:
 	return str(_chain_entry(c, f)[2])
+
+
+## The chain's text for faction f (its people's own, the entry's fourth field, else the chain's "desc"). View only.
+static func chain_desc(c: int, f: int) -> String:
+	var e := _chain_entry(c, f)
+	return str(e[3]) if e.size() > 3 else str(CHAINS[c]["desc"])
 
 
 ## A rules message ("needs Barracks 2", "needs Range 1 and ...") with the chains' default names

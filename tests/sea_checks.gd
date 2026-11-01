@@ -110,6 +110,27 @@ static func scenario(key: String) -> Dictionary:
 			u.append({"side": 0, "t": "frigate", "q": 130})
 			u.append({"side": 1, "t": "frigate", "q": 85})
 			u.append({"side": 1, "t": "brigantine", "q": 85})
+		"canoes":
+			# (Native vessels, 2026-11-01) Itza piraguas, a great canoe and a fire canoe against a Spanish sloop and
+			# a brigantine (not in SCENARIOS: canoes() runs it). Boarding quality as the campaign sets it
+			# (cseabattle: the row's board x the crews' boarding %, SEA_CREWS: the Itza 115, New Spain 115).
+			u.append(_cu(0, "piragua", 80, 115, "itza"))
+			u.append(_cu(0, "piragua", 80, 115, "itza"))
+			u.append(_cu(0, "great_canoe", 80, 115, "itza"))
+			u.append(_cu(0, "fire_canoe", 80, 115, "itza"))
+			u.append(_cu(1, "sloop", 95, 115, "new_spain"))
+			u.append(_cu(1, "brigantine", 95, 115, "new_spain"))
+			scn["layout"] = "gauge0"
+		"canoes_eq":
+			# (Native vessels, equal gold) Two Itza piraguas and a great canoe (940 gold) against a Spanish sloop, a
+			# brigantine and a war canoe (920): the boarding hulls' balance measure.
+			u.append(_cu(0, "piragua", 80, 115, "itza"))
+			u.append(_cu(0, "piragua", 80, 115, "itza"))
+			u.append(_cu(0, "great_canoe", 80, 115, "itza"))
+			u.append(_cu(1, "sloop", 95, 115, "new_spain"))
+			u.append(_cu(1, "brigantine", 95, 115, "new_spain"))
+			u.append(_cu(1, "war_canoe", 95, 115, "new_spain"))
+			scn["layout"] = "gauge0"
 		"galleys":
 			# (R1, Rome's navy) Triremes and a lembos against a corvus quinquereme and a trireme.
 			u.append({"side": 0, "t": "trireme"})
@@ -118,6 +139,12 @@ static func scenario(key: String) -> Dictionary:
 			u.append({"side": 1, "t": "quinquereme"})
 			u.append({"side": 1, "t": "trireme"})
 	return scn
+
+
+## A scenario ship as the campaign builds it (cseabattle): gunnery q, boarding quality = the row's board x the
+## crews' boarding % (bpct), crew kit ck.
+static func _cu(side: int, t: String, q: int, bpct: int, ck: String) -> Dictionary:
+	return {"side": side, "t": t, "q": q, "bq": ST.stat(ST.index_of(t), "board") * bpct / 100, "ck": ck}
 
 
 ## Run scenario `key` for up to `ticks` (stops 30 ticks after it ends):
@@ -243,6 +270,7 @@ static func determinism() -> int:
 	fails += flight()
 	fails += douse()
 	fails += galleys()
+	fails += canoes()
 	return fails
 
 
@@ -1371,3 +1399,101 @@ static func campaign(check: Callable) -> void:
 			sea_pending = true
 	check.call(not sea_pending, "sea: without a player no sea battle is pending (one auto-resolved this turn: %s)" % auto)
 	CData.use_pack("rome")
+
+
+## (Native vessels, 2026-11-01) The natives' new dugouts in the sea sim: the rows (the fire canoe a fire ship by
+## its flag, none of the dugouts a war galley, the masts by row); a fire canoe sent at a sloop hove to is lit
+## and sets her alight; a piragua ordered to board a sloop grapples her; the "canoes" battle (piraguas, a great
+## canoe and a fire canoe against a sloop and a brigantine, both sides AI) twice the same, snapshots restored
+## at 300 and 1200 run on identically; over 8 seeds the fire canoe is lit and the canoes board; at equal gold
+## ("canoes_eq") the dugouts board more than once a battle (the win count is printed, not gated).
+static func canoes() -> int:
+	var fails := 0
+	var pg := ST.index_of("piragua")
+	var gc := ST.index_of("great_canoe")
+	var fc := ST.index_of("fire_canoe")
+	var rows_ok := pg >= 0 and gc >= 0 and fc >= 0 and ST.is_fire(fc) and not ST.is_fire(pg) \
+		and not ST.is_galley(pg) and not ST.is_galley(gc) and not ST.is_galley(fc) and ST.is_galley(ST.index_of("lembos")) \
+		and ST.masts(ST.index_of("sloop")) == 1 and ST.masts(ST.index_of("brigantine")) == 2 \
+		and ST.masts(ST.index_of("fire_ship")) == 2 and ST.masts(ST.index_of("frigate")) == 3 and ST.masts(pg) == 0 \
+		and ST.index_of("corbita") == 11 and pg == 12
+	if not rows_ok:
+		fails += 1
+		printerr("FAIL sea canoes: the rows (fire flag, not galleys, masts, appended after the corbita)")
+	else:
+		print("PASS sea canoes: the fire canoe is a fire ship by its flag, no dugout is a war galley, masts by row, rows appended")
+	# A fire canoe sent at a sloop hove to 400 m off.
+	var a := _gal_sim([{"side": 0, "t": "fire_canoe", "x": 1000, "y": 900, "head": 0},
+		{"side": 1, "t": "sloop", "x": 1000, "y": 500, "head": 90}])
+	a.queue_order({"type": SeaSim.O_SAILS, "unit": 1, "on": 0, "tick": 0})
+	a.queue_order({"type": SeaSim.O_FIRE, "unit": 1, "on": 0, "tick": 0})
+	a.queue_order({"type": SeaSim.O_TARGET, "unit": 0, "target": 1, "tick": 0})
+	a.s_spd[1] = 0
+	var lit := -1
+	var contact := -1
+	for t in 900:
+		a.step()
+		if lit < 0 and a.s_lit[0] >= 0:
+			lit = a.tick
+		if contact < 0 and _first_ev(a, SeaSim.EV_FS_CONTACT, 0) >= 0:
+			contact = a.tick
+	if lit < 0 or contact < 0 or a.s_burn[1] <= 0 and a.u_state[1] != SeaSim.S_SUNK:
+		fails += 1
+		printerr("FAIL sea fire canoe: lit at %d, contact at %d, the sloop's fire %d" % [lit, contact, a.s_burn[1]])
+	else:
+		print("PASS sea fire canoe: sent at a sloop hove to 400 m off, lit at tick %d, alongside and set her alight at %d" % [lit, contact])
+	# A piragua ordered to board a sloop hove to.
+	var b := _gal_sim([{"side": 0, "t": "piragua", "x": 1000, "y": 800, "head": 0, "ck": "itza", "bq": 115},
+		{"side": 1, "t": "sloop", "x": 1000, "y": 560, "head": 90, "crew": 60}])
+	b.queue_order({"type": SeaSim.O_SAILS, "unit": 1, "on": 0, "tick": 0})
+	b.queue_order({"type": SeaSim.O_FIRE, "unit": 1, "on": 0, "tick": 0})
+	b.queue_order({"type": SeaSim.O_BOARD, "unit": 0, "target": 1, "tick": 0})
+	b.s_spd[1] = 0
+	var grap := -1
+	for t in 1200:
+		b.step()
+		if grap < 0 and _first_ev(b, SeaSim.EV_GRAPPLE, 0) >= 0:
+			grap = b.tick
+	var taken := b.u_state[1] == SeaSim.S_TAKEN
+	if grap < 0:
+		fails += 1
+		printerr("FAIL sea piragua: ordered to board a sloop hove to, never grappled")
+	else:
+		print("PASS sea piragua: ordered to board a sloop hove to, grappled at tick %d; the sloop %s" % [grap, "taken" if taken else "not taken"])
+	# The battle, both sides AI.
+	var r1 := run("canoes", 4242, 9200, [300, 1200])
+	var r2 := run("canoes", 4242, 9200)
+	if r1["hashes"] != r2["hashes"] or str(r1["bad"]) != "":
+		fails += 1
+		printerr("FAIL sea canoes battle: twice the same %s, snapshots %s" % [str(r1["hashes"] == r2["hashes"]), str(r1["bad"])])
+	else:
+		print("PASS sea canoes battle: twice identical (%d ticks), snapshots restored at 300 and 1200 run on identically" % (r1["hashes"] as PackedInt64Array).size())
+	var lit_n := 0
+	var boards := 0
+	var contacts := 0
+	var won := 0
+	for sd in range(1, 9):
+		var rr := run("canoes", sd, 9200)
+		var stt: Dictionary = rr["stats"]
+		lit_n += 1 if int(stt["fireships"]) > 0 else 0
+		contacts += 1 if int(stt["fire_contacts"]) > 0 else 0
+		boards += int(stt["boardings"])
+		won += 1 if int((rr["result"] as Dictionary)["winner"]) == 0 else 0
+	if lit_n <= 0 or boards <= 0:
+		fails += 1
+		printerr("FAIL sea canoes over 8 seeds: fire canoe lit in %d, alongside a ship in %d, boardings %d, the canoes won %d" % [lit_n, contacts, boards, won])
+	else:
+		print("PASS sea canoes over 8 seeds: fire canoe lit in %d, alongside a ship in %d, boardings %d, the canoes won %d" % [lit_n, contacts, boards, won])
+	# Equal gold ("canoes_eq": 940 against 920): the dugouts close and board (a reading, not a balance gate).
+	var eq_won := 0
+	var eq_b := 0
+	for sd in range(1, 9):
+		var re := run("canoes_eq", sd, 9200)
+		eq_b += int(re["stats"]["boardings"])
+		eq_won += 1 if int((re["result"] as Dictionary)["winner"]) == 0 else 0
+	if eq_b <= 8:
+		fails += 1
+		printerr("FAIL sea canoes at equal gold: %d boardings in 8 battles (the dugouts should close and board)" % eq_b)
+	else:
+		print("PASS sea canoes at equal gold over 8 seeds: %d boardings, the canoes won %d" % [eq_b, eq_won])
+	return fails

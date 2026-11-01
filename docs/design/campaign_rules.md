@@ -1380,6 +1380,71 @@ for the owner, not a lever pulled.
 
 **Canoe yard moved to the Shipyard (2026-10-29, owner: "If we have nothing to build in the Workshop then it should go away ... it should come with what we need for Canoes").** The natives' Shipyard is the Canoe yard (the war canoes already launch from it); the Workshop, which only the Itza keep for the wagon, is the Craft house. Data only (`CHAIN_NAMES`); no rule or pin moves.
 
+**Native vessels (as built, 2026-11-01; owner: "There is no need for level 2 and 3 shipyards for the natives, unless we can come up with some heavy vessels for them", then: build them, with the naming fix).** Before, the natives built only the war canoe (yard 0) and the Miskito the sloop (yard 1); the Canoe yard 2 and 3 gave them faster repairs alone. Now (`campaign/data/west_ships.gd` ROWS, `sim/sea_types.gd` rows appended after the corbita so every older row keeps its index):
+
+| Hull | Who | Cost / upkeep | Guns / hull / crew | Pace | Carries | Yard | Storm % | Launch | Power |
+|---|---|---|---|---|---|---|---|---|---|
+| Piragua (the Kalinago sailing dugout) | Itza, Miskito | 260 / 10 | 1 (a swivel) / 22 / 60 | 330 | 1 | 2 | 30 | 2 | 44 (formula) |
+| Great canoe (the Maya trader of 1502) | Itza | 420 / 15 | 0 / 30 / 80 | 300 | 2 | 3 | 35 | 1 | 140 (row) |
+| Fire canoe | Itza, Miskito | 90 / 4 | 0 / 8 / 10 | 320 | 0 | 2 | 45 | 2 | 80 (row) |
+| Brigantine (the existing row) | + Miskito | 500 / 25 | 14 / 45 / 90 | 370 | 2 | Miskito 3 (`yard_f`), the rest 1 | 12 | 1 | 203 |
+
+All three dugouts are coastal and rowed. Sea sim: piragua len 18, beam 3, vmax 100, turn 110, 1 gun of 3 at 120 m, hull 180,
+crew 60, board 160; great canoe len 24, vmax 92, turn 100, hull 260, crew 80, board 150, no gun; fire canoe the fire ship's
+numbers in a dugout (len 13, beam 3, rowed, crew 10, hull 60, `fire` 1; irons, tack and rig 0 as every rowed row, where the brief
+said "as the fire ship's": a rowed boat has no no-go zone). Boarding uses the crews table (`SEA_CREWS`: the Itza 115 %, the
+Miskito 120 %) as for the war canoe.
+- *The ally condition.* A ship row may carry `"ally"`: faction key -> faction keys; that faction builds the hull only while it
+  trades with or is allied to one of them alive (`CDip.ship_why`, the treaty lines' own test `_trades_with`, shared with
+  `line_why`); the row's other factions are not bound. The brigantine's is `{"miskito": ["england"]}` (the Miskito start allied to
+  England). Checked at order time (`CFleet.ship_check` after "your people do not build these": "needs a trade agreement or
+  alliance with England"), in `CFleet.buildable` (the AI's list) and in the AI's yard raise. Before format 10 (no treaties)
+  nothing is refused, as for the treaty lines. `"yard_f"` (faction key -> level, `CData.ship_yard`) gives the Miskito's
+  brigantine the Canoe yard 3 while England's stays at the Shipyard 1.
+- *Batches.* A queue is one kind: `ship_check` now treats a different key in the queue as limit 1 (two piraguas a turn, but a fire
+  canoe behind them waits a turn; before, a mixed queue of two multi-launch kinds would have passed the smallest batch).
+- *The sea sim.* `ST.is_galley` excludes rows with `"canoe"` (the four dugouts: rowed, no gun or one, but never Rome's war galleys:
+  no cruise stroke, no galley AI or orders bar), so the great canoe and the fire canoe sail and fight as the war canoe always did.
+  The fire canoe is a fire ship by her `fire` flag (`ST.is_fire`, which the sim and its AI already read); a rowed fire ship is
+  lit at 80 m and abandoned at 25 m (`FS_LIGHT_OARS_M`, `FS_ABANDON_OARS_M`; sea.md "Native vessels"). The one hull-key compare
+  in the sim, `_masts` (the deck melee's mast cells: "sloop" one mast, "brigantine" or "fire_ship" two), is now the row's
+  optional `"masts"` (`ST.masts`: 1, 2, default 3, rowed 0); it meant the rig (one, two or three masts), not a class of hull.
+  The view's rig drawing reads the same (the fire ship now draws her two masts, as the sim always counted them).
+- *Names (view only).* The natives' Workshop is the Craft lodge (short Craft, the Workshop's icon); their Shipyard stays the Canoe
+  yard (short Canoes, `canoe_yard`) with its own text through `CData.chain_desc` (a fourth field of a `CHAIN_NAMES` entry): what
+  each level builds. The Shipyard texts on the panels (the ship dialog's title, tab and line, the section head, the ship rows' sub
+  line, the "needs Shipyard n" refusals through `local_text`, the command bar's action) read `chain_name`; the command bar's
+  building chips read `chain_short` ("Canoes 2", "Craft 1"), and the shorts still wider than the 52 px chip a chip word
+  (`CommandBar.CHIP_SHORT`: Shipyard "Yard", Workshop "Works", Barracks "Barr.", Hunting "Hunt", Palisade "Stakes"; measured: "Shipyard 2"
+  56 px, "Workshop 1" 64, "Barracks 2" 56, "Hunting 2" 52, "Palisade 2" 54 against 50 of room), the tip keeps the full name; the build dialog's
+  Shipyard row says "Unlocks: Piragua, Fire canoe" (the faction's rows needing that level, a treaty condition named); a ship row
+  with an `ally` for the buyer says "while trading with or allied to England". How to play's Three ways line names the new hulls.
+- *Power* (`CFleet.ship_power` at full strength): war canoe 38 < piragua 44 < sloop 122 < great canoe 140 < brigantine 203;
+  fire canoe 80.
+- *AI* (docs/AI.md 52): the natives value warships by that power (piragua over the war canoe), transports by places (the great
+  canoe); their best port's yard goes up a level when a better hull needs it (`AI_YARD_UP`; paid from the treasury above half
+  the reserve); fire canoes are never bought by
+  the campaign AI (as fire ships) and are sailed at a mark by the battle AI through the flag.
+- *The Canoe yard needs no town (owner, 2026-11-01: "a dugout yard is a beach and a shed").* `CRules.build_info` skips the
+  settlement-level rule (a level n building needs a settlement of level n - 1) for the Shipyard of a faction in
+  `west_ships.gd` `YARD_ANY_LEVEL` (the Itza and the Miskito; `CData.yard_any_level`): a native village port raises its Canoe
+  yard to 3. Everyone else's Shipyard, and every other chain, keeps the rule.
+- *Measured* (`tests/campaign_sim.gd`, West, 72 seeds x 60 turns; format 6 / format 10; before the native vessels -> as built):
+
+| | before | as built |
+|---|---|---|
+| Itza alive at 60 | 65 / 60 | 62 / 63 |
+| Miskito alive at 60 | 60 / 65 | 66 / 63 |
+| Itza best Canoe yard 0/1/2/3 at the end (alive) | 36/6/23/0 and 41/2/17/0 | 20/1/26/15 and 30/1/17/15 |
+| Miskito best Canoe yard 0/1/2/3 | 5/54/1/0 and 1/61/3/0 | 4/8/46/8 and 2/11/46/4 |
+| Itza launched: war canoe / piragua / great canoe | 790/0/0 and 540/0/0 | 388/41/8 and 349/41/10 |
+| Miskito launched: war canoe / sloop / piragua / brigantine | 405/378/0/0 and 376/340/0/0 | 410/348/15/6 and 345/281/15/2 |
+| Sea battles a seed | 26.7 / 24.8 | 26.9 / 24.8 |
+
+  An intermediate build (yard raise paid from the whole treasury) had the Miskito alive 50 of 72 at format 6; paid from the
+  treasury above half the reserve (as built) 66. The West pins move (the natives' purchases); Rome's are unchanged. The rules
+  hash moves; no state shape changes (a ship is its key), no `CState.VERSION` bump.
+
 
 **The raiding lessons and "Three ways to play" (2026-10-30, view and words; `Tutorial.TURNS` 13 is the one value the rules read).** The
 owner: "We should teach raiding stances for the army and the ships, we should also have a section that talks about Asymmetry and the

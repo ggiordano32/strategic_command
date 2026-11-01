@@ -17,7 +17,13 @@ extends RefCounted
 ## fire (1: a fire ship, N3c), power (the formula's worth of a ship
 ## without guns); launch (optional, default 1: how many ships of this kind
 ## one port launches in a turn; the orders queue is one kind, or a batch of a
-## multi-launch kind: war canoes, 4).
+## multi-launch kind: war canoes, 4); ally (optional, 2026-11-01: faction key
+## -> faction keys; that faction builds the hull only while it trades with or
+## is allied to one of them, the treaty lines' rule: cdip.gd ship_why; the
+## other factions of the row are not bound); yard_f (optional: faction key ->
+## the Shipyard level that faction needs instead of "yard"; CData.ship_yard);
+## canoe (1: a native dugout; the
+## sea sim's own rows say so too: rowed but not a war galley).
 
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "cost": 300, "upkeep": 15, "guns": 8, "hull": 30, "crew": 60, "speed": 400,
@@ -27,7 +33,7 @@ const ROWS: Array[Dictionary] = [
 		"desc": "Fast and handy, a few light guns: scouting, raiding and one company of men."},
 	{"key": "brigantine", "name": "Brigantine", "cost": 500, "upkeep": 25, "guns": 14, "hull": 45, "crew": 90, "speed": 370,
 		"cap": 2, "coastal": 0, "oars": 0, "yard": 1, "storm": 12,
-		"factions": ["england", "france", "dutch", "brethren"],
+		"factions": ["england", "france", "dutch", "brethren", "miskito"], "ally": {"miskito": ["england"]}, "yard_f": {"miskito": 3},
 		"role": "The cruiser: chases merchantmen, lands two companies, outguns a sloop.",
 		"desc": "Two masts and a long reach: the pirates' and the traders' favourite."},
 	{"key": "frigate", "name": "Frigate", "cost": 900, "upkeep": 45, "guns": 30, "hull": 70, "crew": 200, "speed": 340,
@@ -49,7 +55,25 @@ const ROWS: Array[Dictionary] = [
 		"cap": 1, "coastal": 1, "oars": 1, "yard": 0, "storm": 45, "launch": 4,
 		"factions": ["itza", "miskito"],
 		"role": "The coast raider: lands a war party on any beach, hugs the shallows, dies to a broadside.",
-		"desc": "Piraguas and dugouts: rowed, fast along the shore whatever the wind, never out of sight of land."},
+		"desc": "Piraguas and dugouts: rowed, fast along the shore whatever the wind, never out of sight of land.", "canoe": 1},
+	# (2026-11-01) The natives' heavier vessels, from the Canoe yard (the natives' Shipyard) 2 and 3: the
+	# piragua (the Kalinago sailing dugout), the great canoe (the Maya trader Columbus met off Honduras in
+	# 1502, "as long as a galley") and the fire canoe. The Miskito's brigantine is the row above ("ally").
+	{"key": "piragua", "name": "Piragua", "cost": 260, "upkeep": 10, "guns": 1, "hull": 22, "crew": 60, "speed": 330,
+		"cap": 1, "coastal": 1, "oars": 1, "yard": 2, "storm": 30, "launch": 2, "canoe": 1,
+		"factions": ["itza", "miskito"],
+		"role": "Sail and paddles, a swivel in the bow and sixty warriors: she boards. Coastal.",
+		"desc": "The great sailing dugout of the islands: a mat sail, forty paddles and a swivel gun bought from the English; her warriors swarm over a rail."},
+	{"key": "great_canoe", "name": "Great canoe", "cost": 420, "upkeep": 15, "guns": 0, "hull": 30, "crew": 80, "speed": 300,
+		"cap": 2, "coastal": 1, "oars": 1, "yard": 3, "storm": 35, "power": 140, "launch": 1, "canoe": 1,
+		"factions": ["itza"],
+		"role": "A dugout as long as a galley: carries two companies and boards with eighty men; no guns. Coastal.",
+		"desc": "One trunk, as long as a galley, a palm-thatched cabin amidships and twenty-five paddlers a side: the Maya traders' ship, met by Columbus off Honduras in 1502."},
+	{"key": "fire_canoe", "name": "Fire canoe", "cost": 90, "upkeep": 4, "guns": 0, "hull": 8, "crew": 10, "speed": 320,
+		"cap": 0, "coastal": 1, "oars": 1, "yard": 2, "storm": 45, "fire": 1, "power": 80, "launch": 2, "canoe": 1,
+		"factions": ["itza", "miskito"],
+		"role": "A dugout packed with brushwood and pitch, paddled at a ship and lit. Coastal.",
+		"desc": "An old dugout heaped with brushwood, pitch and dry palm. Ten paddlers drive her at the enemy, light her and swim for it; whatever she touches burns. Spent once lit."},
 	# (N3c) A fire ship: no guns, a skeleton crew; in a sea battle she is sailed
 	# at an enemy, lit and abandoned, and burns what she touches (spent when
 	# lit). "power": her worth to the auto-resolve formula (CFleet.ship_power)
@@ -61,6 +85,16 @@ const ROWS: Array[Dictionary] = [
 		"role": "One shot: sailed into a stronger enemy and lit; keep her behind the line until then.",
 		"desc": "An old hull packed with tar, brimstone and brushwood. In a sea battle her dozen volunteers sail her at the enemy, light her and take to the boat; whatever she grapples burns. Spent once lit."},
 ]
+
+## (2026-11-01, docs/AI.md 52) The factions whose campaign AI raises its best Shipyard a level when a hull
+## of its people needs it and is worth more than what it can build now (cai_fleet.gd _build): the natives,
+## whose Canoe yard 2 and 3 bring the piragua and the great canoe. Every other faction keeps its start yards.
+const AI_YARD_UP: Array = ["itza", "miskito"]
+
+## (2026-11-01, owner: "a dugout yard is a beach and a shed") The factions whose Shipyard (the Canoe yard) any
+## settlement level may raise to its top (CData.yard_any_level, CRules.build_info); for everyone else a Shipyard
+## 2 needs a town and 3 a city, as every building.
+const YARD_ANY_LEVEL: Array = ["itza", "miskito"]
 
 ## Coastal ships keep to sea cells within this many cells (Chebyshev) of land.
 const COASTAL_CELLS := 2

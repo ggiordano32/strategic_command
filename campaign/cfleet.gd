@@ -111,6 +111,11 @@ static func _capt() -> GDScript:
 	return load("res://campaign/ccaptain.gd")
 
 
+## Treaties (the ship rows' "ally": cdip.gd ship_why).
+static func _cdip() -> GDScript:
+	return load("res://campaign/cdip.gd")
+
+
 ## The pack changed (CData.use_pack_script).
 static func pack_reset() -> void:
 	_sea = PackedByteArray()
@@ -582,7 +587,7 @@ static func buildable(st: Dictionary, f: int, r: int) -> Array:
 	var yard := CState.building(st, r, CData.SHIPYARD)
 	var fk := str(CData.FACTIONS[f]["key"])
 	for row in CData.ship_rows():
-		if (row["factions"] as Array).has(fk) and int(row["yard"]) <= yard:
+		if (row["factions"] as Array).has(fk) and CData.ship_yard(row, f) <= yard and _cdip().ship_why(st, f, row) == "":
 			out.append(str(row["key"]))
 	return out
 
@@ -602,8 +607,11 @@ static func ship_check(st: Dictionary, f: int, r: int, key: String) -> String:
 		return "not a port"
 	if not (row["factions"] as Array).has(str(CData.FACTIONS[f]["key"])):
 		return "your people do not build these"
-	if CState.building(st, r, CData.SHIPYARD) < int(row["yard"]):
-		return "needs Shipyard %d" % int(row["yard"])
+	var tw: String = _cdip().ship_why(st, f, row)
+	if tw != "":
+		return tw
+	if CState.building(st, r, CData.SHIPYARD) < CData.ship_yard(row, f):
+		return "needs Shipyard %d" % CData.ship_yard(row, f)
 	if not CState.siege_at(st, r).is_empty():
 		return "besieged"
 	if not CState.battle_at(st, r).is_empty():
@@ -613,6 +621,8 @@ static func ship_check(st: Dictionary, f: int, r: int, key: String) -> String:
 		var lim := int(row.get("launch", 1))
 		for k in q:
 			lim = mini(lim, int(CData.ship_row(str(k)).get("launch", 1)))
+			if str(k) != key:
+				lim = 1  # (a batch is of one kind: war canoes behind fire canoes wait a turn)
 		if q.size() >= lim:
 			return "launching a ship already" if lim == 1 else "the yard launches %d of these a turn" % lim
 	if int(row["cost"]) > int(st["factions"][f]["treasury"]):

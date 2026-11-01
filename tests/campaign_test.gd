@@ -169,6 +169,7 @@ func _init() -> void:
 	_ai_sea_garrison()
 	_docking()
 	_launches()
+	_native_vessels()
 	_board_march()
 	_sortie()
 	_sight()
@@ -4333,7 +4334,7 @@ func _chain_levels() -> void:
 		"level 1 unlocks: Barracks the canoe raiders, Range the musketeers")
 	# Names and icons.
 	_check(CData.chain_name(CData.BARRACKS, mi) == "War lodge" and CData.chain_name(CData.RANGE, iz) == "Hunting ground" \
-		and CData.chain_name(CData.SHIPYARD, mi) == "Canoe yard" and CData.chain_name(CData.WORKSHOP, iz) == "Craft house" and CData.chain_name(CData.MARKET, iz) == "Trading post" \
+		and CData.chain_name(CData.SHIPYARD, mi) == "Canoe yard" and CData.chain_name(CData.WORKSHOP, iz) == "Craft lodge" and CData.chain_name(CData.MARKET, iz) == "Trading post" \
 		and CData.chain_name(CData.WALLS, mi) == "Palisade", "the natives' building names")
 	_check(CData.chain_name(CData.FARM, iz) == "Milpa" and CData.chain_name(CData.FARM, mi) == "Gardens" and CData.chain_name(CData.FARM, ns) == "Farms", "Milpa, Gardens, Farms")
 	_check(CData.chain_name(CData.BARRACKS, ns) == "Barracks" and CData.chain_icon(CData.BARRACKS, ns) == "barracks" and CData.chain_name(CData.BARRACKS, -1) == "Barracks",
@@ -6277,6 +6278,149 @@ func _launches() -> void:
 	CAIFleet._build(sa, mi)
 	var aq: Array = sa["regions"][cg].get("sq", [])
 	_check(aq.size() == 2 and not aq.has("sloop"), "launches: the AI Miskito orders a batch of canoes when it wants transport and money allows two (%d)" % aq.size())
+
+
+## (Native vessels, 2026-11-01) A port's Shipyard set to level lvl (the slot added or changed).
+func _set_yard(st: Dictionary, r: int, lvl: int) -> void:
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.SHIPYARD:
+			sl[1] = lvl
+			return
+	if lvl > 0:
+		(st["regions"][r]["slots"] as Array).append([CData.SHIPYARD, lvl])
+
+
+## (Native vessels, 2026-11-01) The natives' piragua, great canoe and fire canoe from the Canoe yard 2 and 3,
+## the Miskito's brigantine at the Canoe yard 3 while they trade with or are allied to England, the batches,
+## the formula's power, the AI's purchases and its yard raise; the natives' yard and lodge names.
+func _native_vessels() -> void:
+	CData.use_pack("west")
+	var iz := _f("itza")
+	var mi := _f("miskito")
+	var en := _f("england")
+	var vl := _r("bluefields")  # (the Itza start with no port: the Miskito's Bluefields is given them below)
+	var cg := _r("cabo_gracias")
+	var pg := CData.ship_row("piragua")
+	var gc := CData.ship_row("great_canoe")
+	var fc := CData.ship_row("fire_canoe")
+	var br := CData.ship_row("brigantine")
+	_check(int(pg["yard"]) == 2 and int(pg["launch"]) == 2 and int(pg["cap"]) == 1 and int(pg["coastal"]) == 1 and int(pg["guns"]) == 1
+		and int(gc["yard"]) == 3 and int(gc["cap"]) == 2 and gc["factions"] == ["itza"] and int(fc["fire"]) == 1 and int(fc["cap"]) == 0
+		and int(fc["launch"]) == 2 and (br["factions"] as Array).has("miskito"), "native vessels: the rows (piragua yard 2 launch 2, great canoe yard 3 cap 2 Itza only, fire canoe a fire ship)")
+	_check(CData.ship_yard(br, mi) == 3 and CData.ship_yard(br, en) == 1, "native vessels: the brigantine needs the Miskito's Canoe yard 3, England's Shipyard 1")
+	var st := CState.new_campaign("native_vessels", 44, [iz, mi], {}, [], "west")
+	st["regions"][vl]["owner"] = iz
+	st["factions"][iz]["treasury"] = 5000
+	st["factions"][mi]["treasury"] = 5000
+	var lists: Array = []
+	for lv in 4:
+		_set_yard(st, vl, lv)
+		lists.append(CFleet.buildable(st, iz, vl))
+	_check(lists[0] == ["war_canoe"] and lists[1] == ["war_canoe"] and lists[2] == ["war_canoe", "piragua", "fire_canoe"]
+		and lists[3] == ["war_canoe", "piragua", "great_canoe", "fire_canoe"], "native vessels: the Itza's Canoe yard 0-3 lists %s" % str(lists))
+	_check(CFleet.ship_check(st, iz, vl, "sloop") == "your people do not build these", "native vessels: the Itza build no sloop")
+	var ml: Array = []
+	for lv in 4:
+		_set_yard(st, cg, lv)
+		ml.append(CFleet.buildable(st, mi, cg))
+	_check(CState.dip(st, mi, en) == CState.ALLIED and ml[0] == ["war_canoe"] and ml[1] == ["sloop", "war_canoe"]
+		and ml[2] == ["sloop", "war_canoe", "piragua", "fire_canoe"] and ml[3] == ["sloop", "brigantine", "war_canoe", "piragua", "fire_canoe"],
+		"native vessels: the Miskito (allied to England) at the Canoe yard 0-3 list %s" % str(ml))
+	_check(CFleet.ship_check(st, mi, cg, "great_canoe") == "your people do not build these", "native vessels: the great canoe is the Itza's")
+	# The ally condition off and on: peace with England refuses the brigantine, a trade agreement allows it.
+	var sp := CState.copy(st)
+	CState.set_dip(sp, mi, en, CState.PEACE)
+	var why_p := CFleet.ship_check(sp, mi, cg, "brigantine")
+	_check(why_p == "needs a trade agreement or alliance with England" and not CFleet.buildable(sp, mi, cg).has("brigantine")
+		and CRules.apply_order(sp, mi, {"t": "ship", "r": cg, "ship": "brigantine"}) != "",
+		"native vessels: at peace with England the Miskito's brigantine is refused at order time (%s)" % why_p)
+	CState.set_dip(sp, mi, en, CState.TRADE)
+	_check(CFleet.ship_check(sp, mi, cg, "brigantine") == "", "native vessels: a trade agreement with England allows it again")
+	var en_port := _r("port_royal")
+	CState.set_dip(sp, mi, en, CState.WAR)
+	_check(CFleet.buildable(sp, en, en_port).has("brigantine") and CFleet.ship_check(sp, mi, cg, "brigantine") != "",
+		"native vessels: the condition binds the Miskito only (England builds brigantines at war with them)")
+	var s6 := CState.as_format(CState.copy(sp), 6)
+	_check(CFleet.ship_check(s6, mi, cg, "brigantine") == "", "native vessels: before format 10 (no treaties) nothing is refused, as for the treaty lines")
+	_check(CFleet.ship_check(st, mi, cg, "brigantine") == "" and CRules.apply_order(st, mi, {"t": "ship", "r": cg, "ship": "brigantine"}) == "",
+		"native vessels: allied to England, the Miskito order a brigantine at the Canoe yard 3")
+	st["regions"][cg].erase("sq")
+	# Batches: two piraguas a turn, a third refused; a fire canoe behind them waits (one kind a batch).
+	_set_yard(st, vl, 2)
+	var t0 := int(st["factions"][iz]["treasury"])
+	var b1 := CRules.apply_order(st, iz, {"t": "ship", "r": vl, "ship": "piragua"})
+	var b2 := CRules.apply_order(st, iz, {"t": "ship", "r": vl, "ship": "piragua"})
+	var b3 := CRules.apply_order(st, iz, {"t": "ship", "r": vl, "ship": "piragua"})
+	var b4 := CRules.apply_order(st, iz, {"t": "ship", "r": vl, "ship": "fire_canoe"})
+	_check(b1 == "" and b2 == "" and b3 == "the yard launches 2 of these a turn" and b4 == "launching a ship already"
+		and int(st["factions"][iz]["treasury"]) == t0 - 520, "native vessels: two piraguas a turn (%s), the fire canoe waits (%s)" % [b3, b4])
+	var g := CTurn.resolve_turn(st, [CTurn.submission(st, iz, []), CTurn.submission(st, mi, [])])
+	var kinds: Array = []
+	for fl in CFleet.fleets_of(g, iz):
+		for sh in fl["ships"]:
+			kinds.append(str(sh["t"]))
+	_check(kinds.count("piragua") == 2, "native vessels: the two piraguas are launched (%s)" % str(kinds))
+	# Power: the formula values the piragua above the war canoe and below the sloop; the great canoe between
+	# the sloop and the brigantine.
+	var pw := {}
+	for k in ["war_canoe", "piragua", "fire_canoe", "sloop", "great_canoe", "brigantine"]:
+		pw[k] = CFleet.ship_power({"t": k, "h": 100, "c": 100})
+	_check(int(pw["war_canoe"]) < int(pw["piragua"]) and int(pw["piragua"]) < int(pw["sloop"]) and int(pw["sloop"]) < int(pw["great_canoe"])
+		and int(pw["great_canoe"]) < int(pw["brigantine"]), "native vessels: the power at full strength %s" % str(pw))
+	var cfl := {"ships": [{"t": "great_canoe", "h": 100, "c": 100}]}
+	_check(CFleet.capacity(cfl) == 2, "native vessels: a great canoe carries two companies")
+	# The AI: the Itza with a Canoe yard 3 and no fleet buy a great canoe for transport; with a Canoe yard 1
+	# they raise the yard (their best transport needs 3), never buying a fire canoe.
+	var sa := CState.new_campaign("native_ai", 45, [], {}, [], "west")
+	var keep: Array = []
+	for fl in sa["fleets"]:
+		if int(fl["f"]) != iz:
+			keep.append(fl)
+	sa["fleets"] = keep
+	sa["regions"][vl]["owner"] = iz
+	var sb := CState.copy(sa)
+	_set_yard(sa, vl, 3)
+	sa["factions"][iz]["treasury"] = CAI._reserve(sa, iz) + 600
+	CAIFleet._build(sa, iz)
+	var aq: Array = sa["regions"][vl].get("sq", [])
+	_check(aq == ["great_canoe"], "native vessels: the AI Itza (Canoe yard 3, no fleet) order a great canoe (%s)" % str(aq))
+	_set_yard(sb, vl, 1)
+	sb["regions"][vl]["level"] = maxi(int(sb["regions"][vl]["level"]), CData.TOWN)  # (a Shipyard 2 needs a town)
+	sb["factions"][iz]["treasury"] = CAI._reserve(sb, iz) + 1200
+	CAIFleet._build(sb, iz)
+	var bq: Array = sb["regions"][vl]["build"]
+	_check(not bq.is_empty() and int(bq[0]) == CData.SHIPYARD and int(bq[1]) == 2 and not sb["regions"][vl].has("sq"),
+		"native vessels: the AI Itza at a Canoe yard 1 raise it to 2 rather than buy a canoe (%s)" % str(bq))
+	var se := CState.new_campaign("native_ai_eu", 45, [], {}, [], "west")
+	var nsf := _f("new_spain")
+	se["factions"][nsf]["treasury"] = CAI._reserve(se, nsf) + 5000
+	var ha := _r("havana")
+	var bld0: Array = (se["regions"][ha]["build"] as Array).duplicate()
+	CAIFleet._yard_up(se, nsf, ha, true, 0, 5000)
+	_check(se["regions"][ha]["build"] == bld0, "native vessels: the yard raise is the natives' only (AI_YARD_UP)")
+	# (Owner, 2026-11-01) A native Canoe yard needs no town or city: a village port raises it to 3; a European
+	# village port's Shipyard 2 still needs a town.
+	var sv := CState.new_campaign("native_yard_lv", 46, [], {}, [], "west")
+	sv["regions"][cg]["level"] = 0
+	sv["factions"][mi]["treasury"] = 10000
+	_set_yard(sv, cg, 1)
+	var i2 := CRules.build_info(sv, mi, cg, CData.SHIPYARD)
+	_set_yard(sv, cg, 2)
+	var i3 := CRules.build_info(sv, mi, cg, CData.SHIPYARD)
+	var eu := _r("port_royal")
+	sv["regions"][eu]["level"] = 0
+	_set_yard(sv, eu, 1)
+	var ie := CRules.build_info(sv, en, eu, CData.SHIPYARD)
+	_check(not i2.has("why") and int(i2["level"]) == 2 and not i3.has("why") and int(i3["level"]) == 3 and str(ie.get("why", "")) == "needs a town"
+		and CData.yard_any_level(mi) and not CData.yard_any_level(en),
+		"native vessels: a Miskito village raises its Canoe yard to 2 and 3 (%s / %s), an English village's Shipyard 2 needs a town (%s)" % [str(i2.get("why", "ok")), str(i3.get("why", "ok")), str(ie.get("why", "ok"))])
+	# Names: the natives' Shipyard is the Canoe yard (its own text), their Workshop the Craft lodge.
+	_check(CData.chain_name(CData.SHIPYARD, iz) == "Canoe yard" and CData.chain_short(CData.SHIPYARD, mi) == "Canoes"
+		and CData.chain_icon(CData.SHIPYARD, iz) == "canoe_yard" and CData.chain_name(CData.WORKSHOP, iz) == "Craft lodge"
+		and CData.chain_short(CData.WORKSHOP, iz) == "Craft" and CData.chain_desc(CData.SHIPYARD, iz).contains("piraguas")
+		and CData.chain_desc(CData.SHIPYARD, en) == str(CData.CHAINS[CData.SHIPYARD]["desc"]) and CData.chain_name(CData.SHIPYARD, en) == "Shipyard",
+		"native vessels: Canoe yard (its own text) and Craft lodge for the natives; England keeps the Shipyard")
+	CData.use_pack("rome")
 
 
 ## A march with "fleet": boards on arriving (CFleet.board_on_arrival).

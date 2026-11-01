@@ -846,3 +846,68 @@ that sails away meanwhile is not chased: the army walks to the old cell and repo
 `CState.VERSION` change. Tests: `campaign_test` `_launches`, `_board_march`.
 
 (2026-10-30) A fleet waits for an army marching to board it. The owner: loading the army took one turn more than it allowed, so the ship sailed to Tortuga empty (the fleets sail first, the armies march after, and `board_on_arrival` came last). Rule: in `cturn.resolve_turn`, `_defer_boarding_fleets` drops from the fleets' moves every fleet that is the `dest_fleet` of an army of the same faction marching this turn (a `move` with `fleet` among the submissions, or a stored march with `dest_fleet`); the voyage is written to the fleet as a stored one (`dest_x`, `dest_y`, `tgt`, `dk`; one already stored to the same cell is kept), so the fleet sails the turn after the army went aboard, with it. Event `fleet_waits {f, fleet, army}` (chronicle: "A fleet of ours waits for an army marching to board it, then sails."). The fleet panel says "Waits this turn for the army to board, then sails." in front of the planned voyage. A direct `embark` order is applied before the moves and is unchanged. The AI never uses `dest_fleet` (it boards with `embark` beside the fleet, `cai.gd`), so its fleets are untouched. No new state field, no `CState.VERSION` bump; the rules hash moves (online players reload between turns). Tests: `campaign_test` "boarding wait".
+
+### Native vessels (as built, 2026-11-01)
+
+The natives' heavier dugouts (campaign side, the ally condition and the measure: `docs/design/campaign_rules.md` "Native
+vessels (as built, 2026-11-01)"). Sea sim rows, appended to `sim/sea_types.gd` ROWS after the corbita (index 12-14), so every
+older row keeps its `s_type` and every older battle hashes as before:
+
+| Row | len / beam | vmax | turn | guns x gun, range | hull | crew | board | other |
+|---|---|---|---|---|---|---|---|---|
+| piragua | 18 / 3 | 100 | 110 | 1 x 3, 120 m | 180 | 60 | 160 | rowed, rig 1, reload 8 |
+| great_canoe | 24 / 3 | 92 | 100 | none | 260 | 80 | 150 | rowed |
+| fire_canoe | 13 / 3 | 95 | 70 | none | 60 | 10 | 60 | rowed, `fire` 1, reload 10 |
+
+All three, and the war canoe, carry `"canoe": 1`: `ST.is_galley` (oars and no guns) excludes them, so the great canoe and the
+fire canoe are not Rome's war galleys (no stroke meter, no galley AI or orders bar, no galley drawing): they paddle as the war
+canoe does. The fire canoe is a fire ship by her flag (`ST.is_fire`): an O_TARGET / O_BOARD sends her at the mark (M_FIRE),
+a rowed fire ship is lit inside `FS_LIGHT_OARS_M` (80 m, where a sailing one lights at `FS_LIGHT_M` 200) and her paddlers
+leave her inside `FS_ABANDON_OARS_M` (25 m; `FS_ABANDON_M` 80 for sail): abandoned, a rowed hull slows to 30 % (the crew term
+of a rowed ship's pace) and cannot outrun a ship under sail for long. With the sailing distances she was lit too far off and
+drifted: over 16 seeds of the "canoes" battle 2 enemy contacts and 2 on her own side; with the rowed distances 5 and 0 (the
+European fire ship's numbers do not move; only a row with both `fire` and `oars`). Measured against a sloop hove to 400 m
+off: lit at tick 356, alongside at 423. The deck melee's mast cells (`_masts`) and the view's rig read the row's optional `"masts"`
+(`ST.masts`: the sloop 1, the brigantine and the fire ship 2, default 3, rowed 0) where they compared the keys "sloop",
+"brigantine" and "fire_ship": the compare meant the rig, not a class of hull. The view draws the dugouts as the war canoe
+(paddles along both sides, by `len` and `beam`); the overworld miniature is the war canoe's (`MinisLayer.SHIP_LOOK`), the
+great canoe 1.35 times larger (`SHIP_SCALE`); `SHIP_RANK` puts the great canoe after the sloop, then the piragua, the war
+canoe, the fire canoe. The custom battle's West ship list gains the three. Test: `tests/sea_checks.gd` `canoes()` (in the
+sea determinism run): the rows, a fire canoe lit and alongside a sloop, a piragua grappling a sloop, the "canoes" battle
+(two piraguas, a great canoe and a fire canoe against a sloop and a brigantine, both sides AI) twice identical with
+snapshots restored at 300 and 1200, over 8 seeds the fire canoe lit and the canoes boarding; at equal gold the dugouts board
+more than once a battle. The test scenarios set the boarding quality as the campaign does (`cseabattle`: the row's `board` x
+the crews' boarding %, `SeaChecks._cu`); the first build's scenario gave every ship a flat 115, which undervalued the dugouts.
+
+**The dugouts close and board (2026-11-01, the sea AI).** The battle AI's think for a ship with `canoe`:
+- *Target:* the enemy ship with the fewest defenders (distance + 6 x her boarding strength), not the weakest hull.
+- *Board:* when her boarding strength is `CANOE_BOARD_PCT` (100) % of the target's with the defenders' deck bonus (the others
+  need `BOARD_PCT` 160), at any range (rowed, as before); otherwise she engages as before.
+- *Strength:* `_guns_eq` (the fleet's power for the flight rule and the call on the clock) counts a dugout as a galley (her
+  boarders), so a canoe fleet is not "outgunned" by one brigantine and does not flee.
+A "swarm" count (every free dugout of the side added to her strength) was tried and dropped: a grapple is one ship to one ship
+in this sim, so the swarm sent canoes alone against a brigantine.
+
+Equal gold, `SeaChecks` "canoes_eq": two Itza piraguas and a great canoe (940 gold; gunnery 80, the Itza crews' boarding 115 %)
+against a Spanish sloop, brigantine and war canoe (920; gunnery 95, boarding 115 %), layout gauge0, both sides AI, canoe wins:
+
+| Step | 8 seeds | 16 seeds | boardings (8) |
+|---|---|---|---|
+| The first build's AI | 0 | 0 | 6 |
+| + the swarm count | 0 | 1 | 20 |
+| + the target by defenders | 1 | 3 | 22 |
+| the swarm dropped, boarding at 100 % (as built) | 1 | 3 | 33 |
+| + piragua board 160 -> 180 | 1 | 3 | 30 |
+| + piragua board 200 | 1 | 3 | 31 |
+| + piragua hull 180 -> 200 | 1 | 3 | 32 |
+| + piragua hull 220 | 1 | 3 | 27 |
+| + great canoe board 150 -> 170 | 1 | 2 | 24 |
+| + great canoe board 190 | 1 | 2 | 16 |
+| (a reading, not kept: a dugout sends 95 % of her crew across, not `DECK_BOARD_PCT` 75) | 2 | 3 | 22 |
+
+No step reaches the 40-50 % band, so the rows keep their numbers (piragua board 160, hull 180; great canoe board 150) and only
+the AI change is kept. Why the stats do not move it: the boarding quality is clamped at 200 in the sim (`s_bq`; a piragua's 160
+x 115 % is already 184), hull does not enter a deck melee, and a melee is one ship against one: a piragua sends 45 of her 60 men
+across against a sloop's 60 fighting at 125 % on their own deck, and the brigantine's 90. The canoes take the war canoe and
+often the sloop, then lose their boarders to the brigantine. The levers left are outside the brief: more than one boarder on a
+ship, the 200 clamp, a dugout's share across, or crews.

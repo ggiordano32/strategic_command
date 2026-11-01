@@ -9,7 +9,9 @@ extends RefCounted
 ##  2. build: a Shipyard 1 at its best port when it has none; at most one
 ##     ship a turn: transports while the fleets carry less than WANT_CAP
 ##     units (by its armies), else warships while its fleets are weaker than
-##     its enemies' (WAR_PCT), within the money above the AI's reserve;
+##     its enemies' (WAR_PCT), within the money above the AI's reserve
+##     (docs/AI.md 52: the natives value warships by the formula's power and
+##     raise their best port's yard a level when a better hull needs it);
 ##  3. loaded fleets sail to land their troops by the best hostile coastal
 ##     region they can take (value per defence, the voyage in turns), or the
 ##     nearest friendly coast with work on that land;
@@ -307,8 +309,9 @@ static func _merge(st: Dictionary, f: int) -> void:
 
 static func _build(st: Dictionary, f: int) -> void:
 	var budget := int(st["factions"][f]["treasury"]) - CAI._reserve(st, f)
-	if budget <= 0:
-		return
+	var yard_up_f := (CData.ship_const("AI_YARD_UP", []) as Array).has(str(CData.FACTIONS[f]["key"]))
+	if budget <= 0 and not yard_up_f:
+		return  # (an AI_YARD_UP faction goes on: its yard raise may dip into the reserve, _yard_up)
 	var ports: Array[int] = []
 	for r in CState.regions_of(st, f):
 		if CFleet.dock(r) >= 0:
@@ -324,7 +327,7 @@ static func _build(st: Dictionary, f: int) -> void:
 	var fk := str(CData.FACTIONS[f]["key"])
 	var yard_ships := false
 	for row in CData.ship_rows():
-		if (row["factions"] as Array).has(fk) and int(row["yard"]) > 0:
+		if (row["factions"] as Array).has(fk) and CData.ship_yard(row, f) > 0:
 			yard_ships = true
 	var has_yard := false
 	for r in ports:
@@ -359,18 +362,24 @@ static func _build(st: Dictionary, f: int) -> void:
 	var best_r := -1
 	var best_k := ""
 	var best_v := -1
+	var yard_v := -1  # (the best its yards build, money aside: what a higher yard must beat)
 	for r in ports:
 		for key in CFleet.buildable(st, f, r):
 			var row := CData.ship_row(str(key))
 			if int(row.get("fire", 0)) != 0:
 				continue  # (N3c: fire ships are a player's choice; the battle AI sails them)
+			var v := _ship_value(row, transport, f)
+			yard_v = maxi(yard_v, v)
 			if int(row["cost"]) > budget or CFleet.ship_check(st, f, r, str(key)) != "":
 				continue
-			var v := int(row["cap"]) * 1000 + int(row["guns"]) if transport else int(row["guns"]) * 1000 + int(row["cap"])
 			if v > best_v:
 				best_v = v
 				best_k = str(key)
 				best_r = r
+	if yard_up_f and _yard_up(st, f, ports[0], transport, yard_v, int(st["factions"][f]["treasury"]) - CAI._reserve(st, f) / 2):
+		return
+	if budget <= 0:
+		return
 	if best_r >= 0:
 		var lim := int(CData.ship_row(best_k).get("launch", 1))
 		var cost := int(CData.ship_row(best_k)["cost"])
@@ -382,6 +391,46 @@ static func _build(st: Dictionary, f: int) -> void:
 			if lim <= 1 or not transport or made >= lim or left < cost \
 					or CFleet.ship_check(st, f, best_r, best_k) != "":
 				break
+
+
+## A row's worth to _build for faction f: transports by places then guns; warships by guns then places,
+## except (2026-11-01, docs/AI.md 52) for the factions of the pack's AI_YARD_UP (the natives, whose dugouts
+## board rather than shoot), by the formula's power at full strength then places (CFleet.ship_power: the
+## piragua and the great canoe above the war canoe, which guns put first). Everyone else (Rome's galleys,
+## the Europeans) picks as before.
+static func _ship_value(row: Dictionary, transport: bool, f: int) -> int:
+	if transport:
+		return int(row["cap"]) * 1000 + int(row["guns"])
+	if (CData.ship_const("AI_YARD_UP", []) as Array).has(str(CData.FACTIONS[f]["key"])):
+		return CFleet.ship_power({"t": str(row["key"]), "h": 100, "c": 100}) * 1000 + int(row["cap"])
+	return int(row["guns"]) * 1000 + int(row["cap"])
+
+
+## (2026-11-01, docs/AI.md 52) A faction of the pack's AI_YARD_UP (the natives) raises the Shipyard of its
+## best port r a level, instead of a ship this turn, when a row of its people (not a fire ship, treaties
+## allowing) needs a higher yard than r has and is worth more (_ship_value) than the best its yards build
+## now (best_v, money aside), and the level fits `budget`: the treasury above half the reserve (a one-off
+## building; the natives' money above the whole reserve rarely reaches the 1,000 of a level 2, and the whole
+## treasury cost the Miskito 10 more eliminations in 72 seeds). True when it ordered the building.
+static func _yard_up(st: Dictionary, f: int, r: int, transport: bool, best_v: int, budget: int) -> bool:
+	var fk := str(CData.FACTIONS[f]["key"])
+	if not (CData.ship_const("AI_YARD_UP", []) as Array).has(fk):
+		return false
+	var yard := CState.building(st, r, CData.SHIPYARD)
+	var want := false
+	for row in CData.ship_rows():
+		if not (row["factions"] as Array).has(fk) or int(row.get("fire", 0)) != 0 or CData.ship_yard(row, f) <= yard:
+			continue
+		if CAI.CDip.ship_why(st, f, row) != "":
+			continue
+		if _ship_value(row, transport, f) > best_v:
+			want = true
+	if not want:
+		return false
+	var info := CRules.build_info(st, f, r, CData.SHIPYARD)
+	if info.has("why") or int(info["cost"]) > budget:
+		return false
+	return CRules.apply_order(st, f, {"t": "build", "r": r, "chain": CData.SHIPYARD}) == ""
 
 
 # -------------------------------------------------------------- transport ---

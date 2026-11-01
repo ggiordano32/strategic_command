@@ -2434,7 +2434,7 @@ func _j_board() -> void:
 	var sl = cs.dialog_box.find_child("ship_sloop", true, false)
 	_check(wc != null and CFleet.ship_check(cs.ps, cs.f, r, "war_canoe") == "" and (wc as Kit.ShipRow).modulate.a >= 1.0,
 		"shipyard: the canoe row stays orderable after one canoe")
-	_check(sl != null and (sl as Kit.ShipRow).sub_text == CFleet.ship_check(cs.ps, cs.f, r, "sloop") and (sl as Kit.ShipRow).sub_text != "",
+	_check(sl != null and (sl as Kit.ShipRow).sub_text == CData.local_text(CFleet.ship_check(cs.ps, cs.f, r, "sloop"), cs.f) and (sl as Kit.ShipRow).sub_text != "",
 		"shipyard: the sloop row shows the yard reason (%s)" % (sl as Kit.ShipRow).sub_text)
 	var q = cs.dialog_box.find_child("ship_queued", true, false)
 	var q_text: String = (q as Label).text if q is Label else ""
@@ -2449,6 +2449,45 @@ func _j_board() -> void:
 		(x as Button).pressed.emit()
 		await process_frame
 	_check((cs.ps["regions"][r].get("sq", []) as Array).is_empty(), "shipyard: the group's close button removes the order")
+	cs.close_dialog()
+	# (Native vessels, 2026-11-01) The Miskito's Canoe yard 2 and 3: the dialog's names and the new rows.
+	cs.st["regions"][r]["level"] = maxi(int(cs.st["regions"][r]["level"]), CData.TOWN)
+	for sl2 in cs.st["regions"][r]["slots"]:
+		if int(sl2[0]) == CData.SHIPYARD:
+			sl2[1] = 2
+	cs.st["factions"][cs.f]["treasury"] = 20000
+	cs._replan()
+	cs.panels._raise = {}
+	cs.panels.show_raise(r, "ship")
+	for k in 4:
+		await process_frame
+	var pg = cs.dialog_box.find_child("ship_piragua", true, false)
+	var fcn = cs.dialog_box.find_child("ship_fire_canoe", true, false)
+	var bg = cs.dialog_box.find_child("ship_brigantine", true, false)
+	var tab = cs.dialog_box.find_child("raise_tab_ship", true, false)
+	_check(cs.dialog_title.text.begins_with("Canoe yard at") and tab != null and (tab as Button).text == "Canoe yard",
+		"native vessels: the Miskito's ship dialog is the Canoe yard ('%s')" % cs.dialog_title.text)
+	_check(pg != null and fcn != null and (pg as Kit.ShipRow).modulate.a >= 1.0 and (fcn as Kit.ShipRow).modulate.a >= 1.0
+		and cs.dialog_box.find_child("ship_great_canoe", true, false) == null,
+		"native vessels: at the Canoe yard 2 the piragua and the fire canoe rows are orderable, no great canoe (the Itza's)")
+	_check(bg != null and (bg as Kit.ShipRow).sub_text == "needs Canoe yard 3",
+		"native vessels: the brigantine row reads the yard reason in the natives' words (%s)" % ((bg as Kit.ShipRow).sub_text if bg != null else "none"))
+	cs.close_dialog()
+	for sl3 in cs.st["regions"][r]["slots"]:
+		if int(sl3[0]) == CData.SHIPYARD:
+			sl3[1] = 3
+	cs._replan()
+	cs.panels.show_raise(r, "ship")
+	for k in 4:
+		await process_frame
+	var bg3 = cs.dialog_box.find_child("ship_brigantine", true, false)
+	_check(bg3 != null and (bg3 as Kit.ShipRow).sub_text.contains("while trading with or allied to England") and (bg3 as Kit.ShipRow).modulate.a >= 1.0,
+		"native vessels: at the Canoe yard 3, allied to England, the brigantine is orderable and names the condition (%s)" % ((bg3 as Kit.ShipRow).sub_text if bg3 != null else "none"))
+	cs.close_dialog()
+	cs.panels.show_build(r)
+	await process_frame
+	var yu = cs.dialog_box.find_child("build_unlocks_shipyard", true, false)
+	_check(yu == null or not (yu as Label).text.contains("Shipyard"), "native vessels: the build dialog never says Shipyard for the natives")
 	cs.close_dialog()
 	hold = false
 

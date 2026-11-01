@@ -57,6 +57,10 @@ const ACT_W_PHONE := 56.0
 const ACT_ICON := 26           # icon size, desktop
 const ACT_ICON_PHONE := 24
 const ACT_FONT := 11
+## (2026-11-01) A building chip's label: the chain's short name (CData.chain_short), and for the shorts still
+## wider than the 52 px chip at ACT_FONT ("Shipyard 2" 56 px, "Workshop 1" 64, "Barracks 2" 56, "Hunting 2" 52,
+## "Palisade 2" 54) these. The tip keeps the full name.
+const CHIP_SHORT := {"Shipyard": "Yard", "Workshop": "Works", "Barracks": "Barr.", "Hunting": "Hunt", "Palisade": "Stakes"}
 const MAX_TRAITS := 3
 const PRIMARY := 3             # actions that stay on the bar when the rest fold under "..."
 const FOLD_CARDS := 4          # the strip must hold this many cards (at their narrowest) beside the actions, else fold
@@ -895,8 +899,9 @@ func _build_region(r: int) -> void:
 			var building: bool = not bld.is_empty() and int(bld[0]) == ci
 			if cur == 0 and not building:
 				continue
-			var lab := "%s %d" % [CData.chain_name(ci, f), cur]
-			var tip := "%s: %s" % [lab, str(ch["desc"])]
+			var cshort := CData.chain_short(ci, f)
+			var lab := "%s %d" % [CHIP_SHORT.get(cshort, cshort), cur]   # (the short name: the chip is narrow)
+			var tip := "%s %d: %s" % [CData.chain_name(ci, f), cur, CData.chain_desc(ci, f)]
 			if building:
 				tip += "\nBuilding level %d: %d turn%s left." % [int(bld[1]), int(bld[2]), "" if int(bld[2]) == 1 else "s"]
 			var chip := _action(CData.chain_icon(ci, f), ("%s >%d" % [CData.chain_short(ci, f), int(bld[1])]) if building else lab, tip,
@@ -1032,7 +1037,7 @@ func _build_fleet(id: int) -> void:
 		var port := CFleet.port_of(ps, fl, ff)
 		var yt: Array = s.panels.ship_tab(port) if port >= 0 else [false, ""]
 		if bool(yt[0]):
-			acts.append(_action("shipyard", "Shipyard", "Build ships at %s" % CData.REGIONS[port]["city"],
+			acts.append(_action("shipyard", CData.chain_short(CData.SHIPYARD, ff), "Build ships at %s" % CData.REGIONS[port]["city"],
 				func(): s.panels.show_raise(port, "ship"), str(yt[1]), "shipyard"))
 	acts.append(_details_action())
 	var cw := _card_w(ships.size(), acts.size())

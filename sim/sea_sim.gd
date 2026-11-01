@@ -225,6 +225,9 @@ const BLAST_M := 70
 # Fire ships (N3c).
 const FS_LIGHT_M := 200          # lit this close to her mark (when she can lie the course to it)
 const FS_ABANDON_M := 80         # her crew lash the helm and take to the boat this close ...
+const FS_LIGHT_OARS_M := 80      # a rowed fire ship is lit this close (she cannot outrun a ship under sail for long)
+const FS_ABANDON_OARS_M := 25    # ... a rowed fire ship's paddlers this close (the fire canoe, 2026-11-01: rowed, she
+                                 # slows to a drift without them, so they paddle her nearly alongside)
 const FS_ABANDON_TICKS := 300    # ... or this long after she is lit
 const FS_STICK_TICKS := 250      # her grapnels hold her alongside what she touched
 const FS_FIRE := 400             # the intensity she gives what she touches (+ FS_FEED a second alongside)
@@ -262,6 +265,7 @@ const SEA_ROOM_M := 400          # a new board leads the way with this much clea
 const LAYLINE_M := 200           # she tacks this far short of land or the field's edge ahead
 const LEE_SHORE_M := 250         # land this close to leeward: she sails along it, never in toward it
 const START_CLEAR_M := 300       # no shoal (nor land, where the field allows) this close to a start line
+const CANOE_BOARD_PCT := 100   # (2026-11-01) a native dugout boards at this % (she has no broadside to trade)
 const BOARD_PCT := 160          # the battle AI boards when its boarding strength is this % of hers (or more)
 const HOLD_TICKS := 1800         # the battle AI's leeward fleet holds its line at most this long (3 min) before it beats up
 const LEE_ROOM_M := 500          # the leeward fleet starts with this much clear water to leeward and on both beams
@@ -1534,9 +1538,11 @@ func _fire_heading(s: int) -> int:
 	var b := FM.atan2_a(ty - s_y[s], tx - s_x[s])
 	var lies := absi(FM.angle_diff(w_from, b)) >= close_hauled(s)
 	s_sail[s] = 2
-	if s_lit[s] < 0 and d < FS_LIGHT_M and lies:
+	var rowed := ST.stat(s_type[s], "oars") != 0
+	if s_lit[s] < 0 and d < (FS_LIGHT_OARS_M if rowed else FS_LIGHT_M) and lies:
 		_light(s)
-	if s_lit[s] >= 0 and s_aband[s] == 0 and (d < FS_ABANDON_M or tick - s_lit[s] >= FS_ABANDON_TICKS):
+	var ab_m := FS_ABANDON_OARS_M if rowed else FS_ABANDON_M
+	if s_lit[s] >= 0 and s_aband[s] == 0 and (d < ab_m or tick - s_lit[s] >= FS_ABANDON_TICKS):
 		_abandon(s, _sailable(s, b))
 		return heading(s) if s_mode[s] != M_HEAD else s_tx[s]
 	return _course(s, tx, ty)
@@ -1931,14 +1937,15 @@ func _deck_walk(m: int, x: int, y: int) -> bool:
 
 
 ## Mast places of ship type ty: % of the length from amidships toward the bow.
+## By the row's masts (ST.masts; it was the keys "sloop", "brigantine" and "fire_ship" until 2026-11-01).
 static func _masts(ty: int) -> Array:
-	var key := str(ST.row(ty)["key"])
-	if ST.stat(ty, "oars") != 0:
-		return []
-	if key == "sloop":
-		return [12]
-	if key == "brigantine" or key == "fire_ship":
-		return [22, -12]
+	match ST.masts(ty):
+		0:
+			return []
+		1:
+			return [12]
+		2:
+			return [22, -12]
 	return [30, 2, -25]
 
 
@@ -2905,6 +2912,7 @@ func _think(s: int) -> void:
 	var galley := ST.is_galley(s_type[s])
 	var light := galley and ST.stat(s_type[s], "ram") == 0 and ST.stat(s_type[s], "corvus") == 0
 	var swarm := light and fighting(u_side[s]) >= 2 * fighting(1 - u_side[s])
+	var canoe_s := ST.stat(s_type[s], "canoe") != 0
 	var best := -1
 	var bs := 1 << 40
 	var cur_score := 1 << 40
@@ -2913,6 +2921,9 @@ func _think(s: int) -> void:
 			continue
 		var d := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s]) / U
 		var sc := d + s_hull[t] * 300 / s_hull0[t]
+		if canoe_s:
+			# (Native vessels) A dugout picks the ship her boarders can carry: the fewest defenders, not the weakest hull.
+			sc = d + (s_crew[t] * s_bq[t] / 100 + s_troops[t] * 12 / 10) * 6
 		if light:
 			var crip_t := s_hull[t] * 100 / s_hull0[t] < 40
 			if not crip_t and not swarm and s_hull0[t] > 2 * s_hull0[s]:
@@ -2940,15 +2951,19 @@ func _think(s: int) -> void:
 	var my_b := s_crew[s] * s_bq[s] / 100 + s_troops[s] * 12 / 10
 	var her_b := (s_crew[t2] * s_bq[t2] / 100 + s_troops[t2] * 12 / 10) * DECK_BONUS_PCT / 100
 	# Friends already going for her board with us (a swarm of sloops).
+	# (Native vessels, 2026-11-01) A dugout counts every free dugout of her side as going in with her: the
+	# canoes close and board together rather than trade shots with a swivel (docs/design/sea.md "Native vessels").
+	var canoe := ST.stat(s_type[s], "canoe") != 0
 	for f in n_units:
 		if f != s and u_side[f] == u_side[s] and u_state[f] == S_SAIL and s_tgt[f] == t2 \
 				and (s_mode[f] == M_BOARD or s_grap[f] == t2):
 			my_b += s_crew[f] * s_bq[f] / 100 + s_troops[f] * 12 / 10
+
 	var crippled := s_rig[t2] * 100 / s_rig0[t2] < 40 or s_spd[t2] < _vmax(t2) / 4
 	var runs := s_mode[t2] == M_FLEE and s_spd[t2] * 10 >= s_spd[s] * 9
 	if galley and ST.stat(s_type[s], "corvus") != 0 and not runs and tick - s_cv_t[s] >= CORVUS_COOL:
 		my_b = 1 << 30  # (R1) the corvus: she closes and boards (not while it is hauled up after a repulse)
-	if my_b * 100 > her_b * BOARD_PCT and not runs and (dist < 260 or crippled or ST.stat(s_type[s], "oars") != 0):
+	if my_b * 100 > her_b * (CANOE_BOARD_PCT if canoe else BOARD_PCT) and not runs and (dist < 260 or crippled or ST.stat(s_type[s], "oars") != 0):
 		if s_mode[s] != M_BOARD or s_tgt[s] != t2:
 			s_mode[s] = M_BOARD
 			s_tgt[s] = t2
@@ -2981,11 +2996,11 @@ func _think(s: int) -> void:
 
 # ---------------------------------------------------------- galleys (R1) ---
 
-## The row's guns, or for a galley what stands for them in the fleet's
+## The row's guns, or for a galley (and, 2026-11-01, a native dugout) what stands for them in the fleet's
 ## strength (power, the flight rule): her ram, marines and boarders.
 func _guns_eq(s: int) -> int:
 	var ty := s_type[s]
-	if not ST.is_galley(ty):
+	if not ST.is_galley(ty) and ST.stat(ty, "canoe") == 0:
 		return ST.stat(ty, "guns")
 	return (ST.stat(ty, "ram") + ST.stat(ty, "marines") * 2 + ST.stat(ty, "crew") * ST.stat(ty, "board") / 100) / 20
 
