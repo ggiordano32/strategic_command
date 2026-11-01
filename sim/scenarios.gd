@@ -1442,9 +1442,21 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 
 
 ## Deployment zones for a field battle (metres): each side's part of the
-## field from `gap` m beyond the centre line to its own edge, plus a box of
-## `pad` m round every unit of that side standing outside it (armies that
-## arrive on a flank). [[side, 0 (BattleSim.DZ_RECT), x0, y0, x1, y1], ...].
+## field from `gap` m beyond the centre line to its own edge, plus one box
+## per group of its units standing outside it (armies that arrive on a
+## flank: the `pad` m boxes round them that touch are merged into one), every
+## rectangle cut so that it holds no enemy unit (the padded box of each enemy
+## unit it reaches is taken out: left, right, above and below pieces, those
+## under ZONE_MIN m across dropped). A scenario with "ambush": s (the sim side
+## caught on the march, campaign/cbattle.gd is_ambush) gives that side the
+## strip |y - height / 2| <= AMBUSH_STRIP along the whole width and the other
+## side two bands, north and south of the strip, each from AMBUSH_OFF m off the
+## axis to the map edge. [[side, 0 (BattleSim.DZ_RECT), x0, y0, x1, y1], ...].
+const AMBUSH_STRIP := 40
+const AMBUSH_OFF := 70
+const ZONE_MIN := 40
+
+
 static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 	var w := int(sc["width_m"])
 	var h := int(sc["height_m"])
@@ -1454,32 +1466,105 @@ static func field_zones(sc: Dictionary, gap: int = 30, pad: int = 40) -> Array:
 		# A river crossing: each side's zone ends RIV_ZONE short of the water
 		# (side 0 below it, side 1 above), never across it.
 		rg = MapGen.river_geom(sc["river"], w, h)
+	var amb := int(sc.get("ambush", -1))
 	for s in 2:
-		var sy := 0
-		var cnt := 0
-		for ud in sc["units"]:
-			if int(ud["side"]) == s and int(ud.get("reserve", 0)) == 0:
-				sy += int(ud["y_m"])
-				cnt += 1
-		var bottom := cnt == 0 and s == 0 or cnt > 0 and sy / cnt > h / 2
-		if not rg.is_empty():
-			bottom = s == 0
-		var band := [s, 0, 0, h / 2 + gap, w, h] if bottom else [s, 0, 0, 0, w, h / 2 - gap]
-		if not rg.is_empty():
-			if bottom:
-				band[3] = maxi(int(band[3]), MapGen.river_reach(rg, 0, w, 0) + RIV_ZONE)
+		var bands: Array = []
+		if amb >= 0:
+			if s == amb:
+				bands.append([0, h / 2 - AMBUSH_STRIP, w, h / 2 + AMBUSH_STRIP])
 			else:
-				band[5] = mini(int(band[5]), MapGen.river_reach(rg, 0, w, 1) - RIV_ZONE)
-		zones.append(band)
+				bands.append([0, 0, w, h / 2 - AMBUSH_OFF])
+				bands.append([0, h / 2 + AMBUSH_OFF, w, h])
+		else:
+			var sy := 0
+			var cnt := 0
+			for ud in sc["units"]:
+				if int(ud["side"]) == s and int(ud.get("reserve", 0)) == 0:
+					sy += int(ud["y_m"])
+					cnt += 1
+			var bottom := cnt == 0 and s == 0 or cnt > 0 and sy / cnt > h / 2
+			if not rg.is_empty():
+				bottom = s == 0
+			var band := [0, h / 2 + gap, w, h] if bottom else [0, 0, w, h / 2 - gap]
+			if not rg.is_empty():
+				if bottom:
+					band[1] = maxi(int(band[1]), MapGen.river_reach(rg, 0, w, 0) + RIV_ZONE)
+				else:
+					band[3] = mini(int(band[3]), MapGen.river_reach(rg, 0, w, 1) - RIV_ZONE)
+			bands.append(band)
+		var rects: Array = bands.duplicate(true)
+		var boxes: Array = []
+		var foes: Array = []
 		for ud in sc["units"]:
-			if int(ud["side"]) != s or int(ud.get("reserve", 0)) != 0:
+			if int(ud.get("reserve", 0)) != 0:
 				continue  # (reinforcements to come are not deployed)
 			var x := int(ud["x_m"])
 			var y := int(ud["y_m"])
-			if y >= int(band[3]) and y <= int(band[5]):
+			if int(ud["side"]) != s:
+				foes.append([x, y])
 				continue
-			zones.append([s, 0, maxi(x - pad, 0), maxi(y - pad, 0), mini(x + pad, w), mini(y + pad, h)])
+			var inside := false
+			for bd in bands:
+				if x >= int(bd[0]) and x <= int(bd[2]) and y >= int(bd[1]) and y <= int(bd[3]):
+					inside = true
+			if not inside:
+				boxes.append([maxi(x - pad, 0), maxi(y - pad, 0), mini(x + pad, w), mini(y + pad, h)])
+		rects.append_array(_merge_boxes(boxes))
+		var cut := _cut_rects(rects, foes, pad)
+		if cut.is_empty():
+			cut = bands
+		for rc in cut:
+			zones.append([s, 0, int(rc[0]), int(rc[1]), int(rc[2]), int(rc[3])])
 	return zones
+
+
+## Boxes [x0, y0, x1, y1] that overlap or touch merged into their bounding boxes (repeated to a fixed point; index order).
+static func _merge_boxes(boxes: Array) -> Array:
+	var out: Array = boxes.duplicate(true)
+	var merged := true
+	while merged:
+		merged = false
+		var k := 0
+		while k < out.size() and not merged:
+			var j := k + 1
+			while j < out.size():
+				var p: Array = out[k]
+				var q: Array = out[j]
+				if int(q[0]) <= int(p[2]) and int(p[0]) <= int(q[2]) and int(q[1]) <= int(p[3]) and int(p[1]) <= int(q[3]):
+					out[k] = [mini(int(p[0]), int(q[0])), mini(int(p[1]), int(q[1])), maxi(int(p[2]), int(q[2])), maxi(int(p[3]), int(q[3]))]
+					out.remove_at(j)
+					merged = true
+					break
+				j += 1
+			k += 1
+	return out
+
+
+## Rectangles with the `pad` m box round each enemy point (x, y) taken out (a piece under ZONE_MIN across is dropped).
+static func _cut_rects(rects: Array, foes: Array, pad: int) -> Array:
+	var cur: Array = rects.duplicate(true)
+	for f in foes:
+		var hx0 := int(f[0]) - pad
+		var hy0 := int(f[1]) - pad
+		var hx1 := int(f[0]) + pad
+		var hy1 := int(f[1]) + pad
+		var next: Array = []
+		for r in cur:
+			var x0 := int(r[0])
+			var y0 := int(r[1])
+			var x1 := int(r[2])
+			var y1 := int(r[3])
+			if hx1 <= x0 or hx0 >= x1 or hy1 <= y0 or hy0 >= y1:
+				next.append(r)
+				continue
+			var cx0 := maxi(hx0, x0)
+			var cx1 := mini(hx1, x1)
+			var pieces := [[x0, y0, hx0, y1], [hx1, y0, x1, y1], [cx0, y0, cx1, hy0], [cx0, hy1, cx1, y1]]
+			for pc in pieces:
+				if int(pc[2]) - int(pc[0]) >= ZONE_MIN and int(pc[3]) - int(pc[1]) >= ZONE_MIN:
+					next.append(pc)
+		cur = next
+	return cur
 
 
 static func _gate_rank(ty: int) -> int:

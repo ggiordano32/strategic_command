@@ -810,7 +810,13 @@ file, plus small hooks in `setup`, `step`, `_apply_orders`,
   ahead of their front to their map edge); the defenders inside the walls
   (any piece of open ground with every gate shut other than the attackers'
   piece, within the walls' box: citadels included) and on the walkways;
-  an open town: a square round it.
+  an open town: a square round it. `field_zones` merges a side's flank
+  boxes that touch into one box per group and cuts every rect so it holds
+  no enemy unit (the 40 m box round each enemy it reaches taken out). A
+  scenario key `"ambush": s` (campaign ambush, campaign_rules.md "Ambush
+  battles"): `field_zones` gives side s a strip along the map's axis and
+  the other side two bands, one each side of it, and `_setup_deploy` does
+  not deploy side s with the AI (its column stands as placed).
 - **Phase.** `phase` is `PHASE_DEPLOY` from setup while `dep_left` (sim
   ticks) > 0. A deployment step applies the players' orders (scripted
   orders, player 50, and AI orders wait for the battle), counts down, and

@@ -19026,8 +19026,12 @@ func _setup_deploy(sc: Dictionary) -> void:
 		BattleAI.think(self)
 		_apply_orders()
 		pending_orders.append_array(keep)
+		var ambushed := int(sc.get("ambush", -1))  # (the side caught on the march keeps its column as placed)
 		for u in n_units:
 			if ai_sides[u_side[u]] == 0 or u_state[u] != U_READY or u_order[u] != O_MOVE:
+				continue
+			if u_side[u] == ambushed:
+				u_order[u] = O_NONE
 				continue
 			var p := deploy_clamp(self, u_side[u], u_dx[u], u_dy[u])
 			if p.z != 0:

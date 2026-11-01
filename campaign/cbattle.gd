@@ -66,6 +66,13 @@ const SCREEN := 15       # missile screen ahead of the line
 const MAX_LINE := 12     # units in the first line before a second line forms
 const EDGE_BAND := 110   # m added on a side of the field where reinforcements arrive
 const EDGE_IN := 45      # m from the map edge to an arriving column's front
+## Ambush (2026-11-01, is_ambush): the caught army's column of march: files of foot / horse, m between units,
+## m of ground at each end, the attackers' line this far from the axis (their front; Scenarios.AMBUSH_OFF is the
+## nearest they may be put).
+const AMB_FILES_FOOT := 4
+const AMB_FILES_CAV := 3
+const AMB_GAP := 12
+const AMB_END := 120
 const LADDER_TURNS := 1  # an assault after a siege of this many turns brings ladders ...
 const RAM_TURNS := 2     # ... and of this many a ram
 const LADDER_SETS := [2, 3]  # ... sets of ladders after LADDER_TURNS, RAM_TURNS turns
@@ -200,6 +207,28 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 	# attacker's approach is the attackers' own edge.
 	var edges := _edge_groups(b, entries)
 	var layouts := [_layout(entries[0]), _layout(entries[1])]
+	# An ambush (is_ambush): the defenders as a column of march along the axis, the attackers on its sides.
+	var amb := is_ambush(st, b)
+	var col := {}
+	var att_lays: Array = []
+	var att_north := false
+	if amb:
+		col = _column(entries[1])
+		col["west"] = _column_west(st, b)
+		var app := _approach(b)
+		att_north = app == 7 or app == 0 or app == 1
+		var halves: Array = [entries[0]]
+		if app == 2 or app == 6:
+			halves = _split_halves(entries[0])
+		var wmax := 0
+		var lmax := 1
+		for h in halves:
+			var lh := _layout(h)
+			att_lays.append(lh)
+			wmax = maxi(wmax, int(lh["width"]))
+			lmax = maxi(lmax, int(lh["lines"]))
+		layouts[0] = {"placed": [], "width": wmax, "lines": lmax}
+		layouts[1] = {"placed": [], "width": int(col["len"]) - 80, "lines": 1}
 	var width := 560
 	for s in 2:
 		width = maxi(width, int(layouts[s]["width"]) + 160)
@@ -226,12 +255,15 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 		width += 2 * EDGE_BAND
 	if end_edges:
 		height += 2 * EDGE_BAND
-	width = mini(width, 960 + 2 * EDGE_BAND)
+	if not amb:
+		width = mini(width, 960 + 2 * EDGE_BAND)
 	width -= width % 4
 	var units: Array = []
 	var map: Array = []
 	var ufac: Array = []
-	var placed_all: Array = []  # [campaign side, x, y, face, entry]
+	var placed_all: Array = []  # [campaign side, x, y, face, entry, files (optional)]
+	if amb:
+		_place_ambush(col, att_lays, att_north, width, height, placed_all)
 	for cs in 2:
 		var ss: int = sim_side[cs]
 		for p in layouts[cs]["placed"]:
@@ -267,7 +299,7 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 			cnt = maxi(cnt * scale_pct / 100, mini(cnt, 8))
 			if UT.cls(ty) == UT.CLS_ART:
 				cnt = int(e["n"])  # engines and crews are not scaled
-		var su := Scenarios.unit(ss, ty, cnt, x, y, face)
+		var su := Scenarios.unit(ss, ty, cnt, x, y, face, int(pa[5]) if pa.size() > 5 else -1)
 		if int(e.get("morale", 100)) != 100:
 			su["morale_pct"] = int(e["morale"])  # version 6: caught on a forced march
 		_unit_extras(su, e)
@@ -297,6 +329,8 @@ static func _build0(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct:
 		# build): the battle plays as before.
 		scn["river"] = {"id": cross, "kind": int(CGrid.crossing(cross)[2]), "seed": crossing_seed(cross),
 			"bank": int(sim_side[1])}
+	if amb:
+		scn["ambush"] = int(sim_side[1])  # the sim side caught on the march (BattleSim._setup_deploy, field_zones)
 	_field_works(st, b, arm, scn, sim_side)
 	_deployment(st, scn, human_f)
 	_time_limit(st, scn)
@@ -423,6 +457,134 @@ static func workshop_level(st: Dictionary, f: int) -> int:
 	for r in CState.regions_of(st, f):
 		best = maxi(best, CState.building(st, r, CData.WORKSHOP))
 	return best
+
+
+## An ambush (2026-11-01): a field battle (not a settlement's, not a river crossing) whose lead defending army is
+## caught on the march: it is on a forced march (ST_FORCED), or it moved into this region this turn ("moved" set
+## and "from" a region other than this one; both are cleared at the end of the turn, so they are exact for the
+## turn's battles). Pure function of the state.
+static func is_ambush(st: Dictionary, b: Dictionary) -> bool:
+	if str(b.get("kind", "")) != "field" or int(b.get("settlement", 1)) != 0:
+		return false
+	var defs: Array = b.get("def", [])
+	if defs.is_empty() or river_crossing(st, b) >= 0:
+		return false
+	var a := CState.army(st, int(defs[0]))
+	if a.is_empty():
+		return false
+	if CState.stance(a) == CData.ST_FORCED:
+		return true
+	return int(a.get("moved", 0)) != 0 and int(a.get("from", -1)) >= 0 and int(a["from"]) != int(a["r"])
+
+
+## True when the caught army's column heads west (it came from a region to the east of this one), else east.
+static func _column_west(st: Dictionary, b: Dictionary) -> bool:
+	var a := CState.army(st, int((b["def"] as Array)[0]))
+	var from := int(a.get("from", -1))
+	if from < 0 or from == int(a["r"]):
+		return false
+	var sc := CData.sector(int(a["r"]), from)
+	return sc == 1 or sc == 2 or sc == 3
+
+
+## The defenders as a column of march (van first): a cavalry unit, the skirmishers, the line infantry, the wagons,
+## the artillery and the general, the rear guard (the last line unit, the rest of the cavalry). [{e, files, depth}]
+## and "len" (m, with the AMB_END ground at each end).
+static func _column(entries: Array) -> Dictionary:
+	var cav: Array = []
+	var skir: Array = []
+	var line: Array = []
+	var train: Array = []
+	for e in entries:
+		var ty := UT.index_of(str(e["t"]))
+		if UT.stat(ty, "wagon") >= 0 or UT.stat(ty, "cmd_r") > 0 or UT.cls(ty) == UT.CLS_ART:
+			train.append(e)
+		elif UT.cls(ty) == UT.CLS_CAV:
+			cav.append(e)
+		elif UT.cls(ty) == UT.CLS_MISSILE:
+			skir.append(e)
+		else:
+			line.append(e)
+	var order: Array = []
+	var van_n := (cav.size() + 1) / 2
+	for k in van_n:
+		order.append(cav[k])
+	order.append_array(skir)
+	var rear: Array = []
+	if line.size() > 1:
+		rear.append(line.pop_back())
+	order.append_array(line)
+	order.append_array(train)
+	order.append_array(rear)
+	for k in range(van_n, cav.size()):
+		order.append(cav[k])
+	var out: Array = []
+	var total := 0
+	for e in order:
+		var ty := UT.index_of(str(e["t"]))
+		var n := int(e["n"])
+		var files := Scenarios.unit(0, ty, n, 0, 0, 0)["files"] as int
+		if UT.stat(ty, "wagon") < 0 and UT.stat(ty, "cmd_r") <= 0 and UT.cls(ty) != UT.CLS_ART:
+			files = AMB_FILES_CAV if UT.cls(ty) == UT.CLS_CAV else AMB_FILES_FOOT
+		files = clampi(files, 1, maxi(n, 1))
+		var depth := (n + files - 1) / files * UT.stat(ty, "rank_sp") / 1024 + 1
+		out.append({"e": e, "files": files, "depth": depth})
+		total += depth + AMB_GAP
+	return {"units": out, "len": maxi(total - AMB_GAP, 0) + 2 * AMB_END}
+
+
+## Entries split into two lines for an ambush from the east or west: the cavalry and skirmishers all in the second
+## (south) line, the rest alternately by half in index order (first half north, second half south).
+static func _split_halves(entries: Array) -> Array:
+	var body: Array = []
+	var far: Array = []
+	for e in entries:
+		var c := UT.cls(UT.index_of(str(e["t"])))
+		if c == UT.CLS_CAV or c == UT.CLS_MISSILE:
+			far.append(e)
+		else:
+			body.append(e)
+	var north: Array = []
+	var south: Array = far.duplicate()
+	for k in body.size():
+		if k < (body.size() + 1) / 2:
+			north.append(body[k])
+		else:
+			south.append(body[k])
+	return [north, south]
+
+
+## Place an ambush: the column along y = height / 2 (campaign side 1), the attackers' lines 100 m off the axis
+## facing it (north of the column for a northern approach, else south; two lines, one each side, when att_lays
+## has two). Appends [campaign side, x, y, face, entry, files] to placed_all.
+static func _place_ambush(col: Dictionary, att_lays: Array, att_north: bool, width: int, height: int,
+		placed_all: Array) -> void:
+	# Attackers first (the south line first, so the edge groups read the attackers as standing south).
+	if att_lays.size() == 2:
+		_place_attack_line(att_lays[1], false, width, height, placed_all)
+		_place_attack_line(att_lays[0], true, width, height, placed_all)
+	else:
+		_place_attack_line(att_lays[0], att_north, width, height, placed_all)
+	var west: bool = col.get("west", false)
+	var half_len := int(col["len"]) / 2
+	var cur := width / 2 + half_len - AMB_END if not west else width / 2 - half_len + AMB_END
+	for cu in col["units"]:
+		var d := int(cu["depth"])
+		var x := cur - d / 2 if not west else cur + d / 2
+		placed_all.append([1, x, height / 2, Scenarios.FACE_LEFT if west else Scenarios.FACE_RIGHT, cu["e"], int(cu["files"])])
+		cur = cur - d - AMB_GAP if not west else cur + d + AMB_GAP
+
+
+static func _place_attack_line(lay: Dictionary, north: bool, width: int, height: int, placed_all: Array) -> void:
+	for p in lay["placed"]:
+		var x := width / 2 + int(p["x"])
+		var y := height / 2 + FRONT + int(p["back"])
+		var face := Scenarios.FACE_UP
+		if north:
+			x = width - x
+			y = height - y
+			face = Scenarios.FACE_DOWN
+		placed_all.append([0, x, y, face, p["e"]])
 
 
 ## A battle fought by players (human_f >= 0) gets the campaign's deployment

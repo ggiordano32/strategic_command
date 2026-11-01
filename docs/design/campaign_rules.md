@@ -1483,3 +1483,36 @@ benefits of the nations. I think Pirate vs Native vs European should mostly suff
 - *Tests.* `tests/tutorial_test.gd` plays lessons 1 to 13 for England (10: the pointer on the fleet and then the lit beach, the landing;
   11: the pointer on the fleet's Raid button, pressed; 12: the region's Raid button, pressed), a skip run for lessons 9 to 12 from lesson 9,
   France's three objectives on its own orders, nine sections and the `ways_*` lines. `menu_test` expects nine sections.
+
+### Ambush battles (as built, 2026-11-01)
+
+The owner, on a phone: "during an ambush we need to work on the spawn points. One side looks like a bunch of squares and the
+other shows placing units right on top of the enemy. We should be able to place in both sides of a narrow marching army with
+ambushes." Two faults: `Scenarios.field_zones` gave every unit outside its side's band a box of its own (a flank group was a pile
+of squares), and a flank group stood inside the other side's half, so the enemy could deploy onto it.
+
+- **The rule** (`CBattle.is_ambush(st, b)`, a pure function of the state): a field battle (`kind` "field", not a settlement's, not
+  a river crossing) whose lead defending army (`b["def"][0]`) is caught on the march: its stance is `ST_FORCED`, or it moved into
+  this region this turn (`moved` set and `from` a region other than this one). `moved` and `from` are cleared in `end_turn`, so
+  they are exact for the turn's battles; `dest` is not used (it is cleared on arrival). Forced-march morale
+  (`FORCED_MORALE_PCT`) applies as before.
+- **The column.** The map's axis is horizontal (`y = height / 2`). The defenders (reinforcement armies keep their edge
+  placement) stand in column of march, `files` 4 for foot, 3 for cavalry, the engines and wagons as they are, 12 m between units
+  (depth = ranks x rank spacing), facing along the axis, heading east unless the lead army came from the east
+  (`CData.sector` of its `from` region 1-3: west). Order from the van: half the cavalry (one cavalry unit if there is one), the
+  skirmishers, the line infantry, the wagons, the artillery and the general, the rear guard (the last line unit, the rest of the
+  cavalry). Width = max(560, column + 2 x 120 m), no 960 m cap; height as before. 
+- **The attackers** keep today's line (`_layout`, 100 m off the axis, missile screen 85 m) facing the column: north of it for an
+  approach from the north (sectors 7, 0, 1), else south; from the east or west (sectors 2, 6) the line is split in two halves, the
+  first half of the line units north and the second south, the cavalry and skirmishers all south.
+- **Zones.** The scenario key `"ambush": <sim side>` names the defenders' side. `field_zones` gives that side one strip
+  (`|y - height / 2| <= 40`, the whole width) and the attackers two bands, north and south, each from 70 m off the axis to the
+  map edge (the player places on both sides of the column). In every battle, plain or ambush, `field_zones` now merges the
+  padded (40 m) boxes of a side's units outside its band that touch into one box per group, and cuts each rect (band, strip,
+  box) so it holds no enemy unit: the padded box of every enemy unit it reaches is taken out (left / right / above / below
+  pieces, slivers under 40 m dropped). The rule is integer maths over arrays in unit order.
+- **The sim.** `BattleSim._setup_deploy` does not let the battle AI deploy the ambushed side at tick 0 (its column stands as
+  placed, as on settlement maps); a human on that side may still place units inside the strip. The key is read only there.
+- **Not changed.** No `CState.VERSION` bump (the state's meaning is unchanged), the rules hash moves (`campaign/` changed),
+  scenarios without the key hash as before; auto-resolved battles (the formula) never build the layout.
+- Tests: `tests/ambush_test.gd`; shots `tests/amb_shot.gd` (top and oblique deployment views).
