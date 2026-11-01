@@ -3791,7 +3791,10 @@ func _m_block_setup() -> void:
 	CState.place(na, ec)
 	CRules._insert_army(cs.st, na)
 	_blocker = id
-	CState.place(CState.army(cs.st, g0), c0)
+	# (2026-11-01: g0 one cell further south, outside the enemy's zone: an
+	# army that starts inside a zone may now move within it, round the
+	# enemy, so from c0 the merge would be allowed.)
+	CState.place(CState.army(cs.st, g0), CGrid.at(CGrid.cx(c0), CGrid.cy(c0) + 1))
 	CState.place(CState.army(cs.st, g1), CGrid.at(CGrid.cx(c0), CGrid.cy(c0) - 3))
 	cs._replan()
 	cs.close_side()

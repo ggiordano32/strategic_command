@@ -3219,7 +3219,11 @@ static func check_eliminations(st: Dictionary) -> void:
 		var arm := battle_armies(st, b)
 		var att_here := false
 		for a in arm[0]:
-			if int(a["r"]) == int(b["r"]):
+			# (2026-11-01) On the grid an attacker may stand across a region
+			# border from the battle's cell (it fights from the cell next to
+			# its target, or from a settlement's ring): it is still there.
+			# The region test dropped such battles at the end of the turn.
+			if int(a["r"]) == int(b["r"]) or CState.grid_on(st):
 				att_here = true
 		if att_here:
 			keepb.append(b)
@@ -3607,14 +3611,22 @@ static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, m
 	var m: PackedByteArray = cache[kb]
 	var zm: PackedInt32Array = cache[kz]
 	var targets: Array = aim["targets"]
+	var own := true  # (zm is still the cached mask: copy before changing it)
 	if not targets.is_empty():
 		zm = zm.duplicate()
+		own = false
 		for id in targets:
 			var e := CState.army(st, int(id))
 			if e.is_empty() or zone_r(st, e) <= 0 or not CState.at_war(st, f, int(e["f"])):
 				continue
 			for c in CGrid.disc(CState.cell(e), zone_r(st, e)):
 				zm[c] -= 1
+			zm[CState.cell(e)] += 1  # (2026-11-01) never onto its cell: a path to one target went over another's
+	var held := -1
+	if zm[CState.cell(a)] > 0:
+		if own:
+			zm = zm.duplicate()
+		held = held_zones(st, a, zm, targets)
 	var goal := int(aim["cell"])
 	var adjacent := int(aim["adjacent"]) != 0
 	if not adjacent and (m[goal] != 0 or zm[goal] > 0):
@@ -3625,9 +3637,34 @@ static func plan_path(st: Dictionary, a: Dictionary, dest: int, tgt: int = -1, m
 	var res := CGrid.find_path(CState.cell(a), goal, full, CState.mp(a), m, zm, adjacent, max_turns,
 		400 * max_turns if max_turns <= 2 else 1500 + 1500 * mini(max_turns, 6), amph)
 	if res.is_empty():
+		if held >= 0:
+			return {"why": "held in %s's zone of control: attack them or march clear of them" % CData.faction_name(held)}
 		return {"why": "no route"}
 	res["aim"] = aim
 	return res
+
+
+## (2026-11-01) The zones of control army a already stands in (enemy
+## armies not in `skip`): taken out of the zone mask zm, in place, so a
+## path may move inside them as _step6 lets it (a zone stops a step only
+## when entered from outside), but the cells next to that army stay in
+## (a step there is contact: an attack on it) and other armies' zones
+## stay whole. Returns the faction of the first such army, -1 none.
+static func held_zones(st: Dictionary, a: Dictionary, zm: PackedInt32Array, skip: Array = []) -> int:
+	var start := CState.cell(a)
+	var held := -1
+	for e in zone_armies(st, int(a["f"])):
+		var ec := CState.cell(e)
+		var zr := zone_r(st, e)
+		if skip.has(int(e["id"])) or not CGrid.within(ec, start, zr):
+			continue
+		for c in CGrid.disc(ec, zr):
+			zm[c] -= 1
+		for c in CGrid.disc(ec, 1):
+			zm[c] += 1
+		if held < 0:
+			held = int(e["f"])
+	return held
 
 
 ## "" if army a may march to army join and merge into it: another army of
@@ -3948,6 +3985,21 @@ static func _arrive6(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
 					and not inside(st, e) and CGrid.cheb(CState.cell(e), CState.cell(a)) <= 1:
 				_contact6(st, a, e, CState.cell(a), 0)
 				return
+		# A target next to it is already in a battle started this turn (another
+		# army of its side attacked first): join that battle. An army that
+		# starts next to its target never steps, so _step6's join does not see
+		# it, and support leaves out armies inside a settlement or on a siege
+		# ring (2026-11-01, two armies attacking one).
+		for id in aim["targets"]:
+			var e := CState.army(st, int(id))
+			if e.is_empty() or int(e["busy"]) == 0 or CGrid.cheb(CState.cell(e), CState.cell(a)) > 1:
+				continue
+			var bj := _new_battle_of(st, int(id))
+			if not bj.is_empty():
+				var jw := _join6(st, a, bj, CState.cell(a), 0)
+				if jw != "":
+					event(st, {"k": "move_failed", "f": int(a["f"]), "army": int(a["id"]), "to": int(bj["r"]), "why": jw})
+				return
 		if str(aim["kind"]) == "relief":
 			# At the walls of our besieged city with no besieger next to it:
 			# the relief falls on the besiegers all the same.
@@ -3975,6 +4027,15 @@ static func _arrive6(st: Dictionary, a: Dictionary, p: Dictionary) -> void:
 		_assault6(st, r, a)
 	else:
 		start_siege(st, r, a, int(a["from"]))
+
+
+## The land battle started this turn (not yet fought: "new") that army id
+## fights in as attacker or defender, {} none.
+static func _new_battle_of(st: Dictionary, id: int) -> Dictionary:
+	for b in st["battles"]:
+		if int(b.get("new", 0)) != 0 and not b.has("sea") and ((b["att"] as Array).has(id) or (b["def"] as Array).has(id)):
+			return b
+	return {}
 
 
 ## The march of plan p ended next to the army it merges into (aim "join"):
@@ -4069,7 +4130,11 @@ static func _contact6(st: Dictionary, a: Dictionary, e: Dictionary, c: int, cost
 		if int(bx.get("new", 0)) == 0:
 			return "battle pending there"
 		var jw := _join6(st, a, bx, c, cost)
-		return "stop" if jw == "" else jw
+		if jw != "":
+			return jw
+		if not relief:
+			_pull_in(st, a, e, bx)
+		return "stop"
 	var c0 := CState.cell(a)
 	if c != c0:
 		_move_to(st, a, c, cost)
@@ -4093,6 +4158,28 @@ static func _contact6(st: Dictionary, a: Dictionary, e: Dictionary, c: int, cost
 	return "stop"
 
 
+## Army a, which ran into enemy army e, joined battle b (one battle a
+## region: another army of its side started it elsewhere in the region this
+## turn): e and its side's free armies next to it fight in b too, on the
+## side against a (2026-11-01: before, a fought in b while e, the army it
+## attacked, stayed out of every battle).
+static func _pull_in(st: Dictionary, a: Dictionary, e: Dictionary, b: Dictionary) -> void:
+	var on_att := (b["att"] as Array).has(int(a["id"]))
+	var lead := int(b["def_f"]) if on_att else int(b["att_f"])
+	if lead < 0 or int(e["busy"]) != 0 or not CState.friendly(st, int(e["f"]), lead):
+		return
+	var ec := CState.cell(e)
+	var key := "def" if on_att else "att"
+	for d in st["armies"]:
+		if int(d["busy"]) != 0 or not CState.friendly(st, int(d["f"]), int(e["f"])) or inside(st, d) \
+				or CGrid.cheb(CState.cell(d), ec) > 1 or not CState.at_war(st, int(a["f"]), int(d["f"])):
+			continue
+		d["busy"] = 1
+		(b[key] as Array).append(int(d["id"]))
+		if b.has("from") and int(d["from"]) >= 0 and int(d["from"]) != int(b["r"]):
+			(b["from"] as Array).append([int(d["id"]), int(d["from"])])
+
+
 ## Army a steps onto cell c next to battle b (started this turn) and joins
 ## it on its side (version 6 join_battle).
 static func _join6(st: Dictionary, a: Dictionary, b: Dictionary, c: int, cost: int) -> String:
@@ -4105,10 +4192,18 @@ static func _join6(st: Dictionary, a: Dictionary, b: Dictionary, c: int, cost: i
 	if side < 0:
 		return "battle there"
 	var left := int(a["r"])
-	if c != CState.cell(a):
+	var stays := c == CState.cell(a)
+	if not stays:
 		_move_to(st, a, c, cost)
 	a["busy"] = 1
 	(b["att" if side == 0 else "def"] as Array).append(int(a["id"]))
+	if stays:
+		# (2026-11-01) Joining from where it stands (next to its target): it
+		# came from where its "from" says, as an attacker of
+		# start_field_battle, and a besieger's siege record is left alone.
+		if b.has("from") and int(a["from"]) >= 0:
+			(b["from"] as Array).append([int(a["id"]), int(a["from"])])
+		return ""
 	if b.has("from"):
 		(b["from"] as Array).append([int(a["id"]), left])
 	var sg := CState.siege_at(st, int(b["r"]))
@@ -4185,6 +4280,8 @@ static func reach6(st: Dictionary, a: Dictionary, turns: int = 0) -> PackedInt32
 	var amph := amphibious(st, a)
 	if amph:
 		CFleet.ensure()
+	if zm[CState.cell(a)] > 0:
+		held_zones(st, a, zm)  # (the zones it stands in, as plan_path)
 	return CGrid.reach(CState.cell(a), full, CState.mp(a), m, turns, zm, amph)
 
 

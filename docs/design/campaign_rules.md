@@ -809,6 +809,61 @@ existing systems.
   area, zones, support (yellow) and attack (red) lines, paths with this
   turn's end marked, and replays the turn's steps. Details: CAMPAIGN.md
   "The continuous overworld".
+- **(2026-11-01) Two armies attacking one.** The owner (West, a native
+  faction): "I can't attack when multiple armies attack an army at once. I
+  had to back one army off and reattack to get the battle to start", and
+  again with three armies on two enemy armies close together. Headless
+  probe `tests/multi_attack_probe.gd` (West, the Miskito against Tierra
+  Firme; each order through `CTurn.preview` as the view's `set_move6`,
+  then `resolve_turn`). Five causes in `campaign/crules.gd`, all silent:
+  1. *A battle across a region border vanished.* The battle stands on the
+     target's cell, in the target's region; an attacker next to it may stand
+     in the neighbouring region. `check_eliminations` (run at the end of the
+     turn and after every battle applied) kept a battle only while an
+     attacker stood in the battle's region (a rule of the region-hop
+     formats), so the battle was dropped and every army freed: no battle.
+     Attacking again from a cell in the target's region worked, which reads
+     as "back one army off and reattack". On the grid an attacker in the
+     battle counts wherever it stands. The AI was hit too: an AI battle
+     across a border was dropped when another battle was applied first.
+  2. *A second attacker that starts next to the target stood idle.* It
+     never steps, so `_step6`'s join does not see it, and `_arrive6`
+     skipped a target already busy; support leaves out armies inside a
+     settlement and on a siege ring (field armies came in as `reinf` on a
+     map edge). `_arrive6` now joins the battle started this turn that a
+     target next to it fights in (`_new_battle_of`, `_join6`; a refusal is
+     a `move_failed` event). A joiner that does not move records its own
+     `from` in the battle (as an attacker of `start_field_battle`) and
+     leaves a siege's record alone.
+  3. *One battle a region left the attacked army out.* `_contact6` puts an
+     army that runs into a free enemy army into the battle already started
+     in that region this turn; the army it attacked stayed out (ordered
+     1 + 2, the two on X fought Y's battle and X was never fought).
+     `_pull_in` now brings the army it ran into, with its side's free
+     armies next to it, into that battle on the other side (not for a
+     relief, whose battle is the siege's). Enemy armies in adjacent regions
+     get a battle each, as before.
+  4. *A path went over a target's own cell.* `plan_path` takes the zones of
+     the target and its side's armies out of the zone mask, cells included,
+     so a march on X could step onto Y's cell (two armies on one cell; with
+     cause 1 the battle then vanished). The targets' own cells stay out.
+  5. *The zone-of-control lock.* `CGrid.find_path` never entered a zone
+     cell, even in the zone the army started in, though `_step6` stops a
+     step only on a zone entered from outside: an army next to (or within
+     two cells of) enemy army Y could neither march clear nor attack another
+     army X ("no route"). `held_zones` takes the zones the army already
+     stands in out of the mask for `plan_path` and `reach6` (the reach
+     shading), keeping the cells next to that army in (a step there is
+     contact) and other armies' zones whole; if a path still fails the
+     refusal reads "held in <faction>'s zone of control: attack them or
+     march clear of them".
+  campaign_test `_grid_two_army_attacks` checks two field attackers, two in
+  a town, field and town, two besiegers (the siege's record untouched), two
+  targets in one region either order, an attack across a region border, an
+  attack on X from next to Y, and marching clear of Y without stepping next
+  to it (9 of them FAIL on HEAD). campaign_input_test's merge-glyph set-up
+  moved its army out of the enemy's zone (from inside it the merge is now
+  allowed). Causes 1, 4 and 5 change the AI's play: the pins move (STATUS).
 
 ### Fog of war on the overworld (as built 2026-10-17, state format 8)
 

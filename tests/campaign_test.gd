@@ -2136,6 +2136,137 @@ func _grid_two_army_attacks() -> void:
 		var fb: Dictionary = s2["battles"][0] if not (s2["battles"] as Array).is_empty() else {}
 		_check(not fb.is_empty() and (fb["att"] as Array).has(int(a1["id"])) and (fb["def"] as Array).has(int(e["id"])),
 			"%d armies next to an enemy army: the attack makes a field battle (%s)" % [n, str(fb)])
+		if n == 2:
+			_check(not fb.is_empty() and (fb["att"] as Array).size() == 2 and (fb["att"] as Array).has(int(CState.army(st2, int(orders[1]["army"]))["id"])),
+				"two armies next to an enemy army, both ordered to attack it: both are attackers of the one battle (%s)" % str(fb))
+	# (2026-11-01, the owner: "I can't attack when multiple armies attack an
+	# army at once") A second attacker that starts next to the target never
+	# steps, and support leaves out armies inside a settlement or on a siege
+	# ring: it was left out of the battle with no event. Now it joins.
+	var ro := -1
+	for r in CData.region_count():
+		if ro < 0 and CState.owner(_empty6(), r) == rome and CState.ring_cell(r, 0) != CGrid.site(r):
+			ro = r
+	if ro >= 0:
+		for case in ["both inside the town", "field and town"]:
+			var st4 := _empty6()
+			var s4 := CGrid.site(ro)
+			var ec4 := CState.ring_cell(ro, 0)
+			var fc4 := -1
+			for c in CGrid.disc(ec4, 1):
+				if fc4 < 0 and c != s4 and c != ec4 and CGrid.passable(c) and CGrid.site_region(c) < 0 and CGrid.step_cost(ec4, c) > 0:
+					fc4 = c
+			var e4 := _put(st4, ep, ec4, ["spear", "spear"])
+			var tb1 := _put(st4, rome, s4 if case == "both inside the town" else fc4, ["heavy", "heavy"])
+			var tb2 := _put(st4, rome, s4, ["heavy", "heavy"])
+			var s5 := CTurn.resolve_turn(st4, [CTurn.submission(st4, rome, [_move6(tb1, ec4, {"tgt": int(e4["id"])}), _move6(tb2, ec4, {"tgt": int(e4["id"])})])])
+			var b5: Dictionary = s5["battles"][0] if (s5["battles"] as Array).size() == 1 else {}
+			_check(not b5.is_empty() and (b5["att"] as Array).has(int(tb1["id"])) and (b5["att"] as Array).has(int(tb2["id"]))
+				and (b5["def"] as Array).has(int(e4["id"])),
+				"two armies attack one enemy army next to their town (%s): one battle, both attackers (%s)" % [case, str(b5)])
+	else:
+		_check(false, "a Roman town with a ring cell for the two-attackers check")
+	# Two besiegers of a town attack an enemy army that stands next to the siege.
+	var ap2 := _r("apulia")
+	var st6 := _empty6()
+	var q1 := _put(st6, rome, CState.ring_cell(ap2, 0), ["heavy", "heavy"])
+	CRules.start_siege(st6, ap2, q1, -1)
+	var q2 := _put(st6, rome, CState.ring_cell(ap2, 1), ["heavy", "heavy"])
+	var tc6 := -1
+	for c in CGrid.disc(CState.cell(q1), 1):
+		if tc6 < 0 and CGrid.passable(c) and CGrid.site_region(c) < 0 and CGrid.cheb(c, CGrid.site(ap2)) == 2 and CGrid.cheb(c, CState.cell(q2)) <= 1:
+			tc6 = c
+	if tc6 >= 0:
+		var e6 := _put(st6, CState.owner(st6, ap2), tc6, ["spear", "spear"])
+		var s7 := CTurn.resolve_turn(st6, [CTurn.submission(st6, rome, [_move6(q1, tc6, {"tgt": int(e6["id"])}), _move6(q2, tc6, {"tgt": int(e6["id"])})])])
+		var b7: Dictionary = {}
+		for b in s7["battles"]:
+			if (b["def"] as Array).has(int(e6["id"])):
+				b7 = b
+		_check(not b7.is_empty() and (b7["att"] as Array).has(int(q1["id"])) and (b7["att"] as Array).has(int(q2["id"])),
+			"two besiegers attack an enemy army next to the siege: both are attackers (%s)" % str(b7))
+		var sg7 := CState.siege_at(s7, ap2)
+		_check(not sg7.is_empty() and CRules._siege_origin(sg7, int(q2["id"])) == CRules._siege_origin(CState.siege_at(st6, ap2), int(q2["id"])),
+			"the siege stands and its record of the second besieger is untouched by its joining (%s)" % str(sg7.get("from", [])))
+	else:
+		_check(false, "a cell next to both Apulia besiegers for the two-attackers check")
+	# (2026-11-01, the owner's second report: three armies on two enemy
+	# armies close together) Two enemy armies 4 cells apart in one region,
+	# each attacked: one battle a region, and the army the joiner ran into
+	# fights in it too (it stayed out of every battle before).
+	var rg := _row(_r("gallaecia"), 11, 21)
+	if rg.size() >= 11:
+		for first_on_y in [false, true]:
+			var st8 := _empty6()
+			var x8 := _put(st8, ep, rg[3], ["spear", "spear"])
+			var y8 := _put(st8, ep, rg[7], ["spear", "spear"])
+			var ay: Dictionary = {}
+			if first_on_y:
+				ay = _put(st8, rome, rg[10], ["heavy", "heavy"])
+			var ax := _put(st8, rome, rg[0], ["heavy", "heavy"])
+			if not first_on_y:
+				ay = _put(st8, rome, rg[10], ["heavy", "heavy"])
+			var s8 := CTurn.resolve_turn(st8, [CTurn.submission(st8, rome, [_move6(ax, rg[3], {"tgt": int(x8["id"])}), _move6(ay, rg[7], {"tgt": int(y8["id"])})])])
+			var b8: Dictionary = s8["battles"][0] if (s8["battles"] as Array).size() == 1 else {}
+			_check(not b8.is_empty() and (b8["att"] as Array).has(int(ax["id"])) and (b8["att"] as Array).has(int(ay["id"]))
+				and (b8["def"] as Array).has(int(x8["id"])) and (b8["def"] as Array).has(int(y8["id"])),
+				"two enemy armies in one region, each attacked (%s first): one battle with both attackers and both targets (%s)" % [
+				"Y's attacker" if first_on_y else "X's attacker", str(s8["battles"])])
+	else:
+		_check(false, "a Gallaecia row for the two-targets check")
+	# (2026-11-01) An attack across a region border: the battle stands on the
+	# target's cell in its region, the attacker next to it in the other; the
+	# end-of-turn check dropped it (attackers "not in the region").
+	var stx := _empty6()
+	var bx0 := -1
+	for c in CGrid.count():
+		var c2 := CGrid.at(CGrid.cx(c) + 1, CGrid.cy(c))
+		if c2 < 0 or not CGrid.passable(c) or not CGrid.passable(c2) or CGrid.step_cost(c, c2) <= 0 \
+				or CGrid.region(c) == CGrid.region(c2) or CGrid.region(c) < 0 or CGrid.region(c2) < 0 \
+				or CGrid.site_region(c) >= 0 or CGrid.site_region(c2) >= 0:
+			continue
+		var o1 := CState.owner(stx, CGrid.region(c))
+		var o2 := CState.owner(stx, CGrid.region(c2))
+		if (o1 == rome or o1 == ep) and (o2 == rome or o2 == ep) and CGrid.cheb(c, CGrid.site(CGrid.region(c))) >= 3 \
+				and CGrid.cheb(c2, CGrid.site(CGrid.region(c2))) >= 3:
+			bx0 = c
+			break
+	if bx0 >= 0:
+		var ex := _put(stx, ep, bx0, ["spear", "spear"])
+		var axx := _put(stx, rome, bx0 + 1, ["heavy", "heavy"])
+		var sx := CTurn.resolve_turn(stx, [CTurn.submission(stx, rome, [_move6(axx, bx0, {"tgt": int(ex["id"])})])])
+		var bxx: Dictionary = sx["battles"][0] if (sx["battles"] as Array).size() == 1 else {}
+		_check(not bxx.is_empty() and (bxx["att"] as Array).has(int(axx["id"])) and str(sx["phase"]) == "battles",
+			"an attack across a region border leaves a pending battle (%s)" % str(sx["battles"]))
+	else:
+		_check(false, "a Roman / Epirote region border for the cross-border check")
+	# (2026-11-01) The zone it stands in: an army next to enemy army Y may
+	# march clear of it, or attack another army X past it.
+	if rg.size() >= 11:
+		var stz := _empty6()
+		var xz := _put(stz, ep, rg[3], ["spear", "spear"])
+		_put(stz, ep, rg[7], ["spear", "spear"])
+		var az := _put(stz, rome, rg[8], ["heavy", "heavy"])
+		var why_z := CRules.apply_order(stz, rome, _move6(az, rg[3], {"tgt": int(xz["id"])}))
+		var sz := CTurn.resolve_turn(stz, [CTurn.submission(stz, rome, [_move6(az, rg[3], {"tgt": int(xz["id"])})])])
+		var bz: Dictionary = sz["battles"][0] if (sz["battles"] as Array).size() == 1 else {}
+		_check(why_z == "" and not bz.is_empty() and (bz["att"] as Array).has(int(az["id"])) and (bz["def"] as Array).has(int(xz["id"])),
+			"an army next to an enemy army attacks another army past it ('%s', %s)" % [why_z, str(sz["battles"])])
+		var off := CGrid.at(CGrid.cx(rg[8]), CGrid.cy(rg[8]) + 3)
+		if off >= 0 and CGrid.passable(off):
+			var stz2 := _empty6()
+			_put(stz2, ep, rg[7], ["spear", "spear"])
+			var az2 := _put(stz2, rome, rg[8], ["heavy", "heavy"])
+			var why_o := CRules.apply_order(stz2, rome, _move6(az2, off))
+			_check(why_o == "" or why_o.begins_with("held in"),
+				"an army next to an enemy army may march clear of it, or is told it is held ('%s')" % why_o)
+			if why_o == "":
+				var pp := CRules.plan_path(stz2, CState.army(stz2, int(az2["id"])), off)
+				var adj := false
+				for c in pp.get("path", []):
+					if CGrid.cheb(int(c), rg[7]) <= 1:
+						adj = true
+				_check(not adj, "marching clear, it never steps next to that army")
 	# A field battle of ours in the region this turn: the assault is refused, with the reason.
 	var st3 := _empty6()
 	var bs := _put(st3, rome, CState.ring_cell(ap, 0), ["heavy", "heavy", "heavy"])
@@ -3932,7 +4063,9 @@ func _ai_skilled() -> void:
 	# (Easy golden moved 2026-10-13 with reinforcements: an army that was
 	# bounced off a full battle side now joins it; was be6e10a3, same rng.
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "3ab3e567" and int(ge["rng"]) == 989255646,
+	# (Moved 2026-11-01 with the attack fixes: the targets' cells kept out of a march and the zone lock
+	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "82ddfac4" and int(ge["rng"]) == 1051292326,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false

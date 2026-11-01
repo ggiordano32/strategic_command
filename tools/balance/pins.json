@@ -1,34 +1,34 @@
 {
  "_note": "the pins in force; docs/STATUS.md 'Verification pins' is the source of truth, keep this file equal to it",
- "_moved": "2026-11-01 West and West 10 moved: the native vessels (the natives' AI buys piraguas, great canoes and the Miskito brigantine, a native Canoe yard needs no town or city, the AI raises it); were west 64b07610 1cfdaa76 b1e924b8 feed9643 b7f3377a f0ddd6ff, west10 92c74071 5b37e8c9 333d2d6f 87945566 a1690c82 5c18a450; Rome unchanged",
+ "_moved": "2026-11-01 all four moved: the attack fixes (campaign/crules.gd: across-border battles kept by check_eliminations, the targets' own cells kept out of a march, the zone-of-control lock lifted by held_zones); were rome 7df61f83 8e12363b 07354ffa 3656ce6d a27c02da 2640b4c5, west 1b323b32 4fc8a07e b62be437 8d564b85 92a459ea f0ddd6ff, rome10 096465bb 75af05bc 31d31609 173a2d9e 6e903a40 61462ab2, west10 fb51a194 04e2b27f 417d9b78 ca1d4359 352737f8 84d84a62",
  "rome": [
-  "7df61f83",
-  "8e12363b",
-  "07354ffa",
-  "3656ce6d",
-  "a27c02da",
-  "2640b4c5"
+  "6bfa2186",
+  "0a33f33c",
+  "18b11c1b",
+  "59dc0582",
+  "0eaf547b",
+  "cdab38bd"
  ],
  "west": [
   "1b323b32",
-  "4fc8a07e",
-  "b62be437",
-  "8d564b85",
+  "5e71bc0c",
+  "f91a534a",
+  "fc259c74",
   "92a459ea",
   "f0ddd6ff"
  ],
  "rome10": [
   "096465bb",
-  "75af05bc",
+  "11d5924b",
   "31d31609",
-  "173a2d9e",
+  "ee065ecd",
   "6e903a40",
   "61462ab2"
  ],
  "west10": [
   "fb51a194",
   "04e2b27f",
-  "417d9b78",
+  "3e1ba4c8",
   "ca1d4359",
   "352737f8",
   "84d84a62"
