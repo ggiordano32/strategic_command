@@ -298,9 +298,11 @@ func wall_refusal(u: int, x: int, y: int) -> String:
 		if BattleSim.ladder_set_for(sim, u, ws.z, ws.x, ws.y) < 0:
 			if kc == BattleSim.EQ_LADDERS:
 				return "No ladders there: a tower, a gate, the sea, the citadel or out of reach"
+			if kc == BattleSim.EQ_POLES:
+				return "No poles there: a tower, a gate, the sea, the citadel or out of reach"
 			if kc != 0:
 				return "The siege tower cannot stand there: a tower, a gate, the sea, the citadel or out of reach"
-			return "No ladders or siege tower planted on that wall: a unit carrying one plants it"
+			return "No ladders, poles or siege tower planted on that wall: a unit carrying a set plants it"
 		return ""
 	var c1: int = sim.u_cls[u]
 	var att_wall: bool = sim.u_wall[u] > 0 and sim.u_side[u] != sim.city_def and kc == 0 \

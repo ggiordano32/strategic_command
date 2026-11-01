@@ -130,10 +130,10 @@ func _stage(n: int) -> void:
 	var ram: int = p[2]
 	var tower: int = p[3]
 	var mants: Array = p[4]
-	var mx: int = p[5]
-	var my: int = p[6]
-	var tx: int = p[7]
-	var P := func(a: float, b: float): return _at(a, b)
+	var _mx: int = p[5]
+	var _my: int = p[6]
+	var _tx: int = p[7]
+	var _P := func(a: float, b: float): return _at(a, b)
 	if n == 1:
 		var fa := _at(-16, 18)
 		_put(ladders[1], BattleSim.Q_GROUND, fa.x, fa.y, 100)

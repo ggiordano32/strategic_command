@@ -3248,18 +3248,64 @@ func _come_down() -> void:
 
 ## True if a click / tap at world point w (px) is about a wall with men to
 ## put on it: the point is on a stretch (BattleSim.wall_stretch_at) and a
-## selected unit can man walls or already stands on one.
+## selected unit can man walls, already stands on one, or (an attacker
+## outside) may go up by ladders or poles (BattleSim.may_ladder: it carries
+## a set, or a set of its side is planted; 2026-11-01: before, such a unit
+## got a plain ground move and a group's moves landed off the wall).
 func _wall_click_at(w: Vector2) -> int:
 	if sim.city_on == 0 or sim.ws_x0.size() == 0 or selection.is_empty():
 		return -1
 	var any := false
 	for u in selection:
-		if sim.u_state[u] == BattleSim.U_READY and (BattleSim.can_man_walls(sim, u) or sim.u_wall[u] > 0):
+		if sim.u_state[u] == BattleSim.U_READY and (BattleSim.can_man_walls(sim, u) or sim.u_wall[u] > 0 \
+				or _may_climb(u)):
 			any = true
 	if not any:
 		return -1
 	var p := w / PX_PER_M * M
 	return BattleSim.wall_stretch_at(sim, int(p.x), int(p.y))
+
+
+## Unit u is an attacker outside the walls that may go up by ladders or
+## poles (the order rule's test: BattleSim.may_ladder, not att_inside).
+func _may_climb(u: int) -> bool:
+	return sim.u_wall[u] == 0 and BattleSim.may_ladder(sim, u) and not BattleSim.att_inside(sim, u)
+
+
+## The planted ladders, poles or siege tower under world point w (px), or
+## -1: within the marker hit radius / 2 (at least 3 m) of one of its lanes
+## as drawn (from its foot 3.5 m in across the wall). Only when a selected
+## unit may climb it: a tap on it is a tap on its stretch (_wall_click at
+## the set's walkway point), so the second party up a planted set need not
+## find the wall's own cells behind the poles and the climbing men.
+func _planted_at(w: Vector2) -> int:
+	if sim.n_eq == 0 or sim.city_on == 0 or selection.is_empty():
+		return -1
+	var any := false
+	for u in selection:
+		if sim.u_state[u] == BattleSim.U_READY and _may_climb(u):
+			any = true
+	if not any:
+		return -1
+	var p := w / PX_PER_M * M
+	var r := float(maxi(3 * 1024, _marker_hit_r() / 2))
+	var best := -1
+	var bd := 0.0
+	for q in sim.n_eq:
+		if sim.q_state[q] != BattleSim.Q_PLANTED or sim.q_seg[q] < 0:
+			continue
+		if sim.q_side[q] != player_side and BattleSim.EQ_ANY[sim.q_kind[q]] == 0:
+			continue
+		var dir: float = sim.ws_dir[sim.q_seg[q]] * TAU / 1024.0
+		var inw := -Vector2(cos(dir), sin(dir)) * 3.5 * M
+		for k in maxi(BattleSim.EQ_LANES[sim.q_kind[q]], 1):
+			var f: Vector2i = sim.set_ladder_foot(q, k)
+			var a := Vector2(f.x, f.y)
+			var d := Geometry2D.get_closest_point_to_segment(p, a, a + inw).distance_to(p)
+			if d <= r and (best < 0 or d < bd):
+				best = q
+				bd = d
+	return best
 
 
 ## A click / tap on wall stretch sg at world point w (px): each selected
@@ -3391,6 +3437,11 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 		var q := _equip_at(w)
 		if q >= 0:
 			_tap_equip(q, w)
+			return
+		var pq := _planted_at(w) if not _wp_append() and _wall_click_at(w) < 0 else -1
+		if pq >= 0:
+			_count("planted_tap")
+			_wall_click(sim.q_seg[pq], Vector2(sim.q_wx[pq], sim.q_wy[pq]) / M * PX_PER_M, double)
 			return
 		var eg := _engines_at(w) if sim.n_eg > 0 else -1
 		if eg >= 0:
@@ -3962,7 +4013,8 @@ func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 	if _wall_click_at(w) >= 0 and not _shift_held() and not add_mode:
 		_tap(pos, double, long_press)  # a click on a wall mans it
 		return
-	if not selection.is_empty() and (_gate_at(w) >= 0 or _equip_at(w) >= 0 or (sim.n_eg > 0 and _engines_at(w) >= 0)):
+	if not selection.is_empty() and (_gate_at(w) >= 0 or _equip_at(w) >= 0 or _planted_at(w) >= 0 \
+			or (sim.n_eg > 0 and _engines_at(w) >= 0)):
 		_tap(pos, double, long_press)
 		return
 	_count("click_ground")

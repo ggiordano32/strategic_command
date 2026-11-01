@@ -25,7 +25,10 @@ extends SceneTree
 ##             none at a formed block, thrown on Use now; the batter's melee form at a walls-1 gate (Use now: they go
 ##             to its face and break it; Hold stops them); the siege AI (Average) in a walls-2 oppidum with no ram
 ##             batters the attacked gate with them (Use now) and it falls; Easy gives no ability order; Rome's rows
-##             have neither.
+##             have neither. A second unit up a planted set (2026-11-01, the owner's "are the poles single use?"):
+##             Itza warriors carry poles onto a walls-1 stretch and climb; then the second warriors, the bowmen
+##             and the Holcan, each ordered onto the stretch, go up the planted poles and stand on the walkway;
+##             the same with Spanish-era ladders and heavy infantry.
 ##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
@@ -784,6 +787,8 @@ func _native() -> void:
 		else:
 			_check(s3.stat_ab_orders == 0 and s3.stat_mbat_blows == 0, "native: Easy gives the torch raiders no ability order")
 	_torch_stretch_check()
+	_second_party_check("poles")
+	_second_party_check("ladders")
 
 
 ## docs/AI.md 51: two torch raider units at a walls-1 oppidum's gate (the palisade), the AI at Average: the first
@@ -823,3 +828,73 @@ func _torch_stretch_check() -> void:
 	_check(gate_now and stretch >= 0, "native: of two torch raider units at a palisade gate the second batters a stretch")
 	_check(breach > 0 and (gate_down < 0 or gate_down >= breach), "native: the second torch raider unit's stretch is breached (a second way in)")
 
+
+
+## A unit with no set ordered onto a stretch where its side's set is planted goes up it (ST_LADDER_GO, then
+## ST_LADDER) and ends on the walkway (2026-11-01). One run a second unit: kind "poles" (Itza warriors with a
+## pole set; then warriors, bowmen, Holcan) or "ladders" (heavy infantry and javelinmen with a ladder set).
+func _second_party_check(kind: String) -> void:
+	var city := {"seed": 4242, "level": 2, "walls": 1, "bld": [], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 11, "forest": 0, "ground": 2}
+	var att: Array
+	if kind == "poles":
+		att = [[UT.index_of("native_warriors"), 90], [UT.index_of("native_warriors"), 90],
+			[UT.index_of("native_bowmen"), 60], [UT.index_of("holcan"), 60]]
+	else:
+		att = [[UT.HEAVY, 90], [UT.HEAVY, 90], [UT.JAVELIN, 60], [UT.HEAVY, 60]]
+	var eq_k: int = BattleSim.EQ_POLES if kind == "poles" else BattleSim.EQ_LADDERS
+	for second in [1, 2, 3]:
+		var sc: Dictionary = Scenarios.settlement(city, terr, att, [[UT.JAVELIN, 10]], 1, [], {kind: 2})["scenario"]
+		var sim := BattleSim.new()
+		sim.setup(sc, 77)
+		var dfu := -1
+		for u in sim.n_units:
+			if sim.u_side[u] == 1 and dfu < 0:
+				dfu = u
+		var q0 := -1
+		for q in sim.n_eq:
+			if q0 < 0 and sim.q_kind[q] == eq_k:
+				q0 = q
+		var sg := -1
+		var bd := 0
+		var mp := Vector2i.ZERO
+		for s in sim.ws_x0.size():
+			var p: Vector2i = BattleSim.seg_pt(sim, s, BattleSim.seg_len(sim, s) / 2)
+			if not BattleSim.ladder_ok(sim, 0, s, p.x, p.y):
+				continue
+			var d := absi(p.x - sim.u_cx[0]) + absi(p.y - sim.u_cy[0])
+			if sg < 0 or d < bd:
+				sg = s
+				bd = d
+				mp = p
+		sim.queue_order({"tick": 0, "type": BattleSim.ORDER_FIRE, "unit": dfu, "on": 0, "player": 51})
+		sim.queue_order({"tick": 1, "type": BattleSim.ORDER_PICKUP, "unit": 0, "equip": q0, "run": 0, "player": 50})
+		var ordered := false
+		var sent := false
+		var set_for := -2
+		var went := false
+		var climbed := false
+		var up := 0
+		while sim.tick < 4500:
+			if not ordered and sim.u_carry[0] == q0:
+				ordered = true
+				sim.queue_order(BattleSim.make_move_order(sim.tick, 0, mp.x, mp.y, 768, 20 * M, 0))
+			if not sent and sim.u_stair[0] == BattleSim.ST_LADDER:
+				sent = true
+				set_for = BattleSim.ladder_set_for(sim, second, sg, mp.x, mp.y)
+				sim.queue_order(BattleSim.make_move_order(sim.tick, second, mp.x, mp.y, 768, 20 * M, 0))
+			sim.step()
+			if sent:
+				went = went or sim.u_stair[second] == BattleSim.ST_LADDER_GO
+				climbed = climbed or sim.u_stair[second] == BattleSim.ST_LADDER
+				if sim.u_wall[second] == sg + 1 and sim.u_stair[second] == 0:
+					var base: int = sim.u_slot_base[second]
+					for sl in sim.u_alive[second]:
+						if sim._on_walk(sim.pos_x[sim.slot_soldier[base + sl]], sim.pos_y[sim.slot_soldier[base + sl]]):
+							up += 1
+					break
+		var key: String = str(UT.TYPES[sim.u_type[second]]["key"])
+		print("second party (%s): %s set %d, to the foot %s, climbing %s, %d of %d on the walkway at tick %d" % [
+			kind, key, set_for, str(went), str(climbed), up, sim.u_alive[second], sim.tick])
+		_check(set_for == q0 and went and climbed and up * 10 >= sim.u_alive[second] * 9 and sim.u_alive[second] > 0,
+			"%s: a second unit (%s) ordered onto the stretch goes up the planted set onto the walkway" % [kind, key])

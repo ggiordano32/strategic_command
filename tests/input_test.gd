@@ -317,6 +317,9 @@ func _initialize() -> void:
 		_step_eq_check_wall,
 		_step_eq_drop,
 		_step_eq_check_drop,
+		_step_eq_plant,
+		_step_eq_tap_planted,
+		_step_eq_check_planted,
 		_step_en_drop,
 		_step_en_check_drop,
 		_step_en_tap,
@@ -3065,6 +3068,51 @@ func _step_eq_drop() -> void:
 func _step_eq_check_drop() -> void:
 	var dr := _eq_orders(BattleSim.ORDER_DROP)
 	_check(dr.size() == 1 and int(dr[0]["unit"]) == _eq_inf, "Drop: the carrier puts the ladders down (%s)" % str(dr))
+
+
+## The set planted on the stretch (test set-up), the carrier free again: a
+## tap on the planted ladders' foot (the ground below the wall, where the
+## set is drawn) sends the selected foot up them (2026-11-01: the owner's
+## "single use?" report; before, a plain move to the foot).
+func _step_eq_plant() -> void:
+	var sim := battle.sim
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	var wl := BattleSim.wall_snap(sim, _eq_lp.x, _eq_lp.y)
+	var lf := BattleSim.ladder_foot(sim, wl.z, wl.x, wl.y)
+	sim.u_carry[_eq_inf] = -1
+	sim.q_unit[0] = -1
+	sim.q_state[0] = BattleSim.Q_PLANTED
+	sim.q_seg[0] = wl.z
+	sim.q_x[0] = lf.x
+	sim.q_y[0] = lf.y
+	sim.q_wx[0] = wl.x
+	sim.q_wy[0] = wl.y
+	battle._select(_eq_inf)
+	_focus(lf.x, lf.y)
+
+
+func _step_eq_tap_planted() -> void:
+	var sim := battle.sim
+	_check(BattleSim.wall_snap(sim, sim.q_x[0], sim.q_y[0]).z < 0, "the planted set's foot is off the wall")
+	_check(battle._planted_at(Vector2(sim.q_x[0], sim.q_y[0]) / 1024.0 * Battle.PX_PER_M) == 0, "the tap finds the planted set")
+	_gd_tap(Vector2(sim.q_x[0], sim.q_y[0]) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_eq_check_planted() -> void:
+	var sim := battle.sim
+	var mo := _eq_orders(BattleSim.ORDER_MOVE)
+	var ok := mo.size() == 1 and int(mo[0]["unit"]) == _eq_inf
+	if ok:
+		var ws := BattleSim.wall_snap(sim, int(mo[0]["x"]), int(mo[0]["y"]))
+		ok = ws.z == sim.q_seg[0] and BattleSim.ladder_set_for(sim, _eq_inf, ws.z, ws.x, ws.y) == 0
+	_check(ok, "a tap on planted ladders: the selected foot is ordered up them (%s)" % str(mo))
+	var wp: Dictionary = battle.orders.wall_plan(_eq_inf)
+	_check(str(wp.get("mode", "")) == "ladder", "the preview: up the planted ladders (%s)" % str(wp.get("mode", "")))
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	sim.q_state[0] = BattleSim.Q_GROUND
+	sim.q_seg[0] = -1
 
 
 # Engines as equipment (docs/DESIGN.md "Artillery"): the Drop button for a

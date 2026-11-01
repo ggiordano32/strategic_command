@@ -2825,7 +2825,13 @@ Target pick for torch raiders, the unit book's "The natives' siege" paragraph, t
   points as ladders, burn as ladders, any foot of the side may carry them (in the campaign only the natives have
   them). Scenario `equip` `{"poles": n}` (0-8) places them after the ladders and rams (the ram row's x positions shift
   only when poles are present: Rome never has them). Measured in `--only=native`: 90 native warriors over a walls-1
-  stretch in 48.5 s against the ladders' 36.9 s on the same piece.
+  stretch in 48.5 s against the ladders' 36.9 s on the same piece. A planted set is not single use (the owner's
+  question, 2026-11-01): any infantry or missile unit of the side ordered onto that stretch goes up it, as with
+  ladders (tested: `tests/roles_sim_test.gd --only=native`, a second warriors, bowmen and Holcan unit, and heavy
+  infantry and javelinmen up planted ladders). The view sends it: a tap on a wall stretch with such a unit selected
+  is a wall order (`_wall_click_at` now takes `may_ladder` units, so a group goes onto THAT stretch), and a tap on
+  the planted poles or ladders themselves (their foot is on the ground below the wall, `_planted_at`) is a tap on
+  their stretch at the set's walkway point; before, both were plain ground moves and the unit stood at the foot.
 - **The melee batter** (`AB_BATTER` for a row with `"batter": 1`: the torch raiders; the guns' batter is unchanged).
   The batter's Use now (target: a gate -2 - g, a wall stretch, or -1 the nearest shut outer gate) sends the unit to the
   gate's outer face (`gate_front`) or the stretch's outside middle (`ws_side_pt`), at the run from farther than
