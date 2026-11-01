@@ -4333,3 +4333,27 @@ Miskito 1 / 3 -> 46 / 46); launched: Itza piraguas 41 / 41, great canoes 8 / 10,
 piraguas 15 / 15, brigantines 6 / 2, sloops 378 -> 348 / 340 -> 281. Test: `campaign_test` `_native_vessels` (the AI Itza at a
 Canoe yard 3 with no fleet order a great canoe; at a Canoe yard 1 in a town they raise it to 2; a European faction never
 raises by this rule; a Miskito village raises its Canoe yard to 3, an English village's Shipyard 2 needs a town).
+
+## 53. Dugouts board as a pack: the target and the join (2026-11-01)
+
+The joint boarding (`docs/design/sea.md` "Joint boarding by dugouts (as built, 2026-11-01)"). Code: `sim/sea_sim.gd` `_think`
+(the target scan), `_join_of` (the gate), `_contacts`, `_steer` (M_BOARD). New hashed state `s_join`, `s_jw`, `k_jl`, `k_dw`
+(the sim's, no AI state).
+
+- **The target (the pack).** Note 52's target (the fewest defenders) sent the dugouts one by one at the war canoe while the
+  gunned ships cut their crews. Now a dugout scores each enemy by her broadside weight (`guns` x `gun`: the brigantine 35, the
+  sloop 16, the war canoe 3) and admits her when the side's free dugout pack (every dugout of the side sailing, not grappled,
+  not a fire row or lit, plus those already grappled to her) has a boarding strength of `CANOE_PACK_PCT` (100) % of her
+  defenders with the deck bonus; the heaviest admitted broadside wins, ties by distance (score `d - weight x 100000`); none
+  admitted: the fewest defenders as before (scored above every admitted ship). Every dugout of a side computes the same pack,
+  so they converge on one ship.
+- **The decision.** She boards at `CANOE_BOARD_PCT` 100 % of her strength, with friends boarding or grappled to that ship
+  counted in (`my_b`), as before. A grappled target no longer ends her run: M_BOARD steering dropped any target with `s_grap`
+  set, and `_contacts` would not grapple it; now both pass when `_join_of` finds a melee of her side on that ship (the target
+  a defender, its first boarder of her side with `k_on`, no outside melee), and in reach she joins instead of grappling. Any
+  other ship (a European, a galley) still drops a grappled target.
+- **Measured** (`SeaChecks`, 8 seeds, both sides AI, canoe wins, canoes_eq / canoes): before 1 / 5 (33 boardings at equal
+  gold); joining alone (the share left at 75) 1 / 8; joining + `CANOE_DECK_PCT` 95: 2 / 8 (25 boardings, 6 joins), with
+  `CANOE_BOARD_PCT` 60 / 80: 2, 130: 1 (kept at 100); + the pack's target (as built): 3 / 5 (27 boardings, 5 joins). Before the
+  pack's target the canoes took the war canoe first and the sloop's and brigantine's guns cut their crews until they struck
+  (crew under 18 % with an enemy near) or were boarded in turn.

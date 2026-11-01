@@ -911,3 +911,54 @@ x 115 % is already 184), hull does not enter a deck melee, and a melee is one sh
 across against a sloop's 60 fighting at 125 % on their own deck, and the brigantine's 90. The canoes take the war canoe and
 often the sloop, then lose their boarders to the brigantine. The levers left are outside the brief: more than one boarder on a
 ship, the 200 clamp, a dugout's share across, or crews.
+
+### Joint boarding by dugouts (as built, 2026-11-01)
+
+The owner's levers for the equal-gold canoe fight (the previous section's open item): two or more dugouts boarding one ship
+together, and a larger share of a dugout's crew sent across. Code: `sim/sea_sim.gd` `_join_of`, `_join`, `_join_settle`,
+`_charge_men`, `_deck_pct`; the gates in `_contacts` and `_steer` (M_BOARD); `_ungrapple`, `_deck_close`, `_hold_alongside`.
+
+- **Who joins.** A dugout (a row with `canoe`) whose board target is already grappled by a boarder of her own side (dugout or
+  not), that boarder's deck melee on (`k_on`), grapples her too when she comes within the grapple reach at the same relative
+  speed gate as a first grapple. She is a *joiner* of that melee (`s_join` = the first boarder, hashed in `SHIP_ARRAYS`,
+  carried by snapshots): `s_grap` the target, `s_boarder` 1, no melee of her own (`k_on` 0); `EV_GRAPPLE` with `d` 1 ("joins
+  the boarding" in the view's log), `stats["boardings"]` and `stats["joins"]` + 1. A player's O_BOARD at such a ship joins the
+  same way. A non-dugout never joins (it still cannot grapple a grappled ship). The target and the melee stay the first
+  boarder's: one melee per first boarder, the prize is hers.
+- **Her men.** `crew x CANOE_DECK_PCT / 100 + troops` enter side 0 of the first boarder's melee: new figures at the free cells
+  of the first boarder's deck (rail back, amidships out) while side 0 has free figure slots (`DECK_FIG`), her soldiers with her
+  first troop kit, her crew with her own kit and boarding quality (`s_ck_*` x `s_bq`; no captain of her own); with no free cell
+  or slot her men are spread over side 0's figures in index order (the remainder to the first). Side 0's morale becomes the
+  men-weighted mean of its morale and hers + `DECK_RUSH`; `k2_men0` grows by her men. She lies on the target's other side from
+  the first boarder; a second joiner on the first boarder's side a third of the target's length forward, and so on.
+- **Losses.** From the first join side 0's losses are pooled (`k_jl`) instead of being taken off the first boarder at once; when
+  the melee ends in any way (taken, thrown back, both spent, the first boarder sinking, striking, burning, the battle's end)
+  `_join_settle` charges them to the first boarder and each joiner by the men each had in it (the first boarder: her men on
+  deck at the first join, `s_jw`), integer shares, the remainder to the first boarder, troops first then crew, and casts the
+  joiners off (`s_grap`, `s_boarder`, `s_join` cleared, M_FREE). Losses before the first join were already the first
+  boarder's. A joiner that sinks or burns mid-melee is dropped (`k_dw` keeps her men's weight): her men already across fight
+  on and her share of the losses is charged to nobody.
+- **The dugout share.** `CANOE_DECK_PCT` 95: a dugout's boarding party (first boarder or joiner) is 95 % of her crew (no sails
+  to work; `DECK_BOARD_PCT` 75 for every other ship). The AI's strength estimate (`my_b`) counts the whole crew and is
+  unchanged; the boarding quality clamp at 200 is unchanged.
+- **The pack's target.** A dugout of the battle AI scores each enemy ship by her broadside weight (`guns` x `gun`: the
+  brigantine 35, the sloop 16, the war canoe 3) and admits her when the side's free dugout pack (every dugout of the side
+  sailing, not grappled, not a fire row or lit, plus its dugouts already grappled to her) has a boarding strength of
+  `CANOE_PACK_PCT` (100) % of her defenders with the deck bonus; among the admitted ships the heaviest broadside, ties by
+  distance; none admitted: the fewest defenders, as before. So every dugout of a side converges on the same gunned ship and
+  the later ones join the first's melee.
+- **Limits.** With the scenario's `"deck"` 1 (the outside melee, O_DECK) nobody joins: a dugout waits as before. A joiner
+  cannot herself be boarded or joined (she is grappled). No morale hit for a joiner when the melee is thrown back (the first
+  boarder's `_repelled` only).
+
+Measured (`SeaChecks`, 8 seeds, both sides AI, canoe wins; `docs/AI.md` 53):
+
+| Step | canoes_eq | canoes |
+|---|---|---|
+| Before (the fewest-defenders target, one boarder a ship, 75 % across) | 1 | 5 |
+| Joining alone (share 75) | 1 | 8 |
+| Joining + `CANOE_DECK_PCT` 95 | 2 | 8 |
+| ... `CANOE_BOARD_PCT` 60 / 80 / 130 | 2 / 2 / 1 | 8 |
+| + the pack's target (as built) | 3 | 5 |
+
+Test: `SeaChecks._joint_boarding` (in `canoes()`).

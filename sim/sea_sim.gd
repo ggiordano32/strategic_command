@@ -246,6 +246,7 @@ const DECK_KILL_PM := 14         # per mille of a figure's men killing a man a d
 const DECK_SHOT_PM := 5          # per mille of a volley's men hitting, per shot % (crowded rails, smoke)
 const DECK_MAX_TICKS := 450      # both crews spent: the ships part
 const DECK_BOARD_PCT := 75       # % of the boarder's crew that go across (the rest work the ship)
+const CANOE_DECK_PCT := 95       # (2026-11-01) % of a dugout's crew that go across (no sails to work; paddlers fight)
 const DECK_BREAK_DEF := 30       # defenders under this % of the boarders: the deck is lost, she strikes
 const DECK_BREAK_ATT := 45       # boarders under this % of the defenders: thrown back
 const DECK_MOR_LOSS := 100        # morale a side loses for losing all its men (by the share lost)
@@ -266,6 +267,7 @@ const LAYLINE_M := 200           # she tacks this far short of land or the field
 const LEE_SHORE_M := 250         # land this close to leeward: she sails along it, never in toward it
 const START_CLEAR_M := 300       # no shoal (nor land, where the field allows) this close to a start line
 const CANOE_BOARD_PCT := 100   # (2026-11-01) a native dugout boards at this % (she has no broadside to trade)
+const CANOE_PACK_PCT := 100      # (2026-11-01) the dugout pack goes for a gunned ship its free dugouts can carry at this %
 const BOARD_PCT := 160          # the battle AI boards when its boarding strength is this % of hers (or more)
 const HOLD_TICKS := 1800         # the battle AI's leeward fleet holds its line at most this long (3 min) before it beats up
 const LEE_ROOM_M := 500          # the leeward fleet starts with this much clear water to leeward and on both beams
@@ -367,6 +369,10 @@ var s_rl := PackedInt32Array()       # 2 per ship: reload work left (ticks x 100
 var s_tack := PackedInt32Array()
 var s_grap := PackedInt32Array()
 var s_boarder := PackedInt32Array()
+var s_join := PackedInt32Array()     # (joint boarding) the first boarder whose melee this dugout joined, -1
+var s_jw := PackedInt32Array()       # men a joiner put into the melee; a first boarder's men in it at the first join
+var k_jl := PackedInt32Array()       # per melee with joiners: side-0 losses since the first join (charged at the end)
+var k_dw := PackedInt32Array()       # per melee: the men of joiners dropped mid-melee (sunk, burnt: charged nothing)
 var s_bd_t := PackedInt32Array()
 var s_bd_wait := PackedInt32Array()
 var s_by := PackedInt32Array()
@@ -466,7 +472,7 @@ var stats := {"broadsides": 0, "hits": 0, "rakes": 0, "boardings": 0, "captured"
 	"sunk": 0, "fires": 0, "blown": 0, "tacks": 0, "wears": 0, "grounded": 0, "fled": 0, "chain": 0, "grape": 0,
 	"deck_fights": 0, "deck_taken": 0, "deck_repelled": 0, "deck_spent": 0, "deck_shots": 0, "deck_ticks": 0,
 	"captains_fallen": 0, "fireships": 0, "fire_contacts": 0, "fs_spread": 0, "fire_sunk": 0, "fire_out": 0,
-	"douse": 0, "douse_out": 0}
+	"douse": 0, "douse_out": 0, "joins": 0}
 
 
 # ------------------------------------------------------------------ setup ---
@@ -573,6 +579,7 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 		s_fire[s] = 1
 		s_tgt[s] = -1
 		s_grap[s] = -1
+		s_join[s] = -1
 		s_by[s] = -1
 		s_end_t[s] = -1
 		s_want[s] = -1
@@ -611,7 +618,7 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 
 const SHIP_ARRAYS: Array[String] = ["u_side", "u_state", "s_type", "s_x", "s_y", "s_h16", "s_want", "s_tdir", "s_spd",
 	"s_sail", "s_hull", "s_hull0", "s_crew", "s_crew0", "s_rig", "s_rig0", "s_troops", "s_q", "s_bq", "s_mor", "s_mode",
-	"s_tx", "s_ty", "s_tgt", "s_fire", "s_shot", "s_tack", "s_grap", "s_boarder", "s_bd_t", "s_bd_wait", "s_by", "s_burn",
+	"s_tx", "s_ty", "s_tgt", "s_fire", "s_shot", "s_tack", "s_grap", "s_boarder", "s_join", "s_jw", "k_jl", "k_dw", "s_bd_t", "s_bd_wait", "s_by", "s_burn",
 	"s_ground", "s_hit_t", "s_end_t", "s_kills", "s_blown", "s_flee_x", "s_flee_y", "s_ffl",
 	"s_lit", "s_aband", "s_fsg", "s_fs_t", "s_douse", "s_ck_atk", "s_ck_def", "s_ck_shot", "s_ck_rng", "s_ck_sh", "s_ck_rl", "s_cq",
 	"k_on", "k_t0", "k_w", "k_hb", "k_ht", "k_ax0", "k_la", "k_bx0", "k_lb", "k_step"]
@@ -1357,7 +1364,8 @@ func _steer(s: int) -> void:
 				want = _engage_heading(s, t)
 		M_BOARD:
 			var t2 := s_tgt[s]
-			if t2 < 0 or not (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK) or s_grap[t2] >= 0 or s_lit[t2] >= 0:
+			if t2 < 0 or not (u_state[t2] == S_SAIL or u_state[t2] == S_STRUCK) or (s_grap[t2] >= 0 and _join_of(s, t2) < 0) \
+					or s_lit[t2] >= 0:
 				s_mode[s] = M_FREE
 				s_tgt[s] = -1
 			else:
@@ -1765,10 +1773,22 @@ func _hold_alongside(s: int) -> void:
 	# The boarder: beside her, on the side it came from, heading with her.
 	var oh := heading(o)
 	var side := 1 if FM.angle_diff(oh, FM.atan2_a(s_y[s] - s_y[o], s_x[s] - s_x[o])) >= 0 else -1
+	var along := 0
+	var m := s_join[s]
+	if m >= 0:
+		# A joiner: the first boarder's other side, then hers again fore and aft (by rank among the joiners).
+		var ms := 1 if FM.angle_diff(oh, FM.atan2_a(s_y[m] - s_y[o], s_x[m] - s_x[o])) >= 0 else -1
+		var r := 0
+		for j in s:
+			if s_join[j] == m:
+				r += 1
+		side = -ms if r % 2 == 0 else ms
+		if r > 0:
+			along = ((r + 1) / 2) * ST.stat(s_type[o], "len") / 3 * (1 if r % 4 < 2 else -1)
 	var gap := (ST.stat(s_type[s], "beam") + ST.stat(s_type[o], "beam")) / 2 + 2
 	var pa := (oh + side * 256) & FM.ANGLE_MASK
-	var gx := s_x[o] + ((FM.cos_a(pa) * gap) >> 12) * U
-	var gy := s_y[o] + ((FM.sin_a(pa) * gap) >> 12) * U
+	var gx := s_x[o] + ((FM.cos_a(pa) * gap) >> 12) * U + ((FM.cos_a(oh) * along) >> 12) * U
+	var gy := s_y[o] + ((FM.sin_a(pa) * gap) >> 12) * U + ((FM.sin_a(oh) * along) >> 12) * U
 	s_x[s] += (gx - s_x[s]) / 6
 	s_y[s] += (gy - s_y[s]) / 6
 	var dh := FM.angle_diff(heading(s), oh)
@@ -1802,7 +1822,7 @@ func _contacts() -> void:
 		for b in range(a + 1, n_units):
 			if u_state[b] == S_SUNK or u_state[b] == S_FLED:
 				continue
-			if s_grap[a] == b or s_fsg[a] == b or s_fsg[b] == a:
+			if s_grap[a] == b or s_grap[b] == a or s_fsg[a] == b or s_fsg[b] == a:
 				continue
 			var dx := s_x[b] - s_x[a]
 			var dy := s_y[b] - s_y[a]
@@ -1827,8 +1847,13 @@ func _contacts() -> void:
 		if u_state[s] != S_SAIL or s_mode[s] != M_BOARD or s_grap[s] >= 0:
 			continue
 		var t := s_tgt[s]
-		if t < 0 or s_grap[t] >= 0 or not (u_state[t] == S_SAIL or u_state[t] == S_STRUCK) or s_lit[t] >= 0:
+		if t < 0 or not (u_state[t] == S_SAIL or u_state[t] == S_STRUCK) or s_lit[t] >= 0:
 			continue
+		var jm := -1
+		if s_grap[t] >= 0:
+			jm = _join_of(s, t)  # (joint boarding: a dugout joins a friend's melee on her)
+			if jm < 0:
+				continue
 		var d2 := FM.approx_len(s_x[t] - s_x[s], s_y[t] - s_y[s])
 		var reach := ((ST.stat(s_type[s], "len") + ST.stat(s_type[t], "len")) * 40 / 100 + 8) * U
 		if d2 > reach:
@@ -1837,7 +1862,10 @@ func _contacts() -> void:
 		var vy := ((FM.sin_a(heading(s)) * s_spd[s]) >> 12) - ((FM.sin_a(heading(t)) * s_spd[t]) >> 12)
 		if FM.approx_len(vx, vy) > 360 and s_spd[t] > 150:
 			continue
-		_grapple(s, t, 1 if ST.stat(s_type[s], "corvus") != 0 else 0)
+		if jm >= 0:
+			_join(s, t, jm)
+		else:
+			_grapple(s, t, 1 if ST.stat(s_type[s], "corvus") != 0 else 0)
 	if gal_on != 0:
 		_corvus()
 	for s in n_units:
@@ -1878,6 +1906,153 @@ func _grapple(s: int, t: int, cv: int = 0) -> void:
 		k_cv[s] = cv
 
 
+## Joint boarding (2026-11-01): the first boarder whose deck melee on ship t
+## dugout s may join (t grappled by a boarder of s's side, its melee on; not
+## with the outside melee, "deck" 1), else -1. A non-dugout never joins.
+func _join_of(s: int, t: int) -> int:
+	if deck_on != 0 or ST.stat(s_type[s], "canoe") == 0 or u_state[t] != S_SAIL:
+		return -1
+	var m := s_grap[t]
+	if m < 0 or s_boarder[t] != 0 or s_grap[m] != t or s_boarder[m] == 0 or s_join[m] >= 0:
+		return -1
+	if u_side[m] != u_side[s] or k_on[m] == 0:
+		return -1
+	return m
+
+
+## Dugout s grapples t alongside first boarder m and her boarding party joins
+## side 0 of m's melee: new figures at free cells of m's deck while slots
+## remain (her own kit and quality), else spread over side 0's figures.
+func _join(s: int, t: int, m: int) -> void:
+	s_grap[s] = t
+	s_boarder[s] = 1
+	s_join[s] = m
+	s_bd_t[s] = tick
+	s_mode[s] = M_FREE
+	stats["boardings"] = int(stats["boardings"]) + 1
+	stats["joins"] = int(stats["joins"]) + 1
+	_event(EV_GRAPPLE, s, 0, t, 1, 0)
+	var base := m * FIG
+	if s_jw[m] == 0:
+		# The first join: from now on side 0's losses are pooled and split at the end.
+		var have := 0
+		for i in DECK_FIG:
+			have += f_n[base + i]
+		s_jw[m] = maxi(have, 1)
+		k_jl[m] = 0
+		k_dw[m] = 0
+	var crew := s_crew[s] * _deck_pct(s) / 100
+	var troops := s_troops[s]
+	var men := crew + troops
+	s_jw[s] = maxi(men, 1)
+	if men <= 0:
+		return
+	var now := 0
+	for i in DECK_FIG:
+		now += f_n[base + i]
+	k2_mor[m * 2] = (k2_mor[m * 2] * now + clampi(s_mor[s] + DECK_RUSH, 20, 170) * men) / maxi(now + men, 1)
+	k2_men0[m * 2] += men
+	# Free cells of the boarder's deck (from the rail back, amidships out) and free figure slots.
+	var occ := {}
+	for i in FIG:
+		if f_n[base + i] > 0:
+			occ[f_y[base + i] * 256 + f_x[base + i]] = 1
+	var cells: Array[int] = []
+	var x0 := k_ax0[m]
+	var ln := k_la[m]
+	for y in range(k_hb[m] - 1, -1, -1):
+		for k in ln:
+			var off := (k + 1) / 2 * (1 if k % 2 == 1 else -1)
+			var x := x0 + ln / 2 + off
+			if x >= x0 and x < x0 + ln and _deck_walk(m, x, y) and not occ.has(y * 256 + x):
+				cells.append(y * 256 + x)
+	var slots: Array[int] = []
+	for i in DECK_FIG:
+		if f_n[base + i] <= 0:
+			slots.append(i)
+	var nf := mini(slots.size(), cells.size())
+	if nf <= 0:
+		# No room: her men stand in with side 0's figures (index order, the remainder to the first).
+		var live: Array[int] = []
+		for i in DECK_FIG:
+			if f_n[base + i] > 0:
+				live.append(i)
+		if live.is_empty():
+			return
+		for li in live.size():
+			f_n[base + live[li]] += men / live.size() + (men % live.size() if li == 0 else 0)
+		return
+	var nt := 0
+	if troops > 0:
+		nt = clampi((nf * troops + men / 2) / maxi(men, 1), 1, nf if crew <= 0 else maxi(nf - 1, 1))
+		nt = mini(nt, troops)
+	var nc := mini(nf - nt, crew) if crew > 0 else 0
+	var b := -1
+	for k in TK_MAX:
+		if b < 0 and s_tkp[(s * TK_MAX + k) * TKP] > 0:
+			b = (s * TK_MAX + k) * TKP
+	for i in nt:
+		var c := cells[i]
+		var n := troops / nt + (1 if i < troops % nt else 0)
+		if b >= 0:
+			_fig(base + slots[i], c % 256, c / 256, 0, 1, n, s_tkp[b + 1], s_tkp[b + 2], s_tkp[b + 3], s_tkp[b + 4],
+				s_tkp[b + 5], s_tkp[b + 6])
+		else:
+			_fig(base + slots[i], c % 256, c / 256, 0, 1, n, int(ST.DECK_TROOPS["atk"]), int(ST.DECK_TROOPS["def"]),
+				int(ST.DECK_TROOPS["shot"]), int(ST.DECK_TROOPS["rng"]), int(ST.DECK_TROOPS["shots"]),
+				int(ST.DECK_TROOPS["rl"]))
+	for i in nc:
+		var c2 := cells[nt + i]
+		var n2 := crew / nc + (1 if i < crew % nc else 0)
+		_fig(base + slots[nt + i], c2 % 256, c2 / 256, 0, 0, n2, s_ck_atk[s] * s_bq[s] / 100,
+			s_ck_def[s] * s_bq[s] / 100, s_ck_shot[s], s_ck_rng[s], s_ck_sh[s], s_ck_rl[s])
+
+
+## % of boarder s's crew in her boarding party.
+func _deck_pct(s: int) -> int:
+	return CANOE_DECK_PCT if ST.stat(s_type[s], "canoe") != 0 else DECK_BOARD_PCT
+
+
+## Melee m is over: its pooled side-0 losses are charged to the first boarder
+## and her joiners by the men each put in (a dropped joiner's share to
+## nobody, the remainder to the first boarder; troops first), and the
+## joiners cast off.
+func _join_settle(m: int) -> void:
+	if s_jw[m] == 0:
+		return
+	var tot := s_jw[m] + k_dw[m]
+	for j in n_units:
+		if s_join[j] == m:
+			tot += s_jw[j]
+	var l := k_jl[m]
+	var given := l * k_dw[m] / maxi(tot, 1)
+	for j in n_units:
+		if s_join[j] != m:
+			continue
+		var sh := l * s_jw[j] / maxi(tot, 1)
+		given += sh
+		_charge_men(j, sh)
+		s_grap[j] = -1
+		s_boarder[j] = 0
+		s_bd_wait[j] = 0
+		s_join[j] = -1
+		s_jw[j] = 0
+		s_mode[j] = M_FREE
+	_charge_men(m, l - given)
+	s_jw[m] = 0
+	k_jl[m] = 0
+	k_dw[m] = 0
+
+
+## n men of ship s lost in a deck melee: troops first, then crew.
+func _charge_men(s: int, n: int) -> void:
+	if n <= 0:
+		return
+	var tl := mini(n, s_troops[s])
+	s_troops[s] -= tl
+	s_crew[s] = maxi(s_crew[s] - (n - tl), 0)
+
+
 # ------------------------------------------------------------- deck melee ---
 
 ## Every DECK_EVERY ticks: each boarding under way fights a deck step.
@@ -1910,7 +2085,7 @@ func _deck_open(s: int, t: int) -> void:
 	var base := s * FIG
 	for i in FIG:
 		f_n[base + i] = 0
-	_deck_side(s, 0, s, s_crew[s] * DECK_BOARD_PCT / 100, s_troops[s])
+	_deck_side(s, 0, s, s_crew[s] * _deck_pct(s) / 100, s_troops[s])
 	_deck_side(s, 1, t, s_crew[t], s_troops[t])
 	k2_mor[s * 2] = clampi(s_mor[s] + DECK_RUSH, 20, 170)
 	k2_mor[s * 2 + 1] = clampi(s_mor[t], 20, 170)
@@ -2153,7 +2328,9 @@ func _deck_step(s: int) -> void:
 		f_n[fb] -= k
 		var vs := 1 - sd
 		var sh: int = ships[vs]
-		if f_kind[fb] == 1:
+		if vs == 0 and s_jw[s] != 0:
+			k_jl[s] += k  # (joined: pooled, split at the end, _join_settle)
+		elif f_kind[fb] == 1:
 			s_troops[sh] = maxi(s_troops[sh] - k, 0)
 		else:
 			s_crew[sh] = maxi(s_crew[sh] - k, 0)
@@ -2217,6 +2394,7 @@ func _repelled(s: int, t: int, both: int) -> void:
 
 
 func _deck_close(m: int) -> void:
+	_join_settle(m)
 	k_on[m] = 0
 	k_cv[m] = 0
 	var base := m * FIG
@@ -2236,6 +2414,16 @@ func _lose_men(s: int, n: int) -> void:
 
 func _ungrapple(s: int) -> void:
 	var t := s_grap[s]
+	var jm := s_join[s]
+	if jm >= 0:
+		# A joiner leaving mid-melee (sunk, burnt): dropped; her men already across fight on, she is charged nothing.
+		k_dw[jm] += s_jw[s]
+		s_grap[s] = -1
+		s_boarder[s] = 0
+		s_bd_wait[s] = 0
+		s_join[s] = -1
+		s_jw[s] = 0
+		return
 	if k_on[s] != 0:
 		_deck_close(s)
 	if t >= 0 and k_on[t] != 0:
@@ -2672,8 +2860,8 @@ func _decide() -> void:
 			u_state[s] = S_SAIL  # her own side held the field: the colours go up again
 			s_mode[s] = M_FREE
 			s_mor[s] = maxi(s_mor[s], 40)
-		if s_grap[s] >= 0 and s_boarder[s] != 0:
-			_ungrapple(s)
+		if s_grap[s] >= 0 and s_boarder[s] != 0 and s_join[s] < 0:
+			_ungrapple(s)  # (joiners cast off with their first boarder)
 
 
 # ------------------------------------------------------- the flight rule ---
@@ -2913,6 +3101,13 @@ func _think(s: int) -> void:
 	var light := galley and ST.stat(s_type[s], "ram") == 0 and ST.stat(s_type[s], "corvus") == 0
 	var swarm := light and fighting(u_side[s]) >= 2 * fighting(1 - u_side[s])
 	var canoe_s := ST.stat(s_type[s], "canoe") != 0
+	# (Joint boarding) The side's free dugout pack: its boarding strength (fire rows and lit hulls aside).
+	var pack := 0
+	if canoe_s:
+		for f in n_units:
+			if u_side[f] == u_side[s] and u_state[f] == S_SAIL and s_grap[f] < 0 and s_lit[f] < 0 \
+					and ST.stat(s_type[f], "canoe") != 0 and not ST.is_fire(s_type[f]):
+				pack += s_crew[f] * s_bq[f] / 100 + s_troops[f] * 12 / 10
 	var best := -1
 	var bs := 1 << 40
 	var cur_score := 1 << 40
@@ -2923,7 +3118,16 @@ func _think(s: int) -> void:
 		var sc := d + s_hull[t] * 300 / s_hull0[t]
 		if canoe_s:
 			# (Native vessels) A dugout picks the ship her boarders can carry: the fewest defenders, not the weakest hull.
-			sc = d + (s_crew[t] * s_bq[t] / 100 + s_troops[t] * 12 / 10) * 6
+			var dfn := s_crew[t] * s_bq[t] / 100 + s_troops[t] * 12 / 10
+			sc = d + dfn * 6 + (1 << 32)
+			# (Joint boarding, 2026-11-01) The pack goes for the most guns it can carry together (its dugouts already
+			# grappled to her count in), ties by distance; none it can carry: the fewest defenders, as above.
+			var pk := pack
+			for f in n_units:
+				if s_grap[f] == t and u_side[f] == u_side[s] and ST.stat(s_type[f], "canoe") != 0:
+					pk += s_crew[f] * s_bq[f] / 100 + s_troops[f] * 12 / 10
+			if pk * 100 >= dfn * DECK_BONUS_PCT / 100 * CANOE_PACK_PCT:
+				sc = d - ST.stat(s_type[t], "guns") * maxi(ST.stat(s_type[t], "gun"), 1) * 100000
 		if light:
 			var crip_t := s_hull[t] * 100 / s_hull0[t] < 40
 			if not crip_t and not swarm and s_hull0[t] > 2 * s_hull0[s]:

@@ -1401,6 +1401,68 @@ static func campaign(check: Callable) -> void:
 	CData.use_pack("rome")
 
 
+## (Joint boarding, 2026-11-01) Two piraguas ordered to board a brigantine hove to: the first grapples, the
+## second joins her melee (EV_GRAPPLE d 1, s_join the first, her men on side 0), a copy restored from a snapshot
+## mid-melee runs on with the same hash; when it ends the joiner is cast off (s_join and s_grap -1) and side 0's
+## losses are charged to both by the men each put in; a sloop (not a dugout) never joins.
+static func _joint_boarding() -> int:
+	var fails := 0
+	var units := [{"side": 0, "t": "piragua", "x": 1000, "y": 800, "head": 0, "ck": "itza", "bq": 184},
+		{"side": 0, "t": "piragua", "x": 1060, "y": 860, "head": 0, "ck": "itza", "bq": 184},
+		{"side": 1, "t": "brigantine", "x": 1000, "y": 560, "head": 90},
+		{"side": 0, "t": "sloop", "x": 940, "y": 860, "head": 0}]
+	var scn := {"sea": 1, "wind_deg": 90, "wind_str": 40, "ai_sides": [0, 0], "units": units}
+	var b := SeaSim.new()
+	b.setup(scn, 5)
+	for u in [2]:
+		b.queue_order({"type": SeaSim.O_SAILS, "unit": u, "on": 0, "tick": 0})
+		b.queue_order({"type": SeaSim.O_FIRE, "unit": u, "on": 0, "tick": 0})
+	for u in [0, 1, 3]:
+		b.queue_order({"type": SeaSim.O_BOARD, "unit": u, "target": 2, "tick": 0})
+	b.s_spd[2] = 0
+	var c0 := [b.s_crew[0] + b.s_troops[0], b.s_crew[1] + b.s_troops[1]]
+	var joined := -1
+	var men_in := 0
+	var bad := ""
+	var cp: SeaSim = null
+	var sloop_joined := false
+	var ended := -1
+	for t in 3000:
+		b.step()
+		if b.s_join[3] >= 0:
+			sloop_joined = true
+		if joined < 0 and b.s_join[1] == 0:
+			joined = b.tick
+			for i in SeaSim.DECK_FIG:
+				men_in += b.f_n[i]
+			cp = SeaSim.new()
+			cp.setup(scn, 5)
+			if not cp.restore(b.snapshot()) or cp.state_hash() != b.state_hash():
+				bad = "restore at the join"
+		elif cp != null and ended < 0:
+			cp.step()
+			if bad == "" and cp.state_hash() != b.state_hash():
+				bad = "the restored copy diverged at tick %d" % b.tick
+		if joined >= 0 and ended < 0 and b.k_on[0] == 0:
+			ended = b.tick
+			break
+	var j_ev := false
+	for e in SeaSim.EV_CAP:
+		if b.ev_k[e] == SeaSim.EV_GRAPPLE and b.ev_a[e] == 1 and b.ev_d[e] == 1:
+			j_ev = true
+	var lost := [c0[0] - b.s_crew[0] - b.s_troops[0], c0[1] - b.s_crew[1] - b.s_troops[1]]
+	var ok := joined >= 0 and ended >= 0 and j_ev and bad == "" and not sloop_joined and b.s_join[1] == -1 \
+		and b.s_grap[1] == -1 and b.s_boarder[1] == 0 and int(b.stats["joins"]) >= 1 and int(lost[1]) > 0
+	if not ok:
+		fails += 1
+		printerr("FAIL sea joint boarding: joined at %d (event %s, %d men on side 0), ended at %d, restore '%s', sloop joined %s, after: join %d grap %d, lost %s" % [
+			joined, str(j_ev), men_in, ended, bad, str(sloop_joined), b.s_join[1], b.s_grap[1], str(lost)])
+	else:
+		print("PASS sea joint boarding: the second piragua joined at tick %d (%d men on side 0), the melee ended at %d (brigantine %s), the joiner cast off, men lost first / joiner %d / %d; a restored copy ran on alike; the sloop never joined" % [
+			joined, men_in, ended, "taken" if b.u_state[2] == SeaSim.S_TAKEN else "not taken", int(lost[0]), int(lost[1])])
+	return fails
+
+
 ## (Native vessels, 2026-11-01) The natives' new dugouts in the sea sim: the rows (the fire canoe a fire ship by
 ## its flag, none of the dugouts a war galley, the masts by row); a fire canoe sent at a sloop hove to is lit
 ## and sets her alight; a piragua ordered to board a sloop grapples her; the "canoes" battle (piraguas, a great
@@ -1460,6 +1522,7 @@ static func canoes() -> int:
 		printerr("FAIL sea piragua: ordered to board a sloop hove to, never grappled")
 	else:
 		print("PASS sea piragua: ordered to board a sloop hove to, grappled at tick %d; the sloop %s" % [grap, "taken" if taken else "not taken"])
+	fails += _joint_boarding()
 	# The battle, both sides AI.
 	var r1 := run("canoes", 4242, 9200, [300, 1200])
 	var r2 := run("canoes", 4242, 9200)

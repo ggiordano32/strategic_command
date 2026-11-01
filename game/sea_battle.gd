@@ -341,7 +341,10 @@ func _events() -> void:
 				_msg("%s blows up!" % _name(a), Color(1, 0.6, 0.3))
 				AudioFx.play("burst", 1.0, 0.0, "art")
 			SeaSim.EV_GRAPPLE:
-				_msg("%s grapples %s: boarders away!" % [_name(a), _name(c)], Color(1, 0.9, 0.5))
+				if sim.ev_d[i] == 1:
+					_msg("%s joins the boarding of %s!" % [_name(a), _name(c)], Color(1, 0.9, 0.5))
+				else:
+					_msg("%s grapples %s: boarders away!" % [_name(a), _name(c)], Color(1, 0.9, 0.5))
 				AudioFx.play("charge", 0.7, 0.0, "melee")
 			SeaSim.EV_TAKEN:
 				if a >= 0:
@@ -558,7 +561,7 @@ func _draw_ships() -> void:
 	# Grapples: lines across, the melee on the decks (sparks), a ring round both.
 	for s in sim.n_units:
 		var o := sim.s_grap[s]
-		if o > s:
+		if o > s or (o >= 0 and sim.s_grap[o] != s):  # (a dugout joining a boarding: her lines too)
 			var a := _draw_pos(s)
 			var b := _draw_pos(o)
 			for k in 4:
