@@ -582,3 +582,34 @@ merge keeps its `merge_check` text) and now also closes that toast, which used
 to stay open over the merged army. A single tap keeps the preview; no
 selection change happens on the double tap (Select it is only its button).
 `campaign_input_test` `_m_merged` checks no toast is left.
+
+### Lane traders, the ambient ships retired (as built, 2026-11-02, view only)
+
+The owner, from his phone: "I think the 'fake' drawn ships can be removed from the overworld. They just add clutter.
+Small ships going along the supply lines when trade is active would be nice though."
+
+**Removed.** The only ships on the chart with no state behind them were the moored ships each port's town plan laid
+along its quay (`TownPlan._moored`, up to two a port: brigantine / frigate in the West, lembos / trireme in Rome;
+there was no ambient layer sailing the open sea and no Options row for them, so no setting changed). `TownPlan.MOORED_SHIPS`
+(const, false) now gates the one call, so `_moored` and its `ship_*` handling in the town layer stay as dead code that
+is trivial to delete or to bring back. The real ships stay: fleet tokens, a fleet docked in a port (minis_layer's
+`_moored`, Docking) and the flota. The sprites and the `ship_*` atlas entries are still used by those, so no asset went.
+
+**Built.** `game/campaign/lane_traders.gd` (one `Node2D` child of the overlay, between the sea part and the fleets, so
+over the lane stroke and under the fleet tokens and banners). On each state redraw (`MapOverlay._epoch`) it reads
+the lanes as the rules define them (`CLanes.lane_state`, `CLanes.raiders`): a lane whose two ports both pay gets two
+small merchants, one each way along its curve (`MapView.lane_poly`), a lane paying one end only gets one sailing
+towards the paid end, a raided lane (a cut) gets one, a blockaded or besieged end, a lane between ports at war
+(nothing paid) and the exit lanes (the flota's: its token stays) get none. The sails move by delta time at a constant
+10 map px a second from a per-lane phase (`id * 37 + 11 mod 100`, the second sail 0.37 of the lane on), loop with a fade
+over the first and last 6 % at the ports, and bob a fraction of a pixel. A sail is a dark hull, a pale main sail and
+jib (ten vertices, four triangles, about 7 px wide and 7 px high at the reading zoom, scaled by `mk()`), drawn
+from the overlay's current transform in every frame (so panning and zooming never lag or pop: the 80a4376 rule)
+as ONE `canvas_item_add_triangle_array` for all of them, sails off screen skipped. Fully drawn from zoom 0.42, fading
+out to none at 0.28, nothing at all below. Nothing in `campaign/` or `sim/` changed; the node only reads the state.
+Delete it with the file and four lines in `MapOverlay._ready`.
+
+Shots (393 x 851, dpr 3 pattern, `tests/ships_shot.gd`: all factions at trade, one raided and one blockaded lane made in
+the state): the session scratchpad `ships/`. Known: the sails are a shade larger than 2-3 x the 1.5 px lane stroke
+(legibility on a phone); the trade direction is a reading, not a state (the rules keep no goods); the owner's eye on
+sail size, speed and whether one sail per direction is right.

@@ -23,6 +23,9 @@ const CTown := preload("res://campaign/ctown.gd")
 const TownRing := preload("res://game/campaign/town_ring.gd")
 const FortTraces := preload("res://sim/fort_traces.gd")   # (read only: the battle's star trace "fuerza", the shape of the chart's bastioned citadel)
 
+## The decorative moored ships lying along a port's quay (no state behind them) are retired (2026-11-02, the owner:
+## the "fake" drawn ships are clutter); true brings them back. Real docked fleets (minis_layer) are separate.
+const MOORED_SHIPS := false
 const K := 1.2               # world px a metre
 const NA := 24               # footprint radii (angles)
 const R_FULL_M := 38.0       # the footprint of a level 2 town, metres
@@ -1132,7 +1135,7 @@ static func _build(s: Dictionary, r: int, f: Dictionary) -> Dictionary:
 	if walls > 0:
 		_walls(s, sc, walls, style, port and harbour, items, wall_items, rkey, wrings)
 	var moored: Array = []
-	if harbour and port:
+	if MOORED_SHIPS and harbour and port:
 		moored = _moored(s, f, lvl, water)
 	if int(f["siege"]) >= 0:
 		_siege_camp(s, f, items)

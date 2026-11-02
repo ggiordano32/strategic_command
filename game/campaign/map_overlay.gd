@@ -48,6 +48,7 @@ const Minis := preload("res://game/campaign/minis_layer.gd")  # miniatures repla
 const MenuStyle := preload("res://game/menu/menu_style.gd")
 const OvBatch := preload("res://game/campaign/ov_batch.gd")
 const InkLines := preload("res://game/campaign/ink_lines.gd")
+const LaneTraders := preload("res://game/campaign/lane_traders.gd")
 
 const ARMY_W := 30.0
 const ARMY_H := 26.0
@@ -697,6 +698,7 @@ signal ships_redraw
 const ZOOM_SLIDE := 0.16     # a node further off than this is redrawn at once
 const ZOOM_EAGER := 0.02     # ... one a frame once it is further off than this
 var _nodes: Array = []
+var traders: Node2D = null   # the lane traders' node (lane_traders.gd)
 var _dx: Array = []          # Transform2D each node was drawn for
 var _dz: Array = []          # the zoom each node was drawn for
 var _ci = null               # what the part draws on: _b (or a CanvasItem)
@@ -728,6 +730,11 @@ func _ready() -> void:
 		_nodes.append(nd)
 		_dx.append(Transform2D.IDENTITY)
 		_dz.append(1.0)
+	# the lane traders (lane_traders.gd): between the sea part and the fleets; delete these four lines with the file
+	traders = LaneTraders.new()
+	traders.overlay = self
+	add_child(traders)
+	move_child(traders, (_nodes[P_FLEETS] as Node2D).get_index())
 
 
 ## (the state changed: every part is drawn again, in this frame)
