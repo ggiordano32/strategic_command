@@ -563,6 +563,14 @@ static var FIRE_ADJ_GAP := 2     # near: a cell of the other within this many 2 
 ## so tests/matchups.gd --tune can try values; the game never changes them.
 static var WALL_COVER: Array[int] = [0, 25, 15, 25]  # % of missiles from below stopped by the battlements, by wall level (balance T 2026-10-16: walls 2-3 25 / 40 -> 15 / 25, equal-force sieges; 2026-10-09 was 25 / 45 / 70)
 static var WALL_RANGE_PCT: Array[int] = [0, 0, 15, 15]  # missile troops on a wall reach this % further at men below
+## Lobbing over a wall (docs/design/battle_sim.md, 2026-11-02; the owner: archers
+## outside overwhelmed the few on the wall, shooting men inside at full range):
+## an arcing soldier weapon from the ground at men on the ground across a
+## standing wall stretch or a shut gate goes up and comes down steeply, so it
+## reaches this % of its range (lob_over_wall), both ways. Below 100 / (100 +
+## WALL_RANGE_PCT) so the lobbers stand inside the wall archers' reach.
+static var ARC_OVER_WALL_PCT := 60
+const ARC_WALL_STEP := 4 * M     # lob_over_wall samples the line this often (a wall band is at least 8 m thick)
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
@@ -3131,7 +3139,53 @@ func range_h(ty: int, hs: int, ht: int, pct: int = 100) -> int:
 ## Effective range of missile unit u against unit t (centroid heights; from
 ## a wall at men below, WALL_RANGE_PCT further).
 func range_vs(u: int, t: int) -> int:
-	return range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t) + _works_rb(u, t)
+	var r := range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t) + _works_rb(u, t)
+	if lob_over_wall(u, t):
+		r = r * ARC_OVER_WALL_PCT / 100  # (a lob over a wall: up and steeply down)
+	return r
+
+
+## Unit u's missiles at unit t must be lobbed over a wall (ARC_OVER_WALL_PCT
+## of the range): u's weapon arcs and is a soldier's (no crew, no engines:
+## stone throwers and mortars lob over everything at full range), both stand
+## on the ground (not on a wall, a ladder or a siege tower, not a tower
+## engine) and the straight line between their middles crosses a standing
+## wall stretch or a shut gate (a breach, an open or broken gate: no).
+func lob_over_wall(u: int, t: int) -> bool:
+	if not lobber(u) or u_wall[t] != 0 or u_lq[t] >= 0 or t_fixed[u_type[t]] != 0:
+		return false
+	return wall_cross_at(u_cx[u], u_cy[u], u_cx[t], u_cy[t]) >= 0
+
+
+## Unit u shoots an arcing soldier weapon from the ground (lob_over_wall's
+## shooter half; the view's range ring asks it too).
+func lobber(u: int) -> bool:
+	if city_on == 0 or obs_hi == 0:
+		return false
+	var ty := u_type[u]
+	return t_m_arc[ty] != 0 and t_crew[ty] == 0 and u_neng[u] == 0 and t_fixed[ty] == 0 \
+		and u_wall[u] == 0 and u_lq[u] < 0
+
+
+## How far along the straight line (x0, y0) - (x1, y1) it first crosses a
+## standing wall stretch (wall body, walkway, stair, tower) or a shut gate,
+## -1 if it does not: sampled every ARC_WALL_STEP on the 2 m obstacle grid
+## (rubble, open and broken gates let it through).
+func wall_cross_at(x0: int, y0: int, x1: int, y1: int) -> int:
+	if obs_on == 0:
+		return -1
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	var a := ARC_WALL_STEP
+	while a < d:
+		var k := obs_kind(x0 + dx * a / d, y0 + dy * a / d)
+		if k == MapGen.C_WALL or k == MapGen.C_WALK or k == MapGen.C_STAIR or k == MapGen.C_TOWER:
+			return a
+		if MapGen.is_gate(k) and g_state[k - MapGen.C_GATE] == GATE_CLOSED:
+			return a
+		a += ARC_WALL_STEP
+	return -1
 
 
 ## Missile troops on a wall shooting at men not on one: WALL_RANGE_PCT % of
@@ -10873,6 +10927,8 @@ func _missile_think(u: int) -> void:
 				var d := _unit_dist(u, o)
 				if d > rng and (not hgt or d > range_vs(u, o)):
 					continue
+				if d <= rng and d > rng * ARC_OVER_WALL_PCT / 100 and lob_over_wall(u, o) and d > range_vs(u, o):
+					continue  # (too far to lob over the wall)
 				var engaged := u_fighting[o] > 0
 				if ft < 0 or (best_engaged and not engaged) or (engaged == best_engaged and d < best):
 					# Thrown flat: skip enemies behind a crest.
@@ -13120,7 +13176,8 @@ func _pm_sight(i: int, u: int, j: int) -> bool:
 	var pk := _peek(u)
 	var wb := _wall_rb(u, ft) + _works_rb(u, ft)
 	var sk1 := _skip1(ft)
-	if _shot_ok(sx, sy, ax, ay, d, ty, pk.y, sk1, wb, 100, pk.x):
+	var rp := ARC_OVER_WALL_PCT if lob_over_wall(u, ft) else 100
+	if _shot_ok(sx, sy, ax, ay, d, ty, pk.y, sk1, wb, rp, pk.x):
 		return true
 	if u_cvb[u] < 0 and _bnd_still(u) < 0:
 		return false
@@ -13128,7 +13185,7 @@ func _pm_sight(i: int, u: int, j: int) -> bool:
 	if lp.x < 0:
 		return false
 	var ld := FM.approx_len(ax - lp.x, ay - lp.y)
-	return ld > 0 and _shot_ok(lp.x, lp.y, ax, ay, ld, ty, pk.y, sk1, wb, 100, pk.x)
+	return ld > 0 and _shot_ok(lp.x, lp.y, ax, ay, ld, ty, pk.y, sk1, wb, rp, pk.x)
 
 
 ## Firearms (docs/DESIGN.md "Firearms"): gun unit u reloads as a body
@@ -13236,6 +13293,8 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 	var heroed := ch_on != 0 and (u_aura[u] & AU_MIS) != 0
 	if heroed:
 		rp = rp * (100 + t_chv[CV_RNG]) / 100
+	if lob_over_wall(u, ft):
+		rp = rp * ARC_OVER_WALL_PCT / 100  # (a lob over a wall)
 	if ter_on == 0 and map_on == 0 and fwh_on == 0:
 		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
 			return

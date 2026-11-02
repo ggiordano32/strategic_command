@@ -1452,8 +1452,11 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			_dash_outlined(a, gp, Color(1.0, 0.8, 0.45, 0.9), lw, 8.0 / zoom)
 			_dd(gp, tp, Color(tcol, 0.35), lw, 4.0 / zoom)
 			if primary:
+				var into := "MOVING INTO RANGE"
+				if shooter and sim.lob_over_wall(u, t):
+					into = "TOO FAR TO LOB OVER THE WALL: MOVING CLOSER"
 				_dstr(gp + Vector2(r, -r * 1.5),
-					"NO WAY IN: TO THE GATE" if ug.z == 2 else "MOVING INTO RANGE",
+					"NO WAY IN: TO THE GATE" if ug.z == 2 else into,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
 		elif shooter and sim.vis_on != 0 and sim.hidden_from(t, sim.u_side[u]):
 			# Line of sight: the target is out of sight (flat weapons hold,
@@ -1580,6 +1583,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 	var full := a1 - a0 >= TAU - 0.001
 	var steps := RANGE_STEPS if full else maxi(int(RANGE_STEPS * (a1 - a0) / TAU) + 2, 4)
 	var pts := PackedVector2Array()
+	var lob: bool = sim.lobber(u)
 	for k in steps + 1:
 		var ang := a0 + (a1 - a0) * k / steps
 		var dir := Vector2(cos(ang), sin(ang))
@@ -1589,6 +1593,12 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 				var px := cx + int(dir.x * r)
 				var py := cy + int(dir.y * r)
 				r = sim.range_h(ty, sim.u_h[u], sim.height_at(px, py))
+		if lob:
+			# Over a wall the arrows are lobbed: ARC_OVER_WALL_PCT of the range
+			# beyond it (up to the wall in full where the cut range falls short of it).
+			var dw: int = sim.wall_cross_at(cx, cy, cx + int(dir.x * r), cy + int(dir.y * r))
+			if dw >= 0:
+				r = maxi(r * BattleSim.ARC_OVER_WALL_PCT / 100, dw)
 		pts.append(c + dir * (r * px_per_m / M))
 	if full and not _up_on:
 		# The range ring is a brass rule (a grey one when the ammunition is gone): `col`'s alpha says how strong.

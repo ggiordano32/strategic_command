@@ -4383,3 +4383,24 @@ The open item of the attack fixes (`docs/design/campaign_rules.md` "(2026-11-01)
   each pack and format neither picker met one (the opened mask was never built): those armies are planned elsewhere (attack,
   hunt, siege) or hold. The AI was hardly ever trapped by its own reckoning; the march itself was (fixed 2026-11-01). Test:
   `campaign_test` `_grid_two_army_attacks` (the AI's mask opens the cell two from the enemy, keeps the cells next to it).
+## 55. Archers close in to lob over a wall (2026-11-02)
+
+(Numbered 55, not 54: another change may take 54 in parallel.) The battle rule is `docs/design/battle_sim.md` "Lobbing
+over a wall (as built, 2026-11-02)": an arcing soldier weapon from the ground at men on the ground across a standing wall
+or a shut gate reaches `ARC_OVER_WALL_PCT` (60) % of its range. The AI needed no rule of its own, only the cut range where
+it reads a range:
+
+- **Through `range_vs`.** Every AI test that goes through `sim._in_range` or `sim.range_vs` (the battle AI's hold-fire
+  scan, the grenade siege scan, `_anyone_in_range`, the artillery scans, which the rule leaves alone)
+  now sees the cut range for a target behind a wall, and so does the attack order's closing in the sim (`stop` 85 % of
+  `range_vs`): a missile unit sent at a man behind the wall walks in to the lob's reach, or as near as its ground goes.
+  Fire at will at a post shoots the walk (not cut) and men behind the wall only within the lob.
+- **The defenders under fire** (`siege_ai._df_safe`, `S_DEF_FIRE`): a spot behind a wall past a field shooter's lob
+  (`mrange x ARC_OVER_WALL_PCT / 100 + DF_PAD`, `sim.lobber`, `sim.wall_cross_at`) is safe, so the reserve no longer
+  falls back further than the shooters can reach.
+- **Not changed:** the besiegers' archer post (`_att_missile`, `S_COVER_OUT` 110 m off the attacked gate): from there
+  the walk is in reach, the street behind the wall is not. Measured (8 seeds, the owner's case, both AI): the attacker
+  wins 8 / 8 before and after, 6.3 -> 6.4 min; the attacking archers kill 151 -> 138 men (on the wall 84 -> 88, behind
+  it 67 -> 50). A post that walks in to lob at the men behind the gate once the walk is clear is open.
+- **Equal-force sieges** (`rome_walls`, 8 seeds, 144 battles): attacker wins 71 / 40 / 31 % -> 75 / 50 / 38 % (walls 1 /
+  2 / 3), no cell beyond its interval.

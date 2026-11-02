@@ -156,7 +156,10 @@ per soldier on open ground.
   buildings (4-6 m), walls (walkway + 0.6 m parapet), towers (+4 m) and
   closed gates; a shooter on a wall looks over his own battlements. Arrows
   and stones arc over everything; a stone's plough stops at a building or
-  wall.
+  wall. (Since 2026-11-02 an arrow or sling stone lobbed from the ground
+  over a standing wall or shut gate at men on the ground reaches only
+  `ARC_OVER_WALL_PCT` % of its range: battle_sim.md "Lobbing over a wall";
+  engines' stones are not cut.)
 - *Gates*: start closed. The defenders may open or close one (order
   `ORDER_GATE`, any of their units; closing is refused while anyone stands
   in it; a broken gate stays broken). Hit points 1,800 / 2,700 / 3,800 by
@@ -2213,7 +2216,11 @@ from measurements; the results are in docs/STATUS.md (balance pass T).
   went to the side whose routers came back. (`ROUT_INWARD` 0 measured the
   same and was not taken: phase A's huddle stays.)
 - **Battlements** (`WALL_COVER`): walls 2-3 stop 15 / 25 % of missiles from
-  below (was 25 / 40; walls 1 25).
+  below (was 25 / 40; walls 1 25). Since 2026-11-02 arrows, slings and other
+  arcing soldier weapons shot from the ground at men on the ground across a
+  standing wall or a shut gate reach only `ARC_OVER_WALL_PCT` (60) % of
+  their range, both ways (docs/design/battle_sim.md "Lobbing over a wall
+  (as built, 2026-11-02)"); fire at or from the wall is as here.
 - **A battery standing by its engines is not stuck** (`_update_units`):
   its spare men's rows behind its last working engine may be blocked; the
   probe counted it 40 s stuck.

@@ -298,6 +298,111 @@ equal-cost open-field duels javelinmen now beat pikes and archers by
 kiting them (spears and heavy still beat them), and javelins 150 beat
 light 100 every time (was 65%).
 
+### Lobbing over a wall (as built, 2026-11-02)
+
+Why (the owner's phone playtest, besieging a city): "Archers are now very
+powerful against units that are in the city. If the city defender can only
+put a couple of archers in range on the wall, a stack of 5 archers outside
+can overwhelm them. If the units want to hit an enemy close to the wall on
+the inside, they should need to be way closer to send a volley up and back
+down." And later: "I know armies sieging cities brought large cohorts of
+archers historically, so this isn't a bad thing, I just want to make sure
+the game is still fun to play." So the besiegers' archers are not blunted;
+they pay in position: to reach men behind the wall they must come well
+inside the wall archers' reach.
+
+**The rule.** An arcing soldier weapon (`m_arc` 1 with no crew and no
+engines: archers, slingers, camel archers, the elephant's javelin men, the
+master of archers, grenadiers, torch raiders, the native bowmen and every
+tier row of them) fired by a unit on the ground at a unit on the ground
+across a standing wall stretch or a shut gate reaches `ARC_OVER_WALL_PCT`
+(60) % of its range: the shot goes up steeply and comes down. Both ways:
+archers inside shooting out over their own wall at men on the ground
+outside are cut the same, which keeps the defenders' archers up on the walk
+where they belong. Not cut: fire from a unit on a wall (the walk shoots
+down at men below with `WALL_RANGE_PCT` as before), fire at a unit on a
+wall (the battlements' `WALL_COVER` as before), a unit on a ladder move or
+a siege tower (`u_lq`), tower engines (`fixed`), and artillery (stone
+throwers and mortars have crews: they lob over everything at full range).
+"Across a wall": the straight line between the two units' middles crosses
+a wall body, walkway, stair or tower cell, or a shut gate's cell, sampled
+every `ARC_WALL_STEP` (4 m) on the 2 m obstacle grid (a wall band is 8-12 m
+thick, so a sample always lands in it); rubble (a breach) and an open or
+broken gate let the line through. With 140 m bows the lob reaches 84 m;
+the archers on a walls-2 walk reach 161 m plus the height (`m_hgain`), so
+the lobbers stand far inside their answer (the number must stay below
+100 / (100 + `WALL_RANGE_PCT`), 87 %).
+
+**Where it is read.** One place decides: `range_vs(u, t)` cuts its range
+when `lob_over_wall(u, t)`; `lobber(u)` is the shooter half,
+`wall_cross_at(x0, y0, x1, y1)` the line (the distance of the first wall
+sample, -1 none). So `_in_range`, fire at will's target scan (an extra test
+for targets within the flat range but past the lob: "too far to lob over
+the wall"), the attack order's closing (`stop` is 85 % of `range_vs`, so a
+unit told to shoot a man behind the wall walks in to the lob's reach, or as
+near as its ground goes), the battle AI's hold-fire and artillery scans and
+the siege AI's `_anyone_in_range` all see the cut range. Each shot
+(`_fire`) and the per-man aim (`_pm_sight`) cut `rp` the same way, by the
+units' middles (one decision per unit pair, not per man). The siege AI's
+defenders under fire (`_df_safe`) count a spot behind a wall past a field
+shooter's lob as safe. No new state: two constants (`ARC_OVER_WALL_PCT` a
+static var like the other siege levers, `ARC_WALL_STEP`); the obstacle grid
+and the gate states it reads are hashed already.
+
+**The view.** The range ring (`overlay.gd` `_draw_range`) pulls in where it
+crosses a wall: beyond the wall it is the lob's radius (or the wall itself
+where the lob falls short of it). An attack order on a man behind the wall
+out of the lob's reach says "TOO FAR TO LOB OVER THE WALL: MOVING CLOSER"
+where it said "MOVING INTO RANGE".
+
+**Measured** (a scratch probe, 8 seeds, a walls-2 castrum at level 2: five
+archer units of 80 outside with two heavy and two spear 100, against two
+archers 80 and three spear 100; men; "exchange" is the attacking archers'
+kills of the wall archers : the wall archers' kills of the attacking
+archers):
+
+| case | ARC % | attacker wins | attacking archers' kills (men on the wall / on the ground) | their losses | wall archers' kills / losses | exchange |
+|---|---|---|---|---|---|---|
+| both AI, the full siege | before | 8 / 8 | 151 (84 / 67) | 241 | 216 / 141 | 0.56 |
+| | 50 | 8 / 8 | 135 (89 / 46) | 219 | 209 / 136 | 0.56 |
+| | 60 | 8 / 8 | 138 (88 / 50) | 219 | 209 / 137 | 0.57 |
+| archers stood 95 m off the gate, 6 min, no assault | before | | 112 (52 / 60) | 237 | 208 / 102 | 0.49 |
+| | 50 | | 63 (57 / 6) | 211 | 188 / 55 | 0.29 |
+| 70 m off | before | | 135 (52 / 84) | 232 | 203 / 113 | 0.56 |
+| | 50 | | 62 (56 / 6) | 211 | 188 / 54 | 0.28 |
+| | 60 | | 73 (56 / 17) | 237 | 207 / 65 | 0.31 |
+| 50 m off | before | | 136 (55 / 80) | 258 | 245 / 101 | 0.41 |
+| | 50 | | 93 (67 / 26) | 252 | 239 / 70 | 0.29 |
+| | 60 | | 124 (58 / 66) | 250 | 237 / 80 | 0.34 |
+| | 65 | | 125 (59 / 66) | 254 | 241 / 83 | 0.35 |
+
+What it shows: the rule takes away the stand-off's kills of men behind the
+wall (95 m off: 60 -> 6; 70 m: 84 -> 17), and gives them back to archers
+that walk in (50 m off at 60 %: 66 of 80). The fire at the walk is
+untouched (52-67 men either way). The exchange with the wall's archers
+was already against the besiegers before the rule (0.41-0.56: two units on
+the walk shoot down into deep blocks on the ground while the besiegers'
+arrows at a two-deep line on a narrow walk mostly miss, and the battlements
+take 15 %); the rule lowers it further only because the besiegers no
+longer pick off the wall's archers when they come down to the street
+behind the wall. 60 was chosen over 50: at 50 the lob reaches 70 m and
+archers 50 m off the wall still lose two thirds of their kills behind it;
+60 (84 m) keeps the stand-off safe for the men inside and lets archers who
+close in do their work, all of it inside the wall archers' 161 m. The AI's
+full siege barely moves (8 / 8 either way, 6.3 -> 6.4 min): its archers
+stand 110 m off the gate (`S_COVER_OUT`) and shoot the walk.
+
+The equal-force sieges (`tools/balance` `rome_walls`, 6 Rome towns x walls
+1-3 x 8 seeds, 144 battles, code 4822cadaad -> 19ed1045b0): attacker wins
+71 / 40 / 31 % -> 75 / 50 / 38 % (walls 1 / 2 / 3; pooled 47 -> 54 %), no
+cell beyond its interval (the 32-seed reference of 2026-10-31 was
+73 / 41 / 31). The lean toward the attacker is the rule's other half: the
+defenders' archers on the ground behind the wall lob out at 60 % of their
+range, and the attacking archers no longer shoot at men behind the wall
+from their post either; walls 2 moved most (Sicily 38 -> 75, Arverni
+0 -> 25, Latium 88 -> 100, Attica 25 -> 12), on 8 seeds a cell is +-28.
+Campaign pins unchanged (battles settle by formula).
+
 **Artillery.** A battery is a unit whose soldiers are the crews (since
 2026-10-09 its engines are equipment the crews can leave and any foot can
 take up: "Engines are equipment, crews are men" below); its

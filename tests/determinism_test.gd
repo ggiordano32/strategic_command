@@ -1144,7 +1144,12 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (Since the destruction AI, 2026-10-23: the stone throwers batter the
 			# wall by the gate and breach it before the gate falls; the gate's
 			# breaking is gate_ops', cit_ops', punic's and oppidum's.)
-			need = ["paths", "clamp", "squeeze", "wall_shots", "breaches", "obs_lof", "wall_cover", "layout"]
+			# (No wall_cover since lobbing over a wall, 2026-11-02: the run plays
+			# the same to about tick 2,400, then the attacking archers shoot the
+			# tower engines, not the walk's archers, and no arrow from below meets
+			# the battlements (21 stops before); wall_cover is siege_castrum's
+			# and siege_eq_polis2's.)
+			need = ["paths", "clamp", "squeeze", "wall_shots", "breaches", "obs_lof", "layout"]
 		"siege_hill@ai":
 			# (Walls 3 since the tower engines: the batteries batter the towers
 			# by the gate first, so the gate stands past the run, and the

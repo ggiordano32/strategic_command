@@ -4661,8 +4661,12 @@ static func _df_back(sim, u: int, sh: PackedInt32Array) -> Vector2i:
 static func _df_safe(sim, x: int, y: int, sh: PackedInt32Array) -> bool:
 	var z: int = sim.height_at(x, y) + sim.LOF_BODY
 	for e in sh:
-		if BattleAI._d(sim.u_cx[e] - x, sim.u_cy[e] - y) > sim.mrange(e) + DF_PAD:
+		var de := BattleAI._d(sim.u_cx[e] - x, sim.u_cy[e] - y)
+		if de > sim.mrange(e) + DF_PAD:
 			continue
+		if de > sim.mrange(e) * sim.ARC_OVER_WALL_PCT / 100 + DF_PAD and sim.lobber(e) \
+				and sim.wall_cross_at(sim.u_cx[e], sim.u_cy[e], x, y) >= 0:
+			continue  # (behind a wall, past its lob: docs/design/battle_sim.md "Lobbing over a wall")
 		if sim.sight_line(sim.u_cx[e], sim.u_cy[e], sim.u_h[e] + sim.VIS_EYE, x, y, z):
 			return false
 	return true
