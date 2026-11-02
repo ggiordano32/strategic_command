@@ -44,6 +44,7 @@ const BASE_SHADER_OB_CPU := preload("res://game/soldier_bases_ob_cpu.gdshader")
 const PR_SHADER_OB := preload("res://game/projectiles_ob.gdshader")
 const PR_SHADER_OB_CPU := preload("res://game/projectiles_ob_cpu.gdshader")
 const BoardView := preload("res://game/board_view.gd")
+const BattleKit := preload("res://game/battlekit.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -784,7 +785,9 @@ func upload() -> void:
 				shoot |= F_FIRED | F_SHOOT
 		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
 		if oblique:
-			_unit_ext[u] = sim.wall_h * 10 / 1024 if sim.u_wall[u] > 0 else 0
+			# (A unit on a wall: its walk's height; in a held building: the building's firing level, ob_z; a unit
+			# climbing a ladder or a siege tower: 0, its men's own heights are _stair_lift's.)
+			_unit_ext[u] = 0 if sim.u_stair[u] == sim.ST_LADDER else _stand_dm(u, sim.wall_h * 10 / 1024)
 	if oblique:
 		_stair_lift()
 	# Engines follow the soldiers in every array.
@@ -835,12 +838,22 @@ func _stair_lift() -> void:
 	for i in _man_ext_on:
 		_man_ext[i] = 0
 	_man_ext_on.clear()
-	if _flights.is_empty():
-		return
 	var hm := float(sim.wall_h) / 1024.0
 	for u in sim.n_units:
 		var mode: int = sim.u_stair[u]
-		if (mode != 1 and mode != 3) or sim.u_alive[u] <= 0:
+		if mode == sim.ST_LADDER and sim.u_alive[u] > 0:
+			# (On a ladder or a siege tower's lanes: the men up on the walk are at its height, the men still
+			# below, queueing at the foot, on the ground: the unit's wall height lifted all of them.)
+			var lb: int = sim.u_slot_base[u]
+			var wdm := roundi(hm * 10.0)
+			for sl in sim.u_alive[u]:
+				var li: int = sim.slot_soldier[lb + sl]
+				var lk: int = sim.obs_kind(sim.pos_x[li], sim.pos_y[li])
+				if lk == MapGen.C_WALK or lk == MapGen.C_TOWER:
+					_man_ext[li] = wdm
+					_man_ext_on.append(li)
+			continue
+		if _flights.is_empty() or (mode != 1 and mode != 3) or sim.u_alive[u] <= 0:
 			continue
 		var fi: int = sim.u_sseg[u] * 2 + sim.u_send[u]
 		if fi < 0 or fi >= _flights.size() or not _flights[fi][5]:
@@ -1334,18 +1347,8 @@ func _pr_heights() -> void:
 		_pr_h_t0[i] = t0[i]
 		if t1[i] < 0:
 			continue
-		var su: int = sim.pr_unit[i]
-		var hs := 0
-		if su >= 0 and su < sim.n_units and sim.u_wall[su] > 0:
-			hs = wdm
-		else:
-			hs = _cell_dm(sim.pr_sx[i], sim.pr_sy[i], wdm)
-		var tu: int = sim.pr_tu[i]
-		var he := 0
-		if tu >= 0 and tu < sim.n_units and sim.u_wall[tu] > 0:
-			he = wdm
-		else:
-			he = _cell_dm(sim.pr_x[i], sim.pr_y[i], wdm)
+		var hs := _end_dm(sim.pr_unit[i], sim.pr_sx[i], sim.pr_sy[i], wdm)
+		var he := _end_dm(sim.pr_tu[i], sim.pr_x[i], sim.pr_y[i], wdm)
 		_pr_hs[i] = hs
 		_pr_he[i] = he
 		_pr_hpack[i] = hs + 1024 * he
@@ -1353,15 +1356,47 @@ func _pr_heights() -> void:
 	_pr_hi = hi
 
 
-## The wall walk's height (dm) if the point stands on a walk, a tower or (half) a stair, else 0.
-func _cell_dm(x: int, y: int, wdm: int) -> int:
-	if sim.obs_on == 0:
-		return 0
-	var k: int = sim.obs_kind(x, y)
-	if k == MapGen.C_WALK or k == MapGen.C_TOWER:
+## The height (dm) unit u stands at as the men are drawn: on a wall `wdm`, in a held building its firing level (ob_z);
+## else 0.
+func _stand_dm(u: int, wdm: int) -> int:
+	if sim.u_wall[u] > 0:
 		return wdm
-	if k == MapGen.C_STAIR:
-		return wdm / 2
+	if sim.occ_on != 0 and sim.u_occ[u] > 0:
+		var b: int = sim.u_occ[u] - 1
+		return BattleKit.held_dm.get(b, sim.ob_z[b])   # (the piece's drawn deck, else the sim's firing level)
+	return 0
+
+
+## A missile end's height (dm): the unit's (shooter or aimed at) where it stands at one height, else the point's cell.
+func _end_dm(u: int, x: int, y: int, wdm: int) -> int:
+	if u >= 0 and u < sim.n_units and sim.u_stair[u] != sim.ST_LADDER:
+		var h := _stand_dm(u, wdm)
+		if h > 0:
+			return h
+	return point_dm(sim, x, y)
+
+
+## The height (dm) things at a point are drawn at (view only): the wall walk's or a tower's `wall_h`, half of it on a stair,
+## the firing level (ob_z) in a held building, a live siege tower's deck (the shots it takes land on its body), else 0.
+static func point_dm(bs, x: int, y: int) -> int:
+	var wdm: int = bs.wall_h * 10 / 1024
+	if bs.obs_on != 0:
+		var k: int = bs.obs_kind(x, y)
+		if k == MapGen.C_WALK or k == MapGen.C_TOWER:
+			return wdm
+		if k == MapGen.C_STAIR:
+			return wdm / 2
+		if k == MapGen.C_BUILDING and bs.occ_on != 0:
+			var ob: int = bs.occ_bg[(y >> 11) * bs.ob_w + (x >> 11)] - 1
+			if ob >= 0 and bs.ob_u[ob] != 0:
+				return BattleKit.held_dm.get(ob, bs.ob_z[ob])
+	for q in bs.n_eq:
+		if bs.q_kind[q] != bs.EQ_TOWER or bs.q_state[q] == bs.Q_WRECKED:
+			continue
+		var c: Vector2i = bs.eq_centre(q)
+		var r: int = bs.EQ_DEPTH2[bs.EQ_TOWER] * 5 / 4   # (the tower's side is 2 x EQ_DEPTH2: the box's corner reach)
+		if absi(x - c.x) <= r and absi(y - c.y) <= r:
+			return wdm
 	return 0
 
 

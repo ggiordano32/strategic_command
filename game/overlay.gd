@@ -17,6 +17,7 @@ const Marks := preload("res://game/tabletop_marks.gd")
 const CData := preload("res://campaign/cdata.gd")
 const BoardView := preload("res://game/board_view.gd")
 const SiegeGearOb := preload("res://game/siege_gear_ob.gd")
+const SoldierLayer := preload("res://game/soldier_layer.gd")
 var _siege_ob := SiegeGearOb.new()
 const Traits := preload("res://game/unit_traits.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
@@ -1537,12 +1538,11 @@ func _draw_impacts(lw: float) -> void:
 		var p := to_px(sim.fx_x[k], sim.fx_y[k])
 		var dir := Vector2(sim.fx_dx[k], sim.fx_dy[k]) / 4096.0
 		var a := 0.85 * (1.0 - f)
-		# A stone that landed on a wall walk (or a tower) lands there, at the height the men on it are drawn at.
+		# A stone that landed on a wall walk (or a tower), in a held building or on a siege tower lands there, at the height
+		# the men on it are drawn at (SoldierLayer.point_dm).
 		var up_h := 0.0
 		if BoardView.oblique and sim.obs_on != 0:
-			var ok: int = sim.obs_kind(sim.fx_x[k], sim.fx_y[k])
-			if ok == MapGen.C_WALK or ok == MapGen.C_TOWER:
-				up_h = float(sim.wall_h) / 1024.0 * px_per_m * BoardView.OBLIQUE_SIN
+			up_h = float(SoldierLayer.point_dm(sim, sim.fx_x[k], sim.fx_y[k])) * 0.1 * px_per_m * BoardView.OBLIQUE_SIN
 		_up(p)
 		draw_circle(p + Vector2(0, -up_h - px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
 		if up_h > 0.0:

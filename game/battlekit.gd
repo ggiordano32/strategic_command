@@ -105,6 +105,12 @@ const WEST_PIECE := {MapGen.B_TAVERN: "tavern", MapGen.B_SHOP: "shop", MapGen.B_
 	MapGen.B_SHACK: "shack", MapGen.B_LEANTO: "leanto", MapGen.B_MAGAZINE: "magazine"}
 const PROP_PIECE := ["barrels", "crates", "cart", "well"]
 
+## The height (dm) the men of a held building stand at as the oblique view draws its piece: the roof deck of a flat-roofed piece,
+## by the building's index in the layout (the sim's own ob_z is a per-building number that does not follow the piece's drawn
+## height, up to 1.7 m off on a flat roof). A building not in it: the sim's ob_z (game/soldier_layer.gd _stand_dm).
+const DECK_DM := {"house_flat_s": 32, "house_flat_m": 35, "shop": 38, "governor": 70}
+static var held_dm := {}
+
 static var _tex2_low: Texture2D
 static var _name_idx2 := {}
 
@@ -183,6 +189,7 @@ var ob_mat: ShaderMaterial          # its material (the occluder duplicates it)
 
 
 func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
+	held_dm.clear()
 	sim = p_sim
 	lay = p_lay
 	k = p_k
@@ -282,6 +289,8 @@ func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: flo
 	i_cul.append(culture if cul < 0 else cul)
 	i_flash.append(0.0)
 	i_bld.append(_cur_bld)
+	if _cur_bld >= 0 and DECK_DM.has(piece):
+		held_dm[_cur_bld] = DECK_DM[piece]
 	return i_piece.size() - 1
 
 
