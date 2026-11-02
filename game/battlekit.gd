@@ -69,6 +69,8 @@ const STAIR_RUN := 1.8
 const POST_STEP := 2.5          # battlekit.gdshader POST_STEP
 ## Wall row kinds (battlekit.gdshader): faces (a vertical quad on a ground edge) then tops (a quad between two lines).
 enum {WK_OUT, WK_MERLON, WK_STEP, WK_IN, WK_CAP, WK_WALK, WK_MTOP, WK_RAMP}
+## A stone stair's rows (_ob_stone_flight) carry this in custom.w, where a stretch's fade goes (stairs never fade).
+const STAIR_ROW := 2.0
 const FADE_ZOOM := 1.5          # the camera's zoom past which a stretch hiding men behind it fades
 const FADE_BEHIND := 10.0       # metres behind the wall
 const FADE_FRAMES := 6
@@ -1087,6 +1089,8 @@ func _ob_walls() -> void:
 	var towers: Array = lay.get("towers", [])
 	var pp := clampf(float(int(lay.get("pp", 2))), 1.0, 4.0)
 	var rub: PackedByteArray = sim.obs if sim != null and sim.rub_n > 0 else PackedByteArray()
+	# (A stone wall's stairs: each flight stands in a notch cut in the inner rampart, _ob_stone_flight.)
+	var flights: Array = [] if _timber else CityDraw.stair_flights(lay)
 	for ring in _rings:
 		var t: float = ring[1]
 		var hm: float = ring[2]
@@ -1181,21 +1185,64 @@ func _ob_walls() -> void:
 				s0 = maxf(s0, float(c[1]))
 			if s0 < l - 0.3:
 				stand.append([s0, l])
+			# The stone stairs' notches along this edge: [from, to] (metres along it), the inner band cut away there.
+			var notch: Array = []
+			for f in flights:
+				if not f[5]:
+					continue
+				var rf: Vector2 = (f[0] as Vector2) - p[e]
+				var s_in := t * 0.5 + float(MapGen.RING_W) * 0.5 - float(f[2])   # (S's offset in from the wall's line)
+				if (f[1] as Vector2).dot(n) > 0.9 and absf(rf.dot(n) - s_in) < 1.5 and rf.dot(d) > 0.0 and rf.dot(d) < l:
+					notch.append([rf.dot(d) - CityDraw.FLIGHT_HW, rf.dot(d) + CityDraw.FLIGHT_HW])
 			for iv in stand:
 				var a0: float = iv[0]
 				var a1: float = iv[1]
 				if a1 - a0 < 0.3:
 					continue
-				var ns := maxi(ceili((a1 - a0) / WALL_SEG), 1)
-				for q in ns:
-					var sa := a0 + (a1 - a0) * q / ns
-					var sb := a0 + (a1 - a0) * (q + 1) / ns
-					var pa: Array = []
-					var pb: Array = []
-					for li in nl:
-						pa.append(ps[e * nl + li].lerp(pe[e2 * nl + li], sa / l))
-						pb.append(ps[e * nl + li].lerp(pe[e2 * nl + li], sb / l))
-					_ob_wseg_rows(pa, pb, t, hm, q == 0 and a0 > 0.01, q == ns - 1 and a1 < l - 0.01)
+				# Pieces [from, to, inner band standing].
+				var subs: Array = [[a0, a1, true]]
+				for nt in notch:
+					var cut: Array = []
+					for sbv in subs:
+						var n0 := maxf(float(nt[0]), float(sbv[0]))
+						var n1 := minf(float(nt[1]), float(sbv[1]))
+						if not sbv[2] or n1 <= n0 + 0.05:
+							cut.append(sbv)
+							continue
+						if n0 > float(sbv[0]) + 0.05:
+							cut.append([sbv[0], n0, true])
+						cut.append([n0, n1, false])
+						if n1 < float(sbv[1]) - 0.05:
+							cut.append([n1, sbv[1], true])
+					subs = cut
+				for si in subs.size():
+					var s0b: float = subs[si][0]
+					var s1b: float = subs[si][1]
+					var inb: bool = subs[si][2]
+					var ns := maxi(ceili((s1b - s0b) / WALL_SEG), 1)
+					for q in ns:
+						var sa := s0b + (s1b - s0b) * q / ns
+						var sb := s0b + (s1b - s0b) * (q + 1) / ns
+						var pa: Array = []
+						var pb: Array = []
+						for li in nl:
+							var l0: Vector2 = ps[e * nl + li]
+							var l1: Vector2 = pe[e2 * nl + li]
+							if notch.is_empty():
+								pa.append(l0.lerp(l1, sa / l))
+								pb.append(l0.lerp(l1, sb / l))
+							else:
+								# (With a notch on the edge every line is cut square across at the same distance along
+								# it, so the notch's sides and the flight meet: the mitred lines are not the centre
+								# line's length. The edge's own ends keep their mitred points.)
+								var x0 := (l0 - p[e]).dot(d)
+								var x1 := maxf((l1 - p[e]).dot(d), x0 + 0.01)
+								pa.append(l0 if sa <= 0.01 else l0.lerp(l1, clampf((sa - x0) / (x1 - x0), 0.0, 1.0)))
+								pb.append(l1 if sb >= l - 0.01 else l0.lerp(l1, clampf((sb - x0) / (x1 - x0), 0.0, 1.0)))
+						_ob_wseg_rows(pa, pb, t, hm, q == 0 and si == 0 and a0 > 0.01,
+							q == ns - 1 and si == subs.size() - 1 and a1 < l - 0.01, inb,
+							inb and q == 0 and si > 0 and not subs[si - 1][2],
+							inb and q == ns - 1 and si < subs.size() - 1 and not subs[si + 1][2])
 			# The bevel's wedge at the vertex e2 (when the wall stands on both sides of it).
 			if bev[e2] != 0 and not stand.is_empty() and float(stand[stand.size() - 1][1]) >= l - 0.01:
 				var wa: Array = []
@@ -1204,9 +1251,9 @@ func _ob_walls() -> void:
 					wa.append(pe[e2 * nl + li])
 					wb.append(ps[e2 * nl + li])
 				_ob_wseg_rows(wa, wb, t, hm, false, false)
-	if _timber and not _rings.is_empty():
+	if not _rings.is_empty():
 		_ob_stairs(float(_rings[0][2]))
-		if int(lay.get("wring", 0)) != 0:
+		if _timber and int(lay.get("wring", 0)) != 0:
 			_ob_fences()
 	_ob_nwall = _ob_wkey.size()
 	_seg_fade.resize(_ob_seg.size())
@@ -1238,7 +1285,10 @@ static func _ring_pts(poly: PackedInt32Array) -> PackedVector2Array:
 ## One stretch's rows: `a` and `b` the four lines' points at its start and end (metres; outer, merlons' inner edge,
 ## walk's inner edge, inner), caps where the wall is cut at its start (cs) or end (ce). Its sort keys: the stretch's
 ## nearness, the faces turned away first, then the tops lowest first, then the faces toward the camera.
-func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool) -> void:
+## `inner` false: a stone stair's notch (no inner rampart, its step or face: the flight stands there); ics / ice: the
+## rampart ends at the start / end of this piece against a notch (its cut face).
+func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool, inner := true, ics := false,
+		ice := false) -> void:
 	var w0 := _ob_wkey.size()
 	var ca: Vector2 = (a[0] + a[3]) * 0.5
 	var cb: Vector2 = (b[0] + b[3]) * 0.5
@@ -1254,17 +1304,25 @@ func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool) 
 	var zr := maxf(hm - RAMP_DROP, 0.5)
 	_ob_face(a[0], b[0], 0.0, zt, WK_OUT, base)
 	_ob_face(b[1], a[1], hm, zt, WK_MERLON, base)
-	_ob_face(b[2], a[2], zr, hm, WK_STEP, base)
-	_ob_face(b[3], a[3], 0.0, zr, WK_IN, base)
+	if inner:
+		_ob_face(b[2], a[2], zr, hm, WK_STEP, base)
+		_ob_face(b[3], a[3], 0.0, zr, WK_IN, base)
 	if cs:   # (facing back along the wall: A to B outward)
 		_ob_face(a[2], a[0], 0.0, hm, WK_CAP, base)
-		_ob_face(a[3], a[2], 0.0, zr, WK_CAP, base)
+		if inner:
+			_ob_face(a[3], a[2], 0.0, zr, WK_CAP, base)
 		_ob_face(a[1], a[0], hm, zt, WK_CAP, base)
 	if ce:
 		_ob_face(b[0], b[2], 0.0, hm, WK_CAP, base)
-		_ob_face(b[2], b[3], 0.0, zr, WK_CAP, base)
+		if inner:
+			_ob_face(b[2], b[3], 0.0, zr, WK_CAP, base)
 		_ob_face(b[0], b[1], hm, zt, WK_CAP, base)
-	_ob_top(a[2], b[2], a[3], b[3], zr, WK_RAMP, base)
+	if ics:
+		_ob_face(a[3], a[2], 0.0, zr, WK_CAP, base)
+	if ice:
+		_ob_face(b[2], b[3], 0.0, zr, WK_CAP, base)
+	if inner:
+		_ob_top(a[2], b[2], a[3], b[3], zr, WK_RAMP, base)
 	_ob_top(a[0], b[0], a[2], b[2], hm, WK_WALK, base)
 	if not _timber:
 		_ob_top(a[0], b[0], a[1], b[1], zt, WK_MTOP, base)
@@ -1304,34 +1362,77 @@ func _ob_tseg_rows(a: Array, b: Array, hm: float, cs: bool, ce: bool, base: floa
 		_ob_face(b[1], b[2], hm - 0.3, hm, WK_CAP, base, rk[6])
 
 
-## The stockade's plank stairs (the timber flag): one at each stair point of the sim's walkway stretches (lay "segs":
-## the point in the inner band, MapGen._segments), running along the wall from the ground (toward the stretch's
-## middle, or the way that climbs away from the camera) up to the platform's edge, STAIR_W wide; never fading (a
-## stretch of their own with no facing).
+## The stairs at the sim's stair points (lay "segs", CityDraw.stair_flights), each a stretch of its own with no facing
+## (never fading), keyed just after its wall when the wall's inner side faces the camera and just before it when its
+## outer side does (the stockade's rule). A stockade's are plank stairs (the timber flag) running along the wall from
+## the ground (toward the stretch's middle, or the way that climbs away from the camera) up to the platform's edge,
+## STAIR_W wide; a stone wall's a masonry flight on the sim's own run (_ob_stone_flight).
 func _ob_stairs(hm: float) -> void:
-	for sg in lay.get("segs", []):
-		var a: Array = sg
-		if a.size() < MapGen.SEG_LEN:
-			continue
-		var d := Vector2(int(a[2]) - int(a[0]), int(a[3]) - int(a[1]))
-		if d.length() < 1.0:
-			continue
-		d = d.normalized()
-		var ang := float(int(a[4])) * TAU / 1024.0
-		var inw := -Vector2(cos(ang), sin(ang))
-		for e in 2:
-			var s := Vector2(int(a[7 + e * 6]), int(a[8 + e * 6]))
-			var up := -d if e == 0 else d   # (the top toward the stretch's end ...
+	var segs: Array = lay.get("segs", [])
+	var fl := CityDraw.stair_flights(lay)
+	var rub: PackedByteArray = sim.obs if sim != null and sim.rub_n > 0 else PackedByteArray()
+	for i in fl.size():
+		var f: Array = fl[i]
+		var s: Vector2 = f[0]
+		var inw: Vector2 = f[1]
+		var w0 := _ob_wkey.size()
+		var key := BoardView.near_px(s * k) + (0.03 if inw.y > 0.0 else -0.03)
+		var foot: Vector2
+		var top: Vector2
+		if _timber:
+			var a: Array = segs[i / 2]
+			if not f[5]:
+				continue
+			var d := Vector2(int(a[2]) - int(a[0]), int(a[3]) - int(a[1]))
+			if d.length() < 1.0:
+				continue
+			d = d.normalized()
+			var up := -d if i % 2 == 0 else d   # (the top toward the stretch's end ...
 			if up.y > 0.05:
 				up = -up   # (... unless that climbs toward the camera: a stair rising away from it shows its treads)
-			var foot := s - up * STAIR_RUN
-			var top := s + up * STAIR_RUN
+			foot = s - up * STAIR_RUN
+			top = s + up * STAIR_RUN
 			var hw := inw * STAIR_W * 0.5
-			var w0 := _ob_wkey.size()
-			var key := BoardView.near_px(s * k) + (0.03 if inw.y > 0.0 else -0.03)
 			_ob_top(foot - hw, top - hw, foot + hw, top + hw, hm, WK_MTOP, key, 0.0)
-			_ob_seg.append([foot, top, Vector2.ZERO, 0.0, w0, 1])
+		else:
+			if not rub.is_empty():
+				var cx := int(s.x / 2.0)
+				var cy := int(s.y / 2.0)
+				if cx >= 0 and cy >= 0 and cx < sim.ob_w and cy * sim.ob_w + cx < rub.size() \
+						and rub[cy * sim.ob_w + cx] == MapGen.C_RUBBLE:
+					continue   # (the stretch is breached here: no flight)
+			if not f[5]:
+				continue   # (two stairs' runs crossing in a corner: CityDraw.stair_flights)
+			foot = s + inw * float(f[2])
+			top = s + inw * float(f[4])
+			_ob_stone_flight(f, hm, key)
+		_ob_seg.append([foot, top, Vector2.ZERO, 0.0, w0, _ob_wkey.size() - w0])
+		for w in _ob_wkey.size() - w0:
 			_ob_wseg.append(_ob_seg.size() - 1)
+
+
+## A stone wall's stair (docs/design/art_pipeline.md "Stone stairs"; f a CityDraw.stair_flights entry): a masonry flight
+## FLIGHT_HW x 2 wide in the inner rampart's notch (_ob_walls), rising from the street at c_foot (the sim's foot D) to
+## the walk's height at c_land, then a landing to the walk's inner edge, so the men climbing D -> S -> E are on its
+## treads (game/soldier_layer.gd lifts them by the same run). Rows: its sloped top (a WK_WALK top flagged STAIR_ROW in
+## custom.w: treads, battlekit.gdshader ob_stair_col), the landing (a walk top), the two sides (WK_CAP faces flagged
+## STAIR_ROW, custom.y +1 rising toward B, -1 toward A: their tops stepped) and the landing's sides; the usual ranks
+## (faces turned away first, the tops, the faces toward the camera).
+func _ob_stone_flight(f: Array, hm: float, key: float) -> void:
+	var s: Vector2 = f[0]
+	var inw: Vector2 = f[1]
+	var al := Vector2(-inw.y, inw.x)
+	var hw := al * CityDraw.FLIGHT_HW
+	var foot := s + inw * float(f[2])
+	var land := s + inw * float(f[3])
+	var top := s + inw * float(f[4])
+	_ob_top(foot - hw, land - hw, foot + hw, land + hw, hm, WK_WALK, key, -1.0, STAIR_ROW)
+	_ob_top(land - hw, top - hw, land + hw, top + hw, hm, WK_WALK, key)
+	# (A face's normal is its edge A -> B turned right: toward +al for foot -> land on the +al side.)
+	_ob_face(foot + hw, land + hw, 0.0, hm, WK_CAP, key, -1.0, 1.0, STAIR_ROW)
+	_ob_face(land - hw, foot - hw, 0.0, hm, WK_CAP, key, -1.0, -1.0, STAIR_ROW)
+	_ob_face(land + hw, top + hw, 0.0, hm, WK_CAP, key)
+	_ob_face(top - hw, land - hw, 0.0, hm, WK_CAP, key)
 
 
 ## Fences round the garden plots outside the native lesson's village (lay "fields" of kind 2; view only: the sim
@@ -1382,7 +1483,8 @@ func fence_runs() -> Array:
 
 ## A face row: the vertical quad on the ground edge A -> B (metres) from z0 to z1 metres up, its normal A -> B turned
 ## to the right (outward for the outer face). Faces turned toward the camera (south) draw over the stretch's tops.
-func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: float, rk := -1.0) -> void:
+func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: float, rk := -1.0, cy := 0.0,
+		cw := 0.0) -> void:
 	if pa.distance_squared_to(pb) < 0.0004 or z1 <= z0:
 		return
 	var dd := (pb - pa).normalized()
@@ -1391,16 +1493,17 @@ func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: f
 		rank = rk   # (the stockade's explicit order)
 	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z0 * 10.0), 0, 200))
 	_ob_wall.append_array(PackedFloat32Array([pa.x * k, pb.x * k, 0.0, 0.0, pa.y * k, pb.y * k, 0.0, z1,
-		code, 0.0, 0.0, 0.0]))
+		code, cy, 0.0, cw]))
 	_ob_wkey.append(base + rank)
 
 
 ## A top row: the quad between the lines A0 -> B0 and A1 -> B1 (metres) z metres up (B1 as its offset from B0: the
 ## custom data is kept in half floats).
-func _ob_top(a0: Vector2, b0: Vector2, a1: Vector2, b1: Vector2, z: float, kind: int, base: float, rk := -1.0) -> void:
+func _ob_top(a0: Vector2, b0: Vector2, a1: Vector2, b1: Vector2, z: float, kind: int, base: float, rk := -1.0,
+		cw := 0.0) -> void:
 	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z * 10.0), 0, 200))
 	_ob_wall.append_array(PackedFloat32Array([a0.x * k, b0.x * k, 0.0, a1.x * k, a0.y * k, b0.y * k, 0.0, a1.y * k,
-		code, (b1.x - b0.x) * k, (b1.y - b0.y) * k, 0.0]))
+		code, (b1.x - b0.x) * k, (b1.y - b0.y) * k, cw]))
 	_ob_wkey.append(base + (rk if rk >= 0.0 else 0.004 + z * 0.0005))
 
 
@@ -1846,6 +1949,9 @@ class _LowDraw extends Node2D:
 		if kit._timber:
 			_timber_row(o, z, kind)
 			return
+		if wb[o + 11] > 1.5:
+			_stair_row(o, z, kind, sc)
+			return
 		var pa := Vector2(wb[o], wb[o + 4])
 		var pb := Vector2(wb[o + 1], wb[o + 5])
 		var bv = kit.BoardView
@@ -1881,6 +1987,39 @@ class _LowDraw extends Node2D:
 		if absf(area) < 0.5:
 			return
 		draw_colored_polygon(q, col)
+
+	## A stone stair's row on Low (the High path's battlekit.gdshader ob_stair_col, flat-shaded): the treads a quad from
+	## the ground at A up to z at B with a line at each step, a side a polygon with the steps' profile on top.
+	func _stair_row(o: int, z: float, kind: int, sc: Color) -> void:
+		var wb: PackedFloat32Array = kit._ob_wall
+		var bv = kit.BoardView
+		var pa := Vector2(wb[o], wb[o + 4])
+		var pb := Vector2(wb[o + 1], wb[o + 5])
+		if kind == kit.WK_WALK:
+			var pa2 := Vector2(wb[o + 3], wb[o + 7])
+			var pb2 := pb + Vector2(wb[o + 9], wb[o + 10])
+			var n := maxi(roundi(z / kit.CityDraw.TREAD_RISE), 1)
+			_quad(PackedVector2Array([bv.to_board(pa, 0.0), bv.to_board(pb, z), bv.to_board(pb2, z), bv.to_board(pa2, 0.0)]),
+				sc * 0.98)
+			var lc := sc * 0.66
+			lc.a = 1.0
+			for i in range(1, n):
+				var f := float(i) / float(n)
+				draw_line(bv.to_board(pa.lerp(pb, f), z * f), bv.to_board(pa2.lerp(pb2, f), z * f), lc, 1.0)
+			return
+		var z1: float = wb[o + 7]
+		var n2 := maxi(roundi(z1 / kit.CityDraw.TREAD_RISE), 1)
+		var rise := z1 / float(n2)
+		var up_b: bool = wb[o + 9] > 0.0
+		var g0: Vector2 = pa if up_b else pb   # (the foot's end)
+		var g1: Vector2 = pb if up_b else pa
+		var poly := PackedVector2Array([bv.to_board(g0, 0.0)])
+		for i in n2:
+			poly.append(bv.to_board(g0.lerp(g1, float(i) / float(n2)), rise * float(i + 1)))
+			poly.append(bv.to_board(g0.lerp(g1, float(i + 1) / float(n2)), rise * float(i + 1)))
+		poly.append(bv.to_board(g1, 0.0))
+		var dd := (pb - pa).normalized()
+		_quad(poly, sc * 0.94 * (0.78 + 0.32 * (0.5 + 0.5 * (dd.y * -0.74 - dd.x * -0.67))))
 
 	## A stockade row on Low (the High path's battlekit.gdshader ob_timber_col, flat-shaded): the logs as one
 	## polygon with a saw-tooth top, posts, rails and fences as thin quads, the platform and stairs as quads.

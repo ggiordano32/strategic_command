@@ -33,6 +33,7 @@ uniform vec4 ob_kanch[288];   // size px, anchor px (the footprint's centre on t
 uniform float ob_kk = 1.25;   // board px per sheet px
 uniform vec4 ob_rockq[2];     // pass 6: the oblique kit sheet's rock sprites (indices, -1 unused): sunk into the ground
 uniform float ob_sink = 0.14; // how far the rock sits below its footprint, a share of its height
+const float TREAD_RISE = 0.3; // a stone stair's step, about (game/city_draw.gd TREAD_RISE; ob_stair_col)
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -79,26 +80,40 @@ void vertex() {
 		vec2 g;
 		float z;
 		bool tim = ob_timber > 0.5;
+		bool stair = cd.w > 1.5;   // (a stone stair's row: game/battlekit.gd STAIR_ROW, where a stretch's fade goes)
 		if (kind < 4.5 || (tim && kind > 6.5)) {   // (a stockade's kind 7: a fence, a face)
 			g = mix(A, B, UV.x);
 			z = mix(C.y, zdm * 0.1, UV.y);
 			v_wall = vec4(10.0 + kind, dot(g, d) / ob_ppm, z, C.y);
+			if (stair) {
+				// A stone stair's side: its top rising from the ground at the foot to C.y at the top end (custom.y +1:
+				// toward B), a step's rise above the slope so the stepped edge (ob_stair_col) fits inside.
+				float fr = cd.y > 0.0 ? UV.x : 1.0 - UV.x;
+				float rise = C.y / max(floor(C.y / TREAD_RISE + 0.5), 1.0);
+				z = mix(min(C.y, C.y * fr + rise), 0.0, UV.y);
+				v_wall = vec4(30.0 + kind, fr, z, C.y);
+			}
 			rot_cs = vec2(d.y, -d.x);   // the face's normal on the ground
 		} else {
 			g = mix(mix(A, B, UV.x), mix(C, B + cd.yz, UV.x), UV.y);
 			z = zdm * 0.1;
 			v_wall = vec4(10.0 + kind, dot(g, d) / ob_ppm, UV.y, z);
+			rot_cs = vec2(0.0);
 			if (tim && kind > 5.5) {
 				// A stockade's stair: from the ground at the A end up to the platform at B; along it in metres from A.
 				z *= UV.x;
 				v_wall.y = UV.x * length(B - A) / ob_ppm;
+			} else if (stair) {
+				// A stone stair's treads: from the ground at the A end up to the landing at B (y: 0 .. 1 along it).
+				z *= UV.x;
+				v_wall = vec4(30.0 + kind, UV.x, UV.y, zdm * 0.1);
+				rot_cs = d;   // (the way it climbs)
 			}
-			rot_cs = vec2(0.0);
 		}
 		VERTEX = ob_board(g) - vec2(0.0, z * ob_ppm * OB_SIN);
 		v_near = ob_near(g, z * ob_ppm);
 		culture = ob_wall_cul;
-		flash = clamp(cd.w, 0.0, 1.0);   // (a wall row: its fade)
+		flash = stair ? 0.0 : clamp(cd.w, 0.0, 1.0);   // (a wall row: its fade)
 		UV = vec2(0.0);
 	} else {
 		if (ob_on > 0.5) {
@@ -251,9 +266,70 @@ vec4 ob_timber_col() {
 	return vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 
+// A stone wall's stair (game/battlekit.gd _ob_stone_flight, docs/design/art_pipeline.md "Stone stairs"): dressed stone
+// in the wall's culture tint. The treads (kind 5): n steps of about TREAD_RISE from the foot to the landing, each its
+// riser then its tread, the riser's share of a step as the camera sees it (most when the flight climbs away from it,
+// in the light by its own direction; a shadow line when it climbs toward it), a lit nosing, each tread its own wear,
+// a coping along both edges. The sides (kind 4): coursed masonry, the top cut into the steps' profile (the rest
+// discarded), a lit lip on each step, a darker foot.
+vec4 ob_stair_col() {
+	int kind = int(v_wall.x - 30.0 + 0.5);
+	int ci = clamp(int(culture + 0.5), 0, 7);
+	vec3 stone = vec3(0.66, 0.62, 0.55) * stone_tint[ci];
+	float hm = v_wall.w;
+	float n = max(floor(hm / TREAD_RISE + 0.5), 1.0);
+	float rise = hm / n;
+	vec2 L = normalize(light_dir.xy);
+	vec3 col;
+	if (kind == 5) {
+		float fs = v_wall.y * n;
+		float st = floor(fs);
+		float ph = fs - st;
+		float ac = v_wall.z;
+		float away = clamp(-rot_cs.y, 0.0, 1.0);   // (climbing north: the risers face the camera)
+		float rs = mix(0.10, 0.55, away);
+		float wear = 0.92 + 0.12 * ob_hash(vec2(st, 4.0));
+		if (ph < rs) {
+			// The riser: lit by its own direction (it faces back down the flight); a shadow line when it faces away,
+			// a faint one seen from the side (strong lines there read as a fence).
+			float rl = 0.5 + 0.5 * dot(-rot_cs, L);
+			col = stone * wear * (away > 0.3 ? 0.66 + 0.3 * rl : mix(0.82, 0.55, clamp(rot_cs.y * 2.0, 0.0, 1.0)));
+		} else {
+			col = stone * 1.04 * wear * (1.0 + (0.04 + 0.12 * away) * (1.0 - smoothstep(0.0, 0.14, ph - rs)));   // the nosing lit
+			col *= 1.0 - 0.06 * smoothstep(0.25, 0.0, abs(ac - 0.5));   // (worn in the middle)
+		}
+		col = mix(col, stone * 1.1, step(0.93, ac) + step(ac, 0.07));   // the coping
+		col *= 0.88 + 0.12 * v_wall.y;   // (the foot in the street's shade)
+	} else {
+		float fr = v_wall.y;
+		float z = v_wall.z;
+		float ztop = min((floor(fr * n) + 1.0) * rise, hm);
+		if (z > ztop) {
+			return vec4(0.0);
+		}
+		float u = fr * hm;
+		float course = floor(z / 0.55);
+		float gy = fract(z / 0.55);
+		float jx = fract(u / 1.1 + course * 0.37);
+		float mortar = max(1.0 - smoothstep(0.0, 0.09, gy), 1.0 - smoothstep(0.0, 0.05, min(jx, 1.0 - jx)));
+		col = stone * 0.94 * (0.9 + 0.12 * ob_hash(vec2(course, floor(u / 1.1 + course * 0.37))));
+		col *= 1.0 - 0.2 * mortar;
+		col *= 0.80 + 0.36 * (0.5 + 0.5 * dot(rot_cs, L));
+		col *= 0.74 + 0.26 * smoothstep(0.0, 1.3, z);
+		col = mix(col, col * 1.25 + vec3(0.03), smoothstep(ztop - 0.09, ztop - 0.02, z));
+	}
+	float lum = dot(col, vec3(0.3, 0.59, 0.11));
+	col = mix(vec3(lum), col, sat);
+	col = (col - 0.5) * contrast + 0.5;
+	return vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+
 const float MERLON_STEP = 2.0;   // tools/battlekit b_wall_strip: 8 merlons a 16 m tile, 1.1 m wide
 const float MERLON_W = 1.1;
 vec4 ob_wall_col() {
+	if (v_wall.x > 29.5) {
+		return ob_stair_col();
+	}
 	if (ob_timber > 0.5) {
 		return ob_timber_col();
 	}

@@ -17,6 +17,8 @@
 //     in the last 0.3 s, bit 23 a powder-weapon unit),
 //   8 unit engine set (indexed by unit, 6 bits; its own block: the bits above
 //     24 do not survive the float decode)
+//   the oblique view: 9 the per-tick draw order, 10 a man's height on a stone
+//     stair's flight (dm, 0 else; soldier_layer.gd _stair_lift)
 //
 // CPU-fed variant (render_mode skip_vertex_transform): the same sim ints,
 // converted to floats natively and interleaved into the MultiMesh buffer by
@@ -553,7 +555,7 @@ void vertex() {
 			st >= 6 ? bitfield(u8, 1, 64) : bitfield(flags, 4096, 64),
 			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
 			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i),
-			float(u8 / 64) * 0.1 * px_per_unit * 1024.0, uv, pos, col, look, ob, near);
+			float(u8 / 64 + fetch_int(10, i)) * 0.1 * px_per_unit * 1024.0, uv, pos, col, look, ob, near);
 		v_ob = ob;
 		v_near = near;
 #else

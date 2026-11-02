@@ -53,6 +53,61 @@ static func banner_color(lay: Dictionary) -> Color:
 	return SIDE_COLORS[clampi(int(lay.get("def", 1)), 0, 1)]
 
 
+## Stone stairs (docs/design/art_pipeline.md "Stone stairs"): the flight at each walkway stretch end's stair, on
+## the sim's own run (lay "segs": the foot D on the street, the stair point S in the middle of the wall's inner band,
+## the walkway point E; a man climbing walks D -> S -> E, sim/battle_sim.gd _stair_set), one entry per segment end
+## in the sim's order (seg * 2 + end, as BattleSim.stair_pt): [S (metres), inw (unit, into the town), c_foot,
+## c_land, c_top] with c the distance inward from S: the flight rises from the ground at c_foot (D's distance: the
+## inner face plus half the ring road) to the walk's height at c_land, a landing from there to the walk's inner edge
+## c_top (FLIGHT_LAND: the walkway's cells begin about there, so a man is at the top when he steps onto them). The
+## same numbers draw the flight in both views (game/battlekit.gd _ob_stone_flight, _draw_stairs) and lift the men
+## climbing it (game/soldier_layer.gd). A sixth element: false for a flight not drawn, where two stairs meet in a
+## re-entrant corner (the West fort's bastion flanks) and their runs cross: of the two, the one whose foot lies deeper
+## in the other's wall (the sim's foot D can fall in the other wall's body); its men keep the walk's height as before.
+## Empty for a ring without walls.
+const FLIGHT_HW := 2.0       # half its width (MapGen.STAIR_HW: the stair's cells; men keep within about 1.5 m)
+const FLIGHT_LAND := 0.8     # the landing at the top
+const TREAD_RISE := 0.3      # about this much a step (battlekit.gdshader rounds it to fit the walk's height)
+static func stair_flights(lay: Dictionary) -> Array:
+	var out: Array = []
+	if int(lay.get("walls", 0)) <= 0 or not lay.has("t"):
+		return out
+	var t := float(lay["t"])
+	var pp := float(int(lay.get("pp", 2)))
+	var inner := maxf(t - pp - float(MapGen.WALK_W), 0.0)
+	var b_s := float(int(t) / 2 - int(inner) / 2)   # (S's offset in from the wall's centre line, as the sim rounds it)
+	var b2 := minf(-t * 0.5 + pp + float(MapGen.WALK_W), t * 0.5 - 0.5)   # (the walk's inner edge: battlekit _ob_walls)
+	var c_top := b2 - b_s
+	var c_foot := t * 0.5 - b_s + float(MapGen.RING_W) * 0.5
+	for sg in lay.get("segs", []):
+		var a: Array = sg
+		if a.size() < MapGen.SEG_LEN:
+			for e in 2:
+				out.append([Vector2.ZERO, Vector2.DOWN, c_foot, c_top + FLIGHT_LAND, c_top, false])   # (kept in step)
+			continue
+		var ang := float(int(a[4])) * TAU / 1024.0
+		var inw := -Vector2(cos(ang), sin(ang))
+		for e in 2:
+			out.append([Vector2(int(a[7 + e * 6]), int(a[8 + e * 6])), inw, c_foot, c_top + FLIGHT_LAND, c_top, true])
+	if int(lay.get("palisade", 0)) != 0 or "--kit-palisade" in OS.get_cmdline_user_args():
+		return out   # (a stockade's plank stairs run along the wall: they do not cross)
+	var feet: Array = []
+	for f in out:
+		var s0: Vector2 = f[0]
+		var iw: Vector2 = f[1]
+		var al := Vector2(-iw.y, iw.x) * FLIGHT_HW
+		feet.append(PackedVector2Array([s0 + iw * c_top - al, s0 + iw * c_top + al, s0 + iw * c_foot + al, s0 + iw * c_foot - al]))
+	for i in out.size():
+		for j in range(i + 1, out.size()):
+			if not out[i][5] or not out[j][5] or Geometry2D.intersect_polygons(feet[i], feet[j]).is_empty():
+				continue
+			# (How far each foot lies inward of the other's stair point: the smaller is in, or by, the other's wall.)
+			var ci := ((out[i][0] as Vector2) + (out[i][1] as Vector2) * c_foot - (out[j][0] as Vector2)).dot(out[j][1])
+			var cj := ((out[j][0] as Vector2) + (out[j][1] as Vector2) * c_foot - (out[i][0] as Vector2)).dot(out[i][1])
+			out[i if ci < cj else j][5] = false
+	return out
+
+
 ## Everything static. `fine`: details for close views (merlons, stairs,
 ## roof ridges); `gates`: draw the gates too, closed (the preview; the
 ## battle draws them per tick with draw_gate). `kit`: the battle view, whose walls, towers and
@@ -102,10 +157,8 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 ## What stands above the kit pieces on the battle map: the stairs at the ends of the walkways and
 ## the banners.
 static func draw_over(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
-	# (The oblique view's stockade draws its own plank stairs: game/battlekit.gd _ob_stairs.)
-	var ob_timber: bool = BattleKit.BoardView.oblique and (int(lay.get("palisade", 0)) != 0
-		or "--kit-palisade" in OS.get_cmdline_user_args())
-	if int(lay["walls"]) > 0 and not ob_timber:
+	# (The oblique view's walls draw their own stairs, plank or stone: game/battlekit.gd _ob_stairs.)
+	if int(lay["walls"]) > 0 and not BattleKit.BoardView.oblique:
 		_draw_stairs(ci, lay, k, o)
 	if int(lay.get("wring", 0)) != 0:
 		_draw_cross(ci, lay, k, o)
@@ -505,12 +558,25 @@ static func _draw_tower(ci: CanvasItem, tw: Array, k: float, o: Vector2, palisad
 	ci.draw_colored_polygon(sqp.call(0.42, Vector2.ZERO), WALK if not palisade else TIMBER)
 
 
-## Stairs at each end of a walkway stretch: a few treads across the wall's
-## inner face (at the segment's stair points S).
+## Stairs at each end of a walkway stretch (at the segment's stair points S): a stockade's a few plank treads across
+## its inner band; a stone wall's a masonry flight on the sim's run (stair_flights, as the oblique view's
+## battlekit _ob_stone_flight): its shadow to the lower right, its side toward the shadow in shade, the treads from
+## the foot on the street up to the landing at the walk (each a dark riser line and a lit nosing, lighter as they rise),
+## a coping along both edges. Static: drawn once.
 static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
+	if int(lay.get("palisade", 0)) == 0:
+		var walls := clampi(int(lay["walls"]), 0, 3)
+		var hm := float(int(lay.get("wall_h_m", MapGen.WALL_H[walls]))) if int(lay.get("west", 0)) != 0 \
+			else float(MapGen.WALL_H[walls])
+		var tv: Vector3 = BattleKit.STONE_TINT[clampi(int(lay.get("founder", lay.get("plan", 0))), 0, 7)]
+		var stone := Color(0.74, 0.70, 0.62) * Color(tv.x, tv.y, tv.z)
+		for f in stair_flights(lay):
+			if f[5]:
+				_draw_flight(ci, f, k, o, stone, hm)
+		return
 	var lw := maxf(k * 0.25, 1.0)
 	# (A stockade's stairs are planks: game/battlekit.gd "the timber stockade".)
-	var tread := Color(0.62, 0.49, 0.33) if int(lay.get("palisade", 0)) != 0 else Color(0.78, 0.74, 0.66)
+	var tread := Color(0.62, 0.49, 0.33)
 	for sg in lay["segs"]:
 		var a: Array = sg
 		if a.size() < MapGen.SEG_LEN:
@@ -523,6 +589,45 @@ static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) 
 			for q in 4:
 				var c := s + n * (float(q) - 1.5) * 0.7
 				ci.draw_line(o + (c - d * 1.6) * k, o + (c + d * 1.6) * k, tread, lw)
+
+
+## One stone flight from above (f a stair_flights entry, hm the walk's height): see _draw_stairs.
+static func _draw_flight(ci: CanvasItem, f: Array, k: float, o: Vector2, stone: Color, hm: float) -> void:
+	var s: Vector2 = f[0]
+	var inw: Vector2 = f[1]
+	var al := Vector2(-inw.y, inw.x)
+	var cf: float = f[2]
+	var cl: float = f[3]
+	var ct: float = f[4]
+	var hw := FLIGHT_HW
+	var pt := func(c: float, a: float) -> Vector2: return o + (s + inw * c + al * a) * k
+	# The shadow (the key light from the north-west): the flight's outline pushed to the lower right by its height.
+	var sh := Vector2(0.55, 0.55) * hm * 0.4 * k
+	ci.draw_colored_polygon(PackedVector2Array([pt.call(cf, -hw), pt.call(cf, hw), pt.call(cl, hw) + sh, pt.call(ct, hw) + sh,
+		pt.call(ct, -hw) + sh, pt.call(cl, -hw) + sh]), Color(0, 0, 0, 0.28))
+	ci.draw_colored_polygon(PackedVector2Array([pt.call(cf, -hw), pt.call(cf, hw), pt.call(ct, hw), pt.call(ct, -hw)]),
+		stone * Color(0.86, 0.86, 0.86))
+	# The treads, the risers' lines and the nosings, lighter toward the top.
+	var n := maxi(roundi(hm / TREAD_RISE), 1)
+	var lw := maxf(k * 0.07, 1.0)
+	for i in n:
+		var c0 := cf + (cl - cf) * float(i) / float(n)
+		var c1 := cf + (cl - cf) * float(i + 1) / float(n)
+		var lit := 0.86 + 0.2 * float(i + 1) / float(n)
+		ci.draw_colored_polygon(PackedVector2Array([pt.call(c0, -hw), pt.call(c0, hw), pt.call(c1, hw), pt.call(c1, -hw)]),
+			stone * Color(lit, lit, lit))
+		ci.draw_line(pt.call(c0, -hw), pt.call(c0, hw), stone * Color(0.5, 0.5, 0.5), lw)
+		var cn := c0 + (c1 - c0) * 0.25
+		ci.draw_line(pt.call(cn, -hw), pt.call(cn, hw), stone * Color(1.12, 1.12, 1.12), lw)
+	ci.draw_colored_polygon(PackedVector2Array([pt.call(cl, -hw), pt.call(cl, hw), pt.call(ct, hw), pt.call(ct, -hw)]),
+		stone * Color(1.04, 1.04, 1.04))
+	# The coping on both edges; the side away from the light in shade.
+	var away := 1.0 if al.dot(Vector2(0.67, 0.74)) > 0.0 else -1.0
+	var cw := 0.3
+	ci.draw_colored_polygon(PackedVector2Array([pt.call(cf, away * hw), pt.call(ct, away * hw),
+		pt.call(ct, away * (hw - cw)), pt.call(cf, away * (hw - cw))]), stone * Color(0.62, 0.62, 0.62))
+	ci.draw_colored_polygon(PackedVector2Array([pt.call(cf, -away * hw), pt.call(ct, -away * hw),
+		pt.call(ct, -away * (hw - cw)), pt.call(cf, -away * (hw - cw))]), stone * Color(1.1, 1.1, 1.1))
 
 
 ## The sea gate (scenery): an arch across the sea wall, two small towers.

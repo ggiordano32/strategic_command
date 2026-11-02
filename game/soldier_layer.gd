@@ -34,7 +34,9 @@ const PR_SHADER_CPU := preload("res://game/projectiles_cpu.gdshader")
 ## per-tick order (nearer over farther): the texture path through block 9 (the men sorted by ground y with native
 ## calls: a 64-bit key y << 32 | index), the CPU-fed path by reordering its buffer a unit at a time (units by their
 ## centre's y; a unit facing the camera has its rows reversed, its rear rank drawn first). His wall walk's height lifts
-## a man on a wall (the texture path: block 8 + 64 x dm; the CPU path: the sprite column + 16 x dm).
+## a man on a wall (the texture path: block 8 + 64 x dm; the CPU path: the sprite column + 16 x dm). A man of a unit
+## going up or down a stone wall's stair is lifted by his own place on its flight instead (_stair_lift; docs/design/
+## art_pipeline.md "Stone stairs": the texture path's block 10, per man; the CPU path his own sprite column).
 const SHADER_OB := preload("res://game/soldiers_ob.gdshader")
 const SHADER_OB_CPU := preload("res://game/soldiers_ob_cpu.gdshader")
 const BASE_SHADER_OB := preload("res://game/soldier_bases_ob.gdshader")
@@ -45,6 +47,7 @@ const BoardView := preload("res://game/board_view.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const UT := preload("res://sim/unit_types.gd")
+const CityDraw := preload("res://game/city_draw.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
 const CData := preload("res://campaign/cdata.gd")
 ## The sprite atlas pair (loaded, not preloaded: tools/check_scripts.sh
@@ -241,6 +244,9 @@ var _pr_hi := 0                           # one past the highest slot used so fa
 # The oblique view.
 var oblique := false
 var _unit_ext := PackedInt32Array()       # per unit: its wall walk's height (dm), 0 on the ground
+var _flights: Array = []                  # the stone walls' stair runs (CityDraw.stair_flights), per segment end
+var _man_ext := PackedInt32Array()        # per man: his height on a stair's flight (dm; texture block 10), else 0
+var _man_ext_on := PackedInt32Array()     # the men given one at the last upload (cleared at the next)
 var _ord_idx: Image                       # (texture path) 2 x n RGBA8: the instance index (column 0) for the sort keys
 var _ord_img: Image
 var _cbuf2: Image                         # (CPU path) the reordered buffer
@@ -273,10 +279,16 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	oblique = BoardView.oblique
 	if oblique:
 		SpriteOb.ensure()
-		_blocks = BLOCKS + 1
+		_blocks = BLOCKS + 2
 	_n_inst = sim.n + sim.n_eng
 	_unit_ext.resize(sim.n_units)
 	_unit_ext.fill(0)
+	_man_ext.resize(_n_inst)
+	_man_ext.fill(0)
+	var lay: Dictionary = sim.map_info.get("city", {}) if sim.map_info is Dictionary else {}
+	if oblique and int(lay.get("palisade", 0)) == 0 and not "--kit-palisade" in OS.get_cmdline_user_args():
+		# (A stockade's men keep the walk's height on its stairs: its plank stairs run along the wall, not on the run.)
+		_flights = CityDraw.stair_flights(lay)
 	_pr_cap = sim.pr_t1.size()
 	_pr_hs.resize(_pr_cap)
 	_pr_he.resize(_pr_cap)
@@ -773,6 +785,8 @@ func upload() -> void:
 		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
 		if oblique:
 			_unit_ext[u] = sim.wall_h * 10 / 1024 if sim.u_wall[u] > 0 else 0
+	if oblique:
+		_stair_lift()
 	# Engines follow the soldiers in every array.
 	var xs: PackedInt32Array = sim.pos_x
 	var ys: PackedInt32Array = sim.pos_y
@@ -811,6 +825,47 @@ func upload() -> void:
 	else:
 		_upload_gpu(xs, ys, pxs, pys, fs, sts, missiles)
 	upload_us = Time.get_ticks_usec() - t0
+
+
+## The oblique view: the men of a unit going up (u_stair 3) or down (1) a stone wall's stair stand on its flight
+## (CityDraw.stair_flights, the run battlekit's flight is drawn on): on the walkway or in a tower at the walk's height,
+## else by their distance along the run from the foot (0) to the landing (the walk's height), 0 off to the side of
+## it; their unit's own lift is 0 meanwhile. View only (reads the sim).
+func _stair_lift() -> void:
+	for i in _man_ext_on:
+		_man_ext[i] = 0
+	_man_ext_on.clear()
+	if _flights.is_empty():
+		return
+	var hm := float(sim.wall_h) / 1024.0
+	for u in sim.n_units:
+		var mode: int = sim.u_stair[u]
+		if (mode != 1 and mode != 3) or sim.u_alive[u] <= 0:
+			continue
+		var fi: int = sim.u_sseg[u] * 2 + sim.u_send[u]
+		if fi < 0 or fi >= _flights.size() or not _flights[fi][5]:
+			continue   # (no flight drawn there: the unit's own lift)
+		_unit_ext[u] = 0
+		var f: Array = _flights[fi]
+		var s: Vector2 = f[0]
+		var inw: Vector2 = f[1]
+		var al := Vector2(-inw.y, inw.x)
+		var cf: float = f[2]
+		var cl: float = f[3]
+		var base: int = sim.u_slot_base[u]
+		for sl in sim.u_alive[u]:
+			var i: int = sim.slot_soldier[base + sl]
+			var x: int = sim.pos_x[i]
+			var y: int = sim.pos_y[i]
+			var kd: int = sim.obs_kind(x, y)
+			var h := hm
+			if kd != MapGen.C_WALK and kd != MapGen.C_TOWER:
+				var q := Vector2(x, y) / 1024.0 - s
+				h = 0.0 if absf(q.dot(al)) > CityDraw.FLIGHT_HW + 0.75 else hm * clampf((cf - q.dot(inw)) / (cf - cl), 0.0, 1.0)
+			var dm := roundi(h * 10.0)
+			if dm > 0:
+				_man_ext[i] = dm
+				_man_ext_on.append(i)
 
 
 # --- Casualties on the table (tabletop pass 1) -------------------------------------------------
@@ -1095,6 +1150,7 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 	var arrays: Array = [xs, ys, pxs, pys, fs, sts, sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags, gelook]
 	if oblique:
 		arrays.append(_order_gpu(ys))
+		arrays.append(_man_ext)
 	_image.set_data(TEX_W, _blocks * _rows, false, Image.FORMAT_RGBA8, _pack(arrays, block))
 	_tex.update(_image)
 	if missiles:
@@ -1196,6 +1252,9 @@ func _order_cpu() -> void:
 		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
 		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr + 16 * _unit_ext[u]), 0.0, 0.0))
 		keys.append((int(sim.u_cy[u]) + 4194304) * 8192 + r / 3)
+	for i in _man_ext_on:
+		# (A man on a stair's flight: his own height, _stair_lift.)
+		_cbuf.set_pixel(C_SPRITE, i, Color(float(_unit_sprite[sim.unit_of[i]] + 16 * _man_ext[i]), 0.0, 0.0))
 	keys.sort()
 	var at := 0
 	for kk in keys:

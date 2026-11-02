@@ -1498,3 +1498,68 @@ hash, no pin moves.
   north-south fence, whose posts vanish); the posts are drawn on the platform's two lines only, not under the logs; men on the
   platform are drawn by the occluder as before (the rail ghosts their legs on a wall whose inner side faces the camera); the
   owner's eye on the log size and the platform's colour.
+
+### Stone stairs (as built, 2026-11-02)
+
+The owner: "I also want to add proper stairs to the stone walls. These palisade stairs look great now and it gives the units
+something to move along while traveling up to the top of the wall and down." A stone wall's stairs were four flat lines on the
+ground at each stair point (`CityDraw._draw_stairs`, from `draw_over`), and a climbing unit was drawn wholly at the walk's height
+from the moment it started up (`u_wall` is set at `_climb`) and wholly on the ground going down. View only: `sim/`, `campaign/`
+and mapgen untouched; no hash, no pin moves.
+
+- **The run is the sim's.** A man climbs from the foot D (on the ring road, half its width in from the inner face) to the stair
+  point S (the middle of the inner band) and on to the walkway point E, straight across the wall (`_stair_set`; the stair's cells,
+  `C_STAIR`, are the inner band `STAIR_HW` either side of S). A probe (`stair_probe`, a walls-2 ring) put the climbing men within
+  1.5 m of S's line on the stair cells, on them from about 3.3 m in front of S to 1.2 m behind it, then on walk cells. So the
+  flight runs across the wall, not along it as the stockade's planks do: `CityDraw.stair_flights(lay)` gives, per segment end in
+  the sim's order, S, the inward normal and the distances from S of the foot (c_foot = the inner face + `RING_W` / 2, D), the
+  landing (c_land) and the walk's inner edge (c_top); the flight rises from the ground at c_foot to the walk's height at c_land
+  (`FLIGHT_LAND` 0.8 m before the walk's edge, where the walk's cells begin) and a landing runs on to the edge; `FLIGHT_HW` 2 m
+  either side (4 m wide). Walls 1: 4.2 m of run for 5 m, walls 2: 6.2 for 7, walls 3: 6.2 for 9 (steep, 50-55 degrees: the sim's
+  band is that narrow). Every stone ring: walls 1-3 of each plan and the West harbour fort with its bastions (the citadel's
+  edges are too short for a walkway stretch, so it has no stair points).
+- **The oblique rows** (`battlekit.gd` `_ob_stairs`, `_ob_stone_flight`; `battlekit.gdshader` `ob_stair_col`). `_ob_stairs` now
+  serves both rings over `stair_flights`: the stockade's plank stairs as before, a stone wall's flight as rows of its own
+  stretch with no facing (never fading), keyed just after its wall when the inner side faces the camera and just before it when
+  the outer side does (the stockade's rule), the usual ranks inside it (faces turned away, tops, faces toward the camera): the
+  sloped top (a `WK_WALK` top), the landing (a plain walk top), the two sides (`WK_CAP` faces) and the landing's sides. Stair rows
+  carry `STAIR_ROW` (2.0) in custom.w, where a stretch's fade goes (they never fade); a side's custom.y says which end is high.
+  The shader: treads of about `TREAD_RISE` 0.3 m (rounded to fit the walk's height: 23 steps on walls 2), each a riser then a
+  tread, the riser's share as the camera sees it (about half a step when the flight climbs away from the camera, in the light by
+  its own direction; a shadow line when it climbs toward it; a faint line seen from the side, where strong lines read as a fence),
+  a lit nosing, each tread its own wear, a coping on both edges, the foot darker; the sides coursed like the walls with their top
+  cut to the steps' profile (the quad reaches a step above the slope and the rest is discarded) and a lit lip on each step; the
+  wall's culture tint (`STONE_TINT`). **The notch:** the flight stands in the inner rampart (`RAMP_DROP` below the walk, drawn solid
+  across the inner band), so `_ob_walls` cuts the band's inner rows (the step down, the rampart's top and inner face) over each
+  flight's width and caps the rampart's cut ends (`_ob_wseg_rows` `inner`, `ics`, `ice`); on an edge with a notch every line is
+  cut square across at the same distance along it (the mitred lines are not the centre line's length: the old proportional
+  split put the notch 2-3 m off the flight on a castrum's square corners); the edge's own ends keep their mitred points.
+  A flight on a breached stretch (rubble at S) is not drawn. **Graphics Low** (`_LowDraw._stair_row`): the treads one quad with a
+  line at each step, a side one polygon with the steps' profile on top.
+- **The men on the treads** (`soldier_layer.gd` `_stair_lift`). A man of a unit going up (`u_stair` 3) or down (1) a drawn
+  flight is lifted by his own place on it: on a walk or tower cell the walk's height, else by his distance along the run from
+  the foot (0) to the landing (the walk's height), 0 more than `FLIGHT_HW` + 0.75 m off to its side; his unit's own lift is 0
+  meanwhile. Texture path: a per-man block 10 (dm) after the order block (oblique: `BLOCKS` + 2), added to the unit's lift in
+  `soldiers.gdshaderinc` and `soldier_bases.gdshaderinc`; CPU path: his own sprite column (sprite + 16 x dm) after the run fill.
+  The nearness takes the height, so a man on a tread is not ghosted by the flight behind him. A stockade keeps the unit's lift
+  (its plank stairs are not on the run). Not lifted: ladders, and the tray, standard and marker (still the unit's).
+- **Two runs crossing.** At a re-entrant corner (the West fort's bastion flanks, 4 pairs a fort) two stairs' runs cross and the
+  sim's foot can fall in the other wall's body; of such a pair only the one whose foot is clear is drawn (`stair_flights`' sixth
+  element), and the other's men keep the unit's lift as before.
+- **The top view** (`CityDraw._draw_stairs`, static, drawn once; also the campaign's battle-map preview): the same flight from
+  above, its shadow pushed to the lower right by its height, the base, a band per step (a dark riser line and a lit nosing,
+  lighter as they rise), the landing, a shaded coping on the side away from the light and a lit one on the other. The oblique
+  view no longer draws the flat stair lines (stone or plank). A stockade's top-view stairs stay its plank lines.
+- **Checked:** shots (st_shots, `stair_shot.gd`: a defender ordered up, the sim stepped to mid-climb) before and after: a Rome
+  walls-2 ring's north wall (inner side toward the camera) climbing, both views, both soldier paths, Low; its east, south and
+  west walls; the West harbour assault's walls-3 port with a unit coming down; `west_fort_storm` (the harbour fort and its
+  bastions) in both views; `siege_castrum` (walls 3, square corners) close. Battle hash untouched (`git diff sim/ campaign/`
+  empty).
+- **Open.** On a wall whose inner side faces east or west the flight is seen from the side and the rampart beside its notch
+  (nearer the camera) hides the lower part of the flight and the men on it, who are drawn as ghosts (the occluder's rule, true
+  geometry); the flight at a stretch's south end there can stand behind the corner tower. On a wall whose inner side faces away
+  from the camera the flight climbs toward it: behind the wall, and where it shows (a bastion's gorge) a thin sloped band (the
+  stockade's "turn it to climb away" rule cannot apply: the run is the sim's). The flights are steep on walls 3 (the band is
+  4 m). S comes rounded to the metre, so a flight can sit up to about 0.7 m off its stair's cells (a man's height then steps a
+  little where he reaches the walk's cells). A man dying on the flight drops to the ground as a corpse. The owner's eye on the stone's tone (the treads are lighter
+  than the faces).

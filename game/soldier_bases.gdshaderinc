@@ -120,7 +120,7 @@ void vertex() {
 	int spr = clamp(bitfield(flags, 16, 16), 0, 11);
 	int pal = bitfield(flags, 262144, 16);
 #ifdef OBLIQUE
-	float ext = float(fetch_int(8, uidx) / 64) * 0.1 * px_per_unit * 1024.0;
+	float ext = float(fetch_int(8, uidx) / 64 + fetch_int(10, i)) * 0.1 * px_per_unit * 1024.0;   // (block 10: on a stair)
 #endif
 #endif
 	// 0 formed, 1 fighting, 2 routing, 3 knocked down, 4 dead (hd: its fade), 5 off the field; 6+ engines

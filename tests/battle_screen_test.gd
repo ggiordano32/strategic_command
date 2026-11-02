@@ -435,8 +435,8 @@ func _end_open() -> void:
 	_eb_exit = false
 	_eb.exit_requested.connect(func(): _eb_exit = true)
 	root.add_child(_eb)
-	_check(_eb.soldiers.oblique == _oblique and (not _oblique or _eb.soldiers._blocks == SoldierLayer.BLOCKS + 1),
-		"the end-of-battle screen's view: %s" % ("oblique (the per-tick order block)" if _oblique else "top"))
+	_check(_eb.soldiers.oblique == _oblique and (not _oblique or _eb.soldiers._blocks == SoldierLayer.BLOCKS + 2),
+		"the end-of-battle screen's view: %s" % ("oblique (the per-tick order block, the stair heights block)" if _oblique else "top"))
 
 
 func _end_close() -> void:
