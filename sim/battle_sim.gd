@@ -252,6 +252,9 @@ const SKD_R := 8 * M             # skirmishers standing in the Cover stance: eac
 const CM_FEAR_PCT := 50          # the countermarch (docs/AI.md 44.2): a rank's volley frightens its target at this % of m_fear
 const CM_CLOSE := 40 * M         # ... and on Auto an enemy this near (or a melee) gets the last volley: every loaded man at once
 const CM_NEVER := 1 << 24        # (u_cml, s_cms at the start: long ago, loaded and rested)
+const CM_GAP_TOL := M / 10       # the countermarch's walk to the rear (s_rtw): a man this near the gap beside his file walks down it
+const CM_BACK_DONE := M * 3 / 10 # ... and level with his new place to this, he steps out of the gap into it
+const CM_WALK_T := 80            # ... for this long after its men walked a shot landing on the line strikes the man nearest (not by slot)
 const BLD_TGT := -100000         # u_gtarget at or below this: a building (BLD_TGT - b; the batter order)
 const R_LINE := 0                # t_role: indices of UT.ROLE_ORDER
 const R_SKIRMISH := 1
@@ -1699,7 +1702,14 @@ var u_cmr := PackedInt32Array()       # ... the rank pointer: the rank that fire
 var u_cmt := PackedInt32Array()       # ... the clock at which that rank fires
 var u_cml := PackedInt32Array()       # ... the clock of the line's last shot (a full reload loaded after it: the opening volley)
 var u_cmv := PackedInt32Array()       # ... the tick of its last rank volley (that volley's fright is CM_FEAR_PCT)
+var u_cmk := PackedInt32Array()       # ... the tick its men last walked to the rear after a rank volley (shots at it: the nearest man)
 var s_cms := PackedInt32Array()       # per man: his unit's clock at his last shot (loaded m_reload after it)
+# The countermarch's walk (docs/design/battle_sim.md "The countermarch (as built, 2026-11-02)"): a man who has
+# fired from the front rank (or, pistols at contact, stepped back with his brace spent) files to the rear of his
+# file down the gap to its right; sized with cm_on or pis_on, hashed from the first such man on (rt_on).
+var rt_on: int = 0                    # a man has walked to the rear (s_rtw hashed from then on)
+var s_rtw := PackedByteArray()        # per man: 1 while he walks to his new place at the rear of his file
+var stat_cm_files: int = 0            # front-rank men who filed to the rear after their rank's volley
 var stat_cm_rank: int = 0             # rank volleys fired (rolling fire)
 var stat_cm_full: int = 0             # full volleys of a countermarch unit not on Hold (the opening, the last volley)
 var stat_cm_fright: int = 0           # rank volleys that frightened a unit
@@ -1757,6 +1767,17 @@ var blk_n1 := PackedInt32Array()
 var blk_w: int = 0
 var _enemy_bn := PackedInt32Array()  # scratch: the block counts of the enemies of the unit being moved
 var grid_next := PackedInt32Array()
+# Filtering through a friend (scratch, rebuilt each tick from the positions by _mix_build: no state of its own).
+var mix_any: int = 0                 # some unit mixes with a friend this tick
+var u_mix := PackedByteArray()       # per unit: 1 it mixes this tick (its men thread or give way)
+var u_mxr := PackedInt32Array()      # per unit (4 a unit: x0, y0, x1, y1): where it overlaps the friends it mixes with (only men in it look)
+var u_mxq := PackedInt32Array()      # per unit (3 a unit, set while it mixes): a man's room (_mix_r), the cosine and sine of its facing
+var mx_head := PackedInt32Array()    # the men of mixing units per 2 m grid cell (MX_SHIFT; both sides; friends only are looked at)
+var mx_w: int = 0                    # ... its width and height in cells
+var mx_h: int = 0
+var mx_next := PackedInt32Array()
+var mx_mv := PackedByteArray()       # per man of a mixing unit: 1 on the move (further than PASS_MOVING from his place)
+var stat_mix_men: int = 0            # man-steps that threaded or gave way (not hashed)
 
 # Orders waiting for their tick. Each is a Dictionary of ints.
 var pending_orders: Array = []
@@ -2006,6 +2027,24 @@ const OCC_MIN := 2 * M            # ... half extents at least this (a thin line 
 const OCC_QUEUE := 60 * M         # friends fighting this near the box of the unit we attack are the line we queue behind
 const OCC_CORNER := 8 * M         # front corners probed at most this far either side of the anchor
 const DODGE: Array[int] = [85, 171]  # steering angles tried when blocked (30, 60 degrees: still getting on)
+# Filtering through a friendly unit (docs/design/battle_sim.md "Filtering through a friendly unit (as built,
+# 2026-11-02)"): men of a unit on the move thread the gaps of a friendly unit they cross, its men step aside.
+const PASS_PCT := 50               # a unit's anchor crossing another friend's footprint goes at this % of its speed (_half_step)
+const PASS_R_FOOT := 300           # a man's room in a filing pass: two men on foot keep 0.6 m apart, centre to centre
+const PASS_R_RIDER := 512          # ... a rider's (a rider and a man on foot 0.8 m, two riders 1 m; a beast its body_r)
+const PASS_MOVING := M / 4         # a man further than this from his place is on the move (he threads); nearer, he gives way
+const PASS_KEEP_PCT := 25          # a man threading keeps at least this % of his step when a man stands just ahead of him
+const PASS_GIVE := M / 10          # a man giving way side-steps at most this far a tick (1 m/s)
+const PASS_BOX := 2 * M            # two friendly units mix when their boxes come within this of each other (one on the move, crossing)
+const PASS_SEEN := 8               # a man heeds at most this many men of other units round him
+const MX_SHIFT := 11               # the mixing men's grid: 2 m cells
+const PASS_LOOK := M / 4           # ... and heeds those within their joint room and this (no pull back to his place meanwhile)
+const PASS_SLIDE := M / 8          # a man threading slides sideways at most this far a tick (1.25 m/s)
+const PASS_REACH := M              # (the margin round where two mixing units overlap within which their men look)
+const PASS_ODD := M / 32           # between his looks a man threading further than this off his file's line keeps out of it
+const PASS_THINK := 8              # the units that cross a friend are looked for every this many ticks (their men every tick)
+const PASS_CROSS := M * 3 / 10     # a unit crosses a friend when the line down its middle comes within this of the friend's rectangle
+const PASS_AHEAD := 3 * M          # ... that line runs this far ahead of its front (the next PASS_THINK ticks' steps, and room to look)
 const DODGE_LOOK := 4 * M         # ... each looked along this far (a cell): room to go round, not a sidestep
 const BLK_FRIEND := 1             # u_blk: passing through a friend (half speed)
 const BLK_QUEUE := 2              # ... waiting behind friends fighting its target
@@ -2072,6 +2111,8 @@ var xf_gl: int = -1               # the gates open in the live generation (-1: n
 var _xf_live := PackedInt32Array()  # derived (skipped in snapshots, rebuilt by restore()): (2 + n_gates) fields of ob_w * ob_h
 var _xf_pend := PackedInt32Array()  # ... the generation building
 var _xb_pass := PackedByteArray()   # builder scratch: nav with the generation's gates
+var xf_nav_l := PackedByteArray()   # the nav the live generation was built from (rubble changes nav later: restore() rebuilds from this, not today's)
+var xf_nav_p := PackedByteArray()   # ... and the pending generation's (empty: none pending)
 var _xb_q := PackedInt32Array()     # ... the flood's queue of cells
 var _xb_f: int = 0                # ... the field building
 var _xb_i: int = 0                # ... its read index
@@ -2622,6 +2663,19 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		arr.resize(grid_w * grid_h)
 		arr.fill(0)
 	grid_next.resize(n)
+	mix_any = 0
+	u_mix.resize(n_units)
+	u_mix.fill(0)
+	u_mxr.resize(n_units * 4)
+	u_mxq.resize(n_units * 3)
+	mx_w = (field_w >> MX_SHIFT) + 1
+	mx_h = (field_h >> MX_SHIFT) + 1
+	mx_head.resize(mx_w * mx_h)
+	mx_head.fill(-1)
+	mx_next.resize(n)
+	mx_mv.resize(n)
+	mx_mv.fill(0)
+	stat_mix_men = 0
 	_update_bounds()
 	_update_units_stats()
 	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
@@ -2674,6 +2728,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	xf_gp = 0
 	_xf_live = PackedInt32Array()
 	_xf_pend = PackedInt32Array()
+	xf_nav_l = PackedByteArray()
+	xf_nav_p = PackedByteArray()
 	_xb_done = 1
 	if obs_on != 0 and land_only == 0:
 		_xf_restart()
@@ -6964,7 +7020,8 @@ func _xf_restart() -> void:
 		return
 	xf_t0 = tick
 	xf_gp = _gates_open()
-	_xf_begin(xf_gp)
+	xf_nav_p = nav.duplicate()
+	_xf_begin(xf_gp, xf_nav_p)
 
 
 ## Once a tick while a generation builds: XF_CELLS more cells; at
@@ -6976,12 +7033,17 @@ func _xf_tick() -> void:
 		_xf_pend = PackedInt32Array()
 		xf_gl = xf_gp
 		xf_t0 = -1
+		xf_nav_l = xf_nav_p
+		xf_nav_p = PackedByteArray()
 	elif _xb_done == 0:
 		_xf_build(XF_CELLS)
 
 
 ## restore(): the live generation and the one building, in full (pure
-## functions of the map and xf_gl / xf_gp).
+## functions of the nav each was built from, xf_nav_l / xf_nav_p, and
+## xf_gl / xf_gp). (Until 2026-11-02 they were rebuilt from today's nav: a
+## breach's or a fallen house's rubble since the live generation began made
+## the restored fields differ, and routers in a restored copy took other ways.)
 func _xf_restore() -> void:
 	_xf_live = PackedInt32Array()
 	_xf_pend = PackedInt32Array()
@@ -6989,19 +7051,20 @@ func _xf_restore() -> void:
 	if obs_on == 0 or land_only != 0 or ob_w <= 0:
 		return
 	if xf_gl >= 0:
-		_xf_begin(xf_gl)
+		_xf_begin(xf_gl, xf_nav_l if xf_nav_l.size() == nav.size() else nav)
 		_xf_build(1 << 30)
 		_xf_live = _xf_pend
 		_xf_pend = PackedInt32Array()
 	if xf_t0 >= 0:
-		_xf_begin(xf_gp)
+		_xf_begin(xf_gp, xf_nav_p if xf_nav_p.size() == nav.size() else nav)
 		_xf_build(1 << 30)
 
 
-## Start building the fields of a generation with the gates `mask` open.
-func _xf_begin(mask: int) -> void:
+## Start building the fields of a generation with the gates `mask` open, from
+## the walkable grid `base` (nav as it stood when the generation began).
+func _xf_begin(mask: int, base: PackedByteArray) -> void:
 	var nc := ob_w * ob_h
-	_xb_pass = nav.duplicate()
+	_xb_pass = base.duplicate()
 	for g in n_gates:
 		var b := g * 4
 		var v := MapGen.NAV_GROUND if ((mask >> g) & 1) != 0 else 0
@@ -9391,6 +9454,7 @@ func step() -> void:
 	_update_units()
 	_update_contacts()
 	_build_grid()
+	_mix_build()
 	_update_soldiers()
 	if fw_on != 0:
 		_update_works()
@@ -9807,13 +9871,304 @@ func _anchor_step0(u: int, ox: int, oy: int, nx: int, ny: int, t: int, spd: int)
 	return Vector2i(ox, oy)
 
 
-## A step (sx, sy) from (ox, oy) through friends: at most half the speed.
+## A step (sx, sy) from (ox, oy) through friends: at most PASS_PCT % of the speed.
 func _half_step(ox: int, oy: int, sx: int, sy: int, spd: int) -> Vector2i:
 	var l := FM.approx_len(sx, sy)
-	var h := maxi(spd / 2, 1)
+	var h := maxi(spd * PASS_PCT / 100, 1)
 	if l <= h:
 		return Vector2i(ox + sx, oy + sy)
 	return Vector2i(ox + sx * h / l, oy + sy * h / l)
+
+
+# Filtering through a friendly unit (docs/design/battle_sim.md "Filtering through a friendly unit (as built,
+# 2026-11-02)"). The anchor crosses a friend's footprint at PASS_PCT % (_occ_probe, _half_step); its men, on the
+# fast path (no enemy in contact), thread the friend's gaps man by man (_mix_step) and the friend's men near their
+# places side-step to let them by (_mix_give), then both walk back to their own places: no slot changes hands.
+
+## Unit u can mix with a friend (thread through one, or give way): on the ground and formed (ready, not in contact,
+## not charging or knocked about, not on a wall, a stair or a ladder, not in a building, no engines, not afloat), not
+## a hero or an agent (their handful of men slips through files as before), in a field battle (not a settlement
+## battle: there files interleave as before, so streets and gateways never deadlock and the storm's balance stands)
+## and not within 4 m of a rock or a cliff (_u_obs).
+func _mix_ok(u: int) -> bool:
+	return u_alive[u] > 0 and u_state[u] == U_READY and u_contact[u] == 0 and u_charge[u] == 0 and u_down[u] == 0 \
+		and u_wall[u] == 0 and u_stair[u] == 0 and u_occ[u] <= 0 and u_neng[u] == 0 and not (amph_on != 0 and afloat(u)) \
+		and city_on == 0 and (obs_on == 0 or u >= _u_obs.size() or _u_obs[u] == 0) and not (ch_on != 0 and u_char[u] != 0)
+
+
+## Which units mix this tick (u_mix) and the grid of their men (mx_head / mx_next, mx_mv): a unit on the move (not
+## settled; its anchor moved this tick or it is under a move or an attack order) whose box comes within PASS_BOX of
+## a friend's (both _mix_ok) mixes, and so does that friend (unsettled, so its men can give way); only their men
+## where the two boxes overlap (u_mxr, PASS_REACH round it) look. Units in index order; derived from the positions,
+## so nothing here is state.
+func _mix_build() -> void:
+	var nu := n_units
+	if mix_any != 0:
+		mx_head.fill(-1)
+	if tick % PASS_THINK != 0:
+		# (Between searches the pairs found stand, while the units can still mix.)
+		if mix_any == 0:
+			return
+		mix_any = 0
+		for u in nu:
+			if u_mix[u] != 0:
+				if _mix_ok(u):
+					mix_any = 1
+					u_settled[u] = 0
+				else:
+					u_mix[u] = 0
+	else:
+		_mix_pairs()
+	if mix_any == 0:
+		return
+	_mix_grid()
+
+
+## The pair search of _mix_build (every PASS_THINK ticks): u_mix, u_mxr, mix_any.
+func _mix_pairs() -> void:
+	if mix_any != 0:
+		u_mix.fill(0)
+	mix_any = 0
+	var nu := n_units
+	for u in nu:
+		if u_settled[u] != 0 or (u_moved[u] == 0 and u_order[u] != O_MOVE and u_order[u] != O_ATTACK) or not _mix_ok(u):
+			continue  # (a mover: its anchor moved this tick, or it is under a move or an attack order)
+		var sd := u_side[u]
+		var x0 := u_minx[u] - PASS_BOX
+		var x1 := u_maxx[u] + PASS_BOX
+		var y0 := u_miny[u] - PASS_BOX
+		var y1 := u_maxy[u] + PASS_BOX
+		for v in nu:
+			if v == u or u_side[v] != sd or u_minx[v] > x1 or u_maxx[v] < x0 or u_miny[v] > y1 or u_maxy[v] < y0:
+				continue
+			if not _mix_ok(v) or not _mix_cross(u, v):
+				continue
+			# Where the two overlap, with the room to look round (their men outside it are too far apart to meet).
+			var rx0 := maxi(x0, u_minx[v] - PASS_BOX) - PASS_REACH
+			var ry0 := maxi(y0, u_miny[v] - PASS_BOX) - PASS_REACH
+			var rx1 := mini(x1, u_maxx[v] + PASS_BOX) + PASS_REACH
+			var ry1 := mini(y1, u_maxy[v] + PASS_BOX) + PASS_REACH
+			for w in [u, v]:
+				var k: int = w * 4
+				if u_mix[w] == 0:
+					u_mxr[k] = rx0
+					u_mxr[k + 1] = ry0
+					u_mxr[k + 2] = rx1
+					u_mxr[k + 3] = ry1
+				else:
+					u_mxr[k] = mini(u_mxr[k], rx0)
+					u_mxr[k + 1] = mini(u_mxr[k + 1], ry0)
+					u_mxr[k + 2] = maxi(u_mxr[k + 2], rx1)
+					u_mxr[k + 3] = maxi(u_mxr[k + 3], ry1)
+				u_mix[w] = 1
+			u_settled[v] = 0
+			mix_any = 1
+
+
+## The grid of the mixing units' men (mx_head / mx_next) and who is on the move (mx_mv), each tick while some mix.
+func _mix_grid() -> void:
+	var nu := n_units
+	var gs := MX_SHIFT
+	var gw := mx_w
+	var gmax := mx_w * mx_h - 1
+	for u in nu:
+		if u_mix[u] == 0:
+			continue
+		u_mxq[u * 3] = _mix_r(u)
+		u_mxq[u * 3 + 1] = FM.cos_a(u_face[u])
+		u_mxq[u * 3 + 2] = FM.sin_a(u_face[u])
+		var base := u_slot_base[u]
+		var ax := u_ax[u]
+		var ay := u_ay[u]
+		var um := u_moved[u] != 0
+		var r0 := u_mxr[u * 4]
+		var r1 := u_mxr[u * 4 + 1]
+		var r2 := u_mxr[u * 4 + 2]
+		var r3 := u_mxr[u * 4 + 3]
+		for s in u_alive[u]:
+			var k := base + s
+			var i := slot_soldier[k]
+			var x := pos_x[i]
+			var y := pos_y[i]
+			if x < r0 or x > r2 or y < r1 or y > r3:
+				mx_mv[i] = 2  # (outside where it overlaps a friend: he neither looks nor is looked at)
+				continue
+			var c := clampi((y >> gs) * gw + (x >> gs), 0, gmax)
+			mx_next[i] = mx_head[c]
+			mx_head[c] = i
+			mx_mv[i] = 1 if um or absi(ax + off_x[k] - x) + absi(ay + off_y[k] - y) > PASS_MOVING else 0
+
+
+## Unit u (on the move) crosses friend v: the line down u's middle, from PASS_AHEAD ahead of its anchor (its front's
+## middle) back through its depth (or to its box's rearmost corner, men left behind their places), enters v's formation rectangle (its files' width and its ranks' depth, PASS_CROSS round it,
+## in v's frame), sampled every half metre. So the men must go through v; a friend marching shoulder to shoulder,
+## beside or behind, whose box u's places never enter, is left alone (its men never overlap for long).
+func _mix_cross(u: int, v: int) -> bool:
+	var one := FM.TRIG_ONE
+	var uc := FM.cos_a(u_face[u])
+	var us := FM.sin_a(u_face[u])
+	var ua := maxi(u_alive[u], 1)
+	var uf := maxi(mini(files_of(u), ua), 1)
+	var udep := ((ua + uf - 1) / uf - 1) * t_rsp[u_type[u]]
+	for q in 4:
+		# (Men left behind their places still in the friend: the box's corners back from the anchor.)
+		var bx := (u_minx[u] if (q & 1) == 0 else u_maxx[u]) - u_ax[u]
+		var by := (u_miny[u] if q < 2 else u_maxy[u]) - u_ay[u]
+		udep = maxi(udep, -(bx * uc + by * us) / one)
+	var va := maxi(u_alive[v], 1)
+	var vf := maxi(mini(files_of(v), va), 1)
+	var vdep := ((va + vf - 1) / vf - 1) * t_rsp[u_type[v]] + PASS_CROSS
+	var vhw := unit_half_width(v) + PASS_CROSS
+	var vc := FM.cos_a(u_face[v])
+	var vs := FM.sin_a(u_face[v])
+	var span := udep + PASS_AHEAD
+	var ns := mini(span / (M / 2) + 1, 64)
+	for k in ns + 1:
+		var bk := span * k / maxi(ns, 1) - PASS_AHEAD
+		var dx := u_ax[u] - uc * bk / one - u_ax[v]
+		var dy := u_ay[u] - us * bk / one - u_ay[v]
+		var lat := (dy * vc - dx * vs) / one
+		var back := -(dx * vc + dy * vs) / one
+		if lat >= -vhw and lat <= vhw and back >= -PASS_CROSS and back <= vdep:
+			return true
+	return false
+
+
+## A man of unit u's room in a filing pass (half the distance two men keep).
+func _mix_r(u: int) -> int:
+	var ty := u_type[u]
+	if big_on != 0 and t_body_r[ty] > 0:
+		return t_body_r[ty]
+	return PASS_R_RIDER if t_rider[ty] != 0 else PASS_R_FOOT
+
+
+## A man of mixing unit u on the move (mx_mv: his unit's anchor moved this tick, or he is further than PASS_MOVING
+## from his place) steps from (ox, oy) to (x, y), his step to his place. With a man of another friendly unit within
+## their joint room (_mix_r both) and PASS_LOOK he keeps only the part of that step along his unit's facing (the
+## pull back to his file waits until he is through) and goes sideways at most PASS_SLIDE a tick: toward the middle
+## of the gap between the files of the standing friend nearest him (the gap to his right when he is square behind
+## a file), so his file threads that gap as a file; away from a man of a friend also on the move within their room
+## (to his right when square behind him). A man just ahead within their room holds him back, at most to
+## PASS_KEEP_PCT % of his step.
+func _mix_step(u: int, ox: int, oy: int, x: int, y: int) -> Vector2i:
+	var q := u_mxq
+	var rm := q[u * 3]
+	var sd := u_side[u]
+	var one := FM.TRIG_ONE
+	var fcx := q[u * 3 + 1]
+	var fcy := q[u * 3 + 2]
+	var sx := x - ox
+	var sy := y - oy
+	var reach := rm + PASS_R_RIDER + PASS_LOOK
+	var gs := MX_SHIFT
+	var cx0 := maxi((ox - reach) >> gs, 0)
+	var cx1 := mini((ox + reach) >> gs, mx_w - 1)
+	var cy0 := maxi((oy - reach) >> gs, 0)
+	var cy1 := mini((oy + reach) >> gs, mx_h - 1)
+	var seen := 0
+	var near := false
+	var lx := 0
+	var cut := 0
+	var fwd := maxi((sx * fcx + sy * fcy) / one, 0)
+	var gv := -1  # (the standing friend nearest him)
+	var gd := 0
+	for cy in range(cy0, cy1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var j := mx_head[cy * mx_w + cx]
+			while j >= 0 and seen < PASS_SEEN:
+				var uj := unit_of[j]
+				if uj != u and u_side[uj] == sd and state[j] < S_DEAD:
+					var rr := rm + q[uj * 3]
+					var rx := pos_x[j] - ox
+					var ry := pos_y[j] - oy
+					var rl := rr + PASS_LOOK
+					if absi(rx) < rl and absi(ry) < rl:
+						var dd := FM.approx_len(rx, ry)
+						if dd < rl:
+							near = true
+							seen += 1
+							var lat := (ry * fcx - rx * fcy) / one  # (+: he is to my right)
+							var al := (rx * fcx + ry * fcy) / one   # (+: ahead of me)
+							if mx_mv[j] == 0:
+								if gv < 0 or dd < gd:
+									gv = uj
+									gd = dd
+							elif absi(lat) < rr and al > -rr / 2:
+								lx += -mini(rr - absi(lat), PASS_SLIDE) if lat > 0 else mini(rr - absi(lat), PASS_SLIDE)
+							if absi(lat) < rr and al > 0 and dd < rr + fwd:
+								cut = maxi(cut, mini(rr + fwd - dd, fwd * (100 - PASS_KEEP_PCT) / 100))
+								stat_mix_men += 1
+				j = mx_next[j]
+	if not near:
+		return Vector2i(x, y)
+	if gv >= 0:
+		# Into the gap: the friend's files stand (2k - (f - 1)) * fsp / 2 to the right of its anchor.
+		var vf := maxi(mini(files_of(gv), u_alive[gv]), 1)
+		var fsp := maxi(t_fsp[u_type[gv]], 1)
+		var vc := q[gv * 3 + 1]
+		var vs := q[gv * 3 + 2]
+		var rxv := (-(ox - u_ax[gv]) * vs + (oy - u_ay[gv]) * vc) / one  # (my place across its front)
+		var tf := rxv + (vf - 1) * fsp / 2  # (from its first file)
+		var k := (tf if tf >= 0 else tf - fsp + 1) / fsp  # (floor)
+		var want := k * fsp + fsp / 2 - (vf - 1) * fsp / 2
+		var dl := clampi(want - rxv, -PASS_SLIDE, PASS_SLIDE)
+		# (Across its front is across mine too when we face alike; in my frame:)
+		var wx := -vs * dl / one
+		var wy := vc * dl / one
+		lx += (-wx * fcy + wy * fcx) / one
+	lx = clampi(lx, -PASS_SLIDE, PASS_SLIDE)
+	var f := fwd - cut
+	return Vector2i(ox + (fcx * f - fcy * lx) / one, oy + (fcy * f + fcx * lx) / one)
+
+
+## A man of mixing unit u at (x, y), at or near his place: each man of another friendly unit on the move (mx_mv)
+## within their joint room and PASS_LOOK makes him stand (z 1: his place does not pull him back while they pass);
+## inside their room he side-steps away from that man across the other's unit's facing (to its left when square
+## ahead of it), at most PASS_GIVE a tick. Once they are by, his place pulls him back.
+func _mix_give(u: int, x: int, y: int) -> Vector3i:
+	var q := u_mxq
+	var rm := q[u * 3]
+	var sd := u_side[u]
+	var nx := x
+	var ny := y
+	var reach := rm + PASS_R_RIDER + PASS_LOOK
+	var gs := MX_SHIFT
+	var cx0 := maxi((x - reach) >> gs, 0)
+	var cx1 := mini((x + reach) >> gs, mx_w - 1)
+	var cy0 := maxi((y - reach) >> gs, 0)
+	var cy1 := mini((y + reach) >> gs, mx_h - 1)
+	var seen := 0
+	var near := 0
+	var one := FM.TRIG_ONE
+	var gx := 0
+	var gy := 0
+	for cy in range(cy0, cy1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var j := mx_head[cy * mx_w + cx]
+			while j >= 0 and seen < PASS_SEEN:
+				var uj := unit_of[j]
+				if uj != u and u_side[uj] == sd and mx_mv[j] != 0 and state[j] < S_DEAD:
+					var rr := rm + q[uj * 3]
+					var rl := rr + PASS_LOOK
+					var rx := x - pos_x[j]
+					var ry := y - pos_y[j]
+					if absi(rx) < rl and absi(ry) < rl and FM.approx_len(rx, ry) < rl:
+						near = 1
+						seen += 1
+						var c := q[uj * 3 + 1]
+						var s := q[uj * 3 + 2]
+						var lat := (ry * c - rx * s) / one
+						if absi(lat) < rr:
+							var push := mini(rr - absi(lat), PASS_GIVE) * (1 if lat > 0 else -1)
+							gx += -s * push / one
+							gy += c * push / one
+							stat_mix_men += 1
+				j = mx_next[j]
+	var gl := FM.approx_len(gx, gy)
+	if gl > PASS_GIVE:
+		gx = gx * PASS_GIVE / gl
+		gy = gy * PASS_GIVE / gl
+	return Vector3i(nx + gx, ny + gy, near)
 
 
 func _update_units() -> void:
@@ -11182,6 +11537,8 @@ func _update_soldiers() -> void:
 			var xside := (xfo / (obw * ob_h)) if xfo >= 0 else -1
 			for s in alive:
 				var i := ss[base + s]
+				if rt_on != 0:
+					s_rtw[i] = 0  # (routing: no walk to the rear)
 				var jitter := ((i * 37) & 15) - 7  # per-soldier spread
 				var fx := flx - fly * jitter / 24
 				var fy := fly + flx * jitter / 24
@@ -11342,6 +11699,7 @@ func _update_soldiers() -> void:
 		var stair_mv := 0
 		if ob:
 			stair_mv = u_stair[u] if u_stair[u] == 1 or u_stair[u] == 3 or u_stair[u] == ST_LADDER else 0
+		var rto := rt_on != 0
 		if u_contact[u] == 0 and u_down[u] == 0 and u_charge[u] == 0:
 			# Fast path: slot following only (no search; separation only near
 			# obstacles, from the men beside and behind in the formation).
@@ -11353,6 +11711,7 @@ func _update_soldiers() -> void:
 				sep_f = maxi(mini(files_of(u), alive), 1)
 			# (A bound: the team holding stands where it is and shoots; C4.)
 			var still := _bnd_still(u) if u_bnd[u] != 0 else -1
+			var mxu := mix_any != 0 and u_mix[u] != 0
 			for s in alive:
 				var k := base + s
 				var i := ss[k]
@@ -11369,6 +11728,10 @@ func _update_soldiers() -> void:
 					var vg0 := _via_goal(u, i, x, y, x + dx, y + dy)
 					dx = vg0.x - x
 					dy = vg0.y - y
+				if rto and s_rtw[i] != 0 and stair_mv == 0:
+					var rg := _rt_goal(u, i, dx, dy)  # (the countermarch: to the rear down the gap beside his file)
+					dx = rg.x
+					dy = rg.y
 				if still >= 0 and (i & 1) == still:
 					dx = 0
 					dy = 0
@@ -11380,6 +11743,14 @@ func _update_soldiers() -> void:
 						st[i] = S_FORMED
 					if ob:
 						sls[i] = 0  # (at his place: no last step for the guard)
+					if mxu and mx_mv[i] != 2 and ((i + tick) & 1) == 0:
+						var gv := _mix_give(u, x, y)  # (a friend threading through: he steps aside)
+						if gv.x != x or gv.y != y:
+							x = clampi(gv.x, 0, fw)
+							y = clampi(gv.y, 0, fh)
+							px[i] = x
+							py[i] = y
+							moved += 1
 					sumx += x
 					sumy += y
 					if x < minx: minx = x
@@ -11398,6 +11769,9 @@ func _update_soldiers() -> void:
 				else:
 					d = ady - (ady >> 5) + ((adx * 3) >> 3) + (adx >> 6)
 				var spd := spd_formed if d <= CATCH_UP_DIST else run
+				if rto and s_rtw[i] != 0 and stair_mv == 0:
+					spd = spd_formed  # (he walks to the rear, never the catch-up run)
+					fc[i] = FM.atan2_a(dy, dx)  # (he turns about to walk to the rear)
 				if d <= spd:
 					x = clampi(x + dx, 0, fw)
 					y = clampi(y + dy, 0, fh)
@@ -11425,6 +11799,31 @@ func _update_soldiers() -> void:
 								var push6 := (SEP_SLOT - sd6) >> 2
 								x = clampi(x + sx6 * push6 / sd6, 0, fw)
 								y = clampi(y + sy6 * push6 / sd6, 0, fh)
+				if mxu and mx_mv[i] != 2:
+					# Through a friendly unit: on the move he threads its gaps, near his place he gives way. A man
+					# looks round every other tick (PASS_ODD); between, one off his file's line goes on straight
+					# ahead and one stood aside stays aside.
+					var look := ((i + tick) & 1) == 0
+					if mx_mv[i] != 0:
+						if look:
+							var mxp := _mix_step(u, px[i], py[i], x, y)
+							x = clampi(mxp.x, 0, fw)
+							y = clampi(mxp.y, 0, fh)
+						else:
+							var qc := u_mxq[u * 3 + 1]
+							var qs := u_mxq[u * 3 + 2]
+							if absi((dy * qc - dx * qs) / FM.TRIG_ONE) > PASS_ODD:
+								var fw2 := maxi(((x - px[i]) * qc + (y - py[i]) * qs) / FM.TRIG_ONE, 0)
+								x = clampi(px[i] + qc * fw2 / FM.TRIG_ONE, 0, fw)
+								y = clampi(py[i] + qs * fw2 / FM.TRIG_ONE, 0, fh)
+					elif look:
+						var mxg := _mix_give(u, px[i], py[i])  # (near his place: a friend by him, he stands aside)
+						if mxg.z != 0:
+							x = clampi(mxg.x, 0, fw)
+							y = clampi(mxg.y, 0, fh)
+					else:
+						x = px[i]  # (stood aside: he waits for his next look before stepping back)
+						y = py[i]
 				var mm := mask if stair_mv == 0 else _stair_mask(u, px[i], py[i], mask, stair_mv)
 				var gsx0 := x
 				var gsy0 := y
@@ -11962,12 +12361,18 @@ func _update_soldiers() -> void:
 					dx = vg2.x - x
 					dy = vg2.y - y
 				var wrapping := wrap_t >= 0 and front and t < 0
+				var rtc := false
 				if wrapping:
 					dx = u_cx[wrap_t] - x
 					dy = u_cy[wrap_t] - y
+				elif rto and s_rtw[i] != 0 and stair_mv == 0:
+					var rgc := _rt_goal(u, i, dx, dy)  # (pistols: back down the gap beside his file to reload)
+					rtc = s_rtw[i] != 0
+					dx = rgc.x
+					dy = rgc.y
 				if dx != 0 or dy != 0:
 					var d := FM.approx_len(dx, dy)
-					var spd := spd_formed if d <= CATCH_UP_DIST else run
+					var spd := spd_formed if d <= CATCH_UP_DIST or rtc else run
 					if d <= spd:
 						nx = x + dx
 						ny = y + dy
@@ -13429,8 +13834,9 @@ func _land(p: int) -> void:
 	var tu := pr_tu[p]
 	if best < 0 and tu >= 0 and (u_contact[tu] == 0 or (occ_on != 0 and u_occ[tu] > 0)) and u_alive[tu] > 0:
 		var j := -1
-		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0 and u_bnd[tu] == 0:
-			j = _slot_at(tu, x, y)
+		if u_state[tu] == U_READY and u_neng[tu] == 0 and u_wall[tu] == 0 and u_cvb[tu] < 0 and u_bnd[tu] == 0 \
+				and not (rt_on != 0 and cm_on != 0 and tick - u_cmk[tu] < CM_WALK_T):
+			j = _slot_at(tu, x, y)  # (a line countermarching has men off their places: the nearest man, below)
 		else:
 			j = _nearest_in_unit(tu, x, y)
 		if j >= 0:
@@ -19004,8 +19410,12 @@ func state_hash() -> int:
 		# The countermarch (a battle without a unit that has it hashes as before).
 		for arr in [u_cmc, u_cmr, u_cmt, u_cml, u_cmv, s_cms]:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
+		if rt_on != 0:
+			ctx.update(u_cmk.to_byte_array())  # (the walk's tick: from the first walking man on)
 		if butt_on != 0:
 			ctx.update(u_butt.to_byte_array())  # (the salvo's charge with the butt: from its first order)
+	if rt_on != 0:
+		ctx.update(s_rtw)  # (the countermarch's walk to the rear: from its first man on)
 	if mb_on != 0 and sg_on == 0:
 		# Native siege: the melee batter's work toward its next blow (with siege gear it is hashed above).
 		ctx.update(u_lacc.to_byte_array())
@@ -21348,6 +21758,8 @@ func _pistol_pass() -> void:
 					target[i] = -1
 					state[i] = S_FORMED
 					s_prl[i] = tick + PIS_RELOAD
+					s_rtw[i] = 1  # (back down the gap beside his file, as the countermarch)
+					rt_on = 1
 					u_pptr[u] = (k0 + q + 1) % nr
 					stat_pis_swaps += 1
 					break
@@ -21371,10 +21783,16 @@ func _setup_cm() -> void:
 		arr.resize(nu)
 		arr.fill(0)
 	u_cmv.fill(-1)
+	u_cmk.resize(nu)
+	u_cmk.fill(-CM_NEVER)
 	u_cml.resize(nu)
 	u_cml.fill(-CM_NEVER)
 	s_cms.resize(n if cm_on != 0 else 0)
 	s_cms.fill(-CM_NEVER)
+	rt_on = 0
+	stat_cm_files = 0
+	s_rtw.resize(n if cm_on != 0 or pis_on != 0 else 0)
+	s_rtw.fill(0)
 	butt_on = 0
 	u_butt.resize(nu)
 	u_butt.fill(0)
@@ -21415,13 +21833,15 @@ func _cm_unit(u: int, ft: int, still: int) -> void:
 	var full := close or clk - u_cml[u] >= 2 * reload
 	var s0 := 0
 	var s1 := alive
+	var files := maxi(mini(files_of(u), alive), 1)
+	var roll := false
 	if not full:
 		if clk < u_cmt[u]:
 			return
-		var files := maxi(mini(files_of(u), alive), 1)
 		var ranks := (alive + files - 1) / files
 		var r := u_cmr[u] % ranks
-		s0 = r * files
+		roll = _cm_walks(u, still, files)
+		s0 = 0 if roll else r * files  # (walking: the men come to the front, so the front rank fires)
 		s1 = mini(s0 + files, alive)
 		u_cmr[u] = (r + 1) % ranks
 		u_cmt[u] = clk + (reload + ranks - 1) / ranks
@@ -21438,8 +21858,12 @@ func _cm_unit(u: int, ft: int, still: int) -> void:
 		_fire(i, u, ft, ty, _shot_kind(i, ks, kstd, pref))
 		if stat_shots != sh:
 			s_cms[i] = clk
+			if roll:
+				_cm_fired.append(s)
 		if u_alive[ft] <= 0:
 			break
+	if roll and not _cm_fired.is_empty():
+		_cm_file_back(u, files)
 	if stat_shots == shots0:
 		return
 	u_fire_acc[u] = 0  # (the body: loaded again a reload after its last shot, for Hold)
@@ -21455,6 +21879,79 @@ func _cm_unit(u: int, ft: int, still: int) -> void:
 	var sd := u_side[u]
 	if ai_sides[sd] != 0 and stat_aic[sd * AIProfile.N_COUNTERS + AIProfile.C_CM] == 0:
 		BattleAI._count(self, sd, AIProfile.C_CM)  # (once a battle a side: its lines rolled)
+
+
+var _cm_fired := PackedInt32Array()  # (scratch: the front-rank files whose man fired this rank volley)
+
+
+## The countermarch walks (docs/design/battle_sim.md "The countermarch (as built, 2026-11-02)"): unit u's men change
+## places after a rank volley when it stands formed in the open on the ground of a field battle (not a settlement
+## battle: there a town's houses decide whose shots are blocked, and the front rank always firing changed the street
+## cover balance; nor within 4 m of a rock or cliff, _u_obs), at least two ranks deep, not in contact, not a bound's holding team (still),
+## not on a wall, a stair, a ladder or in a building, its places its formation's rectangle (not flowed, squeezed or in
+## cover). Else the rank pointer fires where the men stand.
+func _cm_walks(u: int, still: int, files: int) -> bool:
+	_cm_fired.clear()
+	return still < 0 and u_moved[u] == 0 and u_contact[u] == 0 and u_fighting[u] == 0 and u_alive[u] >= 2 * files \
+		and u_wall[u] == 0 and u_stair[u] == 0 and u_occ[u] <= 0 and u_flow[u] == 0 and u_sq[u] == 0 and u_cvb[u] < 0 \
+		and u_skc[u] == 0 and city_on == 0 and (obs_on == 0 or u >= _u_obs.size() or _u_obs[u] == 0)
+
+
+## After a rank volley of unit u (files files): each front-rank man who fired (_cm_fired, his file) files to the
+## rear of his file and the men behind him step up a rank (slot_of / slot_soldier along the file; the last, partial
+## rank is centred, so its man nearest the file's line closes it). He walks down the gap to the file's right
+## (s_rtw, _rt_goal); the next to fire is the man now at the front.
+func _cm_file_back(u: int, files: int) -> void:
+	var alive := u_alive[u]
+	var ranks := (alive + files - 1) / files
+	var part := alive - (ranks - 1) * files
+	var nfull := ranks if part == files else ranks - 1
+	var sh := (files - part) / 2
+	var base := u_slot_base[u]
+	for j in _cm_fired:
+		var fi := slot_soldier[base + j]
+		var s := j
+		for r in range(1, nfull):
+			var s2 := j + r * files
+			var m := slot_soldier[base + s2]
+			slot_soldier[base + s] = m
+			slot_of[m] = s
+			s = s2
+		var q := j - sh
+		if part < files and q >= 0 and q < part:
+			var s3 := (ranks - 1) * files + q
+			var m3 := slot_soldier[base + s3]
+			slot_soldier[base + s] = m3
+			slot_of[m3] = s
+			s = s3
+		if s == j:
+			continue  # (a file one man deep: he stays)
+		slot_soldier[base + s] = fi
+		slot_of[fi] = s
+		s_rtw[fi] = 1
+		stat_cm_files += 1
+	_cm_fired.clear()
+	rt_on = 1
+	u_cmk[u] = tick
+	u_settled[u] = 0
+
+
+## Man i of unit u walking to the rear of his file (s_rtw; (dx, dy) to his place): first a side-step into the gap
+## to his file's right (half the file spacing), then straight back down it until level with his place, then (the
+## flag cleared) into it. Returns the step's goal from where he stands.
+func _rt_goal(u: int, i: int, dx: int, dy: int) -> Vector2i:
+	var one := FM.TRIG_ONE
+	var c := FM.cos_a(u_face[u])
+	var sn := FM.sin_a(u_face[u])
+	var along := (dx * c + dy * sn) / one
+	if along > -CM_BACK_DONE:
+		s_rtw[i] = 0
+		return Vector2i(dx, dy)
+	var g := t_fsp[u_type[u]] / 2
+	var lg := (dy * c - dx * sn) / one + g
+	if absi(lg) > CM_GAP_TOL:
+		return Vector2i(-sn * lg / one, c * lg / one)
+	return Vector2i(dx - sn * g / one, dy + c * g / one)
 
 
 ## The salvo's charge with the butt (docs/AI.md 44.6), after order o to unit u (cm_on): an attack order with

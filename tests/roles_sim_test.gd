@@ -17,6 +17,17 @@ extends SceneTree
 ##             once a reload; as many shots as on Hold (volleys); each rank volley frightens at CM_FEAR_PCT; Use
 ##             now rolls too; rodeleros charging home get the last volley within CM_CLOSE (Auto); an AI side at
 ##             Easy (CM_AUTO 0) volleys; snapshot / restore mid-drill; Rome and the riders have no countermarch.
+##             The walk (2026-11-02): after each rank volley its men file to the rear of their files down the gaps
+##             and the next rank steps up, so every man has stood in the front rank at a rank volley within the
+##             first five; the shots as before; the footprint stays put; none walk on Hold, on the move or in a
+##             melee; the stepped-back pistol men walk the same way.
+##   pass      filtering through a friendly unit (docs/design/battle_sim.md "Filtering through a friendly unit (as
+##             built, 2026-11-02)"): a musket line, a column and lancers ordered through a standing musket line,
+##             and a musket line through standing lancers: no two men of the two units within 0.3 m during the pass
+##             (they were inside one another before), the standing men step aside, after it nobody within 0.5 m
+##             of another man and every man back in his own place (no slot changed hands), the pass at most 15 %
+##             slower than the same move over clear ground; two lines marching shoulder to shoulder, and one
+##             following 4 m behind another, never mix.
 ##   ai        the battle AI's Hold / Use now (docs/AI.md 39): grenadiers storming a walled town (AI, Average) Hold in
 ##             the approach, go up to the gate being hacked and are on Auto once it is down; put by a shut gate
 ##             they Use now at it; a mortar battery in a West town batters (Use now) a held building on the storm's
@@ -29,7 +40,7 @@ extends SceneTree
 ##             Itza warriors carry poles onto a walls-1 stretch and climb; then the second warriors, the bowmen
 ##             and the Holcan, each ordered onto the stretch, go up the planted poles and stand on the walkway;
 ##             the same with Spanish-era ladders and heavy infantry.
-##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native]
+##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native|pass]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -38,6 +49,7 @@ const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const SiegeAI := preload("res://sim/siege_ai.gd")
 const AIProfile := preload("res://sim/ai_profile.gd")
+const FM := preload("res://sim/fixed_math.gd")
 const M := 1024
 const UP := 768
 const DOWN := 256
@@ -89,6 +101,8 @@ func _init() -> void:
 		_countermarch()
 	if only == "" or only == "native":
 		_native()
+	if only == "" or only == "pass":
+		_pass()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL")
 	quit(0 if fails == 0 else 1)
 
@@ -151,6 +165,7 @@ func _pistols() -> void:
 	_check(sim.stat_pis_swaps > 0, "pistols: spent front-rank men stepped back for loaded men (%d)" % sim.stat_pis_swaps)
 	_check(swapped_back > 0, "pistols: a stepped-back man stands in a rear rank reloading")
 	_check(sim.stat_pis_reloads > 0 and reload_seen > 0, "pistols: braces reloaded (%d)" % sim.stat_pis_reloads)
+	_check(sim.rt_on == 1, "pistols: a stepped-back man walked to the rear down the gap (rt_on %d)" % sim.rt_on)
 	# Hold: no pistols.
 	var s2 := _pistol_sc()
 	s2["orders"].append(BattleSim.make_ability_order(0, 0, UT.AB_PISTOL, UT.AB_HOLD))
@@ -621,6 +636,7 @@ func _countermarch() -> void:
 	_check(sa.stat_cm_fright >= sa.stat_cm_rank - 2 and sa.stat_cm_fright > 0, "countermarch: every rank volley frightened (%d of %d)" % [sa.stat_cm_fright, sa.stat_cm_rank])
 	_check(int(hold["jump"]) == fear, "countermarch: a volley frightens at m_fear (%d)" % int(hold["jump"]))
 	_check(sn.stat_cm_rank >= 16, "countermarch: Use now rolls (%d)" % sn.stat_cm_rank)
+	_cm_walk(auto, hold)
 	# The last volley: rodeleros 75 m off take the opening and the rolling fire, then charge the line.
 	var lsc := _sc([Scenarios.unit(0, mus, 100, 150, 200, UP, 25), Scenarios.unit(1, UT.index_of("rodeleros"), 200, 150, 120, DOWN, 40)],
 		[Scenarios.attack(240, 1, 0, 1)])
@@ -628,15 +644,32 @@ func _countermarch() -> void:
 	ls.setup(lsc, 41)
 	var last_d := -1
 	var full0 := 0
+	var walk_melee := 0
 	for t in 700:
 		var fl: int = ls.stat_cm_full
+		var wf: int = ls.stat_cm_files
+		var engaged: bool = ls.u_contact[0] != 0 or ls.u_fighting[0] > 0
 		ls.step()
+		if engaged and ls.stat_cm_files != wf:
+			walk_melee += 1
 		if ls.tick == 240:
 			full0 = ls.stat_cm_full
 		if ls.stat_cm_full > fl and ls.tick > 240 and last_d < 0:
 			last_d = ls._unit_dist(0, 1)
 	print("countermarch: the last volley at %d m (%d rank volleys, %d full)" % [last_d / M, ls.stat_cm_rank, ls.stat_cm_full])
 	_check(full0 >= 1 and last_d >= 0 and last_d <= BattleSim.CM_CLOSE, "countermarch: the last volley within CM_CLOSE (%d m)" % (last_d / M))
+	_check(walk_melee == 0 and ls.stat_cm_files > 0, "countermarch: men walk before the charge (%d), none in the melee (%d)" % [ls.stat_cm_files, walk_melee])
+	# On the move: a line ordered forward mid-drill fires no rank volley and nobody walks while it moves.
+	var msc := _cm_sc([BattleSim.make_move_order(200, 0, 150 * M, 185 * M, UP, 25 * UT.stat(mus, "file_sp"), 0)])
+	var ms := BattleSim.new()
+	ms.setup(msc, 31)
+	var walk_moving := 0
+	for t in 500:
+		var wf2: int = ms.stat_cm_files
+		ms.step()
+		if ms.u_moved[0] != 0 and ms.stat_cm_files != wf2:
+			walk_moving += 1
+	_check(walk_moving == 0, "countermarch: nobody walks to the rear while the line moves (%d)" % walk_moving)
 	# An AI side at Easy (CM_AUTO 0) volleys; at Average it rolls (and counts it once).
 	for sk in [0, 1]:
 		var ai := BattleSim.new()
@@ -673,6 +706,153 @@ func _countermarch() -> void:
 	for t in 100:
 		rs.step()
 	_check(rs.cm_on == 0 and rs.u_cmr.is_empty() and rs.s_cms.is_empty(), "countermarch: a Rome battle has none")
+
+
+## The countermarch's walk (2026-11-02) in the Auto and Hold runs of _cm_run: every man stood in the front rank at
+## one of the first five rank volleys; men walked; the footprint and facing stayed put; none walk on Hold.
+func _cm_walk(auto: Dictionary, hold: Dictionary) -> void:
+	var sim := BattleSim.new()
+	sim.setup(_cm_sc([]), 31)
+	var b0: int = sim.u_slot_base[0]
+	var n0: int = sim.u_count0[0]
+	var front := {}
+	var rank_v := 0
+	var cx0: int = sim.u_cx[0]
+	var w0: int = sim.u_maxx[0] - sim.u_minx[0]
+	var face0: int = sim.u_face[0]
+	var gaps_ok := true
+	for t in 900:
+		var rk0: int = sim.stat_cm_rank
+		var fr: Array[int] = []
+		for s in sim.files_of(0):
+			fr.append(sim.slot_soldier[b0 + s])
+		sim.step()
+		if sim.stat_cm_rank != rk0:
+			rank_v += 1
+			if rank_v <= 5:
+				for i in fr:
+					front[i] = 1
+		# A walking man stands in a gap: never within 0.4 m of another man of the line.
+		if t % 3 == 0:
+			for s in sim.u_alive[0]:
+				var i: int = sim.slot_soldier[b0 + s]
+				if sim.s_rtw[i] == 0:
+					continue
+				for q in sim.u_alive[0]:
+					var j: int = sim.slot_soldier[b0 + q]
+					if j != i and absi(sim.pos_x[i] - sim.pos_x[j]) < M and absi(sim.pos_y[i] - sim.pos_y[j]) < M \
+							and FM.approx_len(sim.pos_x[i] - sim.pos_x[j], sim.pos_y[i] - sim.pos_y[j]) < M * 4 / 10:
+						gaps_ok = false
+	var sa: BattleSim = auto["sim"]
+	var sh: BattleSim = hold["sim"]
+	print("countermarch walk: %d men walked to the rear (Hold %d), %d of %d men in the front rank at the first five rank volleys, centre %d -> %d mm, width %d -> %d mm" % [
+		sim.stat_cm_files, sh.stat_cm_files, front.size(), n0, cx0, sim.u_cx[0], w0, sim.u_maxx[0] - sim.u_minx[0]])
+	_check(sa.stat_cm_files > 0 and sa.stat_cm_files == sim.stat_cm_files, "countermarch: men walk to the rear after their rank's volley (%d)" % sa.stat_cm_files)
+	_check(front.size() == n0, "countermarch: every man stood in the front rank within five rank volleys (%d of %d)" % [front.size(), n0])
+	_check(sh.stat_cm_files == 0, "countermarch: nobody walks on Hold (%d)" % sh.stat_cm_files)
+	_check(gaps_ok, "countermarch: a man walking to the rear keeps 0.4 m from every man of his line")
+	_check(absi(sim.u_cx[0] - cx0) < M / 2 and absi(sim.u_maxx[0] - sim.u_minx[0] - w0) < M and sim.u_face[0] == face0,
+		"countermarch: the footprint and facing stay put")
+
+
+# ------------------------------------------------------------------ pass ---
+
+## A unit of side 0 (`mk` x `mn`, `mf` files) at y 240 ordered to y 160 through a standing friend (`sk` x `sn`, `sf`
+## files) at y 200, both facing up; a far enemy so the battle runs. Returns the pass's numbers (and the same move
+## with the field clear when `clear`).
+func _pass_run(mk: String, mn: int, mf: int, sk: String, sn: int, sf: int, clear: bool) -> Dictionary:
+	var units := [Scenarios.unit(0, UT.index_of(mk), mn, 150, 240, UP, mf)]
+	if not clear:
+		units.append(Scenarios.unit(0, UT.index_of(sk), sn, 150, 200, UP, sf))
+	units.append(Scenarios.unit(1, UT.index_of("musketeers"), 20, 150, 20, DOWN, 10))
+	var w: int = mf * UT.stat(UT.index_of(mk), "file_sp")
+	var sim := BattleSim.new()
+	sim.setup(_sc(units, [BattleSim.make_move_order(5, 0, 150 * M, 160 * M, UP, w, 0)]), 7)
+	var ss0 := sim.slot_soldier.duplicate()
+	var closest := 1 << 30
+	var aside := 0
+	var done := -1
+	for t in 1500:
+		sim.step()
+		if not clear and t % 2 == 0:
+			closest = mini(closest, _pass_closest(sim, 0, 1))
+			for q in sim.u_alive[1]:
+				aside = maxi(aside, _pass_off(sim, 1, q))
+		if done < 0 and sim.tick > 10 and sim.u_order[0] == BattleSim.O_NONE:
+			var ok := true
+			for s in sim.u_alive[0]:
+				if _pass_off(sim, 0, s) > M / 3:
+					ok = false
+			if ok:
+				done = sim.tick
+		if done >= 0 and sim.tick > done + 60:
+			break
+	var off := 0
+	var nu := 1 if clear else 2
+	for u in nu:
+		for s in sim.u_alive[u]:
+			if _pass_off(sim, u, s) > M * 3 / 10:
+				off += 1
+	var after := 1 << 30
+	var same := sim.slot_soldier == ss0
+	for u in nu:
+		after = mini(after, _pass_closest(sim, u, u))
+	if not clear:
+		after = mini(after, _pass_closest(sim, 0, 1))
+	return {"t": done, "closest": closest, "aside": aside, "off": off, "after": after, "same": same, "men": sim.stat_mix_men}
+
+
+## The closest two men, one of unit a and one of unit b (a == b: two of a), within 2 m (else 2 m).
+func _pass_closest(sim, a: int, b: int) -> int:
+	var best := 2 * M
+	for s in sim.u_alive[a]:
+		var i: int = sim.slot_soldier[sim.u_slot_base[a] + s]
+		for q in sim.u_alive[b]:
+			var j: int = sim.slot_soldier[sim.u_slot_base[b] + q]
+			if i == j:
+				continue
+			var dx: int = sim.pos_x[i] - sim.pos_x[j]
+			var dy: int = sim.pos_y[i] - sim.pos_y[j]
+			if absi(dx) < best and absi(dy) < best:
+				best = mini(best, FM.approx_len(dx, dy))
+	return best
+
+
+func _pass_off(sim, u: int, s: int) -> int:
+	var k: int = sim.u_slot_base[u] + s
+	var i: int = sim.slot_soldier[k]
+	return FM.approx_len(sim.u_ax[u] + sim.off_x[k] - sim.pos_x[i], sim.u_ay[u] + sim.off_y[k] - sim.pos_y[i])
+
+
+func _pass() -> void:
+	for c in [["line", "musketeers", 100, 25, "musketeers", 100, 25], ["column", "musketeers", 100, 5, "musketeers", 100, 25],
+			["horse", "lancers", 60, 15, "musketeers", 100, 25], ["foot_horse", "musketeers", 100, 25, "lancers", 60, 15]]:
+		var r := _pass_run(c[1], c[2], c[3], c[4], c[5], c[6], false)
+		var b := _pass_run(c[1], c[2], c[3], c[4], c[5], c[6], true)
+		print("pass %s: %.1f s (clear %.1f s), closest %.2f m, the standing men aside up to %.2f m, after: closest %.2f m, %d men off their places, slots kept %s, %d man-steps" % [
+			c[0], r["t"] / 10.0, b["t"] / 10.0, r["closest"] / float(M), r["aside"] / float(M), r["after"] / float(M), r["off"], str(r["same"]), r["men"]])
+		_check(r["t"] > 0 and b["t"] > 0 and r["t"] >= b["t"] and r["t"] * 100 <= b["t"] * 115, "pass %s: through at most 15 %% slower (%d / %d ticks)" % [c[0], r["t"], b["t"]])
+		_check(r["closest"] >= M * 3 / 10, "pass %s: no two men of the two units within 0.3 m (%.2f m)" % [c[0], r["closest"] / float(M)])
+		_check(r["aside"] >= M / 10, "pass %s: the standing men step aside (%.2f m)" % [c[0], r["aside"] / float(M)])
+		_check(r["after"] >= M / 2 and r["off"] == 0 and r["same"], "pass %s: after it every man in his own place, none within 0.5 m of another" % c[0])
+	# Not a crossing: two lines marching shoulder to shoulder (0.4 m between their flanks), and a line following 4 m
+	# behind another, never mix (2026-11-02, the coordinator: only a real crossing filters).
+	var mus := UT.index_of("musketeers")
+	var fsp: int = UT.stat(mus, "file_sp")
+	var hw: int = 24 * fsp / 2
+	var gap_x: int = (2 * hw + fsp + M * 4 / 10) / M
+	for c2 in [["beside", 150 + gap_x, 240], ["behind", 150, 249]]:
+		var units := [Scenarios.unit(0, mus, 100, 150, 240, UP, 25), Scenarios.unit(0, mus, 100, c2[1], c2[2], UP, 25),
+			Scenarios.unit(1, mus, 20, 150, 20, DOWN, 10)]
+		var sim := BattleSim.new()
+		sim.setup(_sc(units, [BattleSim.make_move_order(5, 0, 150 * M, 160 * M, UP, 25 * fsp, 0),
+			BattleSim.make_move_order(5, 1, int(c2[1]) * M, (int(c2[2]) - 80) * M, UP, 25 * fsp, 0)]), 7)
+		var mixed := 0
+		for t in 700:
+			sim.step()
+			mixed += sim.mix_any
+		print("pass %s: %d ticks mixing, %d man-steps" % [c2[0], mixed, sim.stat_mix_men])
+		_check(sim.stat_mix_men == 0, "pass %s: friends marching %s are left alone (%d man-steps)" % [c2[0], c2[0], sim.stat_mix_men])
 
 
 # ---------------------------------------------------------- native siege ---

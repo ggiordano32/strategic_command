@@ -2306,6 +2306,78 @@ field maps (open, woods, landforms, hamlets) they apply.
   move / attack / halt / withdraw clears it. The flat goldens skirmish and
   bench_2000 moved with the bonus.
 
+### Filtering through a friendly unit (as built, 2026-11-02)
+
+The owner: "Take a look at unit filtering when moving through friendly squads." Diagnosis (`tests/pass_probe.gd`,
+a unit of side 0 marched 80 m through a standing friend 40 m ahead, no enemy near): the anchor crossed the friend's
+footprint at half speed (`BLK_FRIEND`, `_half_step`) and the men walked straight through the friend's men: away from
+an enemy the men only follow their places (the fast path keeps no distance from other units' men; the friendly
+separation lives in the contact path only), so two lines of the same spacing passed file inside file, men drawn on
+top of one another (a musket line through a musket line: 4,975 man-ticks with two men of the two units within 0.5 m,
+2,300 under 0.25 m, closest 0.00 m; a column 3,795; lancers through foot 971; foot through lancers 2,123; Rome's heavy
+foot 6,330), the standing unit never moved, no slot changed hands and both came out in order; the pass cost the mover
+3.2 s on a 68 s march (the half speed while its anchor was inside the friend's 4 m cells).
+
+Rule (`sim/battle_sim.gd`, "Filtering through a friendly unit": `_mix_ok`, `_mix_build`, `_mix_pairs`,
+`_mix_cross`, `_mix_grid`, `_mix_r`, `_mix_step`, `_mix_give`; hooks in `step` and the fast path of
+`_update_soldiers`). **Only a real crossing.** Every `PASS_THINK` 8 ticks the units on the move (not settled; the
+anchor moved this tick or a move or attack order stands) are paired with friends whose boxes come within `PASS_BOX`
+2 m (the broad phase), and a pair mixes only when the mover crosses the friend (`_mix_cross`): the line down the
+mover's middle, from `PASS_AHEAD` 3 m ahead of its front back to its rear rank (or its box's rearmost corner, men left
+behind their places), enters the friend's formation rectangle (`PASS_CROSS` 0.3 m round it, in the friend's frame).
+A friend marching shoulder to shoulder, beside or behind, whose rectangle the mover's line never enters, is left
+exactly as before. Both must be formed, ready, on the ground, out of contact, not charging, not on a wall, stair or
+ladder, not in a building, no engines, not afloat, not a hero or an agent (`u_char`: a character's handful of men
+slips through files as before; they walk to their posts through their own lines all battle, and the lines giving way
+to each changed the AI battles' course: determinism_test `chars` lost its diplomat's parley), in a field battle (not a
+settlement battle: there files interleave as before; a build that only kept it away from walls and houses still
+moved the storms through crossings in the open approach and the plaza, rome_walls walls 1 / 2 71 / 48 -> 85 / 65 and
+four west_walls cells beyond their intervals, all back with the filtering off), and not within 4 m of a rock or a
+cliff (`_u_obs`). Between searches the pairs found stand while both can still mix. Only
+the men within `PASS_REACH` 1 m of where the two boxes overlap (`u_mxr`) take part, in a 2 m grid (`MX_SHIFT`).
+**The men.** A man is on the move while his unit's anchor moved this tick or he is further than `PASS_MOVING` 0.25 m
+from his place; else he stands. A man looks round every other tick (by his index); on the move, with a man of
+another friendly unit within their joint room (`PASS_R_FOOT` 0.3 m a man on foot, `PASS_R_RIDER` 0.5 m a rider, a
+beast its body: two men on foot keep 0.6 m, a rider and a man 0.8 m) and `PASS_LOOK` 0.25 m, he keeps only the part
+of his step along his unit's facing and goes sideways at most `PASS_SLIDE` 0.125 m a tick: toward the middle of the
+gap between the files of the standing friend nearest him (to his right when square behind a file), so a file
+threads a gap as a file, and away from men of a friend also on the move (two units crossing pass right hand to right
+hand); a man just ahead within their room holds him back to at least `PASS_KEEP_PCT` 25 % of his step; between his
+looks, a man further than `PASS_ODD` 3 cm off his file's line keeps going straight ahead. A standing man with a
+moving man of another friendly unit within their room and `PASS_LOOK` stands (his place does not pull him back) and
+side-steps across the mover's unit's facing, away from him, at most `PASS_GIVE` 0.1 m a tick; between his looks one
+stood aside stays aside; when they are by, his place pulls him back. Nobody changes slots. The slowdown stays the
+anchor's: `PASS_PCT` 50 % of its speed while the anchor crosses another friend's footprint (the constant names the
+old half step; unchanged, so the pass costs what it did). No state of its own: the pairs, the overlap rectangles and
+the grid are scratch rebuilt from the positions (snapshot-covered as script variables; restore runs on identically).
+Untouched: the contact path (melee push, pursuit's contact, the friendly separation of fighting men), routers, wall
+and stair units, ladders, men in buildings, settlement battles, skirmishers' loose order. The AI
+does not reason about passes (no eta or route uses the pass speed beyond the anchor's half step it always had), so
+no knob.
+
+Measured (the same probe after; in brackets man-ticks under 0.25 m, before -> after): a line through a line 4,975 ->
+78 man-ticks within 0.5 m (2,300 -> 0), closest 0.00 -> 0.47 m, the standing men aside up to 0.32 m; a column through
+a line 3,795 -> 105 (1,820 -> 0), closest 0.41 m; lancers through foot 971 -> 31 (288 -> 0), closest 0.39 m; foot
+through lancers 2,123 -> 0 (636 -> 0), closest 0.67 m; Rome's heavy 6,330 -> 113 (3,150 -> 0), closest 0.40 m;
+musketeers through a pike block 3,354 -> 785 (736 -> 0; the pike files 0.9 m apart are narrower than two men's room,
+so the pikes give way and the musketeers squeeze), closest 0.45 m; pass times unchanged (line 70.9 s against 67.7 s
+clear, column 70.9, lancers 45.2 against 43.2, foot through lancers 77.4 against 67.7); after every pass every man
+stands in his own place. Battles (field): the asymmetry probe, Spanish wins, `asym_field` 46 -> 43 of 96 seeds, `asym_field2` 47 -> 45 of 48;
+the filtering alone (the countermarch's walk off) 27 -> 31 and 47 -> 44 of 48; the countermarch alone 12 -> 12 and
+24 -> 23 of 24. Settlement battles do not filter, so `tools/balance` town plans move only by the pistols' walk (below,
+"The countermarch (as built, 2026-11-02)"); rome_walls plays exactly as before. Cost: `bench_2000`, 1,500 ticks headless, 2.44 s -> 2.64 s (+8 %;
+the first build, which mixed any unit on the move within 0.5 m of a friend every tick, +36 %).
+
+The exit-field restore (fixed with it). `_xf_restore` rebuilt the routers' exit fields from today's `nav`, but a
+generation is built from the `nav` of the tick it began; a breach's or a fallen house's rubble since then made the
+restored copy's fields differ (`siege_city@ai~ae` in `determinism_test` diverged 112 of 360 ticks once the battle's
+course moved). Each generation now keeps the `nav` it began from (`xf_nav_l` live, `xf_nav_p` pending; script
+variables, so in snapshots) and restore rebuilds from those.
+
+Tests: `tests/roles_sim_test.gd --only=pass` (the four passes; two lines marching shoulder to shoulder and one 4 m
+behind another never mix). Shots: `tests/pass_probe.gd --png=DIR` (top-view dots at the moments the mover's anchor
+crosses 207 ... 180 m, and the worst tick).
+
 ## The Caribbean roster, batch 1 (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: "The different units for different armies is exactly where I want to go with it. They
@@ -2968,7 +3040,53 @@ volley frightens its target once (`u_vf_u` / `u_vf_t` as a volley) at `CM_FEAR_P
 first). Hold: the volleys as before (they also stamp `s_cms`, so a switch back to Auto does not fire men just fired).
 Per-man fire (`_pm_on`: in a building, on a wall, the Cover or Hold-street stance of cover troops) runs before
 `_gun_unit` and is untouched. Stats: `stat_cm_rank`, `stat_cm_full`, `stat_cm_fright`. Tests:
-`tests/roles_sim_test.gd --only=countermarch`.
+`tests/roles_sim_test.gd --only=countermarch`. Since 2026-11-02 the men change places as they fire ("The
+countermarch (as built, 2026-11-02)" below).
+
+#### The countermarch (as built, 2026-11-02)
+
+The owner, from a phone playtest: "The rotating linemen don't actually rotate, just the shots move down the rows one
+at a time. The soldiers should swap positions in the unit to fire." Diagnosis: the 2026-10-27 drill moved a rank
+pointer (`u_cmr`) down the slots and fired that rank's men where they stood, so a musket line stood still while its
+fire walked through the ranks. Rule: the men walk, the drill's clock does not change. Each rank volley is now fired
+by the front rank; after it, in every file whose front man fired, he files to the rear of his file and the men behind
+him step up a rank (`_cm_file_back`: `slot_soldier` / `slot_of` along the file; the last, partial rank is centred, so
+its man nearest the file's line closes that file). Moving the fired man to the rear of his own file is the cheaper of
+the two ways the slot machinery offers and reads better than the loaded rank pushing up through the gaps: one slot
+cycle per file, the rest of the file only steps a rank forward, and a man fires once a reload because a file of
+`ranks` men brings him back to the front after `ranks` volleys of `ceil(m_reload / ranks)` (a shorter file beside a
+partial rank: its front man is not yet loaded at his turn, so he does not fire and that file waits a turn, which is
+exactly the partial rank's share of today's cycle). The walk itself (`s_rtw` per man, `_rt_goal`): he turns about,
+side-steps half a file spacing into the gap to his file's right, walks straight back down it at the walk (never the
+catch-up run) until level with his new place (`CM_BACK_DONE` 0.3 m, `CM_GAP_TOL` 0.1 m), then steps into it; the men
+stepping up walk straight forward in their file. The unit's anchor, facing and box do not move. It walks only while
+`_cm_walks`: formed and standing on the ground of a field battle (not a settlement battle: there a town's houses
+decide whose shots are blocked, and the front rank always firing made buccaneers at a street mouth lose 17 % more
+against a line in the plaza, 106 -> 124 men over 16 seeds, the street-cover pin of `determinism_test`; so in towns
+the line fires by ranks where it stands, as before), not within 4 m of a rock or cliff, at least two ranks deep, not in contact or fighting, not a
+bound's holding team, not on a wall, a stair, a ladder or in a building, its places its formation's rectangle (not
+flowed into a street, squeezed, in cover or drifting into trees); otherwise the pointer fires the rank where it stands
+as before. Full volleys (the opening one, the last one within `CM_CLOSE` or in a melee) and Hold never walk; a unit
+on the move does not fire by ranks at all. A shot landing on a line whose men walked in the last `CM_WALK_T` (8 s,
+`u_cmk`) is resolved against the man nearest the landing point instead of the slot under it (`_land`; a walking man is off
+his slot, so the slot lookup missed him and the walking line was harder to hit). The pistols' change of places at
+contact (`_pistol_pass`) uses the same walk: the spent man goes back down the gap beside his file (in the contact
+path's slot following), the loaded man steps up; in towns as in the field (the buccaneers' and pistoleers' fights at a
+breach or a gate: `tools/balance` west_walls walls 0 / 1 / 2 52 / 33 / 30 -> 52 / 44 / 27, San Juan walls 1 12 -> 62
+beyond its interval; with this walk off the walls-1 plan reads 33 and San Juan 12 again, so it is the pistols' walk:
+the spent man side-steps out of the front before he walks back, rather than straight through the man coming up;
+west_named pooled 59 / 30 / 14 -> 57 / 39 / 9 with no cell beyond its interval, open_town 75 -> 79). Riders' caracole is a unit-level ride and is untouched; bows and
+slings have no countermarch (they shoot over the ranks). State: `s_rtw` (sized with `cm_on` or `pis_on`), hashed from
+the first walking man on (`rt_on`), snapshot-covered as a script variable; `stat_cm_files` counts the walks. No AI
+decision changes (the drill's cadence is the same), so no knob. Measured (`tests/cm_probe.gd`, 100 musketeers in 4
+ranks shooting a 900-man pike block 70 m off for two minutes): shots a minute 500 / 500 before and after, 98 men 490 /
+490, 90 men 450 / 450 (identical cadence), kills a minute 205 / 195 -> 220 / 211 (100 men), 206 / 206 -> 207 / 194
+(98), 202 / 171 -> 193 / 174 (90): within the noise of where the balls land; a Hold line shooting a walking line
+(8 seeds, 60 s, 100 against 100): 437 -> 430 kills; the closest two men of the walking line 0.59 m; the box's middle
+and width unchanged. Tests: `tests/roles_sim_test.gd --only=countermarch` (every man stands in the front rank at one
+of the first five rank volleys; a walking man keeps 0.4 m from every man of his line; the footprint and facing stay
+put; nobody walks on Hold, on the move or in the melee of the rodeleros' charge), `--only=pistols` (the stepped-back
+man walks). Shots: `tests/cm_probe.gd --png=DIR`.
 
 #### The charge with the butt (as built, 2026-10-29)
 

@@ -202,9 +202,13 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## d618e20340501cfa and 5a0aadfb296bd646), and for the pursuit bonus
 ## (2026-10-30, docs/AI.md 47, CHASE_FULL_RUN_ON: skirmish and bench_2000
 ## changed, were 01925b7dfad9e615 and 946a33359bd5a466; the town rules and
-## the skirmisher's kept order leave them as they were).
-const GOLDEN := {"skirmish": "285d5b282a11d4ec", "bench_2000": "a06150d9b42a8231",
-	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "b9d3025690cd28ba"}
+## the skirmisher's kept order leave them as they were), and for filtering
+## through a friendly unit (2026-11-02, docs/design/battle_sim.md "Filtering
+## through a friendly unit (as built, 2026-11-02)": men thread a friend's
+## files and its men step aside; skirmish, bench_2000 and test_stone_line
+## changed, were 285d5b282a11d4ec, a06150d9b42a8231 and b9d3025690cd28ba).
+const GOLDEN := {"skirmish": "df69881ef708d55b", "bench_2000": "06e22950fac353c1",
+	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "e15d23e1c258332c"}
 
 var _ok := true
 

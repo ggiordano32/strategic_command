@@ -863,7 +863,10 @@ below). Everywhere (field and city maps).
   already inside an enemy's cells (it came to us) may back away from its
   middle. A move stopped by an enemy fights where it stands (its men do
   not disengage). Through a *friend's* footprint it goes at half speed
-  (BLK_FRIEND: files interleave, so streets and gateways never deadlock).
+  (BLK_FRIEND, `PASS_PCT`: files interleave, so streets and gateways never deadlock;
+  in field battles since 2026-11-02 its men thread the friend's files and the friend's men
+  step aside, docs/design/battle_sim.md "Filtering through a friendly unit (as built,
+  2026-11-02)"; in settlement battles the files interleave as before).
   A unit attacking, not itself fighting, whose target is fighting, waits
   behind friends fighting or already waiting within 60 m of the target's
   box (BLK_QUEUE) unless it can go round them: the queue behind the line
