@@ -53,6 +53,7 @@ var _tok_at := PackedInt32Array()
 var _tok_cache: Array = []   # microseconds the last standards-and-tokens pass cost (benchmarks)
 var px_per_m: float = 10.0
 var selected_units: Array[int] = []   # first = primary
+var group_tags := {}                  # unit -> its control-group numbers ("2", "1 3", "1 2+"; view only): a tab on its marker
 var zoom: float = 1.0
 var show_all_orders := false   # draw every friendly unit's order footprint
 var player_side := 0
@@ -1094,6 +1095,13 @@ func _draw_markers(r: float, lw: float) -> void:
 			draw_polyline(pts + PackedVector2Array([pts[0]]), Color(0, 0, 0, 0.8), lw)
 		if selected_units.has(u):
 			draw_arc(c, r * 1.6, 0, TAU, 20, Color.WHITE, lw)
+		if not group_tags.is_empty() and group_tags.has(u) and sim.u_side[u] == player_side:
+			var gtx: String = group_tags[u]
+			var gfs := _font_size(11.0)
+			var gtw := ThemeDB.fallback_font.get_string_size(gtx, HORIZONTAL_ALIGNMENT_LEFT, -1, gfs).x
+			var gat := c + Vector2(r * 0.75, -r * 1.05)
+			draw_rect(Rect2(gat + Vector2(-2, -gfs), Vector2(gtw + 5, gfs + 3)), Color(0.08, 0.07, 0.04, 0.85))
+			_dstr(gat, gtx, HORIZONTAL_ALIGNMENT_LEFT, -1, gfs, Color(1.0, 0.85, 0.35))
 		if sim.car_on != 0 and sim.u_car[u] != 0:
 			# The caracole's phase under the marker (Firing / Wheeling / Reloading 18 s).
 			var ctx := Traits.caracole_text(sim, u)

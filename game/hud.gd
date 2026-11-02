@@ -43,6 +43,9 @@ signal book_pressed
 signal card_long_pressed(unit: int)
 signal chip_book_pressed   # the 'Unit book' row of a chip's long-press explanation: battle.gd opens the selected unit's page
 signal deselect_pressed
+signal group_tapped(n: int)          # a control-group chip tapped (battle.gd selects it, or centres on it on the second tap)
+signal group_new_pressed             # the "+" chip: the selection becomes the next free group
+signal group_edit(n: int, mode: String)   # a row of a group chip's options: "set", "add", "clear"
 signal undo_pressed
 signal place_go_pressed             # the placement tool's toolbar (game/battle.gd "placement tool")
 signal place_run_toggled(on: bool)
@@ -93,7 +96,10 @@ const CAP_H := 10.0       # the caption row under the chips
 const CAP_FONT := 9
 const DIV_W := 3.0        # a divider's slot (the line is 1 px in its middle)
 const MORE_HEAD_H := 13.0 # a cluster heading in the More grid
-const CLUSTERS := ["Move", "Shoot", "Fight", "Kit"]
+const CLUSTERS := ["Move", "Shoot", "Fight", "Kit", "Groups"]
+const GROUP_MAX := 9   # control groups per battle (battle.gd keeps them: view state of this peer)
+const GROUP_CHIP_W := 38.0
+const GROUP_TIP := "tap selects, tap again centres the camera, hold for options (set it to the selection, add the selection, clear it). Keys: Ctrl+digit sets, Shift+digit adds, the digit selects."
 ## Chip key -> cluster. A chip whose key is not here lands in Fight; a new chip (a new ability) is one line here.
 const CLUSTER_OF := {"bounds": "Move", "deploy": "Move", "waypoints": "Move", "release": "Move",
 	"batter": "Shoot", "caracole": "Shoot", "fire": "Shoot", "skirmish": "Shoot", "ammo": "Shoot", "refill": "Shoot", "forage": "Shoot",
@@ -101,7 +107,7 @@ const CLUSTER_OF := {"bounds": "Move", "deploy": "Move", "waypoints": "Move", "r
 	"stance": "Fight", "occupy": "Fight", "grenades": "Fight", "pistols": "Fight",
 	"drop": "Kit", "gift": "Kit", "char_sabotage": "Kit", "char_attempt": "Kit", "char_parley": "Kit"}
 const CHIP2_H := 36.0     # a chip's height while the bar is double stacked (the double stack, docs/design/ui.md)
-const UP_FIRST := ["Move", "Kit", "Fight", "Shoot"]   # the order the clusters move to the upper row
+const UP_FIRST := ["Groups", "Move", "Kit", "Fight", "Shoot"]   # the order the clusters move to the upper row
 const CHIP_LONG_SEC := 0.45   # a held chip explains itself
 const CHIP_LONG_SLOP := 8.0   # px it may move meanwhile
 const EXPLAIN_W := 270.0
@@ -136,6 +142,9 @@ var _toggle_emit := {}            # multi-state toggle chip -> Callable that emi
 var ab_chips := {}                # UT.AB_* -> its chip
 var _chip_order: Array = []       # every chip, in the bar's fixed order
 var _sel: Array[int] = []         # the selection as last set
+var group_chips := {}             # n (1..9) -> its control-group chip (visible while the group exists)
+var group_plus: AbilityChip       # "+": the selection becomes the next free group
+var _cg := {}                     # n -> Array[int] of unit ids (battle.gd's control groups, as last set)
 var _refit_pending := false
 ## Set by battle.gd: unit -> Array of [glyph, word] for the card's state strip and tip (the chips not at their default).
 var card_states := Callable()
@@ -563,9 +572,24 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	waypoints_button.name = "waypoints"
 	waypoints_button.low = true
 	waypoints_button.pressed.connect(func(): waypoints_pressed.emit())
+	for gn in range(1, GROUP_MAX + 1):
+		var gc := _chip("grp%d" % gn, str(gn), "", "Group %d" % gn, "Group %d: %s" % [gn, GROUP_TIP], "", true)
+		gc.set_min_w(GROUP_CHIP_W)
+		gc.visible = false
+		gc.pressed.connect(func():
+			group_tapped.emit(gn)
+			_update_group_chips())
+		group_chips[gn] = gc
+	group_plus = _chip("grp_plus", "+", "", "New group", "Make the next free control group from the selection (keys: Ctrl+1 to Ctrl+9).", "")
+	group_plus.set_min_w(GROUP_CHIP_W)
+	group_plus.visible = false
+	group_plus.pressed.connect(func(): group_new_pressed.emit())
 	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, ab_chips[UT.AB_ROLL], skirm_button, stance_button, occupy_button,
 		ab_chips[UT.AB_GRENADE], ab_chips[UT.AB_PISTOL], bounds_button, deploy_button, ammo_button, refill_button, forage_button,
 		drop_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
+	for gn in range(1, GROUP_MAX + 1):
+		_chip_order.append(group_chips[gn])
+	_chip_order.append(group_plus)
 	for b in [halt_button, run_button]:
 		actions.add_child(b)
 	chips_box = HBoxContainer.new()
@@ -1339,11 +1363,13 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 		if f.selected != on:
 			f.selected = on
 			f.queue_redraw()
-	actions_box.visible = not units.is_empty() and not engine_only
+	actions_box.visible = (not units.is_empty() or not _cg.is_empty()) and not engine_only
+	halt_button.visible = not units.is_empty()
+	withdraw_button.visible = not units.is_empty()
 	if chips_up != null and not actions_box.visible:
 		chips_up.visible = false
 	engine_note.visible = not units.is_empty() and engine_only
-	run_button.visible = run >= 0
+	run_button.visible = run >= 0 and not units.is_empty()
 	fire_button.visible = fire >= 0
 	skirm_button.visible = skirm >= 0
 	stance_button.visible = stance >= 0
@@ -1383,6 +1409,7 @@ func set_selection(units: Array[int], run: int, fire: int, skirm: int, deploy: i
 		_close_options()
 		_close_explain()
 	_sel = units.duplicate()
+	_update_group_chips(false)
 	_update_common()
 	_fit_actions()
 
@@ -1411,6 +1438,112 @@ func _chip_applies(c: Button, u: int) -> bool:
 		"ammo":
 			return _sim.spec_kind(u) >= 0
 	return true
+
+
+## Control groups (battle.gd keeps them; docs/design/ui.md "Control groups"): `groups` is n (1..9) -> Array of unit ids.
+## One chip per group that exists, "+" while a selection exists and fewer than nine groups do; the card badges follow.
+func set_control_groups(groups: Dictionary) -> void:
+	_cg = groups.duplicate()
+	for u in _faces:
+		(_faces[u] as CardFace).group_text = card_group_text(u)
+		(_faces[u] as CardFace).queue_redraw()
+	if actions_box != null:
+		actions_box.visible = (not _sel.is_empty() or not _cg.is_empty()) and not engine_only
+		if not actions_box.visible and chips_up != null:
+			chips_up.visible = false
+	_update_group_chips()
+
+
+## The badge text of a unit's card: the numbers of the groups it is in (the first two, then "+"), "" when none.
+func card_group_text(u: int) -> String:
+	var out := ""
+	var n := 0
+	for g in range(1, GROUP_MAX + 1):
+		if _cg.has(g) and (_cg[g] as Array).has(u):
+			n += 1
+			if n <= 2:
+				out += (" " if out != "" else "") + str(g)
+	if n > 2:
+		out += "+"
+	return out
+
+
+## The number of the group equal to the selection (0 when none).
+func lit_group() -> int:
+	if _sel.is_empty():
+		return 0
+	var mine := _sel.duplicate()
+	mine.sort()
+	for g in range(1, GROUP_MAX + 1):
+		if _cg.has(g):
+			var a: Array = (_cg[g] as Array).duplicate()
+			a.sort()
+			if a == mine:
+				return g
+	return 0
+
+
+func _update_group_chips(fit := true) -> void:
+	if group_plus == null:
+		return
+	var lit := lit_group()
+	for g in range(1, GROUP_MAX + 1):
+		var c: AbilityChip = group_chips[g]
+		c.visible = _cg.has(g)
+		if c.visible:
+			c.set_pressed_no_signal(g == lit)
+			var k: int = (_cg[g] as Array).size()
+			c.tip_body = "Group %d (%d unit%s): %s" % [g, k, "" if k == 1 else "s", GROUP_TIP]
+			c._apply_tip()
+	# The "+" chip is for touch and narrow screens (a desktop makes groups with Ctrl+digit and keeps its bar's width).
+	group_plus.visible = not _sel.is_empty() and _cg.size() < GROUP_MAX and not BTheme.desktop(get_viewport().get_visible_rect().size.x)
+	if fit:
+		_update_common()
+		_fit_actions()
+
+
+## The long press of a group chip: the options popover (set to the selection, add the selection, clear).
+func _open_group_options(c: AbilityChip) -> void:
+	var n := int(c.key.trim_prefix("grp"))
+	set_speed_panel_open(false)
+	close_confirm()
+	_close_explain()
+	if c.get_parent() != more_box:
+		_set_more_open(false)
+	_close_options()
+	var k: int = (_cg.get(n, []) as Array).size()
+	var head := Kit.label("Group %d (%d unit%s)" % [n, k, "" if k == 1 else "s"], 15, Kit.COL_GOLD)
+	head.name = "opt_head"
+	opt_box.add_child(head)
+	var hint := Kit.label("Tap selects, tap again centres.", 12, Kit.COL_DIM)
+	hint.name = "opt_hint"
+	opt_box.add_child(hint)
+	var wmax := 0.0
+	var made: Array[OptRow] = []
+	for r in [["Set to selection", "set"], ["Add selection", "add"], ["Clear", "clear"]]:
+		var row := OptRow.new()
+		row.name = "grp_" + str(r[1])
+		row.text = str(r[0])
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.focus_mode = Control.FOCUS_NONE
+		row.add_theme_font_size_override("font_size", FONT)
+		BTheme.plate(row)
+		row.disabled = _sel.is_empty() and str(r[1]) != "clear"
+		row.custom_minimum_size = Vector2(0.0, AbilityChip.H)
+		row.pressed.connect(AudioFx.click)
+		var mode: String = r[1]
+		row.pressed.connect(func():
+			_close_options()
+			group_edit.emit(n, mode))
+		opt_box.add_child(row)
+		made.append(row)
+		wmax = maxf(wmax, _button_w(row, row.text) + 28.0)
+	wmax = maxf(wmax, 150.0)
+	for row in made:
+		row.custom_minimum_size.x = wmax
+	_opt_chip = c
+	opt_panel.visible = true
+	_place_options()
 
 
 ## Dim the chips some of the selected units do not have (tip: not all selected units).
@@ -1464,6 +1597,7 @@ func _refit_later() -> void:
 
 
 func _fit_now() -> void:
+	_update_group_chips(false)
 	var vw := get_viewport().get_visible_rect().size.x
 	var phone := not BTheme.desktop(vw)
 	# Room for the row: the bar less the selection capsule and the notes.
@@ -1668,6 +1802,8 @@ func _clusters_w(items: Array, clusters: Array) -> float:
 
 ## The cluster of a chip (CLUSTER_OF by its key; Fight when it is not listed).
 static func cluster_of(c: AbilityChip) -> String:
+	if c.key.begins_with("grp"):
+		return "Groups"
 	return str(CLUSTER_OF.get(c.key, "Fight"))
 
 
@@ -2072,6 +2208,11 @@ func legend_entries() -> Array:
 			"name": "Run" if b == run_button else str((b as Button).text),
 			"icon": (b as Button).icon, "title": str(t[0]) if t.size() > 0 else "", "tip": str(t[1]) if t.size() > 1 else "", "states": states})
 	for cl in CLUSTERS:
+		if cl == "Groups":
+			out.append({"cluster": cl, "key": "groups", "name": "Groups", "icon": group_plus.icon, "title": "Control groups",
+				"tip": "Up to nine groups of your units for this battle: a chip per group, and + makes the next one from the selection. A group chip: " + GROUP_TIP,
+				"states": ["Set to selection", "Add selection", "Clear"]})
+			continue
 		for c in _cluster_sorted(_chip_order):
 			var ch := c as AbilityChip
 			if cluster_of(ch) != cl:
@@ -2264,6 +2405,9 @@ func _chip_input(ev: InputEvent, c: AbilityChip) -> void:
 
 
 func _open_explain(c: AbilityChip) -> void:
+	if c.key.begins_with("grp") and c != group_plus:
+		_open_group_options(c)
+		return
 	set_speed_panel_open(false)
 	close_confirm()
 	if c.get_parent() != more_box:
@@ -2406,6 +2550,7 @@ func update_cards(sim) -> void:
 		var f: CardFace = _faces[u]
 		var mstate := morale_text(sim, u)
 		var art := UT.cls(ty) == UT.CLS_ART
+		f.group_text = card_group_text(u)
 		f.name_text = "%s %d" % [CData.unit_short(UT.key_of(sim.u_otype[u]), _uf(u)), u + 1]
 		f.number_text = str(u + 1)
 		f.alive = sim.u_alive[u]
@@ -2862,6 +3007,8 @@ class CardFace extends Control:
 	var ak := -1
 	var ak_use := 0
 	var ak_rc := Rect2()   # where the glyph was last drawn (empty: none)
+	## The control groups the unit is in ("2", "1 3", "1 2+"): a small tab at the card's top left.
+	var group_text := ""
 
 	func _draw() -> void:
 		var sz := size
@@ -2991,6 +3138,11 @@ class CardFace extends Control:
 			var gx := sz.x - (26.0 if foreign else 15.0)
 			Kit.UiIcons.draw_icon(self, "general", Rect2(gx, 2, 12, 12),
 				Color(0.5, 0.5, 0.5) if state == ST_GONE else Color(1.0, 0.82, 0.25))
+		if group_text != "" and state != ST_GONE:
+			var gw := font.get_string_size(group_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 5.0
+			draw_rect(Rect2(0, 0, gw, 11), Color(0.08, 0.07, 0.04, 0.92))
+			draw_rect(Rect2(0, 10, gw, 1), Color(Kit.COL_GOLD, 0.8))
+			draw_string(font, Vector2(2.5, 9), group_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Kit.COL_GOLD)
 		if selected:
 			Kit.draw_trim(self, Rect2(Vector2.ZERO, sz), 2.0, 9.0, Kit.COL_GOLD)   # only the selected card is trimmed
 		elif fighting and state == ST_OK:

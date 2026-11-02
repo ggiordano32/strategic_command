@@ -199,6 +199,12 @@ var bench_mode := false
 var selected := -1
 ## Every selected unit; `selected` is one of them.
 var selection: Array[int] = []
+## Control groups (docs/design/ui.md "Control groups"): n (1..9) -> unit ids of this player's side. View state of this
+## peer only: never in the sim, a lockstep input or a hash; it resets with the battle.
+const GROUP_DOUBLE_MS := 400   # the same group again within this centres the camera on it
+var control_groups := {}
+var _cg_last_n := 0
+var _cg_last_ms := -100000
 ## "+ Add" mode: taps on units and cards add to / remove from the selection.
 var add_mode := false
 ## "Release" pressed: the next tap on an enemy unit lets the selected
@@ -480,6 +486,9 @@ func _ready() -> void:
 	hud.withdraw_pressed.connect(_withdraw)
 	hud.withdraw_all_pressed.connect(_withdraw_all)
 	hud.group_pressed.connect(_select_group)
+	hud.group_tapped.connect(_group_select)
+	hud.group_new_pressed.connect(_group_new)
+	hud.group_edit.connect(_group_assign)
 	hud.ability_pressed.connect(_ability_pressed)
 	hud.ability_set.connect(_ability_set)
 	hud.card_states = _card_states
@@ -1192,6 +1201,7 @@ func _process(delta: float) -> void:
 	if _card_timer <= 0.0:
 		_card_timer = 0.25
 		hud.update_cards(sim)
+		_cg_sync()
 		if tutorial != null:
 			tutorial.update()
 		if coop != null:
@@ -1905,6 +1915,109 @@ func _select_group(kind: String) -> void:
 	if not selection.is_empty():
 		selected = selection[0]
 	_selection_changed()
+
+
+# ---- control groups ----
+
+func _cg_units(n: int) -> Array[int]:
+	var out: Array[int] = []
+	for u in control_groups.get(n, []):
+		if u < sim.n_units and sim.u_side[u] == player_side and sim.u_state[u] < BattleSim.U_DESTROYED and _mine(u):
+			out.append(u)
+	return out
+
+
+## Drop the units that are gone (destroyed, or left by the edge) from every group, and the groups left empty; the HUD
+## and the markers follow when something changed.
+func _cg_sync(force := false) -> void:
+	var changed := force
+	for n in control_groups.keys():
+		var keep := _cg_units(n)
+		if keep.is_empty():
+			control_groups.erase(n)
+			changed = true
+		elif keep.size() != (control_groups[n] as Array).size():
+			control_groups[n] = keep
+			changed = true
+	if changed:
+		hud.set_control_groups(control_groups)
+		var tags := {}
+		for n in control_groups:
+			for u in control_groups[n]:
+				tags[u] = hud.card_group_text(u)
+		overlay.group_tags = tags
+		overlay.queue_redraw()
+
+
+## Ctrl+digit ("set"), Shift+digit ("add"), the group chip's options ("set", "add", "clear").
+func _group_assign(n: int, mode: String) -> void:
+	if not interactive or n < 1 or n > 9:
+		return
+	_count("group_" + mode + "_set")
+	if mode == "clear":
+		control_groups.erase(n)
+	elif selection.is_empty():
+		_cg_hint("Select units first", n)
+		return
+	else:
+		var list: Array = (control_groups.get(n, []) as Array).duplicate() if mode == "add" else []
+		for u in selection:
+			if not list.has(u):
+				list.append(u)
+		control_groups[n] = list
+	_cg_sync(true)
+	if control_groups.has(n):
+		var k: int = (control_groups[n] as Array).size()
+		_cg_hint("Group %d: %d unit%s" % [n, k, "" if k == 1 else "s"], n)
+
+
+## The "+" chip: the selection becomes the next free group.
+func _group_new() -> void:
+	for n in range(1, 10):
+		if not control_groups.has(n):
+			_group_assign(n, "set")
+			return
+
+
+## The digit or the group chip: select group n; the same group again within GROUP_DOUBLE_MS centres the camera on it.
+func _group_select(n: int) -> void:
+	if not interactive or not control_groups.has(n):
+		return
+	_cg_sync()
+	var members := _cg_units(n)
+	if members.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	var again := n == _cg_last_n and now - _cg_last_ms <= GROUP_DOUBLE_MS
+	_cg_last_n = n
+	_cg_last_ms = now
+	if again:
+		_count("group_centre")
+		_cam_to(_cg_centre(members))
+		return
+	_count("group_select")
+	selection.clear()
+	selected = -1
+	for u in members:
+		if sim.u_state[u] == BattleSim.U_READY:
+			selection.append(u)
+	if not selection.is_empty():
+		selected = selection[0]
+	_selection_changed()
+	_cg_hint("Group %d (%d unit%s)" % [n, members.size(), "" if members.size() == 1 else "s"], n)
+
+
+func _cg_centre(members: Array[int]) -> Vector2:
+	var c := Vector2.ZERO
+	for u in members:
+		c += Vector2(sim.u_cx[u], sim.u_cy[u])
+	return c / maxf(members.size(), 1) / M * PX_PER_M
+
+
+func _cg_hint(text: String, n: int) -> void:
+	var members := _cg_units(n)
+	var at := _cg_centre(members) if not members.is_empty() else camera.position
+	overlay.flash(text, at)
 
 
 ## Unit book over the battle. Solo play: opening it pauses, closing it
@@ -4024,8 +4137,26 @@ func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 		_select(-1)
 
 
+## The digit 1..9 of a key press (0 when it is not one; the physical key when the layout moved the digit).
+func _digit_of(e: InputEventKey) -> int:
+	for code in [e.keycode, e.physical_keycode]:
+		if code >= KEY_1 and code <= KEY_9:
+			return code - KEY_0
+	return 0
+
+
 ## Keyboard shortcuts, from the controls table (game/controls.gd).
 func _on_key(e: InputEventKey) -> void:
+	var dg := _digit_of(e)
+	if dg > 0 and not e.alt_pressed and not e.meta_pressed:
+		_count("key_group")
+		if e.ctrl_pressed:
+			_group_assign(dg, "set")
+		elif e.shift_pressed:
+			_group_assign(dg, "add")
+		else:
+			_group_select(dg)
+		return
 	var act := Controls.action_for_key(e, "battle")
 	if act != "":
 		_count("key_" + act)

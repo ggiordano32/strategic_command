@@ -220,6 +220,26 @@ func _initialize() -> void:
 		_step_bc_check_deselect,
 		_step_bc_keys,
 		_step_bc_check_keys,
+		# Control groups (docs/design/ui.md "Control groups").
+		_step_cg_assign,
+		_step_cg_check_assign,
+		_step_cg_select,
+		_step_cg_check_select,
+		_step_cg_again,
+		_step_cg_check_centre,
+		_step_cg_add,
+		_step_cg_check_add,
+		_step_cg_dead,
+		_step_cg_settle,
+		_step_cg_chip_tap,
+		_step_cg_check_chip_tap,
+		_step_cg_hold,
+		_step_cg_check_hold,
+		_step_cg_row,
+		_step_cg_check_row,
+		_step_cg_plus,
+		_step_cg_check_plus,
+		_step_cg_done,
 		# Speed slider (solo).
 		_step_sp_open,
 		_step_sp_check_open,
@@ -1984,6 +2004,7 @@ func _key(code: Key, mods: Dictionary = {}) -> void:
 		e.pressed = pressed
 		e.ctrl_pressed = mods.get("ctrl", false)
 		e.shift_pressed = mods.get("shift", false)
+		e.alt_pressed = mods.get("alt", false)
 		Input.parse_input_event(e)
 
 
@@ -2061,14 +2082,148 @@ func _step_bc_check_deselect() -> void:
 func _step_bc_keys() -> void:
 	_bc_paused0 = battle.paused
 	_key(KEY_SPACE)
-	_key(KEY_2)
+	_key(KEY_2, {"alt": true})
 
 
 func _step_bc_check_keys() -> void:
 	_check(battle.paused != _bc_paused0, "Space toggles pause")
-	_check(battle.selection.size() >= 3, "key 2 selects the infantry (%d)" % battle.selection.size())
+	_check(battle.selection.size() >= 3, "Alt+2 selects the infantry (%d)" % battle.selection.size())
 	_key(KEY_SPACE)
 	_key(KEY_ESCAPE)
+
+
+# ---- control groups ----
+
+func _cg_pick(us: Array[int]) -> void:
+	battle.selection.clear()
+	battle.selection.append_array(us)
+	battle.selected = us[0] if not us.is_empty() else -1
+	battle._selection_changed()
+
+
+var _cgu: Array[int] = []   # eight player units of any kind
+
+
+func _step_cg_assign() -> void:
+	_cgu.clear()
+	for u in battle.sim.n_units:
+		if battle.sim.u_side[u] == 0 and _cgu.size() < 8:
+			_cgu.append(u)
+	battle.control_groups.clear()
+	battle._cg_sync(true)
+	_cg_pick([_cgu[0], _cgu[1], _cgu[2]])
+	_key(KEY_3, {"ctrl": true})
+
+
+func _step_cg_check_assign() -> void:
+	var g: Array = battle.control_groups.get(3, [])
+	_check(g == [_cgu[0], _cgu[1], _cgu[2]], "Ctrl+3 makes the selection group 3 (%s)" % str(g))
+	_check(battle.hud.group_chips[3].visible and not battle.hud.group_chips[2].visible, "group 3 has a chip, group 2 none")
+	_check(battle.hud._faces[_cgu[1]].group_text == "3" and battle.overlay.group_tags.get(_cgu[1], "") == "3", "the unit's card and marker carry the badge 3")
+	_check(battle.hud.lit_group() == 3 and battle.hud.group_chips[3].button_pressed, "the chip is lit while the selection equals the group")
+	_cg_pick([_cgu[3]])
+	_key(KEY_3, {"ctrl": true})
+	steps.push_front(_step_cg_replace_check)
+
+
+func _step_cg_replace_check() -> void:
+	_check(battle.control_groups.get(3, []) == [_cgu[3]], "Ctrl+digit replaces the group (%s)" % str(battle.control_groups.get(3, [])))
+	_cg_pick([_cgu[0], _cgu[1], _cgu[2]])
+	_key(KEY_3, {"ctrl": true})
+
+
+func _step_cg_select() -> void:
+	battle._select(-1)
+	battle.camera.position += Vector2(900, 0)
+	_key(KEY_3)
+
+
+func _step_cg_check_select() -> void:
+	_check(battle.selection == [_cgu[0], _cgu[1], _cgu[2]], "the digit selects the group (%s)" % str(battle.selection))
+
+
+func _step_cg_again() -> void:
+	battle.camera.position += Vector2(900, 0)
+	_key(KEY_3)   # (the same digit again, well within 0.4 s)
+
+
+func _step_cg_check_centre() -> void:
+	var want := BoardView.to_board(battle._cg_centre([_cgu[0], _cgu[1], _cgu[2]]))
+	_check(battle.camera.position.distance_to(want) < 1.0 and battle.selection.size() == 3,
+		"the digit again centres the camera on the group, the selection stays (%s, want %s)" % [str(battle.camera.position), str(want)])
+
+
+func _step_cg_add() -> void:
+	_cg_pick([_cgu[4]])
+	_key(KEY_3, {"shift": true})
+
+
+func _step_cg_check_add() -> void:
+	_check(battle.control_groups.get(3, []) == [_cgu[0], _cgu[1], _cgu[2], _cgu[4]], "Shift+digit adds the selection (%s)" % str(battle.control_groups.get(3, [])))
+	_check(battle.selection == [_cgu[4]], "adding to a group leaves the selection alone")
+
+
+func _step_cg_dead() -> void:
+	battle.sim.u_state[_cgu[0]] = BattleSim.U_DESTROYED
+	battle._cg_sync()
+	_check(not (battle.control_groups.get(3, []) as Array).has(_cgu[0]) and battle.hud._faces[_cgu[0]].group_text == "",
+		"a destroyed unit drops out of its group and loses its badge")
+	battle.sim.u_state[_cgu[0]] = BattleSim.U_READY
+	battle._select(-1)
+
+
+func _step_cg_settle() -> void:
+	pass   # (a frame for the bar to lay out the chips before the tap)
+
+
+func _step_cg_chip_tap() -> void:
+	battle._cg_last_ms = -100000   # (the steps run in a few frames: forget the digit presses, which would make this tap an "again")
+	_tap_control(battle.hud.group_chips[3])
+
+
+func _step_cg_check_chip_tap() -> void:
+	_check(battle.selection == [_cgu[1], _cgu[2], _cgu[4]], "a tap on the group chip selects the group (%s)" % str(battle.selection))
+	_cg_pick([_cgu[5]])
+
+
+func _step_cg_hold() -> void:
+	_long_press_control(battle.hud.group_chips[3])
+
+
+func _step_cg_check_hold() -> void:
+	var h = battle.hud
+	_check(h.opt_panel.visible and h.opt_box.has_node("grp_set") and h.opt_box.has_node("grp_add") and h.opt_box.has_node("grp_clear"),
+		"a long press on a group chip opens Set to selection / Add selection / Clear")
+	_check(battle.selection == [_cgu[5]], "the long press did not select the group")
+
+
+func _step_cg_row() -> void:
+	_tap_control(battle.hud.opt_box.get_node("grp_set"))
+
+
+func _step_cg_check_row() -> void:
+	_check(battle.control_groups.get(3, []) == [_cgu[5]] and not battle.hud.opt_panel.visible, "Set to selection from the chip's options (%s)" % str(battle.control_groups.get(3, [])))
+	battle.hud._open_group_options(battle.hud.group_chips[3])
+	battle.hud.opt_box.get_node("grp_clear").pressed.emit()
+	_check(not battle.control_groups.has(3) and not battle.hud.group_chips[3].visible, "Clear removes the group and its chip")
+
+
+func _step_cg_plus() -> void:
+	_cg_pick([_cgu[6], _cgu[7]])
+	if battle.hud.group_plus.visible:
+		_tap_control(battle.hud.group_plus)
+	else:
+		battle._group_new()   # (a desktop-width bar has no + chip; the keys make groups)
+
+
+func _step_cg_check_plus() -> void:
+	_check(battle.control_groups.get(1, []) == [_cgu[6], _cgu[7]], "+ makes the next free group from the selection (%s)" % str(battle.control_groups))
+
+
+func _step_cg_done() -> void:
+	battle.control_groups.clear()
+	battle._cg_sync(true)
+	battle._select(-1)
 
 
 # ---- speed slider ----

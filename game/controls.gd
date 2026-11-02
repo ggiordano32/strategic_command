@@ -29,17 +29,28 @@ static var BINDINGS: Array = [
 	{"id": "select_add", "s": "battle", "label": "Add / remove a unit from the selection",
 		"touch": "+ Add, then tap units or cards", "mouse": "Shift+click or Ctrl+click", "keys": []},
 	{"id": "select_all", "s": "battle", "label": "Select all units",
-		"touch": "All button", "mouse": "All button", "keys": [KEY_A | KEY_MASK_CTRL, KEY_1]},
+		"touch": "All button", "mouse": "All button", "keys": [KEY_A | KEY_MASK_CTRL, KEY_1 | KEY_MASK_ALT]},
 	{"id": "select_line", "s": "battle", "label": "Select the line (swords, spears, pikes, musketeers)",
-		"touch": "Line button", "mouse": "Line button", "keys": [KEY_2]},
+		"touch": "Line button", "mouse": "Line button", "keys": [KEY_2 | KEY_MASK_ALT]},
 	{"id": "select_skirmish", "s": "battle", "label": "Select skirmishers and missile troops",
-		"touch": "Skirm button", "mouse": "Skirm button", "keys": [KEY_3]},
+		"touch": "Skirm button", "mouse": "Skirm button", "keys": [KEY_3 | KEY_MASK_ALT]},
 	{"id": "select_shock", "s": "battle", "label": "Select shock foot",
-		"touch": "Shock button", "mouse": "Shock button", "keys": [KEY_4]},
+		"touch": "Shock button", "mouse": "Shock button", "keys": [KEY_4 | KEY_MASK_ALT]},
 	{"id": "select_horse", "s": "battle", "label": "Select horse (and camels, elephants)",
-		"touch": "Horse button", "mouse": "Horse button", "keys": [KEY_5]},
+		"touch": "Horse button", "mouse": "Horse button", "keys": [KEY_5 | KEY_MASK_ALT]},
 	{"id": "select_guns", "s": "battle", "label": "Select artillery",
-		"touch": "Guns button", "mouse": "Guns button", "keys": [KEY_6]},
+		"touch": "Guns button", "mouse": "Guns button", "keys": [KEY_6 | KEY_MASK_ALT]},
+	{"id": "group_select", "s": "battle", "label": "Control groups: select group 1 to 9 (the same digit again within 0.4 s centres the camera on it)",
+		"touch": "The Groups chips on the bar: tap a group's chip to select it, tap again within 0.4 s to centre on it", "mouse": "Press the digit (the group's units replace the selection)",
+		"keys": [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8, KEY_9], "key_label": "1 to 9"},
+	{"id": "group_set", "s": "battle", "label": "Control groups: the selection becomes group 1 to 9 (replacing it)",
+		"touch": "The + chip makes the next free group from the selection; hold a group chip, Set to selection", "mouse": "Ctrl + digit",
+		"keys": [KEY_1 | KEY_MASK_CTRL, KEY_2 | KEY_MASK_CTRL, KEY_3 | KEY_MASK_CTRL, KEY_4 | KEY_MASK_CTRL, KEY_5 | KEY_MASK_CTRL, KEY_6 | KEY_MASK_CTRL,
+			KEY_7 | KEY_MASK_CTRL, KEY_8 | KEY_MASK_CTRL, KEY_9 | KEY_MASK_CTRL], "key_label": "Ctrl+1 to Ctrl+9"},
+	{"id": "group_add", "s": "battle", "label": "Control groups: add the selection to group 1 to 9",
+		"touch": "Hold a group chip, Add selection (Clear empties it)", "mouse": "Shift + digit",
+		"keys": [KEY_1 | KEY_MASK_SHIFT, KEY_2 | KEY_MASK_SHIFT, KEY_3 | KEY_MASK_SHIFT, KEY_4 | KEY_MASK_SHIFT, KEY_5 | KEY_MASK_SHIFT, KEY_6 | KEY_MASK_SHIFT,
+			KEY_7 | KEY_MASK_SHIFT, KEY_8 | KEY_MASK_SHIFT, KEY_9 | KEY_MASK_SHIFT], "key_label": "Shift+1 to Shift+9"},
 	{"id": "deselect", "s": "battle", "label": "Deselect all",
 		"touch": "Two-finger tap, or the None button (with the group buttons)", "mouse": "None button", "keys": [KEY_ESCAPE]},
 	{"id": "undo", "s": "battle", "label": "Undo the last order (up to 5 batches)",
@@ -232,6 +243,8 @@ static func held(id: String) -> bool:
 
 
 static func key_text(b: Dictionary) -> String:
+	if b.has("key_label"):
+		return str(b["key_label"])
 	var parts: Array[String] = []
 	for k in b["keys"]:
 		parts.append(OS.get_keycode_string(int(k)))
@@ -337,7 +350,8 @@ func _fill_chips() -> void:
 		["Long press", "Hold a chip (touch or mouse, about half a second, without moving) for what it does, its state, each of its states, and a link to the unit book. A tap anywhere else closes it; a short tap still gives the order."],
 		["Two rows", "When the groups do not fit one row, the bar grows a second row above itself (chips a little lower); a group is never split between the rows. What still does not fit is under More. The battle menu's Chips page lists every chip with its states."],
 		["More", "A chip that does not fit the bar is under More, which opens a list above it. Nothing is ever cut off."],
-		["Phone capsule", "On a phone the selection capsule shows the role badges: Line (bars), Skirm (scatter), Shock (sword), Horse (horseshoe), Guns (a gun on a wheel). Keys 1-6 are the same."],
+		["Phone capsule", "On a phone the selection capsule shows the role badges: Line (bars), Skirm (scatter), Shock (sword), Horse (horseshoe), Guns (a gun on a wheel). The role keys are Alt+1 to Alt+6 (the digits alone select control groups)."],
+		["Groups", "Control groups: a chip per group you have made (1 to 9) and a + chip that makes the next one from the selection. Tap a chip to select the group, tap it again within 0.4 s to centre the camera on it, hold it for Set to selection, Add selection and Clear. A number on a unit's card says which groups it is in. Keys: Ctrl+digit sets, Shift+digit adds, the digit selects, the digit twice centres."],
 		["Card strip", "A card shows a small glyph for each chip that is not at its default: hold fire, an ability on Hold or armed, the Cover stance. Its tip lists them in words."]]:
 		var row := UiKit.hbox(10)
 		var v := UiKit.vbox(2)

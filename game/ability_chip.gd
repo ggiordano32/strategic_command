@@ -28,6 +28,7 @@ var pinned := false      # never goes under More (the armed ability)
 var tip_title := ""
 var tip_body := ""
 var compact_mode := false
+var min_w := MIN_W       # a control-group chip is narrower (a digit)
 
 
 func _make_custom_tooltip(for_text: String) -> Object:
@@ -57,6 +58,12 @@ func setup(p_key: String, p_name: String, icon_name: String, title: String, body
 		BTheme.plate(self)
 	_apply_tip()
 	text = full_text()
+
+
+## A narrower minimum (the control-group chips: one digit).
+func set_min_w(w: float) -> void:
+	min_w = w
+	custom_minimum_size.x = w
 
 
 ## The chip's height: 42, or 36 in the double stack.
@@ -120,4 +127,4 @@ func width_for(compact: bool) -> float:
 	if icon != null:
 		w += icon.get_width() + get_theme_constant("h_separation")
 	w += get_theme_stylebox("normal").get_minimum_size().x
-	return maxf(w, MIN_W)
+	return maxf(w, min_w)

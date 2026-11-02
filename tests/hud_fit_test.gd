@@ -460,6 +460,8 @@ func _stress() -> void:
 	var h = b.hud
 	b.process_mode = Node.PROCESS_MODE_DISABLED   # (the battle refreshes the bar as it runs; hold it still)
 	for c in h._chip_order:
+		if (c as AbilityChip).key.begins_with("grp") and (c as AbilityChip) != h.group_plus:
+			continue   # (the group chips show as the groups exist: _groups_check)
 		(c as AbilityChip).visible = true
 		if (c as AbilityChip).ab >= 0:
 			(c as AbilityChip).set_state("Mixed")
@@ -553,7 +555,7 @@ func _explain_stress() -> void:
 	var n := 0
 	for c in h._chip_order:
 		var ch: AbilityChip = c
-		if not ch.visible:
+		if not ch.visible or ch.key.begins_with("grp"):
 			continue
 		if ch.get_parent() == h.more_box:
 			h._set_more_open(true)
@@ -702,6 +704,7 @@ func _run() -> void:
 			root.get_texture().get_image().save_png("%s/hud_phone_mixed_more.png" % _shots)
 			b.hud._set_more_open(false)
 		await _ammo_mark_check()
+		await _groups_check(by_role, sz[2])
 	await _states(by_role)
 	await _resize_check(by_role)
 	await _siege()
@@ -748,6 +751,81 @@ func _ammo_mark_check() -> void:
 	_check(h._faces[mine[1]].ak_use == 1 and h._faces[mine[2]].ak_use == 0, "%s: the glyph is lit for the kind shot now, held back otherwise" % _size_name)
 	_check(Traits.ammo_icon(want[1]) != "" and Kit.UiIcons.has(Traits.ammo_icon(want[1])) and Kit.UiIcons.has(Traits.ammo_icon(want[2])),
 		"%s: both kinds have a drawn icon" % _size_name)
+
+
+## Control groups (docs/design/ui.md "Control groups"): the Groups cluster with 0, 3 and 9 groups fits at every size (chips on
+## the bar xor under More, none clipped, the "+" chip only while a selection exists and fewer than nine groups do), the
+## badges stay inside the cards, the Undo toast still clears the chips, and with nothing selected the chips are still
+## there to select a group by.
+func _groups_check(by_role: Dictionary, sz_phone: bool) -> void:
+	await _new_battle(_scenario(by_role))
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var mine: Array[int] = []
+	for u in b.sim.n_units:
+		if b.sim.u_side[u] == 0:
+			mine.append(u)
+	_check(mine.size() >= 4, "%s: the groups scenario has units (%d)" % [_size_name, mine.size()])
+	for k in [0, 3, 9]:
+		b.control_groups.clear()
+		await _pick(mine)
+		for n in range(1, k + 1):
+			var one: Array[int] = [mine[(n - 1) % mine.size()], mine[n % mine.size()]]
+			await _pick(one)
+			b._group_assign(n, "set")
+		await _pick(mine)
+		await _frames(3)
+		h.update_cards(b.sim)
+		var tag := "%s with %d groups" % [_size_name, k]
+		var bad: Array[String] = []
+		for n in range(1, 10):
+			var c: AbilityChip = h.group_chips[n]
+			if c.visible != (n <= k):
+				bad.append("chip %d visible %s" % [n, str(c.visible)])
+			if c.visible:
+				var in_bar: bool = c.get_parent() == h.chips_box or c.get_parent() == h.chips_up
+				if in_bar and not _rect_in(c, vp):
+					bad.append("chip %d off screen %s" % [n, str(c.get_global_rect())])
+				if not in_bar and c.get_parent() != h.more_box:
+					bad.append("chip %d nowhere" % n)
+		_check(h.group_plus.visible == (k < 9 and sz_phone), tag + ": the + chip shows on touch / narrow screens while fewer than nine groups exist")
+		if h.group_plus.visible and h.group_plus.get_parent() != h.more_box and not _rect_in(h.group_plus, vp):
+			bad.append("+ off screen")
+		_check(bad.is_empty(), tag + ": group chips on the bar or under More, none clipped (%s)" % ", ".join(bad))
+		await _fit(tag)
+		# The badges: a unit in a group has its numbers on its card, inside it.
+		var font := ThemeDB.fallback_font
+		var badge_bad: Array[String] = []
+		for u in mine:
+			var f = h._faces[u]
+			var want: String = h.card_group_text(u)
+			if f.group_text != want:
+				badge_bad.append("card %d says '%s', want '%s'" % [u, f.group_text, want])
+			if want != "":
+				var w := font.get_string_size(want, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x + 5.0
+				if w > f.size.x - 8.0:
+					badge_bad.append("badge %d wide %.0f in card %.0f" % [u, w, f.size.x])
+		_check(badge_bad.is_empty(), tag + ": the badges are on the cards and inside them (%s)" % ", ".join(badge_bad))
+		await _undo_toast_check(tag)
+		# Nothing selected: the group chips remain (to select a group), Halt and Withdraw go.
+		await _pick([] as Array[int])
+		await _frames(2)
+		if k > 0:
+			var empty_bad: Array[String] = []
+			if not h.actions_box.is_visible_in_tree():
+				empty_bad.append("the chip row is hidden")
+			if h.group_plus.visible:
+				empty_bad.append("+ with no selection")
+			if h.halt_button.visible or h.withdraw_button.visible or h.run_button.visible:
+				empty_bad.append("Halt / Run / Withdraw with no selection")
+			for n in range(1, k + 1):
+				var c: AbilityChip = h.group_chips[n]
+				if c.get_parent() != h.more_box and not (c.is_visible_in_tree() and _rect_in(c, vp)):
+					empty_bad.append("chip %d not on screen" % n)
+			_check(empty_bad.is_empty(), tag + ": with nothing selected the group chips are still on the bar (%s)" % ", ".join(empty_bad))
+		else:
+			_check(not h.actions_box.visible, tag + ": no groups and nothing selected: no chip row")
+	b.control_groups.clear()
 
 
 func f_ok(bad: Array[String]) -> bool:

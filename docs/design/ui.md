@@ -1543,3 +1543,45 @@ sign of Tanit and the Iberian horseman were not used because the crests show oth
 these. The STATUS "Crests" item "Rome's references are plain shields" is about the painted crests' references and is
 untouched. `tools/menu_art/render_refs.gd` still says Rome has no drawn emblem (its comment and the Rome references are
 for the painted crests' generation; a re-render would now use these marks).
+
+### Control groups (as built, 2026-11-02)
+
+The owner: "We need to add control groups." View only (nothing under `sim/` or `campaign/`; no lockstep input, no hash): the
+groups are `Battle.control_groups` (`game/battle.gd`, section "control groups"), n 1..9 -> unit ids of the player's side, kept
+by each co-op peer for itself, empty at the start of a battle. A unit may be in several groups; a unit destroyed or gone off the
+edge (`u_state >= U_DESTROYED`) drops out of every group, a group left empty goes (`_cg_sync`, every 0.25 s with the cards and
+after each edit). In co-op only units this player commands (`_mine`) are kept.
+- **Keys** (`controls.gd` rows `group_select`, `group_set`, `group_add`; `Battle._on_key` reads the digit before the table):
+  Ctrl+digit sets the group to the selection (replacing it), Shift+digit adds the selection, the digit selects the group
+  (replacing the selection), the same digit again within 0.4 s (`GROUP_DOUBLE_MS`) centres the camera on the group and keeps the
+  selection. A flash at the group says "Group 3 (4 units)" / "Group 3: 4 units". **Moved binding:** the digits 1-6 were the role
+  buttons' keys (all, line, skirmish, shock, horse, guns); they are now **Alt+1 to Alt+6** (Ctrl+A still selects all). The Keys
+  page and its Chips section say so; `input_test` presses Alt+2. Known: browsers keep Ctrl+1..8 for tab switching, so on the web
+  build Ctrl+digit may not reach the game (Shift+digit and the chips do); the owner's eye.
+- **Chips** (`hud.gd`): a fifth cluster "Groups" (after Kit; `CLUSTERS`, `cluster_of`: any chip key starting "grp"): a chip per
+  group that exists (38 px wide, the digit; `AbilityChip.set_min_w`), lit while the selection equals the group, and a "+"
+  chip while a selection exists and fewer than nine groups do (touch and narrow screens only, `not BTheme.desktop`; a desktop
+  keeps its bar's width and makes groups with the keys, its group chips appear once a group exists). They are ordinary chips of
+  `_chip_order`, so the fit, the double stack (`UP_FIRST` starts with Groups: it goes upstairs first), the captions, dividers
+  and More work unchanged. With nothing selected the chip row still shows (the group chips only; Halt, Run and Withdraw hide
+  with no selection) so a group can be selected from nothing. A tap selects (`group_tapped`), a second tap within 0.4 s centres;
+  "+" makes the next free group from the selection (`group_new_pressed`). A long press (the 0.45 s hold) opens the options
+  popover (`_open_group_options`, the `opt_panel`): "Group 3 (4 units)", "Tap selects, tap again centres.", and the rows Set
+  to selection, Add selection, Clear (`group_edit`); the two first are disabled with no selection. Tip: "Group 3 (4 units): tap
+  selects, tap again centres the camera, hold for options ...". The Chips page has one "Groups" entry; the Keys page's Chips
+  section a "Groups" line and three key rows.
+- **Badges:** `CardFace.group_text` draws a small dark tab with the gold numbers at the card's top left ("2", "1 3", "1 2+":
+  the first two groups, then "+"); `Overlay.group_tags` draws the same tab at the unit's field marker (top right of its disc,
+  `_draw_markers`; own side only). The standards at the tray's corner carry no digit (the marker is the cheap place).
+- **Selection says it:** the lit chip and the flash say "Group 3 (4 units)". The selection capsule (All / Line ... / None) has
+  no text of its own, so it was not made to carry the sentence.
+- **Deployment:** groups work in the deployment as any selection does; a selection that changes drops the placement ghost as it
+  always did, assigning a group does not change the selection and leaves the ghost; chip taps do not reach the field.
+- **Tests:** `hud_fit_test` `_groups_check` (0, 3 and 9 groups at all six sizes: chips on the bar xor under More and inside the
+  viewport, "+" on touch only, the fit checks, the badges inside the cards, the Undo toast clear of the chips, the chips with
+  nothing selected); `input_test` steps `_step_cg_*` (Ctrl+digit sets and replaces, the digit selects, again centres, Shift+digit
+  adds, a destroyed unit drops out, a chip tap selects, the long press opens the options and Set / Clear / "+" work).
+  `tests/groups_shot.gd` takes the shots (`--mode=one|two|empty|hold|deploy`, `--crop`).
+- **Known:** on a phone the Groups cluster often takes the upper row (the bar is 198 px tall with one chip row of its own);
+  nine groups in the stress selection leave some chips under More; groups are not saved between battles; a card's tip does not
+  list its groups; the digits' old meaning moved to Alt (a window manager may take Alt+digit).
