@@ -2402,7 +2402,10 @@ func _j_board() -> void:
 	cs.select_army(aid)
 	cs._refresh_map()
 	await process_frame
-	_check(not cs.overlay.board_cells.is_empty() and cs.overlay.board_cells == bcells,
+	var bc_all := true  # (the war canoes at the Miskito's start carry 3 each now, so their cells are lit too: the test fleet's are among them)
+	for c in bcells:
+		bc_all = bc_all and cs.overlay.board_cells.has(c)
+	_check(not cs.overlay.board_cells.is_empty() and bc_all,
 		"boarding: the army selected lights the fleet's boarding cells (%d)" % cs.overlay.board_cells.size())
 	cs.select_fleet(fid)
 	cs._refresh_map()

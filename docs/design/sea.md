@@ -14,7 +14,8 @@ Battle balance waits until ships, cover and asymmetry are in.
 rows are data (pack "west"): sloop (fast, few guns, carries 1 unit),
 brigantine, frigate (carries 3), galleon (slow, heavy, a treasure hold,
 carries 6), ship of the line (England / Dutch top tier), and piraguas /
-war canoes (Miskito, Itza: coastal water only, fast, carry 1). A fleet is
+war canoes (Miskito, Itza: coastal water only, fast; carry 3, 4 and 6 since
+2026-11-02, see "Native vessels carry more"). A fleet is
 a campaign piece on sea cells with the overworld's continuous movement.
 Its reach per turn depends on the heading against the map's baked wind
 (`relief_west` WIND: the trade winds from the east), so running west is
@@ -962,3 +963,24 @@ Measured (`SeaChecks`, 8 seeds, both sides AI, canoe wins; `docs/AI.md` 53):
 | + the pack's target (as built) | 3 | 5 |
 
 Test: `SeaChecks._joint_boarding` (in `canoes()`).
+
+### Native vessels carry more (2026-11-02)
+
+The owner, as the Miskito: "Requiring a full stack of 12 for the canoes to move a stack of 12 seems unreasonable. The Miskito
+not being able to jump to the southern island without 36 canoes if I have 3 armies doesn't work." Every native hull carried one
+unit and a port launches a few ships a turn, so a 12-unit army needed 12 canoes. Data only (`campaign/data/west_ships.gd`
+`cap`): war canoe 1 -> 3, piragua 1 -> 4, great canoe 2 -> 6 (a 12-unit army boards four war canoes, three piraguas or two
+great canoes); the fire canoe 0, the sloop 1, frigate 3, galleon 6, ship of the line 4 unchanged; price, upkeep, build time and
+launches a turn unchanged. Nothing else read the old numbers: boarding (`CFleet.embark_check`, `csea.gd`), the fleet card
+("men 3/12"), the Board chip ("n of m places taken") and the ship rows' "carries n" all read `CFleet.capacity`. Units aboard a
+sunk or taken ship: the existing rule (`CFleet._sink_extra`): when the fleet's remaining ships carry fewer places than the units
+aboard, the last-boarded armies are lost whole (event `army_sunk`), so a loaded canoe lost in a fight takes its army with it
+(the pre-battle share of the men is the same either way).
+
+In a sea battle the carried men fight: `CSeaBattle.build` gives each hull a share of the men aboard by its places (`troops`),
+and the troops defend the deck and join a boarding (`sea_sim.gd` `s_troops`; sea.md "Joint boarding by dugouts"). A piragua
+with four units aboard carries about 400 men on top of her 60 crew; before, the same four units needed four hulls. Probe
+(`canoe_probe.gd` in the session scratchpad, piragua + 2 war canoes vs a TF frigate with no troops, 24 seeds;
+natives' deck troops 0 / 100 each / 400 + 300 + 300): AI-ordered natives win 0 / 0 / 10 of 24, ordered to board 0 / 13 / 20 of
+24 (median 90 s / 132 s / 108 s). A full-loaded trio is a real threat to a lone frigate, which is the point of a troop
+transport; an escort frigate with troops of its own (the AI's) is not in the probe.

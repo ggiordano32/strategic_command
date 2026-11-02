@@ -76,6 +76,8 @@ var bu_all := {}              # faction -> build-up sums over the seeds (_buildu
 var built := []               # buildings finished per chain (this seed)
 var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
 var elim_all := {}
+var land_all := {}            # faction key -> [landings, units landed (the army's units at the end of its turn)] over the seeds
+var sea_bat_all := 0          # sea battles over the seeds
 const TIER_COUNT := ["native_warriors", "native_warriors2", "canoe_raiders", "canoe_raiders2", "maroons", "maroon_vets", "holcan"]
 var tier_all := {}            # "faction:unit key" -> recruits over the seeds (the tribes' tier rows; docs/design/battle_sim.md "The tribes' tier-2 rows")            # faction -> turns it was eliminated, over the seeds
 var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
@@ -164,6 +166,9 @@ func _init() -> void:
 	var tks: Array = tier_all.keys()
 	tks.sort()
 	print("\nrecruits of the tribes' lines over the seeds (faction:unit n): " + ", ".join(tks.map(func(k): return "%s %d" % [k, int(tier_all[k])])))
+	var lks: Array = land_all.keys()
+	lks.sort()
+	print("\nLANDINGS_JSON " + JSON.stringify({"sea_battles": sea_bat_all, "landings": lks.map(func(k): return [k, land_all[k][0], land_all[k][1]])}))
 	print("\nsurvival over the seeds: faction | eliminated in N of %d seeds | at turns (sorted)" % seeds)
 	for f in CState.nf():
 		var ts: Array = elim_all.get(f, [])
@@ -291,6 +296,14 @@ func _run(sd: int, verbose: bool) -> String:
 						if TIER_COUNT.has(str(uk)):
 							var tk := "%s:%s" % [str(CData.FACTIONS[int(e["f"])]["key"]), str(uk)]
 							tier_all[tk] = int(tier_all.get(tk, 0)) + 1
+				if int(e["turn"]) == t and str(e["k"]) == "landed" and int(e["f"]) >= 0:
+					var lk := str(CData.FACTIONS[int(e["f"])]["key"])
+					var la: Array = land_all.get(lk, [0, 0])
+					la[0] = int(la[0]) + 1
+					la[1] = int(la[1]) + CState.unit_count(CState.army(st, int(e["army"])))
+					land_all[lk] = la
+				if int(e["turn"]) == t and str(e["k"]) == "sea_battle":
+					sea_bat_all += 1
 				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
 					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
 				if int(e["turn"]) == t and str(e["k"]) == "captured" and CData.ships_on():

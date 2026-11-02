@@ -1613,10 +1613,12 @@ for the owner, not a lever pulled.
 
 | Hull | Who | Cost / upkeep | Guns / hull / crew | Pace | Carries | Yard | Storm % | Launch | Power |
 |---|---|---|---|---|---|---|---|---|---|
-| Piragua (the Kalinago sailing dugout) | Itza, Miskito | 260 / 10 | 1 (a swivel) / 22 / 60 | 330 | 1 | 2 | 30 | 2 | 44 (formula) |
-| Great canoe (the Maya trader of 1502) | Itza | 420 / 15 | 0 / 30 / 80 | 300 | 2 | 3 | 35 | 1 | 140 (row) |
+| Piragua (the Kalinago sailing dugout) | Itza, Miskito | 260 / 10 | 1 (a swivel) / 22 / 60 | 330 | 4 | 2 | 30 | 2 | 44 (formula) |
+| Great canoe (the Maya trader of 1502) | Itza | 420 / 15 | 0 / 30 / 80 | 300 | 6 | 3 | 35 | 1 | 140 (row) |
 | Fire canoe | Itza, Miskito | 90 / 4 | 0 / 8 / 10 | 320 | 0 | 2 | 45 | 2 | 80 (row) |
 | Brigantine (the existing row) | + Miskito | 500 / 25 | 14 / 45 / 90 | 370 | 2 | Miskito 3 (`yard_f`), the rest 1 | 12 | 1 | 203 |
+
+(2026-11-02) The Carries column: piragua 4, great canoe 6, war canoe 3 (was 1, 2, 1; docs/design/sea.md "Native vessels carry more").
 
 All three dugouts are coastal and rowed. Sea sim: piragua len 18, beam 3, vmax 100, turn 110, 1 gun of 3 at 120 m, hull 180,
 crew 60, board 160; great canoe len 24, vmax 92, turn 100, hull 260, crew 80, board 150, no gun; fire canoe the fire ship's

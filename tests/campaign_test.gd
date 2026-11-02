@@ -6816,9 +6816,9 @@ func _native_vessels() -> void:
 	var gc := CData.ship_row("great_canoe")
 	var fc := CData.ship_row("fire_canoe")
 	var br := CData.ship_row("brigantine")
-	_check(int(pg["yard"]) == 2 and int(pg["launch"]) == 2 and int(pg["cap"]) == 1 and int(pg["coastal"]) == 1 and int(pg["guns"]) == 1
-		and int(gc["yard"]) == 3 and int(gc["cap"]) == 2 and gc["factions"] == ["itza"] and int(fc["fire"]) == 1 and int(fc["cap"]) == 0
-		and int(fc["launch"]) == 2 and (br["factions"] as Array).has("miskito"), "native vessels: the rows (piragua yard 2 launch 2, great canoe yard 3 cap 2 Itza only, fire canoe a fire ship)")
+	_check(int(pg["yard"]) == 2 and int(pg["launch"]) == 2 and int(pg["cap"]) == 4 and int(pg["coastal"]) == 1 and int(pg["guns"]) == 1
+		and int(gc["yard"]) == 3 and int(gc["cap"]) == 6 and gc["factions"] == ["itza"] and int(fc["fire"]) == 1 and int(fc["cap"]) == 0
+		and int(fc["launch"]) == 2 and (br["factions"] as Array).has("miskito"), "native vessels: the rows (piragua yard 2 launch 2, great canoe yard 3 cap 6 Itza only, fire canoe a fire ship)")
 	_check(CData.ship_yard(br, mi) == 3 and CData.ship_yard(br, en) == 1, "native vessels: the brigantine needs the Miskito's Canoe yard 3, England's Shipyard 1")
 	var st := CState.new_campaign("native_vessels", 44, [iz, mi], {}, [], "west")
 	st["regions"][vl]["owner"] = iz
@@ -6880,7 +6880,32 @@ func _native_vessels() -> void:
 	_check(int(pw["war_canoe"]) < int(pw["piragua"]) and int(pw["piragua"]) < int(pw["sloop"]) and int(pw["sloop"]) < int(pw["great_canoe"])
 		and int(pw["great_canoe"]) < int(pw["brigantine"]), "native vessels: the power at full strength %s" % str(pw))
 	var cfl := {"ships": [{"t": "great_canoe", "h": 100, "c": 100}]}
-	_check(CFleet.capacity(cfl) == 2, "native vessels: a great canoe carries two companies")
+	_check(CFleet.capacity(cfl) == 6, "native vessels: a great canoe carries six units")
+	# (2026-11-02, the owner: "Requiring a full stack of 12 for the canoes to move a stack of 12 seems unreasonable") war
+	# canoe 3, piragua 4, great canoe 6: a 12-unit army boards three piraguas, four war canoes or two great canoes, not one
+	# short; European hulls unchanged.
+	_check(CFleet.capacity({"ships": [{"t": "war_canoe"}]}) == 3 and CFleet.capacity({"ships": [{"t": "piragua"}]}) == 4
+		and CFleet.capacity({"ships": [{"t": "sloop"}]}) == 1 and CFleet.capacity({"ships": [{"t": "frigate"}]}) == 3
+		and CFleet.capacity({"ships": [{"t": "galleon"}]}) == 6, "native vessels: war canoe 3, piragua 4 (the sloop 1, frigate 3, galleon 6 unchanged)")
+	var cgm := CData.region_index("cabo_gracias")
+	var smb := CState.new_campaign("native_cap", 47, [], {}, [], "west")
+	smb["fleets"] = []
+	var armb: Dictionary = CState.armies_of(smb, mi)[0]
+	var ub: Array = []
+	for i in 12:
+		ub.append({"t": "native_warriors", "n": 100})
+	armb["units"] = ub
+	CState.place(armb, CGrid.site(cgm))
+	var dkb := CFleet.dock(cgm)
+	var res_b := []
+	for ks in [["piragua", "piragua", "piragua"], ["war_canoe", "war_canoe", "war_canoe", "war_canoe"], ["great_canoe", "great_canoe"],
+			["piragua", "piragua"], ["war_canoe", "war_canoe", "war_canoe"], ["great_canoe"]]:
+		var sc := CState.copy(smb)
+		sc["fleets"] = []
+		var fb := _dk_fleet(sc, mi, dkb, ks, cgm)
+		res_b.append(CFleet.embark_check(sc, mi, int(armb["id"]), int(fb["id"])))
+	_check(res_b[0] == "" and res_b[1] == "" and res_b[2] == "" and res_b[3] != "" and res_b[4] != "" and res_b[5] != "",
+		"native vessels: a 12-unit Miskito army boards three piraguas, four war canoes or two great canoes, not two piraguas, three war canoes or one great canoe (%s)" % str(res_b))
 	# The AI: the Itza with a Canoe yard 3 and no fleet buy a great canoe for transport; with a Canoe yard 1
 	# they raise the yard (their best transport needs 3), never buying a fire canoe.
 	var sa := CState.new_campaign("native_ai", 45, [], {}, [], "west")
@@ -7040,7 +7065,8 @@ func _board_march() -> void:
 	sn["fleets"] = []
 	var small := _dk_fleet(sn, mi, dkc, ["war_canoe"])
 	var big := CState.army(sn, int(a1["id"]))
-	(big["units"] as Array).append({"t": "canoe_raiders", "n": UT.size_of(UT.index_of("canoe_raiders"))})
+	while CState.unit_count(big) <= CFleet.capacity(small):  # (a war canoe carries 3)
+		(big["units"] as Array).append({"t": "canoe_raiders", "n": UT.size_of(UT.index_of("canoe_raiders"))})
 	var no_room := {"t": "move", "army": int(a1["id"]), "x": CGrid.cx(target), "y": CGrid.cy(target), "persist": 1, "fleet": int(small["id"])}
 	var wr := CRules.apply_order(sn, mi, no_room)
 	_check(wr.contains("room"), "board march: a fleet with no room is refused (%s)" % wr)
