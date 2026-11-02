@@ -32,6 +32,7 @@ uniform ivec2 hmap_size = ivec2(2, 2);
 uniform sampler2D vegmap : filter_linear, repeat_disable;
 uniform bool veg_on = false;
 uniform bool trod_soft = false;  // a West town: the trodden-ground mask is blurred (terrain_layer) and drawn as bare earth, half as dark
+uniform float trod_floor = 0.0;  // the native lesson's village (wring): the trodden earth covers the ground (0 a West town .. 1)
 uniform vec2 veg_size_px = vec2(1.0);  // world pixels covered by the features texture
 uniform float texel_px = 20.0;        // world pixels between texels (nodes)
 uniform float h_range_m = 1.0;        // metres represented by 65535
@@ -374,11 +375,13 @@ void fragment() {
 		if (trod_soft && v.g > 0.02) {
 			// Bare earth, not a shadow: warmer, half the darkening, a hand-wobbled edge so no cell shows.
 			float tw = 0.5 + vnoise(wm / 5.0 + vec2(2.3, 7.7)) * 0.9;
-			pv = mix(pv, vec3(0.62, 0.48, 0.31) * worn, 0.45);
-			pv = mix(col, pv, 0.6);
-			trod = clamp(v.g * tw, 0.0, 1.0) * (splat ? 0.7 : 0.45);
+			pv = mix(pv, vec3(0.62, 0.48, 0.31) * worn, 0.45 + 0.35 * trod_floor);
+			pv = mix(col, pv, 0.6 + 0.35 * trod_floor);
+			trod = clamp(v.g * tw * (1.0 + 0.5 * trod_floor), 0.0, 1.0) * (splat ? 0.7 + 0.25 * trod_floor : 0.45 + 0.4 * trod_floor);
 		}
 		col = mix(col, pv, trod);
+		// (The native lesson's village: its plaza and streets beaten earth, paler than the floor, not grey.)
+		pl = mix(pl, vec3(0.70, 0.58, 0.42) * (0.92 + 0.16 * n3), 0.65 * trod_floor);
 		col = mix(col, pl, clamp(v.a, 0.0, 1.0) * (splat ? 0.75 : 0.55));
 		// Fields: straw-coloured strips (ploughed earth with the splatted ground).
 		float strip = 0.85 + 0.15 * step(0.5, fract(world.y / 30.0));

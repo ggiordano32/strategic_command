@@ -2106,6 +2106,23 @@ its inside changes.
   polygon with round palisade towers; the chapel is the West's church
   piece (no bell gable of its own); no fences round the garden plots, no
   banana or plantain rows; the ground is the green palette.
+- **Second visual pass (2026-11-01, view only).** The palisade is drawn as
+  a stockade with a plank fighting platform on posts (art_pipeline.md "The
+  timber stockade (as built, 2026-11-01)"). The inside is a trodden earth
+  floor (`terrain_layer.gd`: the built mask dilated 4 cells, the rest 120 not
+  70, `terrain.gdshader` `trod_floor`), the streets and plaza the same earth
+  beaten paler (`city_streets.gd`), no dark 2 m footings under the houses in
+  the top view (the turned shacks' stepped squares); the chapel keeps its bell
+  tower on the plaza and a timber cross stands before it (`city_draw.gd`
+  `_draw_cross`); shacks and lean-tos have palm thatch (the kit shader's
+  culture + 8); the four garden plots (lay "fields" kind 2) are fenced (a
+  3 m gap on the side toward the village; wall rows in the oblique view,
+  `_FenceDraw` from above) and planted in turn with plantain rows, maize
+  rows and left bare (`tree_layer.gd`). No mapgen record changed: the sim
+  knows no fence, the gates, zones and fields are where they were. Still
+  open: the antiquity polygon and the round log towers; the church piece has
+  no espadaña (its square tower stands for it); the plots overlap the wood
+  on the east side as before.
 
 ### Balance pass T (as built, 2026-10-16)
 

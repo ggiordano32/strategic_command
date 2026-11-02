@@ -374,7 +374,9 @@ func _west_built(vw: int, vh: int) -> PackedByteArray:
 						if ii < ow and jj < oh and obs[jj * ow + ii] == MapGen.C_BUILDING:
 							hit = true
 			out[k] = 1 if hit else 0
-	for it in 2:
+	# (The native lesson's ring village: its whole inside is a trodden earth floor, only the back lots' gaps green.)
+	var wring := int((sim.map_info.get("city", {}) as Dictionary).get("wring", 0)) != 0
+	for it in (4 if wring else 2):
 		var nxt := out.duplicate()
 		for j in vh:
 			for i in vw:
@@ -427,18 +429,20 @@ func _build_veg() -> void:
 	bytes.resize(vw * vh * 4)
 	var veg: PackedByteArray = sim.veg
 	var built := _west_built(vw, vh)
+	var wring := not built.is_empty() and int((sim.map_info.get("city", {}) as Dictionary).get("wring", 0)) != 0
 	for k in vw * vh:
 		var b := veg[k]
 		var o := k * 4
 		bytes[o] = (b & MapGen.V_DENS) * 85
 		bytes[o + 1] = 255 if (b & MapGen.V_URBAN) != 0 else 0
 		if not built.is_empty() and bytes[o + 1] != 0 and built[k] == 0:
-			bytes[o + 1] = 70  # (a West town: only the built-up ground is trodden; yards and gardens between)
+			bytes[o + 1] = 120 if wring else 70  # (a West town: only the built-up ground is trodden; yards and gardens between)
 		bytes[o + 2] = 255 if (b & MapGen.V_FIELD) != 0 else 0
 		bytes[o + 3] = 255 if (b & MapGen.V_PLAZA) != 0 else (130 if (b & MapGen.V_ROAD) != 0 else 0)
 	if not built.is_empty():
 		_soften_trodden(bytes, vw, vh)
 	m.set_shader_parameter("trod_soft", not built.is_empty())
+	m.set_shader_parameter("trod_floor", 1.0 if wring else 0.0)
 	var img := Image.create_from_data(vw, vh, false, Image.FORMAT_RGBA8, bytes)
 	m.set_shader_parameter("vegmap", ImageTexture.create_from_image(img))
 	m.set_shader_parameter("veg_size_px", Vector2(vw, vh) * 4.0 * px_per_m)

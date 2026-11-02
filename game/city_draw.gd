@@ -102,9 +102,46 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 ## What stands above the kit pieces on the battle map: the stairs at the ends of the walkways and
 ## the banners.
 static func draw_over(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
-	if int(lay["walls"]) > 0:
+	# (The oblique view's stockade draws its own plank stairs: game/battlekit.gd _ob_stairs.)
+	var ob_timber: bool = BattleKit.BoardView.oblique and (int(lay.get("palisade", 0)) != 0
+		or "--kit-palisade" in OS.get_cmdline_user_args())
+	if int(lay["walls"]) > 0 and not ob_timber:
 		_draw_stairs(ci, lay, k, o)
+	if int(lay.get("wring", 0)) != 0:
+		_draw_cross(ci, lay, k, o)
 	_draw_banners(ci, lay, k, o, banner_color(lay))
+
+
+## The native lesson's village (city key "wring"): a timber cross on a stone step on the plaza before the chapel
+## (the B_TEMPLE record's front, its q0 - q1 edge), standing up like the banners. View only.
+static func _draw_cross(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
+	for b in lay.get("buildings", []):
+		var a: Array = b
+		if int(a[4]) != MapGen.B_TEMPLE or a.size() < 15:
+			continue
+		var q0 := Vector2(float(int(a[7])), float(int(a[8])))
+		var q1 := Vector2(float(int(a[9])), float(int(a[10])))
+		var q3 := Vector2(float(int(a[13])), float(int(a[14])))
+		var into := (q3 - q0).normalized()
+		var along := (q1 - q0).normalized()
+		var mid := (q0 + q1) * 0.5
+		# (Off the middle to the side away from the plaza's banner, _draw_banners' corner, so the two stand apart.)
+		var ag: Array = lay.get("agora", lay["plaza"])
+		var flag := Vector2(int(ag[0]) + int(ag[2]) - 1, int(ag[1]) - int(ag[2]) + 1)
+		var at := mid - into * 4.0 - along * (3.0 if (flag - mid).dot(along) > 0.0 else -3.0)
+		var s := maxf(k, 1.6)
+		var base: Vector2 = o + at * k
+		var stone := Color(0.72, 0.68, 0.60)
+		ci.draw_colored_polygon(PackedVector2Array([base + Vector2(-0.9, -0.25) * s, base + Vector2(0.9, -0.25) * s,
+			base + Vector2(0.9, 0.35) * s, base + Vector2(-0.9, 0.35) * s]), stone.darkened(0.25))
+		ci.draw_colored_polygon(PackedVector2Array([base + Vector2(-0.9, -0.6) * s, base + Vector2(0.9, -0.6) * s,
+			base + Vector2(0.9, -0.25) * s, base + Vector2(-0.9, -0.25) * s]), stone)
+		var wood := Color(0.30, 0.21, 0.14)
+		var w := maxf(s * 0.38, 1.5)
+		var top := base + Vector2(0, -4.6) * s
+		ci.draw_line(base + Vector2(0, -0.4) * s, top, wood, w)
+		ci.draw_line(base + Vector2(-1.1, -3.5) * s, base + Vector2(1.1, -3.5) * s, wood, w)
+		return
 
 
 static func _p(o: Vector2, k: float, x: float, y: float) -> Vector2:
@@ -472,6 +509,8 @@ static func _draw_tower(ci: CanvasItem, tw: Array, k: float, o: Vector2, palisad
 ## inner face (at the segment's stair points S).
 static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
 	var lw := maxf(k * 0.25, 1.0)
+	# (A stockade's stairs are planks: game/battlekit.gd "the timber stockade".)
+	var tread := Color(0.62, 0.49, 0.33) if int(lay.get("palisade", 0)) != 0 else Color(0.78, 0.74, 0.66)
 	for sg in lay["segs"]:
 		var a: Array = sg
 		if a.size() < MapGen.SEG_LEN:
@@ -483,7 +522,7 @@ static func _draw_stairs(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) 
 			var s := Vector2(int(a[7 + e * 6]), int(a[8 + e * 6]))
 			for q in 4:
 				var c := s + n * (float(q) - 1.5) * 0.7
-				ci.draw_line(o + (c - d * 1.6) * k, o + (c + d * 1.6) * k, Color(0.78, 0.74, 0.66), lw)
+				ci.draw_line(o + (c - d * 1.6) * k, o + (c + d * 1.6) * k, tread, lw)
 
 
 ## The sea gate (scenery): an arch across the sea wall, two small towers.

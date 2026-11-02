@@ -1448,3 +1448,50 @@ counts, fps and render_box (the pose and table shape unchanged), built within th
   nothing fixed. What drew wrong was only the look: the Rome cav rows are the generic shock_cavalry (not changed here).
 - Aids: `tests/rome_audit_shot.gd` (the contact sheet of those rows, `--top` for the top view), `tests/rome_battle_shot.gd` (principes against hoplites, 40 a
   side; `--view=top`); both load the atlases from the files (the imported copies are stale until the next import).
+
+### The timber stockade (as built, 2026-11-01)
+
+The owner on the palisade walls: "They should be raised platforms behind the wooden palisade, not a solid block wall just wooden
+coloured." A walls-1 timber ring (lay "palisade" 1, a level-0 settlement with walls; `--kit-palisade` on any ring) was the stone
+wall's solid geometry in timber colour (oblique) and an earth bank 2.5 m high across the band (top view). View only: `sim/` and
+`campaign/` untouched, the sim's band (thickness t, parapet pp, the 4 m walk at `WALL_H[walls]`, the inner band) where it was; no
+hash, no pin moves.
+
+- **The oblique rows** (`game/battlekit.gd` `_ob_tseg_rows`, `_ob_stairs`; `battlekit.gdshader` `ob_timber_col`). With the timber
+  flag the ring's second offset line is the logs' inner face (`STAKE_W` 0.5 m in from the outer edge) instead of the parapet's,
+  and each stretch is: the logs' outer face (ground to hm + `STAKE_TIP`), their inner face, a post row under the platform's middle
+  and one under its inner edge (posts every `POST_STEP` 2.5 m, 0.3 m, knee braces, the joist along the top; the rest discarded,
+  so the ground shows under the platform), the plank platform from the logs to the walk's inner edge at hm (planks 0.3 m across
+  it, an edge beam, a lit lip), its rail (posts over the posts below, a top and a middle rail, `RAIL_H` 1 m), caps where the ring
+  is cut; nothing over the inner band. The same eight row kinds carry the stockade's meanings (WK_STEP posts, WK_IN the rail,
+  WK_MTOP a stair, a top sloping from the ground at A to hm at B, WK_RAMP a garden fence, a face). Logs: 0.46 m, each its own
+  height (0 to 0.32 m short) and shade, a pointed and fresh-cut top, rope lashings on the outer face and rails behind on the inner
+  face at 1.1 m and hm - 0.7, an earth footing; both faces agree (|u| along the wall). **Sort:** explicit ranks per stretch, since
+  the facing rule put the logs' inner face over the platform: a wall whose inner side faces the camera draws outer face, inner
+  face, middle posts, platform, inner posts, rail, caps; one whose outer side faces it the reverse (rail and inner posts first, the
+  outer face last). **Stairs:** one plank stair (`STAIR_W` 1.6 m, run 2 x `STAIR_RUN` 1.8 m) at each of the sim's stair points
+  (lay "segs", the point in the inner band), along the wall, its top toward the stretch's end unless that climbs toward the camera
+  (then the other way: a stair climbing toward the camera foreshortened to a sliver); keyed just after (inner side toward the
+  camera) or before its wall; never fading. The flat stair marks of `CityDraw.draw_over` are not drawn over a stockade in the
+  oblique view, and are plank-coloured in the top view. The ring's height for a stockade is `WALL_H[walls]` (it was 5 m for any
+  level), so the platform is where the men are drawn. **Graphics Low** (`_LowDraw._timber_row`): the logs one polygon with a
+  saw-tooth top, posts, rails and fences thin quads, platform and stairs quads.
+- **The top-down strips** (`tools/battlekit/build.py` `stockade`, used by `b_pal_strip` and `b_pal_sim`): 27 logs a 12 m tile
+  (0.46 m, 5 m plus a 0.8 m point) on a 1.2 m earth footing, two lashing rails, the plank deck at 5 m from the logs to the walk's
+  inner edge, two rows of posts (5 a tile) and the rail; the inner band is empty, so the strip's texture ends at the rail
+  (`battlekit_strips.gd` ps_8 v -4.75 .. 4.75 -> -4.5 .. 2.25, ps_10 -> -5.5 .. 1.25, ps_12 -> -6.5 .. 0.25) and the ground and the
+  deck's baked shadow show behind it. Rebuilt with Blender (ps_8 / 10 / 12, pal_8 / 10 / 12) and repacked with `pack_strips.py`
+  and `pack.py`; the other 59 atlas crops are pixel-identical (only their places moved); the stone strips were not rewritten.
+  Sizes: ps_8 albedo / nrm / low 10,368 / 3,951 / 3,403 -> 7,605 / 1,759 / 2,531 B, ps_10 12,212 / 4,017 / 3,983 -> 7,603 /
+  1,850 / 2,501, ps_12 14,224 / 3,980 / 4,571 -> 7,671 / 1,820 / 2,469; atlas albedo / nrm / low 800,636 / 169,642 / 251,896 ->
+  787,884 / 156,346 / 246,313 B (1024 x 1024 unchanged).
+- **Kept.** The round log towers (`tower_timber`) and the timber gate pieces (`pgate_*`); no square blockhouse.
+- **Also, the native lesson's village** (siege_and_towns.md "The native lesson's village", second pass): garden fences as wall
+  rows (oblique) and `_FenceDraw` (top), palm thatch (an instance culture + 8 shades the kit's light thatch grey-brown;
+  the Low path darkens it), the chapel's tower on the plaza and a cross before it, the earth floor.
+- **Checked:** shots `tests/native_village_shot.gd` (now `--print` for the ring, the fields and the units) before and after in both
+  views, High and Low; `siege_oppidum` (the Celtic oppidum plan the native towns use) with `--kit-palisade` in both views (Tayasal is a West open town: no ring to draw).
+- **Open.** A wall running exactly north-south shows its faces edge-on (the platform reads, the logs' faces do not; the same for a
+  north-south fence, whose posts vanish); the posts are drawn on the platform's two lines only, not under the logs; men on the
+  platform are drawn by the occluder as before (the rail ghosts their legs on a wall whose inner side faces the camera); the
+  owner's eye on the log size and the platform's colour.

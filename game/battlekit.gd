@@ -53,6 +53,20 @@ const MERLON_H := 1.2           # the merlons above the walk (tools/battlekit b_
 const STAKE_TIP := 0.8
 const RAMP_DROP := 1.1          # the inner rampart below the walk
 const WALK_W := 4.0             # MapGen.WALK_W
+## The timber stockade (a palisade ring, docs/design/art_pipeline.md "The timber stockade"): a row of upright logs
+## STAKE_W thick on the band's outer edge, a plank fighting platform behind it at the walk's height on posts (open
+## underneath), a rail along its inner edge, plank stairs at the sim's stair points, the inner band open ground. The
+## same row kinds carry other meanings when the timber flag is on (battlekit.gdshader ob_timber_col):
+## WK_OUT the stakes' outer face, WK_MERLON their inner face, WK_STEP a post row under the platform (posts every
+## POST_STEP, braces, the joist at its top), WK_IN the rail on the platform's inner edge, WK_CAP an end (wood),
+## WK_WALK the plank platform, WK_MTOP a stair (a top sloping from the ground at A up to the platform at B), WK_RAMP
+## a fence (a face: posts and two rails; the garden plots round the native lesson's village).
+const STAKE_W := 0.5
+const RAIL_H := 1.0             # the platform's rail above its planks
+const FENCE_H := 1.2
+const STAIR_W := 1.6            # a stair's width (across the wall) and half its run along it
+const STAIR_RUN := 1.8
+const POST_STEP := 2.5          # battlekit.gdshader POST_STEP
 ## Wall row kinds (battlekit.gdshader): faces (a vertical quad on a ground edge) then tops (a quad between two lines).
 enum {WK_OUT, WK_MERLON, WK_STEP, WK_IN, WK_CAP, WK_WALK, WK_MTOP, WK_RAMP}
 const FADE_ZOOM := 1.5          # the camera's zoom past which a stretch hiding men behind it fades
@@ -309,7 +323,8 @@ func _build_instances() -> void:
 	strip_name = wname.replace("wall_", "ws_").replace("pal_", "ps_")
 	for poly: PackedInt32Array in rings:
 		_wall_ring(poly, t / wt)
-		_rings.append([poly, t, hs * 5.0])
+		# (A stockade's platform at the sim's walk height, where its men are drawn.)
+		_rings.append([poly, t, float(WALL_H[walls]) if _timber and not west_fort else hs * 5.0])
 	if s_vx.is_empty():
 		strip_name = ""
 		strip_at = 0
@@ -549,8 +564,10 @@ func _build_west() -> void:
 				e = n
 				sx = (fh + 0.6) / float(an[2])
 				sy = (fw + 0.6) / float(an[3])
-			if h % 2 == 0:
-				e = -e
+			if h % 2 == 0 and not (wring and pname == "church" and fh > fw):
+				e = -e   # (the lesson's chapel keeps its bell tower, the piece's -x end, on the plaza)
+		if wring and (pname == "shack" or pname == "leanto"):
+			cul += 8   # (palm thatch: battlekit.gdshader; the Low path darkens them)
 		_add(pname, pos, e, sx, sy, 1.0, -1, cul)
 	_cur_bld = -1
 	_west_fort()
@@ -896,6 +913,11 @@ func _make_nodes() -> void:
 		pn.kit = self
 		add_child(pn)
 		BoardView.lift_node(pn)
+	if not BoardView.oblique and not fence_runs().is_empty():
+		# The garden fences round the native lesson's plots (the oblique view stands them up as wall rows).
+		var fn := _FenceDraw.new()
+		fn.kit = self
+		add_child(fn)
 	if i_piece.is_empty() and (lay.get("pieces", []) as Array).is_empty():
 		return
 	if BoardView.oblique:
@@ -1072,7 +1094,9 @@ func _ob_walls() -> void:
 		var nv := p.size()
 		if nv < 3:
 			continue
-		var offs := PackedFloat32Array([-t * 0.5, -t * 0.5 + pp, minf(-t * 0.5 + pp + WALK_W, t * 0.5 - 0.5), t * 0.5])
+		# (A stockade's second line is the stakes' inner face, not the parapet's: its platform starts there.)
+		var offs := PackedFloat32Array([-t * 0.5, -t * 0.5 + (STAKE_W if _timber else pp),
+			minf(-t * 0.5 + pp + WALK_W, t * 0.5 - 0.5), t * 0.5])
 		var nl := offs.size()
 		var dirs := PackedVector2Array()
 		var nrms := PackedVector2Array()
@@ -1180,6 +1204,10 @@ func _ob_walls() -> void:
 					wa.append(pe[e2 * nl + li])
 					wb.append(ps[e2 * nl + li])
 				_ob_wseg_rows(wa, wb, t, hm, false, false)
+	if _timber and not _rings.is_empty():
+		_ob_stairs(float(_rings[0][2]))
+		if int(lay.get("wring", 0)) != 0:
+			_ob_fences()
 	_ob_nwall = _ob_wkey.size()
 	_seg_fade.resize(_ob_seg.size())
 	_seg_fade.fill(0.0)
@@ -1215,6 +1243,13 @@ func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool) 
 	var ca: Vector2 = (a[0] + a[3]) * 0.5
 	var cb: Vector2 = (b[0] + b[3]) * 0.5
 	var base := BoardView.near_px((ca + cb) * 0.5 * k)
+	if _timber:
+		_ob_tseg_rows(a, b, hm, cs, ce, base)
+		var outw0: Vector2 = (b[0] - a[0]).normalized()
+		_ob_seg.append([ca, cb, Vector2(outw0.y, -outw0.x), t, w0, _ob_wkey.size() - w0])
+		for w in _ob_wkey.size() - w0:
+			_ob_wseg.append(_ob_seg.size() - 1)
+		return
 	var zt := hm + (STAKE_TIP if _timber else MERLON_H)
 	var zr := maxf(hm - RAMP_DROP, 0.5)
 	_ob_face(a[0], b[0], 0.0, zt, WK_OUT, base)
@@ -1241,13 +1276,119 @@ func _ob_wseg_rows(a: Array, b: Array, t: float, hm: float, cs: bool, ce: bool) 
 		_ob_wseg.append(si)
 
 
+## A stockade stretch's rows (the timber flag; `a`, `b` as _ob_wseg_rows'): the stakes' outer face from the ground to
+## hm + STAKE_TIP, their inner face (line 1), a post row under the middle of the platform and one under its inner edge
+## (line 2), the plank platform between lines 1 and 2 at hm, its rail above line 2; nothing over the inner band.
+## Explicit sort ranks (the faces' facing rule would put the stakes' inner face over the platform): back to front as
+## the camera (south) sees them, for a wall whose inner side faces it and for one whose outer side does.
+func _ob_tseg_rows(a: Array, b: Array, hm: float, cs: bool, ce: bool, base: float) -> void:
+	var zt := hm + STAKE_TIP
+	var inw: Vector2 = (a[3] - a[0]).normalized()
+	var in_cam := inw.y > 0.0
+	var ma: Vector2 = (a[1] as Vector2).lerp(a[2], 0.5)
+	var mb: Vector2 = (b[1] as Vector2).lerp(b[2], 0.5)
+	# Ranks: [outer face, inner face, middle posts, platform, inner posts, rail, caps].
+	var rk: Array = [0.0, 0.002, 0.004, 0.006, 0.008, 0.010, 0.012] if in_cam \
+		else [0.016, 0.012, 0.004, 0.006, 0.002, 0.0, 0.014]
+	_ob_face(a[0], b[0], 0.0, zt, WK_OUT, base, rk[0])
+	_ob_face(b[1], a[1], 0.0, zt, WK_MERLON, base, rk[1])
+	_ob_face(mb, ma, 0.0, hm, WK_STEP, base, rk[2])
+	_ob_top(a[1], b[1], a[2], b[2], hm, WK_WALK, base, rk[3])
+	_ob_face(b[2], a[2], 0.0, hm, WK_STEP, base, rk[4])
+	_ob_face(b[2], a[2], hm, hm + RAIL_H, WK_IN, base, rk[5])
+	if cs:
+		_ob_face(a[1], a[0], 0.0, zt, WK_CAP, base, rk[6])
+		_ob_face(a[2], a[1], hm - 0.3, hm, WK_CAP, base, rk[6])
+	if ce:
+		_ob_face(b[0], b[1], 0.0, zt, WK_CAP, base, rk[6])
+		_ob_face(b[1], b[2], hm - 0.3, hm, WK_CAP, base, rk[6])
+
+
+## The stockade's plank stairs (the timber flag): one at each stair point of the sim's walkway stretches (lay "segs":
+## the point in the inner band, MapGen._segments), running along the wall from the ground (toward the stretch's
+## middle, or the way that climbs away from the camera) up to the platform's edge, STAIR_W wide; never fading (a
+## stretch of their own with no facing).
+func _ob_stairs(hm: float) -> void:
+	for sg in lay.get("segs", []):
+		var a: Array = sg
+		if a.size() < MapGen.SEG_LEN:
+			continue
+		var d := Vector2(int(a[2]) - int(a[0]), int(a[3]) - int(a[1]))
+		if d.length() < 1.0:
+			continue
+		d = d.normalized()
+		var ang := float(int(a[4])) * TAU / 1024.0
+		var inw := -Vector2(cos(ang), sin(ang))
+		for e in 2:
+			var s := Vector2(int(a[7 + e * 6]), int(a[8 + e * 6]))
+			var up := -d if e == 0 else d   # (the top toward the stretch's end ...
+			if up.y > 0.05:
+				up = -up   # (... unless that climbs toward the camera: a stair rising away from it shows its treads)
+			var foot := s - up * STAIR_RUN
+			var top := s + up * STAIR_RUN
+			var hw := inw * STAIR_W * 0.5
+			var w0 := _ob_wkey.size()
+			var key := BoardView.near_px(s * k) + (0.03 if inw.y > 0.0 else -0.03)
+			_ob_top(foot - hw, top - hw, foot + hw, top + hw, hm, WK_MTOP, key, 0.0)
+			_ob_seg.append([foot, top, Vector2.ZERO, 0.0, w0, 1])
+			_ob_wseg.append(_ob_seg.size() - 1)
+
+
+## Fences round the garden plots outside the native lesson's village (lay "fields" of kind 2; view only: the sim
+## knows no fence): a face per side, posts and two rails, a gap of 3 m in the side facing the village for the gate.
+func _ob_fences() -> void:
+	for f in fence_runs():
+		var pa: Vector2 = f[0]
+		var pb: Vector2 = f[1]
+		var w0 := _ob_wkey.size()
+		var mid := (pa + pb) * 0.5
+		_ob_face(pa, pb, 0.0, FENCE_H, WK_RAMP, BoardView.near_px(mid * k), 0.0)
+		_ob_seg.append([pa, pb, Vector2.ZERO, 0.0, w0, 1])
+		_ob_wseg.append(_ob_seg.size() - 1)
+
+
+## The garden fences' runs (metres, [a, b] each): each kind-2 field's four sides, the side nearest the village with a
+## 3 m gap in its middle. Both views draw them (the top view in _FenceDraw).
+func fence_runs() -> Array:
+	var out: Array = []
+	if int(lay.get("wring", 0)) == 0:
+		return out
+	var c := Vector2(float(int(lay.get("cx", 0))), float(int(lay.get("cy", 0))))
+	for fd in lay.get("fields", []):
+		var f: Array = fd
+		if int(f[4]) != 2:
+			continue
+		var r := Rect2(float(int(f[0])), float(int(f[1])), float(int(f[2]) - int(f[0])), float(int(f[3]) - int(f[1]))).grow(-0.5)
+		var cs := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+		var best := -1
+		var bd := 1e9
+		for e in 4:
+			var m: Vector2 = (cs[e] + cs[(e + 1) % 4]) * 0.5
+			if m.distance_to(c) < bd:
+				bd = m.distance_to(c)
+				best = e
+		for e in 4:
+			var pa: Vector2 = cs[e]
+			var pb: Vector2 = cs[(e + 1) % 4]
+			if e == best:
+				var m2 := (pa + pb) * 0.5
+				var dd := (pb - pa).normalized()
+				out.append([pa, m2 - dd * 1.5])
+				out.append([m2 + dd * 1.5, pb])
+			else:
+				out.append([pa, pb])
+	return out
+
+
 ## A face row: the vertical quad on the ground edge A -> B (metres) from z0 to z1 metres up, its normal A -> B turned
 ## to the right (outward for the outer face). Faces turned toward the camera (south) draw over the stretch's tops.
-func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: float) -> void:
+func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: float, rk := -1.0) -> void:
 	if pa.distance_squared_to(pb) < 0.0004 or z1 <= z0:
 		return
 	var dd := (pb - pa).normalized()
 	var rank := 0.02 if -dd.x > 0.0 else 0.0   # (the normal (dd.y, -dd.x) has a southward part)
+	if rk >= 0.0:
+		rank = rk   # (the stockade's explicit order)
 	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z0 * 10.0), 0, 200))
 	_ob_wall.append_array(PackedFloat32Array([pa.x * k, pb.x * k, 0.0, 0.0, pa.y * k, pb.y * k, 0.0, z1,
 		code, 0.0, 0.0, 0.0]))
@@ -1256,11 +1397,11 @@ func _ob_face(pa: Vector2, pb: Vector2, z0: float, z1: float, kind: int, base: f
 
 ## A top row: the quad between the lines A0 -> B0 and A1 -> B1 (metres) z metres up (B1 as its offset from B0: the
 ## custom data is kept in half floats).
-func _ob_top(a0: Vector2, b0: Vector2, a1: Vector2, b1: Vector2, z: float, kind: int, base: float) -> void:
+func _ob_top(a0: Vector2, b0: Vector2, a1: Vector2, b1: Vector2, z: float, kind: int, base: float, rk := -1.0) -> void:
 	var code := float(WALL_ROW + kind + 8 * clampi(roundi(z * 10.0), 0, 200))
 	_ob_wall.append_array(PackedFloat32Array([a0.x * k, b0.x * k, 0.0, a1.x * k, a0.y * k, b0.y * k, 0.0, a1.y * k,
 		code, (b1.x - b0.x) * k, (b1.y - b0.y) * k, 0.0]))
-	_ob_wkey.append(base + 0.004 + z * 0.0005)
+	_ob_wkey.append(base + (rk if rk >= 0.0 else 0.004 + z * 0.0005))
 
 
 func _ob_row(o: Vector2, ex: Vector2, ey: Vector2, cd: Color, key: float) -> void:
@@ -1569,6 +1710,26 @@ class _RubbleDraw extends Node2D:
 			kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, false)
 
 
+## The garden fences from above (the top view): a soft shadow to the lower right, the rails, a post every 2 m.
+class _FenceDraw extends Node2D:
+	var kit
+
+	func _draw() -> void:
+		var kk := float(kit.k)
+		var rail := Color(0.55, 0.47, 0.37)
+		var post := Color(0.33, 0.26, 0.19)
+		for f in kit.fence_runs():
+			var a: Vector2 = f[0] * kk
+			var b: Vector2 = f[1] * kk
+			draw_line(a + Vector2(0.45, 0.45) * kk, b + Vector2(0.45, 0.45) * kk, Color(0, 0, 0, 0.22), maxf(0.35 * kk, 1.0))
+			draw_line(a, b, rail, maxf(0.14 * kk, 1.0))
+			var l := a.distance_to(b)
+			var n := maxi(int(round(l / (2.0 * kk))), 1)
+			for i in n + 1:
+				var p := a.lerp(b, float(i) / float(n))
+				draw_rect(Rect2(p - Vector2(0.14, 0.14) * kk, Vector2(0.28, 0.28) * kk), post)
+
+
 ## The town plan's landmark pieces (game/city_draw.gd draw_pieces), drawn once.
 class _PieceDraw extends Node2D:
 	var kit
@@ -1614,9 +1775,11 @@ class _LowDraw extends Node2D:
 			var h: float = float(an[3]) * sy * float(kit.k)
 			var o: Vector2 = (kit.i_pos[i] + e * (float(an[0]) * sx) + dn * (float(an[1]) * sy)) * float(kit.k)
 			draw_set_transform_matrix(Transform2D(e, dn, o))
-			var cu: int = kit.i_cul[i]
+			var cu: int = kit.i_cul[i] & 7
 			var tint: Vector3 = kit.STONE_TINT[cu]
 			var c := Color(tint.x, tint.y, tint.z)
+			if kit.i_cul[i] >= 8:
+				c *= Color(0.8, 0.82, 0.86)   # (palm thatch)
 			if kit.roofy[p] != 0:
 				var rr: Vector3 = kit.PAL_R[cu] / kit.PAL_R[0]
 				c = Color(1, 1, 1).lerp(Color(rr.x, rr.y, rr.z), 0.7)
@@ -1647,7 +1810,7 @@ class _LowDraw extends Node2D:
 				# The oblique kit sheet's pre-lit pass (4 px/m: the rect halved), its anchor at the footprint's centre.
 				var r2: Array = kit.KitOb.px(q)
 				var sc2: float = kit.i_sx[i] * float(kit.k) / kit.KitOb.ppm
-				var cu2: int = kit.i_cul[i]
+				var cu2: int = kit.i_cul[i] & 7
 				var t2: Vector3 = kit.STONE_TINT[cu2]
 				draw_set_transform_matrix(Transform2D(0.0, Vector2(sc2, sc2), 0.0, kit.BoardView.to_board(kit.i_pos[i] * float(kit.k))))
 				draw_texture_rect_region(kit.KitOb.low, Rect2(-float(r2[4]), -float(r2[5]), float(r2[2]), float(r2[3])),
@@ -1662,9 +1825,11 @@ class _LowDraw extends Node2D:
 			var og: Vector2 = kit._ob_ground(i)
 			var hb := 0.5 * (absf(e.y) * w + absf(dn.y) * h)
 			draw_set_transform_matrix(Transform2D(e, dn, kit.BoardView.to_board(og) - Vector2(0, hb)))
-			var cu: int = kit.i_cul[i]
+			var cu: int = kit.i_cul[i] & 7
 			var tint: Vector3 = kit.STONE_TINT[cu]
 			var c := Color(tint.x, tint.y, tint.z)
+			if kit.i_cul[i] >= 8:
+				c *= Color(0.8, 0.82, 0.86)   # (palm thatch)
 			if kit.roofy[p] != 0:
 				var rr: Vector3 = kit.PAL_R[cu] / kit.PAL_R[0]
 				c = Color(1, 1, 1).lerp(Color(rr.x, rr.y, rr.z), 0.7)
@@ -1678,6 +1843,9 @@ class _LowDraw extends Node2D:
 		var c := int(wb[o + 8]) - int(kit.WALL_ROW)
 		var z := float(c / 8) * 0.1
 		var kind := c % 8
+		if kit._timber:
+			_timber_row(o, z, kind)
+			return
 		var pa := Vector2(wb[o], wb[o + 4])
 		var pb := Vector2(wb[o + 1], wb[o + 5])
 		var bv = kit.BoardView
@@ -1712,4 +1880,82 @@ class _LowDraw extends Node2D:
 			area += q[v].x * q[v2].y - q[v2].x * q[v].y
 		if absf(area) < 0.5:
 			return
+		draw_colored_polygon(q, col)
+
+	## A stockade row on Low (the High path's battlekit.gdshader ob_timber_col, flat-shaded): the logs as one
+	## polygon with a saw-tooth top, posts, rails and fences as thin quads, the platform and stairs as quads.
+	func _timber_row(o: int, z: float, kind: int) -> void:
+		var wb: PackedFloat32Array = kit._ob_wall
+		var bv = kit.BoardView
+		var kk := float(kit.k)
+		var pa := Vector2(wb[o], wb[o + 4])
+		var pb := Vector2(wb[o + 1], wb[o + 5])
+		var wood := Color(0.45, 0.33, 0.22)
+		var wood_d := Color(0.31, 0.23, 0.16)
+		var plank := Color(0.56, 0.44, 0.30)
+		if kind == kit.WK_WALK or kind == kit.WK_MTOP:
+			var pa2 := Vector2(wb[o + 3], wb[o + 7])
+			var pb2 := pb + Vector2(wb[o + 9], wb[o + 10])
+			var za := 0.0 if kind == kit.WK_MTOP else z
+			_quad(PackedVector2Array([bv.to_board(pa, za), bv.to_board(pb, z), bv.to_board(pb2, z), bv.to_board(pa2, za)]),
+				plank * (0.85 if kind == kit.WK_WALK else 0.95))
+			return
+		var l := pa.distance_to(pb)
+		if l < 0.5:
+			return
+		var dd := (pb - pa) / l
+		var z1: float = wb[o + 7]
+		var col := wood * (0.78 + 0.32 * (0.5 + 0.5 * (dd.y * -0.74 - dd.x * -0.67)))
+		col.a = 1.0
+		if kind == kit.WK_OUT or kind == kit.WK_MERLON:
+			var poly := PackedVector2Array([bv.to_board(pa, 0.0)])
+			var n := maxi(int(l / kk / 0.46), 1)
+			for i in n + 1:
+				var f := float(i) / float(n)
+				poly.append(bv.to_board(pa.lerp(pb, f), z1 - (0.0 if i % 2 == 1 else 0.7)))
+			poly.append(bv.to_board(pb, 0.0))
+			_quad(poly, col)
+			return
+		if kind == kit.WK_CAP:
+			_quad(PackedVector2Array([bv.to_board(pa, z1), bv.to_board(pb, z1), bv.to_board(pb, z), bv.to_board(pa, z)]), wood_d)
+			return
+		# Posts (and the joist, the rails) along the face at the High path's places.
+		var step := 2.0 if kind == kit.WK_RAMP else float(kit.POST_STEP)
+		var pw := (0.16 if kind == kit.WK_RAMP else (0.3 if kind == kit.WK_STEP else 0.18)) * kk
+		var s0 := pa.dot(dd) / kk
+		var s1 := pb.dot(dd) / kk
+		var m := ceilf(s0 / step) * step
+		while m < s1:
+			var pc := pa + dd * (m - s0) * kk
+			_quad(PackedVector2Array([bv.to_board(pc - dd * pw * 0.5, z1), bv.to_board(pc + dd * pw * 0.5, z1),
+				bv.to_board(pc + dd * pw * 0.5, z), bv.to_board(pc - dd * pw * 0.5, z)]), wood_d)
+			m += step
+		var bands: Array = []
+		if kind == kit.WK_STEP:
+			bands = [[z1 - 0.3, z1]]
+		elif kind == kit.WK_IN:
+			bands = [[z1 - 0.13, z1], [z1 - 0.6, z1 - 0.5]]
+		else:
+			bands = [[0.4, 0.5], [z1 - 0.35, z1 - 0.25]]
+		for bd in bands:
+			_quad(PackedVector2Array([bv.to_board(pa, float(bd[1])), bv.to_board(pb, float(bd[1])), bv.to_board(pb, float(bd[0])),
+				bv.to_board(pa, float(bd[0]))]), col)
+
+	## A polygon with its degenerate points dropped (no "Invalid polygon").
+	func _quad(poly: PackedVector2Array, col: Color) -> void:
+		var q := PackedVector2Array()
+		for v in poly:
+			if q.is_empty() or q[q.size() - 1].distance_squared_to(v) > 0.0001:
+				q.append(v)
+		if q.size() > 2 and q[0].distance_squared_to(q[q.size() - 1]) <= 0.0001:
+			q.remove_at(q.size() - 1)
+		if q.size() < 3:
+			return
+		var area := 0.0
+		for v in q.size():
+			var v2 := (v + 1) % q.size()
+			area += q[v].x * q[v2].y - q[v2].x * q[v].y
+		if absf(area) < 0.5:
+			return
+		col.a = 1.0
 		draw_colored_polygon(q, col)

@@ -188,6 +188,32 @@ func _build() -> void:
 					orchard_kind, 1, _rand() % 8)
 				xx += 6.0
 			yy += 6.0
+	# The native lesson's village (city key "wring"): its fenced garden plots outside the palisade planted, in turn,
+	# with plantain rows (the tropic palms, small), maize rows (bushes, small and close) and left bare (view only).
+	if sim.map_info.has("city") and int(sim.map_info["city"].get("wring", 0)) != 0:
+		var q := 0
+		for f in sim.map_info["city"]["fields"]:
+			if int(f[4]) != 2:
+				continue
+			var rc := Rect2(f[0], f[1], int(f[2]) - int(f[0]), int(f[3]) - int(f[1])).grow(-2.0)
+			var crop := q % 3
+			q += 1
+			if crop == 2 or rc.size.x < 4.0 or rc.size.y < 4.0:
+				continue
+			var row_step := 3.6 if crop == 0 else 2.6
+			var plant_step := 3.0 if crop == 0 else 1.5
+			var yy2 := rc.position.y + row_step * 0.5
+			while yy2 < rc.end.y:
+				var xx2 := rc.position.x + plant_step * 0.5
+				while xx2 < rc.end.x:
+					if crop == 0:
+						_push(data, (xx2 + _randf() * 0.5) * k, (yy2 + _randf() * 0.4) * k, (1.05 + _randf() * 0.3) * k,
+							3, _rand() % 4, _rand() % 8)
+					else:
+						_push(data, (xx2 + _randf() * 0.3) * k, (yy2 + _randf() * 0.2) * k, (0.6 + _randf() * 0.15) * k,
+							7, _rand() % 4, _rand() % 8)
+					xx2 += plant_step
+				yy2 += row_step
 	# Water's edge (crossing maps): reeds, a few willows.
 	var reeds := PackedFloat32Array()
 	if sim.riv_on != 0 and sim.map_info.has("river"):

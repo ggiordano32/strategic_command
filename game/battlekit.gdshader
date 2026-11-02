@@ -78,7 +78,8 @@ void vertex() {
 		vec2 d = (B - A) / max(length(B - A), 0.0001);
 		vec2 g;
 		float z;
-		if (kind < 4.5) {
+		bool tim = ob_timber > 0.5;
+		if (kind < 4.5 || (tim && kind > 6.5)) {   // (a stockade's kind 7: a fence, a face)
 			g = mix(A, B, UV.x);
 			z = mix(C.y, zdm * 0.1, UV.y);
 			v_wall = vec4(10.0 + kind, dot(g, d) / ob_ppm, z, C.y);
@@ -87,6 +88,11 @@ void vertex() {
 			g = mix(mix(A, B, UV.x), mix(C, B + cd.yz, UV.x), UV.y);
 			z = zdm * 0.1;
 			v_wall = vec4(10.0 + kind, dot(g, d) / ob_ppm, UV.y, z);
+			if (tim && kind > 5.5) {
+				// A stockade's stair: from the ground at the A end up to the platform at B; along it in metres from A.
+				z *= UV.x;
+				v_wall.y = UV.x * length(B - A) / ob_ppm;
+			}
 			rot_cs = vec2(0.0);
 		}
 		VERTEX = ob_board(g) - vec2(0.0, z * ob_ppm * OB_SIN);
@@ -141,9 +147,116 @@ vec4 ob_near_col(float a, float fade) {
 // against the key light (from the north-west: a face toward the camera is in half shade), a darker foot, a lit lip;
 // the merlons on the outer edge (gaps cut out), the walk darker than the faces and the inner rampart darker still, so
 // the wall reads thick but walkable. Returns alpha 0 for a cut-out pixel.
+// The timber stockade (game/battlekit.gd "the timber stockade"; ob_timber): upright logs with pointed tops, lashed,
+// on an earth footing; posts with knee braces under a plank platform; a rail on its inner edge; plank stairs; the
+// garden fences. Returns alpha 0 where the ground (or what is behind) shows through.
+const float LOG_W = 0.46;
+const float POST_STEP = 2.5;
+vec4 ob_timber_col() {
+	int kind = int(v_wall.x - 10.0 + 0.5);
+	float u = v_wall.y;
+	vec3 wood = vec3(0.50, 0.37, 0.24);
+	vec3 wood_d = vec3(0.34, 0.25, 0.17);
+	vec3 plank = vec3(0.62, 0.49, 0.33);
+	vec3 earth = vec3(0.45, 0.36, 0.24);
+	vec3 col;
+	vec2 L = normalize(light_dir.xy);
+	if (kind <= 4 || kind == 7) {
+		float z = v_wall.z;
+		float z1 = v_wall.w;
+		float lf = 0.80 + 0.36 * (0.5 + 0.5 * dot(rot_cs, L));
+		if (kind <= 1) {
+			// The logs (the same on both faces: |u| along the wall), each its own height and shade, a point on top.
+			float au = abs(u);
+			float sx = fract(au / LOG_W);
+			float lg = floor(au / LOG_W);
+			float tip = z1 - 0.32 * ob_hash(vec2(lg, 7.0));
+			if (z > tip - 0.8 * abs(sx - 0.5) * 2.0) {
+				return vec4(0.0);
+			}
+			float round_k = 0.62 + 0.42 * sin(sx * 3.14159);
+			col = wood * (0.72 + 0.26 * ob_hash(vec2(lg, 3.0))) * round_k;
+			col *= 0.9 + 0.1 * ob_hash(vec2(lg, floor(z * 2.5)));
+			col = mix(col, vec3(0.70, 0.58, 0.40) * round_k, step(tip - 0.8, z) * 0.55);   // the fresh-cut point
+			float hm = z1 - 0.8;
+			// Lashing (the outer face: rope bands) or the rails behind (the inner face: a pole, lit on top).
+			float b1 = step(abs(z - 1.1), 0.08) + step(abs(z - (hm - 0.7)), 0.08);
+			if (kind == 0) {
+				col = mix(col, vec3(0.66, 0.58, 0.42) * round_k, clamp(b1, 0.0, 1.0) * 0.8);
+				col = mix(col, earth * 0.8, 1.0 - smoothstep(0.15, 0.45, z));   // the earth footing
+			} else {
+				float r1 = step(abs(z - 1.1), 0.11) + step(abs(z - (hm - 0.7)), 0.11);
+				col = mix(col, wood_d * 1.15, clamp(r1, 0.0, 1.0));
+			}
+		} else if (kind == 2) {
+			// A post row under the platform: posts every POST_STEP, knee braces up to the joist at the top.
+			float pc = abs(fract(u / POST_STEP + 0.5) - 0.5) * POST_STEP;
+			float dz = z1 - 0.3 - z;
+			bool post = pc < 0.15;
+			bool beam = dz < 0.0;
+			bool brace = abs(pc - 0.15 - dz) < 0.09 && dz < 1.0 && dz > 0.0;
+			if (!post && !beam && !brace) {
+				return vec4(0.0);
+			}
+			col = beam ? wood * 0.92 : (post ? wood_d * (0.75 + 0.4 * (1.0 - pc / 0.15)) : wood_d * 0.95);
+			col = mix(col, col * 1.25, beam ? smoothstep(z1 - 0.1, z1 - 0.02, z) : 0.0);
+		} else if (kind == 3) {
+			// The rail on the platform's inner edge: posts over the ones below, a top rail and a middle one.
+			float pc = abs(fract(u / POST_STEP + 0.5) - 0.5) * POST_STEP;
+			bool post = pc < 0.09;
+			bool top = z > z1 - 0.13;
+			bool midr = abs(z - (z1 - 0.55)) < 0.05;
+			if (!post && !top && !midr) {
+				return vec4(0.0);
+			}
+			col = wood_d * (top ? 1.25 : 1.0);
+		} else if (kind == 7) {
+			// A garden fence: weathered posts every 2 m and two rails.
+			float pc = abs(fract(u / 2.0 + 0.5) - 0.5) * 2.0;
+			float pt = z1 - 0.15 * ob_hash(vec2(floor(u / 2.0 + 0.5), 5.0));
+			bool post = pc < 0.08 && z < pt;
+			bool rail = abs(z - 0.45) < 0.05 || abs(z - (z1 - 0.3)) < 0.05;
+			if (!post && !rail) {
+				return vec4(0.0);
+			}
+			col = vec3(0.50, 0.43, 0.34) * (post ? 0.85 : 1.05);
+		} else {
+			col = wood_d * 1.05;   // an end
+		}
+		col *= lf;
+		col *= 0.74 + 0.26 * smoothstep(0.0, 1.3, z);
+	} else {
+		float ac = v_wall.z;
+		if (kind == 6) {
+			// A stair: stringers either side, treads with their shadowed risers.
+			if (ac < 0.12 || ac > 0.88) {
+				col = wood_d;
+			} else {
+				float tr = fract(u / 0.32);
+				col = plank * (0.88 + 0.1 * ob_hash(vec2(floor(u / 0.32), 2.0))) * (tr < 0.72 ? 1.0 : 0.62);
+			}
+		} else {
+			// The platform: planks across it (0.3 m), edge beams, a lit lip on the inner edge.
+			float au = abs(u);
+			float pl = floor(au / 0.3);
+			col = plank * (0.80 + 0.16 * ob_hash(vec2(pl, 9.0)));
+			col *= 1.0 - 0.3 * (1.0 - smoothstep(0.0, 0.06, min(fract(au / 0.3), 1.0 - fract(au / 0.3))));
+			col = mix(col, wood_d, step(ac, 0.05));
+			col = mix(col, col * 1.25, smoothstep(0.9, 0.97, ac));
+		}
+	}
+	float lum = dot(col, vec3(0.3, 0.59, 0.11));
+	col = mix(vec3(lum), col, sat);
+	col = (col - 0.5) * contrast + 0.5;
+	return vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+
 const float MERLON_STEP = 2.0;   // tools/battlekit b_wall_strip: 8 merlons a 16 m tile, 1.1 m wide
 const float MERLON_W = 1.1;
 vec4 ob_wall_col() {
+	if (ob_timber > 0.5) {
+		return ob_timber_col();
+	}
 	int kind = int(v_wall.x - 10.0 + 0.5);
 	int ci = clamp(int(culture + 0.5), 0, 7);
 	vec3 stone = vec3(0.66, 0.62, 0.55) * stone_tint[ci];
@@ -267,10 +380,16 @@ void fragment() {
 	float diff = clamp(dot(nrm, L), 0.0, 1.0);
 	float hemi = 0.5 + 0.5 * nz;
 	float lf = (amb * (0.7 + 0.3 * hemi) + key * diff) / (amb + key * L.z);
-	int ci = clamp(int(culture + 0.5), 0, 7);
+	// (culture + 8: palm thatch, the native lesson's shacks and lean-tos: their light straw turned grey-brown.)
+	bool palm = culture > 7.5;
+	int ci = clamp(int(culture + 0.5) - (palm ? 8 : 0), 0, 7);
 	vec3 col = a.rgb;
 	float mc = n.a;
 	if (mc > 0.85) {
+		if (palm) {
+			float al = dot(a.rgb, vec3(0.3, 0.59, 0.11));
+			col = mix(col, col * vec3(0.70, 0.76, 0.86), smoothstep(0.43, 0.52, al));
+		}
 		col *= stone_tint[ci];
 	} else {
 		vec3 p = mc > 0.55 ? pal_r[ci] : (mc > 0.25 ? pal_g[ci] : pal_b[ci]);

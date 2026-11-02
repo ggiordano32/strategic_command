@@ -49,6 +49,12 @@ func _process(_d: float) -> bool:
 			var h := float(battle.sim.field_h) / 1024.0
 			c = Vector2(w / 2.0, h / 2.0)
 			zoom = minf(1240.0 / (w * Battle.PX_PER_M), 700.0 / (h * Battle.PX_PER_M))
+		if "--print" in OS.get_cmdline_user_args():
+			print("CITY c=", Vector2(int(lay["cx"]), int(lay["cy"])), " t=", lay["t"], " walls=", lay["walls"], " pal=", lay.get("palisade", 0))
+			print("POLY ", lay["poly"])
+			print("FIELDS ", lay["fields"])
+			for u in battle.sim.n_units:
+				print("UNIT ", u, " side ", battle.sim.u_side[u], " at ", Vector2(battle.sim.u_cx[u], battle.sim.u_cy[u]) / 1024.0)
 		battle._cam_to(c * Battle.PX_PER_M)
 		battle.camera.zoom = Vector2.ONE * zoom
 	elif frame == 60:

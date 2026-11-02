@@ -91,7 +91,8 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 	# (A West town, phase W: sandy earth streets, the plaza paved, zone 3.)
 	var west := MapGen.west_kit(lay)
 	# (The native lesson's ring village: a beaten-earth plaza like its streets, zone 2.)
-	var plz := 3 if west and int(lay.get("wring", 0)) == 0 else 2
+	var wring := int(lay.get("wring", 0)) != 0
+	var plz := 3 if west and not wring else 2
 	_fill(zone, marked, w, h, org, Rect2(float(int(ag[0])) - ahs, float(int(ag[1])) - ahs, ahs * 2.0, ahs * 2.0), plz)
 	# Paint.
 	var paved := style != 3 and style != 5 and not west
@@ -108,8 +109,9 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 			var sy := int((org.y + (cy + 0.5) * CELL) * 0.5)
 			if sx >= 0 and sy >= 0 and sx < sim.ob_w and sy < sim.ob_h:
 				var k0: int = sim.obs[sy * sim.ob_w + sx]
-				if k0 == MapGen.C_BUILDING and BoardView.oblique:
-					pass   # (the oblique view: the house stands up; its ground is the lane's, no dark footing)
+				if k0 == MapGen.C_BUILDING and (BoardView.oblique or wring):
+					pass   # (the oblique view: the house stands up; its ground is the lane's, no dark footing; the native
+					# lesson's village neither: its turned houses' 2 m cells showed as stepped dark squares round the roofs)
 				elif k0 == MapGen.C_BUILDING:
 					var nf := float((((cx * 374761393) ^ (cy * 668265263)) * 1274126177 >> 8) & 255) / 255.0
 					var fo := Vector3(0.27, 0.23, 0.19) * (0.9 + 0.2 * nf)
@@ -139,6 +141,8 @@ func build(lay: Dictionary, k: float, style: int, sim = null) -> void:
 			# Streets: pale packed earth with a darker rim; the yards round the houses: bare earth, lighter and warmer
 			# than the old dark squares, fading out at the edge (alpha below).
 			col = Vector3(0.76, 0.69, 0.55) if z == 2 else Vector3(0.62, 0.50, 0.35)
+			if wring and z == 2:
+				col = Vector3(0.72, 0.60, 0.44)   # (the lesson's village: its streets and plaza the floor's earth, beaten paler)
 			col *= 0.92 + 0.12 * n
 			if edge and z == 2:
 				col *= 0.74

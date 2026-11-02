@@ -836,26 +836,42 @@ def b_wall_sim(P, t, pp, L=16, h=5.0):
     P.box("stone", 0, wy0 + 0.3, h, L, 0.6, 0.5)                            # inner low parapet
 
 
+def stockade(P, t, W, tiles=1, L=12.0, pp=2, h=5.0):
+    """The timber stockade (2026-11-01; game/battlekit.gd "the timber stockade" draws the same in the oblique view):
+    a row of upright logs on a low earth footing on the band's outer edge (+y) with pointed tops, lashed to rails
+    behind; a plank fighting platform at the walk's height h from the logs to the walk's inner edge (pp + 4 m in),
+    on two rows of posts, open underneath; a rail on its inner edge; the inner band left empty (transparent, so the
+    ground shows). Logs and posts at tile-periodic places (27 logs and 5 posts a 12 m tile)."""
+    yo = t / 2
+    yw = t / 2 - pp - WALK
+    ys = yo - 0.25                                   # the logs' line
+    P.box("earth", 0, yo - 0.4, -0.01, W, 1.2, 0.3)  # the footing
+    nl, npost = 27, 5
+    for k in range(tiles):
+        r = rng(5 + int(t))                          # the same logs in every tile: periodic
+        for i in range(nl):
+            xx = -W / 2 + k * L + (i + 0.5) * L / nl
+            hh = h + r.uniform(-0.3, 0.0)
+            P.cyl("timber", xx, ys + r.uniform(-0.04, 0.04), 0, 0.23, hh, 8, r2=0.21)
+            P.cyl("timber", xx, ys, hh, 0.21, 0.8, 8, r2=0.03)
+    for z in (1.1, h - 0.7):                         # the rails the logs are lashed to
+        P.box("timber_d", 0, ys - 0.33, z - 0.1, W, 0.2, 0.2)
+    deck_w = (ys - 0.25) - yw
+    P.box("timber", 0, yw + deck_w / 2, h - 0.12, W, deck_w, 0.12)       # the platform
+    P.box("timber_d", 0, yw + 0.15, h - 0.42, W, 0.3, 0.3)               # its edge joist
+    for k in range(tiles):
+        for i in range(npost):
+            x = -W / 2 + k * L + (i + 0.5) * L / npost
+            for y in (yw + 0.15, yw + deck_w / 2):
+                P.box("timber_d", x, y, 0, 0.3, 0.3, h - 0.12)          # posts
+            P.box("timber_d", x, yw + 0.1, h, 0.16, 0.16, 1.0)          # the rail's posts
+    P.box("timber", 0, yw + 0.1, h + 0.88, W, 0.14, 0.12)                # the rail
+    P.box("timber", 0, yw + 0.1, h + 0.42, W, 0.1, 0.08)
+
+
 def b_pal_sim(P, t, L=12):
-    """Timber palisade: stakes along the outer edge, a plank fighting walk on an earth bank."""
-    r = rng(5 + int(t))
-    P.box("earth", 0, 0, -0.01, L, t + 0.8, 0.5)
-    P.box("earth", 0, 0, 0, L, t, 2.5)
-    P.box("timber", 0, -0.3, 2.5, L, t - 0.6, 0.2)
-    for i in range(int(L / 0.9) + 1):
-        x = -L / 2 + 0.45 + i * 0.9
-        if abs(x) > L / 2:
-            continue
-        for row, y in enumerate((t / 2 - 0.55, t / 2 - 1.3)):
-            xx = x + (0.45 if row else 0.0)
-            if abs(xx) > L / 2 - 0.1:
-                continue
-            h = 3.6 + r.uniform(-0.3, 0.3)
-            P.cyl("timber", xx, y, 2.5, 0.42, h, 8, r2=0.32)
-            P.cyl("timber", xx, y, 2.5 + h, 0.32, 0.8, 8, r2=0.04)
-    P.box("timber_d", 0, t / 2 - 2.0, 2.7, L, 0.25, 0.3)                    # rail behind the stakes
-    for i in range(3):
-        P.box("timber_d", -L / 2 + (i + 0.5) * L / 3, -t / 2 + 0.3, 2.5, 0.35, 0.35, 0.9)  # inner posts
+    """Timber palisade piece (12 m): the stockade's cross-section with ends (the strips ps_<t> are the walls)."""
+    stockade(P, t, L - 0.2, 1, L - 0.2)
 
 
 def b_tower_timber(P, r=6.0):
@@ -938,22 +954,7 @@ def b_wall_strip(P, t, pp, L=16.0, tiles=3):
 
 
 def b_pal_strip(P, t, L=12.0, tiles=3):
-    W = L * tiles
-    P.box("earth", 0, 0, -0.01, W, t + 0.8, 0.5)
-    P.box("earth", 0, 0, 0, W, t, 2.5)
-    P.box("timber", 0, -0.3, 2.5, W, t - 0.6, 0.2)
-    n = 13                                   # stakes per row and tile
-    for k in range(tiles):
-        r = rng(5 + int(t))                  # the same heights in every tile: periodic
-        for i in range(n):
-            for row, y in enumerate((t / 2 - 0.55, t / 2 - 1.3)):
-                xx = -W / 2 + k * L + (i + (0.5 if row else 0.0) + 0.5) * L / n
-                h = 3.6 + r.uniform(-0.3, 0.3)
-                P.cyl("timber", xx, y, 2.5, 0.42, h, 8, r2=0.32)
-                P.cyl("timber", xx, y, 2.5 + h, 0.32, 0.8, 8, r2=0.04)
-    P.box("timber_d", 0, t / 2 - 2.0, 2.7, W, 0.25, 0.3)
-    for k in range(tiles * 3):
-        P.box("timber_d", -W / 2 + (k + 0.5) * L / 3, -t / 2 + 0.3, 2.5, 0.35, 0.35, 0.9)
+    stockade(P, t, L * tiles, tiles, L)
 
 
 PIECES_S = {"ws_%d_%d" % (t, pp): (48, (lambda t, pp: lambda P: b_wall_strip(P, t, pp))(t, pp)) for t, pp in WALL_VARIANTS}
