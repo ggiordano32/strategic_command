@@ -4404,3 +4404,40 @@ it reads a range:
   it 67 -> 50). A post that walks in to lob at the men behind the gate once the walk is clear is open.
 - **Equal-force sieges** (`rome_walls`, 8 seeds, 144 battles): attacker wins 71 / 40 / 31 % -> 75 / 50 / 38 % (walls 1 /
   2 / 3), no cell beyond its interval.
+
+## 56. Covering archers walk in to lob over the wall (2026-11-02)
+
+The open of note 55: the besiegers' archer post (`_att_missile`, `S_COVER_OUT` 110 m off the attacked gate) reaches
+the walk, not the men on the ground behind the wall, and the archers never left it, so the AI's own sieges lost reach
+against defenders standing inside. The rule: siege_and_towns.md "Archers walk in to lob over the wall (as built,
+2026-11-02)".
+
+- **When.** In the approach (the attacked gate shut), every unit think (1 s), for a covering missile unit that lobs
+  (`sim.lobber`) with ammunition and not in a melee: no enemy unit on the walls within its range (`mrange`) of its
+  post. A man on the walk there means the post as before (it shoots him from there); the post is the reference, not
+  where the unit stands, so the decision does not flicker as it walks.
+- **Where** (`SiegeAI._lob_stand`): the nearest enemy on the ground behind the wall (from the post; seen, not in a
+  building, not on a ladder or tower; the line crosses a wall or a shut gate) at `S_LOB_PCT` % of `range_vs` (the lob
+  cut and heights counted) on the line from it to the post, half the post's spread to the side; off the gate's axis
+  by `LOB_LANE` 15 m out to `S_COVER_OUT` (the ram and the hackers), then within `LOB_MAX_PCT` 95 % of the lobbed
+  range or none; open ground the post reaches (outside); not within `LOB_EQ_R` 20 m of the side's planted ladders or
+  poles or its siege towers; not in the reach (`range_vs` + `DF_PAD`) of enemy wall shooters with more than half the
+  men of all the side's lobbers (`LOB_ODDS` 2). Any of these fails: the post. A re-manned walk or a target gone too
+  deep sends the unit back to the post the next think.
+- **Knob** `S_LOB_PCT` (294; Easy 0 = keep the post, a deliberate mistake; Average and Skilled 85, the attack order's
+  closing). The constants are `LOB_*` in sim/siege_ai.gd. No new state; the defenders are unchanged (their archers
+  stand on the walk, which the lob does not cut; a defender lobbing out from the ground is rare in their layout).
+- **Measured** (8 seeds, `lob_probe` from note 55: walls-2 castrum, 5 archers 80 + 4 foot with ladders and a ram
+  against 2 archers 80 + 3 spear, both AI; "behind" the attacking archers' kills of men on the ground):
+
+| case | attacker wins | min | archers' kills (walk / behind) | archers' losses | wall archers' kills / losses | forward share of approach |
+|---|---|---|---|---|---|---|
+| the probe, before | 8 / 8 | 6.4 | 138 (88 / 50) | 219 | 209 / 137 | 0 |
+| after | 8 / 8 | 6.2 | 141 (89 / 52) | 218 | 209 / 137 | about 1 % (0-4) |
+| wall archers 30 men a unit, before | 8 / 8 | 6.1 | 98 (35 / 64) | 60 | 52 / 52 | 0 |
+| after | 8 / 8 | 5.1 | 231 (30 / 201) | 72 | 57 / 48 | about 48 % |
+
+  In the owner's case the walk stays manned until the ram breaks the gate (4.2 min), so the archers keep the post;
+  where the walk is cleared they go in and kill three times as many men behind the wall for 12 more losses.
+  `rome_walls` (8 seeds, 144 battles): attacker wins 75 / 50 / 38 / all 54 -> 71 / 48 / 40 / 53 % (walls 1 / 2 /
+  3), no cell beyond its interval. Open: men in buildings are not lobbed at; the stand is from the unit's middle.

@@ -191,6 +191,14 @@ const DF_GUARD_R := 45 * M    # ... and no enemy horse or pike within this of th
 const DF_CHARGE_T := 450      # a charge not in contact after this (ticks: 45 s) goes back to its post
 const DF_FB_STEP := 8 * M     # falling back: points this far apart along the post-to-plaza way ...
 const DF_FB_N := 24           # ... at most this many (192 m), then the plaza
+## Archers walk in to lob over the wall (docs/AI.md 56, 2026-11-02; AP.S_LOB_PCT,
+## Average and Skilled): the stand keeps out of the gate's lane, off the side's
+## siege equipment and away from wall shooters that would outshoot the side's
+## lobbers.
+const LOB_LANE := 15 * M      # a stand in front of the attacked gate (out to S_COVER_OUT) keeps this far off its axis (the ram's and the hackers' lane) ...
+const LOB_MAX_PCT := 95       # ... and, moved off it, stays within this % of the lobbed range of its target (else the post)
+const LOB_EQ_R := 20 * M      # no stand within this of the side's planted ladders / poles or its siege towers
+const LOB_ODDS := 2           # no stand in the reach of enemy wall shooters (range_vs + DF_PAD) with men x this above the side's lobbers' men
 ## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
 ## fort as well as taking the town round it only with a ram, ladders or guns
 ## of their own, and only when the fort holds FORT_STORM_PCT % or more of the
@@ -2724,11 +2732,112 @@ static func _att_missile(sim, u: int, phase: int) -> void:
 	if UT.stat(sim.u_type[u], "m_arc") == 0 and phase == SP_APPROACH:
 		out = kn[AP.S_STAGE_OUT]  # javelins wait with the foot
 	var rk := _rank(sim, u, func(o): return sim.u_cls[o] == UT.CLS_MISSILE)
-	var spot := _gate_point(sim, g, out, _spread(rk.x, rk.y, kn[AP.S_MIS_SPREAD]))
+	var lat := _spread(rk.x, rk.y, kn[AP.S_MIS_SPREAD])
+	var spot := _gate_point(sim, g, out, lat)
+	if phase == SP_APPROACH and kn[AP.S_LOB_PCT] > 0 and sim.g_state[g] == GATE_CLOSED:
+		var ls := _lob_stand(sim, u, g, spot, lat / 2, kn)
+		if ls.x >= 0:
+			# (Nothing on the walls before the post in reach: in to lob at the men
+			# behind the wall; docs/AI.md 56.)
+			if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - ls.x, sim.u_dy[u] - ls.y) >= 10 * M:
+				_go_home(sim, u, ls.x, ls.y, ls.z, 10)
+			return
 	var face := FM.atan2_a(sim.g_y[g] - spot.y, sim.g_x[g] - spot.x)
 	_go_home(sim, u, spot.x, spot.y, face, 10)
 	if kn[AP.AK_FIRE_GATE] != 0 and BattleAI._d(spot.x - sim.u_ax[u], spot.y - sim.u_ay[u]) <= 10 * M:
 		_fire_at_gate(sim, u, g)
+
+
+## Covering archer unit u's stand to lob over the wall (docs/AI.md 56,
+## AP.S_LOB_PCT): when no enemy on the walls stands within its range of its
+## post `post` before the attacked gate g, the nearest enemy on the ground
+## behind the wall (from the post; not in a building, seen) is lobbed at from
+## S_LOB_PCT % of u's range at it (range_vs, the lob's cut counted), on the
+## line from it to the post, `lat` to the side; the stand must be open ground
+## the post reaches (outside), out of the gate's lane (LOB_LANE), clear of the
+## side's ladders and towers (LOB_EQ_R) and not where the enemy's wall shooters
+## reach it with LOB_ODDS times worse odds. (x, y, facing), x = -1 none.
+static func _lob_stand(sim, u: int, g: int, post: Vector2i, lat: int, kn: PackedInt32Array) -> Vector3i:
+	var none := Vector3i(-1, -1, 0)
+	if not sim.lobber(u) or sim.u_ammo[u] <= 0 or sim.u_fighting[u] > 0:
+		return none
+	var side: int = sim.u_side[u]
+	var mr: int = sim.mrange(u)
+	var t := -1
+	var td := 0
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or BattleAI.is_char(sim, o) or sim.hidden_from(o, side):
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - post.x, sim.u_cy[o] - post.y)
+		if sim.u_wall[o] > 0:
+			if d <= mr:
+				return none  # (the walk before the post: shoot it from there)
+			continue
+		if sim.u_lq[o] >= 0 or (sim.occ_on != 0 and sim.u_occ[o] > 0):
+			continue
+		if t >= 0 and d >= td:
+			continue
+		if sim.wall_cross_at(post.x, post.y, sim.u_cx[o], sim.u_cy[o]) < 0:
+			continue  # (not behind the wall)
+		t = o
+		td = d
+	if t < 0:
+		return none
+	var rv: int = sim.range_vs(u, t)
+	if not sim.lob_over_wall(u, t):
+		rv = rv * sim.ARC_OVER_WALL_PCT / 100
+	var want: int = rv * kn[AP.S_LOB_PCT] / 100
+	if absi(lat) >= want:
+		lat = 0
+	var tx: int = sim.u_cx[t]
+	var ty: int = sim.u_cy[t]
+	var dx: int = post.x - tx
+	var dy: int = post.y - ty
+	var dl: int = maxi(BattleAI._d(dx, dy), 1)
+	if dl <= want:
+		return none  # (the post is in reach already)
+	var al: int = FM.isqrt(want * want - lat * lat)
+	var x: int = tx + (dx * al - dy * lat) / dl
+	var y: int = ty + (dy * al + dx * lat) / dl
+	# Out of the gate's lane: off its axis by LOB_LANE.
+	var f: Vector2i = sim.gate_face(g)
+	var c := FM.cos_a(sim.g_dir[g])
+	var sn := FM.sin_a(sim.g_dir[g])
+	var go: int = ((x - f.x) * c + (y - f.y) * sn) / FM.TRIG_ONE
+	var gl: int = (-(x - f.x) * sn + (y - f.y) * c) / FM.TRIG_ONE
+	if go >= 0 and go <= kn[AP.S_COVER_OUT] and absi(gl) < LOB_LANE:
+		var sg := 1 if (gl > 0 or (gl == 0 and lat >= 0)) else -1
+		gl = sg * LOB_LANE
+		x = f.x + (c * go - sn * gl) / FM.TRIG_ONE
+		y = f.y + (sn * go + c * gl) / FM.TRIG_ONE
+		if BattleAI._d(x - tx, y - ty) > rv * LOB_MAX_PCT / 100:
+			return none
+	x = clampi(x, 8 * M, sim.field_w - 8 * M)
+	y = clampi(y, 8 * M, sim.field_h - 8 * M)
+	var p: Vector2i = sim.open_snap(sim, x, y, sim._ground_mask(u))
+	var ra: int = sim.reach_at(post.x, post.y)
+	if ra < 0 or sim.reach_at(p.x, p.y) != ra or BattleAI._d(p.x - tx, p.y - ty) > rv * LOB_MAX_PCT / 100:
+		return none  # (inside, or no open ground there)
+	for q in sim.n_eq:
+		if sim.q_side[q] != side or sim.q_state[q] == Q_WRECKED:
+			continue
+		if (sim.q_kind[q] == EQ_TOWER or sim.q_state[q] == Q_PLANTED) \
+				and BattleAI._d(sim.q_x[q] - p.x, sim.q_y[q] - p.y) < LOB_EQ_R:
+			return none
+	# The enemy's wall shooters reaching the stand against the side's lobbers.
+	var thr := 0
+	var own := 0
+	for o in sim.n_units:
+		if sim.u_state[o] != U_READY or sim.u_ammo[o] <= 0 or sim.mrange(o) <= 0:
+			continue
+		if sim.u_side[o] == side:
+			if sim.lobber(o):
+				own += sim.u_alive[o]
+		elif sim.u_wall[o] > 0 and BattleAI._d(sim.u_cx[o] - p.x, sim.u_cy[o] - p.y) <= sim.range_vs(o, u) + DF_PAD:
+			thr += sim.u_alive[o]
+	if thr * LOB_ODDS > own:
+		return none
+	return Vector3i(p.x, p.y, FM.atan2_a(ty - p.y, tx - p.x))
 
 
 ## Attacking missile unit u with a fire kind, standing at its post: it sets

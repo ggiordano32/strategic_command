@@ -722,6 +722,11 @@ antisymmetric), and the charge's extra victim is no longer the first found
 in grid scan order. Result: top army wins 51.4% (as given) and 49.8% (side 1 listed first) of
 420 battles each, 50.6% overall; mirrored duels per type within noise.
 
+
+The siege AI's covering archers walk in to a stand inside the lob's reach once the walls before their post
+are clear (2026-11-02, `S_LOB_PCT`): siege_and_towns.md "Archers walk in to lob over the wall (as built,
+2026-11-02)", docs/AI.md 56.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

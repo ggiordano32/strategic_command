@@ -2972,3 +2972,36 @@ assault's Easy draws every battle by design (Easy's canoes fight on land and nob
 `west_harbour_assault` ("West: the harbour assault, raiders at the quay": a
 Miskito war party against a walled Spanish port, the canoes afloat off its left shore) and `tayasal` ("The lake of
 Tayasal, 1697": the Itza's oppidum on the lake, the Spanish by land with ladders and a falconet battery).
+
+### Archers walk in to lob over the wall (as built, 2026-11-02)
+
+The follow-on of battle_sim.md "Lobbing over a wall (as built, 2026-11-02)" (docs/AI.md 56): since the lob rule the
+besiegers' covering archers at their post (`S_COVER_OUT`, 110 m off the attacked gate) reach the walk but not the men
+on the ground behind the wall, and they never walked in. Now, in the approach (the attacked gate shut), a covering
+missile unit that lobs (`lobber`: bows, slings, grenades, torch raiders; not javelins or guns) with ammunition left and
+not in a melee leaves its post when no enemy unit on the walls (walk or tower) stands within its range of the post:
+nothing there to shoot. Its target is the enemy unit on the ground behind the wall nearest the post (seen, not in a
+building, not on a ladder or siege tower; "behind the wall": the line from the post to it crosses a standing wall or a
+shut gate, `wall_cross_at`). Its stand is `S_LOB_PCT` (85) % of its range at that target (`range_vs`, so the 60 %
+lob cut and the heights are counted) from the target, on the line from the target to the post, half its post's
+spread to the side (the attack order's closing is 85 % too). The stand is refused, and the unit keeps its post, when
+it is not open ground the post's ground reaches (outside the wall), when it is within 20 m (`LOB_EQ_R`) of the side's
+planted ladders or poles or its siege towers, or when the enemy's wall shooters that reach it (their `range_vs` +
+`DF_PAD`) have more than half as many men as all the side's lobbers (`LOB_ODDS` 2: the walk's archers shoot from the
+battlements and win the duel 2 : 1 headless). In front of the attacked gate (out to `S_COVER_OUT`) a stand keeps
+`LOB_LANE` 15 m off the gate's axis (the ram's and the hackers' lane), and if that puts it beyond 95 % of the
+lobbed range the post is kept. Re-decided every unit think (1 s): a man back on the walk within range of the post, or
+the target gone or too deep in the town, and the unit goes back to its post (shooting the walk from there as before).
+The assault (a gate open or broken, a breach) is unchanged (the archers follow to 40 m off the breach). Easy keeps its
+archers at the post. The defenders are unchanged (their archers stand on the walk, where the lob does not apply).
+No new state.
+
+Measured (8 seeds; the `lob_probe` of 01e1729: a walls-2 castrum, five archer units of 80 outside with two heavy and
+two spear and ladders and a ram, against two archers of 80 and three spear, both AI): 8 / 8 attacker wins before and
+after, the attacking archers' kills 138 -> 141 (on the walk 88 -> 89, behind it 50 -> 52), their losses 219 -> 218;
+the walk is manned through almost the whole approach (the gate falls at 4.2 minutes) and the archers stand forward
+about 1 % of the approach (0-4 % a seed). With the wall archers at 30 men a unit (the walk cleared early) the archers stand forward about
+half the approach: kills behind the wall 64 -> 201, their losses 60 -> 72, the battle decided 6.1 -> 5.1 minutes, the
+attackers' dead 139 -> 101. `rome_walls` (8 seeds, 144 battles) attacker wins 75 / 50 / 38 / all 54 -> 71 / 48 / 40 /
+53 %, no cell beyond its interval. Open: the cut is per unit pair, centre to centre, so a stand is chosen from the
+unit's middle; the stand ignores men in buildings; a unit walking in under a wall that is re-manned walks back.
