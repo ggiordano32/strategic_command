@@ -2296,6 +2296,11 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	var e := {"k": "captured", "r": r, "f": f, "from": old}
 	if how != "":
 		e["how"] = how
+	# (2026-11-02) taken by troops f landed in the region from the sea within the last two turns: the line names the landing
+	for le in st["events"]:
+		if str(le.get("k", "")) == "landed" and int(le["f"]) == f and int(le.get("r", -1)) == r and int(le["turn"]) >= int(st["turn"]) - 2:
+			e["sea"] = int(le.get("n", 0))
+			break
 	event(st, e)
 	CDip.on_capture(st, old, f, r)  # (version 10)
 	var sg := CState.siege_at(st, r)

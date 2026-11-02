@@ -1684,3 +1684,73 @@ of squares), and a flank group stood inside the other side's half, so the enemy 
 - **Not changed.** No `CState.VERSION` bump (the state's meaning is unchanged), the rules hash moves (`campaign/` changed),
   scenarios without the key hash as before; auto-resolved battles (the formula) never build the layout.
 - Tests: `tests/ambush_test.gd`; shots `tests/amb_shot.gd` (top and oblique deployment views).
+
+### A landing is contested, and a fleet puts to sea when its port falls (as built, 2026-11-02)
+
+The owner (phone, West, as the Miskito): "One of my big groups of ships off the coast of my city just disappeared when
+Tierra Firme landed and took the city. I didn't get a chance to fight with my fleet, I didn't even see them land and
+their ship is gone already. I'm not sure how they even got to my city." Diagnosed in the rules (headless probe, the
+session scratchpad `port/diagnosis.md`): a docked fleet had no zone and fought nothing, so a transport sailed to the beach
+one cell from it and landed with no battle; an undocked guard only blocked the voyage ("no way there by sea"), it never
+fought it; when the town fell `CFleet.take_docked` handed every ship docked there to the captor as a prize (troops
+aboard destroyed); the transport came from beyond sight in one turn (24-40 cells a turn against 3 cells of coastal sight)
+and dropped out of sight again with the town, whose coast had been the player's only sight there; the report said only
+"An army landed in Bluefields Lagoon."
+
+- **The contested landing** (`campaign/cfleet.gd`). Troops landing in a region whose port holds a docked fleet at war
+  with them (`landing_defenders`: docked in the landing cell's region, reaching the transport this turn at its pace, not
+  busy, not the flota nor a story fleet, not spared by the tutorial's shield) meet it first (`_contest`, after the
+  voyage, in `execute_moves`, and for a `land` order beside the beach): the defenders cast off and fight the transport
+  and the friendly fleets in its zone at the transport's cell, with the port's guns (`PORT_DEF_PCT` + walls) as any
+  defender in its own port. With a human on either side the battle is the fleets' usual pending sea battle (fought or
+  auto-resolved; co-op as any sea battle) carrying the landing (`"land": [fleet, cell, army, the last cell of the voyage]`
+  on the battle record); `apply_sea` lands the troops when the landing side won (or nobody is left to stop it), beside
+  the fleet, free to march next turn; lost, they stay aboard. AI-only it resolves at once and the troops land the same
+  turn when the landing side won. An AI defender stays behind the mole unless its power there is at least the sortie's
+  odds of the landing side's (`CAIFleet.fights_landing`, docs/AI.md 57); a human defender always comes out. A voyage
+  whose every way to the beach lies in the zone of a fleet guarding it (within `FLEET_ZONE` + 1 of the beach) is no longer
+  refused: `plan` opens those zones (`block_mask` `land_at`, `contest` 1) and the step into the zone is the sea battle,
+  which carries the landing the same way (won at once: the fleet sails on to the voyage's last cell and lands). The
+  AI's own landings are unchanged: they already avoid guarded beaches (`_approach`) and stronger fleets near the route,
+  docked ones included (`_ferry_safe`); the Rome navy uses the same code.
+- **The port falls** (`take_docked`, called by `CRules._capture`). A fleet docked there that is not friendly to the
+  captor puts to sea: cast off onto the open sea cell nearest its dock within `PORT_CELLS` of it that lies in no zone
+  of a fleet at war with it (`put_to_sea_cell`; along the coast for canoes), ships, crews and troops aboard kept (event
+  `fleet_to_sea`: "Your fleet at Bluefields (4 ships) put to sea when the town fell to Tierra Firme."). Only a fleet with
+  no such cell (penned in by enemy ships) is taken as before (prizes at `TAKEN_PCT`, the troops lost; `fleet_taken`
+  with `why` "penned": "... they could not get out").
+- **The seen landing.** `land()` marks the fleet `lw` [turn, the region's owner, its cell] when it lands troops in a
+  region not friendly to it; `CSight.compute` shows the owner's team that cell while the fleet lies on it, the turn it
+  lands and the next (so it stays in sight when the town falls that next turn); `CFleet.end_of_turn` drops the mark at
+  the second turn's end or when the fleet sails off (the AI may sail the empty transport away the next turn as before).
+  A landing after a pending battle counts from the turn just resolved.
+- **The report.** `landed` carries the units (`n`), the region's owner (`to`: the defender is always told, whatever the
+  fog), the fleet's ships and its captain: "Tierra Firme landed 7 units at Bluefields Lagoon from the sea (two Tierra
+  Firme galleons and a Tierra Firme frigate)."; `landing_contested` (how: withdrew / pending / won / lost) says the
+  port's fleet came out or stayed in; a `captured` by troops that landed in the region in the last two turns has `sea`:
+  "Tierra Firme took Bluefields from Miskito with the troops it landed from the sea." Old events read as before.
+- **State.** New optional keys only (the battle's `land`, the fleet's `lw`, event keys), read with defaults: no
+  `CState.VERSION` bump; the rules hash moves.
+- **Measured** (`campaign_sim` 72 seeds x 60 turns, all AI Average, HEAD -> after; a seed's mean, eliminations of 72):
+
+| | Rome f6 | Rome f10 | West f6 | West f10 |
+|---|---|---|---|---|
+| eliminations (total) | 154 -> 162 | 131 -> 146 | 39 -> 37 | 38 -> 48 |
+| battles | 47.2 -> 45.9 | 38.2 -> 38.5 | 57.7 -> 59.4 | 48.3 -> 47.3 |
+| sea battles | 8.5 -> 9.3 | 6.7 -> 7.9 | 26.8 -> 28.1 | 22.5 -> 23.4 |
+| landings (armies landed) | 8.4 -> 7.9 | 7.2 -> 7.3 | 21.9 -> 22.3 | 21.6 -> 19.3 |
+| landings contested | 0 -> 0.62 | 0 -> 0.36 | 0 -> 2.12 | 0 -> 2.00 |
+| fleets put to sea / taken in port | 0 / 4.53 -> 4.26 / 0.21 | 0 / 2.78 -> 3.08 / 0.22 | 0 / 4.11 -> 4.79 / 0.04 | 0 / 3.49 -> 3.54 / 0.12 |
+
+  Per faction (eliminated in N of 72): Rome f6 Carthage 9 -> 10, Epirus 57 -> 57, Gauls 17 -> 19, Greeks 5 -> 2,
+  Iberians 4 -> 5, Macedon 28 -> 28, Rome 13 -> 12, Syracuse 21 -> 29; Rome f10 Carthage 4 -> 5, Epirus 41 -> 44, Gauls
+  16 -> 19, Greeks 4 -> 6, Iberians 10 -> 15, Macedon 26 -> 31, Rome 9 -> 7, Syracuse 21 -> 19; West f6 Brethren 16 ->
+  15, Dutch 6 -> 2, England 3 -> 2, France 0 -> 1, Itza 4 -> 10, Miskito 10 -> 7; West f10 Brethren 22 -> 18, Dutch 1 ->
+  2, England 0 -> 4, France 2 -> 4, Itza 8 -> 16, Miskito 5 -> 4. No cell is beyond the two 95 % intervals combined, but
+  the Itza double in both formats (pooled 12 -> 26 of 144, beyond the pooled interval). The cause (an Itza probe over
+  the same 72 West f10 seeds): every AI contest was a withdrawal (the landing AI never lands where the defenders
+  outgun it, so the 110 % sortie odds are never met), and the ships the captors used to seize in fallen ports, 251 ->
+  9 (New Spain's 78 -> 0, the Brethren's 64 -> 5), now put to sea: the Itza, who take Spanish ports often (336 ->
+  324 towns), no longer get their galleons, and the Spanish fleets that escape carry troops back (the Itza lost 152
+  -> 197 towns, 62 of them now by troops landed from the sea). Not tuned: the rule is the decided design; open for the
+  main session.

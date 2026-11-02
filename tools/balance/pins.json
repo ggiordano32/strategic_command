@@ -1,36 +1,36 @@
 {
  "_note": "the pins in force; docs/STATUS.md 'Verification pins' is the source of truth, keep this file equal to it",
- "_moved": "2026-11-02 the tribes' tier-2 rows: native_warriors2 / canoe_raiders2 / maroon_vets in the Itza's and Miskito's rosters, the canoe raiders their own line (the unit keys and rosters are in the state hash); moved West format 6 and format 10 (all six seeds each; format 10 measured on top of the call-to-arms pins; format 8 West moved too, not pinned here), was west 1b323b32 5e71bc0c f91a534a fc259c74 92a459ea f0ddd6ff, west10 fb51a194 04e2b27f 3e1ba4c8 ca1d4359 352737f8 84d84a62; Rome unchanged; before that: 2026-11-02 west10 seeds 1, 4, 5, 6: answering a call to arms pays (campaign/cdip.gd: regard and repute for the call kept, the towns and battles won from the common enemy; the regard events are in the state hash); were west10 fb51a194 ca1d4359 352737f8 84d84a62; before that: 2026-11-02 Rome rows: equites / equites_extra replace cav2 / cav3 in Rome's roster (the unit keys are in the state hash); moved rome seed 4, rome10 seeds 5 and 6, was rome 59dc0582, rome10 6e903a40 61462ab2; before that: 2026-11-01 all four moved: the attack fixes (campaign/crules.gd: across-border battles kept by check_eliminations, the targets' own cells kept out of a march, the zone-of-control lock lifted by held_zones); were rome 7df61f83 8e12363b 07354ffa 3656ce6d a27c02da 2640b4c5, west 1b323b32 4fc8a07e b62be437 8d564b85 92a459ea f0ddd6ff, rome10 096465bb 75af05bc 31d31609 173a2d9e 6e903a40 61462ab2, west10 fb51a194 04e2b27f 417d9b78 ca1d4359 352737f8 84d84a62",
+ "_moved": "2026-11-02 a landing is contested and a fleet puts to sea when its port falls (campaign/cfleet.gd: the fleets docked in a fallen port put to sea instead of being prizes, the landings' event keys and marks are in the state hash); moved all four (every seed), was rome 6bfa2186 0a33f33c 18b11c1b 7eb76327 0eaf547b cdab38bd, west 7f4de6db 833380c8 478a0528 344a0e62 970d58fb 20475a0f, rome10 096465bb 11d5924b 31d31609 ee065ecd 871032c7 a28f5226, west10 60a1084e 70a44c10 89131443 c8bcd11f c6751c30 a51d314e; before that: 2026-11-02 the tribes' tier-2 rows: native_warriors2 / canoe_raiders2 / maroon_vets in the Itza's and Miskito's rosters, the canoe raiders their own line (the unit keys and rosters are in the state hash); moved West format 6 and format 10 (all six seeds each; format 10 measured on top of the call-to-arms pins; format 8 West moved too, not pinned here), was west 1b323b32 5e71bc0c f91a534a fc259c74 92a459ea f0ddd6ff, west10 fb51a194 04e2b27f 3e1ba4c8 ca1d4359 352737f8 84d84a62; Rome unchanged; before that: 2026-11-02 west10 seeds 1, 4, 5, 6: answering a call to arms pays (campaign/cdip.gd: regard and repute for the call kept, the towns and battles won from the common enemy; the regard events are in the state hash); were west10 fb51a194 ca1d4359 352737f8 84d84a62; before that: 2026-11-02 Rome rows: equites / equites_extra replace cav2 / cav3 in Rome's roster (the unit keys are in the state hash); moved rome seed 4, rome10 seeds 5 and 6, was rome 59dc0582, rome10 6e903a40 61462ab2; before that: 2026-11-01 all four moved: the attack fixes (campaign/crules.gd: across-border battles kept by check_eliminations, the targets' own cells kept out of a march, the zone-of-control lock lifted by held_zones); were rome 7df61f83 8e12363b 07354ffa 3656ce6d a27c02da 2640b4c5, west 1b323b32 4fc8a07e b62be437 8d564b85 92a459ea f0ddd6ff, rome10 096465bb 75af05bc 31d31609 173a2d9e 6e903a40 61462ab2, west10 fb51a194 04e2b27f 417d9b78 ca1d4359 352737f8 84d84a62",
  "rome": [
-  "6bfa2186",
-  "0a33f33c",
-  "18b11c1b",
-  "7eb76327",
-  "0eaf547b",
-  "cdab38bd"
+  "b9ab970d",
+  "64382867",
+  "bce7a251",
+  "01c834b9",
+  "aee9e1c9",
+  "c4158ed7"
  ],
  "west": [
-  "7f4de6db",
-  "833380c8",
-  "478a0528",
-  "344a0e62",
-  "970d58fb",
-  "20475a0f"
+  "1e6b6ba2",
+  "99a86783",
+  "8fafa8fd",
+  "33c2fa5e",
+  "34db72fd",
+  "96a7c2c0"
  ],
  "rome10": [
-  "096465bb",
-  "11d5924b",
-  "31d31609",
-  "ee065ecd",
-  "871032c7",
-  "a28f5226"
+  "dcaf4bf9",
+  "c9c71907",
+  "92782f2b",
+  "bac61bb3",
+  "ac90e975",
+  "89642186"
  ],
  "west10": [
-  "60a1084e",
-  "70a44c10",
-  "89131443",
-  "c8bcd11f",
-  "c6751c30",
-  "a51d314e"
+  "183921c7",
+  "99bde4c8",
+  "599409b1",
+  "8ecdb455",
+  "c8fa7556",
+  "ca74f3d9"
  ]
 }

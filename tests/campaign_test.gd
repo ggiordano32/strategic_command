@@ -171,6 +171,7 @@ func _init() -> void:
 	_breached_walls()
 	_ai_sea_garrison()
 	_docking()
+	_port_landing()
 	_launches()
 	_native_vessels()
 	_board_march()
@@ -4133,7 +4134,9 @@ func _ai_skilled() -> void:
 	# (2026-10-26, format 10 (campaign/cdip.gd): trust, AI-AI alliances and
 	# the calls to arms change the play; were 9aca1fcc / 2580136663 and, Easy, f3b40674 / 1790012962.)
 	# (2026-10-27, wars the AI can cover (docs/AI.md 43): were eb11d4a4 / 404660584 and, Easy, 7453315e / 2698612760.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "bac3b6c4" and int(g["rng"]) == 520790384,
+	# (2026-11-02, a landing is contested, a fleet puts to sea when its port falls: the same RNG draws, the state
+	# carries the landings' new event keys and marks; were bac3b6c4 / 520790384 and, Easy, 82ddfac4 / 1051292326.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "62200135" and int(g["rng"]) == 520790384,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4144,7 +4147,7 @@ func _ai_skilled() -> void:
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
 	# (Moved 2026-11-01 with the attack fixes: the targets' cells kept out of a march and the zone lock
 	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "82ddfac4" and int(ge["rng"]) == 1051292326,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "8e7bb4b5" and int(ge["rng"]) == 1051292326,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -6127,6 +6130,207 @@ func _marker_at(list: Array, c: int) -> bool:
 	return false
 
 
+# -------------------------------------------------- contested landings ---
+
+## (2026-11-02) The Miskito's Bluefields, a Tierra Firme transport off Portobelo with an army aboard: [state,
+## Miskito fleet (docked at Bluefields), transport]. humans: the human factions.
+func _pl_setup(humans: Array, mk_ships: Array, troops_aboard: bool = false) -> Array:
+	CData.use_pack("west")
+	var mk := _f("miskito")
+	var tf := _f("tierra_firme")
+	var bf := _r("bluefields")
+	var pb := _r("portobelo")
+	var st := CState.new_campaign("pl", 7, humans, {}, [], "west")
+	for g in CState.nf():
+		for h in CState.nf():
+			if g != h:
+				CState.set_dip(st, g, h, CState.PEACE)
+	CState.set_dip(st, mk, tf, CState.WAR)
+	st["fleets"] = []
+	var mfl := _dk_fleet(st, mk, CFleet.dock(bf), mk_ships, bf)
+	if troops_aboard:
+		var ma: Dictionary = {}
+		for a in st["armies"]:
+			if int(a["f"]) == mk and int(a["r"]) == bf:
+				ma = a
+				break
+		st["armies"].erase(ma)
+		(mfl["carry"] as Array).append(ma)
+	var tfl := _dk_fleet(st, tf, CFleet.dock(pb), ["galleon", "galleon", "frigate"])
+	var army: Dictionary = {}
+	for a in st["armies"]:
+		if int(a["f"]) == tf:
+			army = a
+			break
+	st["armies"].erase(army)
+	(tfl["carry"] as Array).append(army)
+	return [st, mfl, tfl]
+
+
+func _pl_event(st: Dictionary, kind: String) -> Dictionary:
+	for e in st["events"]:
+		if str(e["k"]) == kind:
+			return e
+	return {}
+
+
+## A landing is contested, and a fleet puts to sea when its port falls (docs/design/campaign_rules.md, 2026-11-02).
+func _port_landing() -> void:
+	CData.use_pack("west")
+	var mk := _f("miskito")
+	var tf := _f("tierra_firme")
+	var bf := _r("bluefields")
+	var beach := CFleet.beach(bf)
+	var pan := Panels.new(null)
+	# 1. A human's fleet docked in the port: the landing waits on a pending sea battle.
+	var su: Array = _pl_setup([mk], ["frigate", "frigate", "sloop", "sloop"])
+	var st: Dictionary = su[0]
+	var mid := int(su[1]["id"])
+	var tid := int(su[2]["id"])
+	var army_id := int(su[2]["carry"][0]["id"])
+	CFleet.execute_moves(st, [[tid, beach, tf, 0, -1]])
+	var b: Dictionary = st["battles"][0] if not (st["battles"] as Array).is_empty() else {}
+	var ce := _pl_event(st, "landing_contested")
+	_check(not b.is_empty() and int(b.get("sea", 0)) == 1 and (b.get("land", []) as Array).size() == 3 and int(b["land"][0]) == tid
+		and CState.army(st, army_id).is_empty() and str(ce.get("how", "")) == "pending" and _pl_event(st, "landed").is_empty(),
+		"port landing: a landing at a port holding the defender's docked fleet is a pending sea battle first, the troops still aboard")
+	_check(CFleet.docked(CFleet.fleet(st, mid)) == -1 and CFleet.fleet(st, mid).has("busy") and CFleet.fleet(st, tid).has("busy"),
+		"port landing: the docked fleet cast off to meet it, both fleets busy in the battle")
+	var s_won := CTurn.apply_battle(st, int(b["id"]), {"mode": "fought", "winner": 0, "ships": []})
+	var la := CState.army(s_won, army_id)
+	var le := _pl_event(s_won, "landed")
+	_check(not la.is_empty() and CGrid.region(CState.cell(la)) == bf and int(la["moved"]) == 0 and (CFleet.fleet(s_won, tid)["carry"] as Array).is_empty()
+		and int(le.get("to", -1)) == mk and int(le.get("n", 0)) == CState.unit_count(la) and (le.get("ships", []) as Array).size() == 3,
+		"port landing: the landing side won the sea battle: the troops land at once (free to march next turn), event landed with owner, units, ships")
+	var s_lost := CTurn.apply_battle(st, int(b["id"]), {"mode": "fought", "winner": 1, "ships": []})
+	var lost_ev: Array = []
+	for e in s_lost["events"]:
+		if str(e["k"]) == "landing_contested":
+			lost_ev.append(str(e.get("how", "")))
+	_check(CState.army(s_lost, army_id).is_empty() and (CFleet.fleet(s_lost, tid)["carry"] as Array).size() == 1 and lost_ev == ["pending", "lost"],
+		"port landing: the defender won: no landing, the troops stay aboard (events %s)" % str(lost_ev))
+	var s_auto := CTurn.apply_battle(st, int(b["id"]), {"mode": "formula"})
+	var auto_landed := not CState.army(s_auto, army_id).is_empty()
+	var auto_won := false
+	for e in s_auto["events"]:
+		if str(e["k"]) == "sea_battle":
+			auto_won = int(e["won"]) == 0
+	_check(auto_landed == auto_won, "port landing: auto-resolved, the troops land exactly when the landing side won (won %s)" % str(auto_won))
+	# 2. An AI defender: a strong docked fleet comes out (resolved at once), a weak one stays behind the mole.
+	var sa: Array = _pl_setup([], ["frigate", "frigate", "frigate", "frigate", "frigate"])
+	var sta: Dictionary = sa[0]
+	CFleet.execute_moves(sta, [[int(sa[2]["id"]), beach, tf, 0, -1]])
+	var cea := _pl_event(sta, "landing_contested")
+	var sea_ev := _pl_event(sta, "sea_battle")
+	var a_landed := not CState.army(sta, int(sa[2]["carry"][0]["id"]) if not (sa[2]["carry"] as Array).is_empty() else army_id).is_empty() \
+		or not _pl_event(sta, "landed").is_empty()
+	_check((sta["battles"] as Array).is_empty() and not sea_ev.is_empty() and str(cea.get("how", "")) in ["won", "lost"]
+		and a_landed == (str(cea.get("how", "")) == "won"),
+		"port landing: an AI's strong docked fleet comes out and the battle is resolved at once (%s; landed %s)" % [str(cea.get("how", "")), str(a_landed)])
+	var sw: Array = _pl_setup([], ["war_canoe"])
+	var stw: Dictionary = sw[0]
+	CFleet.execute_moves(stw, [[int(sw[2]["id"]), beach, tf, 0, -1]])
+	var cew := _pl_event(stw, "landing_contested")
+	_check(str(cew.get("how", "")) == "withdrew" and _pl_event(stw, "sea_battle").is_empty() and not _pl_event(stw, "landed").is_empty()
+		and CFleet.docked(CFleet.fleet(stw, int(sw[1]["id"]))) == bf,
+		"port landing: an AI's weak docked fleet stays behind the mole (the sortie odds): the troops land, the fleet stays docked")
+	# (the same strong fleet at Easy: the sortie odds are 0, it never comes out)
+	var se: Array = _pl_setup([], ["frigate", "frigate", "frigate", "frigate", "frigate"])
+	(se[0]["factions"][mk] as Dictionary)["ai_skill"] = CP.EASY
+	CFleet.execute_moves(se[0], [[int(se[2]["id"]), beach, tf, 0, -1]])
+	_check(CP.of(se[0], mk)[CP.SORTIE_ODDS_PCT] == 0 and str(_pl_event(se[0], "landing_contested").get("how", "")) == "withdrew",
+		"port landing: with the sortie odds at 0 (Easy) the docked fleet never comes out")
+	# 3. No fleet in the port: the landing is not contested; the landed fleet is seen by the region's owner.
+	var sn: Array = _pl_setup([mk], ["sloop"])
+	var stn: Dictionary = sn[0]
+	stn["fleets"].erase(sn[1])
+	var tfn: Dictionary = sn[2]
+	CFleet.execute_moves(stn, [[int(tfn["id"]), beach, tf, 0, -1]])
+	_check(_pl_event(stn, "landing_contested").is_empty() and not _pl_event(stn, "landed").is_empty() and (tfn.get("lw", []) as Array).size() == 3
+		and int(tfn["lw"][1]) == mk, "port landing: no fleet in the port: an uncontested landing, the fleet marked seen (lw %s)" % str(tfn.get("lw", [])))
+	stn["regions"][bf]["owner"] = tf  # (the town falls: its coastal sight is gone, its army with it)
+	var keep_a: Array = []
+	for a in stn["armies"]:
+		if not (int(a["f"]) == mk and int(a["r"]) == bf):
+			keep_a.append(a)
+	stn["armies"] = keep_a
+	var seen_lw := Sight.compute(stn, mk)[CFleet.cell(tfn)] != 0
+	var lw_keep: Array = tfn["lw"]
+	tfn.erase("lw")
+	var seen_without := Sight.compute(stn, mk)[CFleet.cell(tfn)] != 0
+	tfn["lw"] = lw_keep
+	_check(seen_lw and not seen_without, "port landing: after the town fell the landing fleet stays in the owner's sight (without the mark: %s)" % str(seen_without))
+	var s1 := CState.copy(stn)
+	s1["turn"] = int(lw_keep[0]) + 1
+	CFleet.end_of_turn(s1)
+	var s2 := CState.copy(stn)
+	s2["turn"] = int(lw_keep[0]) + 2
+	CFleet.end_of_turn(s2)
+	var s3 := CState.copy(stn)
+	CFleet.place(CFleet.fleet(s3, int(tfn["id"])), CFleet.dock(bf))
+	CFleet.end_of_turn(s3)
+	_check(CFleet.fleet(s1, int(tfn["id"])).has("lw") and not CFleet.fleet(s2, int(tfn["id"])).has("lw") and not CFleet.fleet(s3, int(tfn["id"])).has("lw"),
+		"port landing: the mark lasts through the next turn's resolution, and goes when the fleet sails off")
+	var js := CState.from_json(CState.to_json(stn))
+	_check(CState.hash_text(js) == CState.hash_text(stn), "port landing: the mark round-trips JSON and the hash")
+	# 4. The port falls: a fleet docked there puts to sea with its ships and troops; penned in, it is a prize.
+	var sp: Array = _pl_setup([mk], ["frigate", "sloop"], true)
+	var stp: Dictionary = sp[0]
+	var pf: Dictionary = sp[1]
+	var aboard := CFleet.carried_units(pf)
+	CRules._capture(stp, bf, tf)
+	var pf2 := CFleet.fleet(stp, int(pf["id"]))
+	var tse := _pl_event(stp, "fleet_to_sea")
+	_check(not pf2.is_empty() and CFleet.docked(pf2) == -1 and CFleet.is_sea(CFleet.cell(pf2)) and CGrid.cheb(CFleet.cell(pf2), CFleet.dock(bf)) <= CFleet.PORT_CELLS
+		and (pf2["ships"] as Array).size() == 2 and aboard > 0 and CFleet.carried_units(pf2) == aboard and _pl_event(stp, "fleet_taken").is_empty()
+		and int(tse.get("f", -1)) == mk and int(tse.get("by", -1)) == tf and int(tse.get("units", 0)) == aboard,
+		"port landing: the port falls: the docked fleet puts to sea (%d ships, %d units aboard kept), event fleet_to_sea" % [(pf2.get("ships", []) as Array).size(), aboard])
+	var sq: Array = _pl_setup([mk], ["frigate", "sloop"], true)
+	var stq: Dictionary = sq[0]
+	var dkc := CFleet.dock(bf)
+	stq["fleets"].erase(sq[2])
+	var guard := 0
+	while CFleet.put_to_sea_cell(stq, sq[1]) >= 0 and guard < 12:
+		guard += 1
+		var free := CFleet.put_to_sea_cell(stq, sq[1])
+		_dk_fleet(stq, tf, free, ["sloop"])
+	var penned := CFleet.put_to_sea_cell(stq, sq[1]) < 0
+	CRules._capture(stq, bf, tf)
+	var fte := _pl_event(stq, "fleet_taken")
+	_check(penned and CFleet.fleet(stq, int(sq[1]["id"])).is_empty() and str(fte.get("why", "")) == "penned" and int(fte.get("ships", 0)) == 2
+		and _dk_events(stq, "destroyed") == 1 and dkc >= 0,
+		"port landing: penned in by enemy ships (%d placed) the docked fleet is a prize, its troops lost" % guard)
+	# 5. The report lines.
+	var t_land := pan.event_text(le, mk)
+	var t_pend := pan.event_text(ce, mk)
+	var t_sea := pan.event_text(tse, mk)
+	var t_pen := pan.event_text(fte, mk)
+	var t_cap := pan.event_text({"k": "captured", "r": bf, "f": tf, "from": mk, "sea": 7, "turn": 1}, mk)
+	var t_old := pan.event_text({"k": "landed", "f": tf, "army": 1, "fleet": 1, "r": bf, "x": 0, "y": 0, "turn": 1}, mk)
+	print("  ", t_land, " | ", t_pend, " | ", t_sea, " | ", t_pen, " | ", t_cap)
+	_check(t_land.begins_with("Tierra Firme landed %d units at Bluefields Lagoon from the sea (" % int(le["n"])) and t_land.contains("galleons")
+		and t_pend.contains("waits on the sea battle") and t_sea.begins_with("Your fleet at Bluefields (2 ships with")
+		and t_sea.contains("put to sea when the town fell to Tierra Firme") and t_pen.contains("could not get out")
+		and t_cap.contains("landed from the sea") and t_old == "An army landed in Bluefields Lagoon.",
+		"port landing: the report lines name the landing side, units, ships and the fate of the port's fleet")
+	var vis_ev := Sight.event_seen(stn, mk, _pl_event(stn, "landed"))
+	_check(vis_ev, "port landing: the defender is told of the landing whatever the fog (the event names it)")
+	# 6. A landing whose every way in lies in an undocked defender's zone is a contest, not a refusal.
+	var sz: Array = _pl_setup([mk], ["frigate", "frigate"])
+	var stz: Dictionary = sz[0]
+	sz[1].erase("in")  # (lying off the port)
+	var pz := CFleet.plan(stz, tf, int(sz[2]["id"]), beach)
+	_check(not pz.has("why") and int(pz.get("contest", 0)) == 1, "port landing: a guard lying off the beach makes the voyage a contested landing (plan contest 1)")
+	CFleet.execute_moves(stz, [[int(sz[2]["id"]), beach, tf, 0, -1]])
+	var bz: Dictionary = stz["battles"][0] if not (stz["battles"] as Array).is_empty() else {}
+	_check(not bz.is_empty() and bz.has("land") and str(_pl_event(stz, "landing_contested").get("how", "")) == "pending",
+		"port landing: ... a pending sea battle carrying the landing")
+	var sz2 := CTurn.apply_battle(stz, int(bz.get("id", -1)), {"mode": "fought", "winner": 0, "ships": []}) if not bz.is_empty() else stz
+	var zid := int(sz[2]["carry"][0]["id"]) if not (sz[2]["carry"] as Array).is_empty() else -1
+	_check(zid >= 0 and not CState.army(sz2, zid).is_empty() and CGrid.region(CState.cell(CState.army(sz2, zid))) == bf,
+		"port landing: ... won, the fleet sails on to the beach and lands the troops")
+
+
 # ---------------------------------------------------------------- docking ---
 
 func _dk_fleet(st: Dictionary, f: int, c: int, keys: Array, r: int = -1) -> Dictionary:
@@ -6301,6 +6505,10 @@ func _docking() -> void:
 	troops_["units"] = (troops_["units"] as Array).slice(0, 2)
 	(sp["carry"] as Array).append(troops_)
 	var mine := _dk_fleet(sc, eng, hdk, ["sloop"], hv)   # (an English fleet already lying there is not a prize)
+	var pen_n := 0
+	while CFleet.put_to_sea_cell(sc, sp) >= 0 and pen_n < 12:  # (2026-11-02: only a fleet penned in by enemy ships is a prize)
+		pen_n += 1
+		_dk_fleet(sc, eng, CFleet.put_to_sea_cell(sc, sp), ["sloop"])
 	CRules._capture(sc, hv, eng)
 	var taken_ev := 0
 	for e in sc["events"]:
@@ -6314,7 +6522,7 @@ func _docking() -> void:
 		for sh in fl["ships"]:
 			if str(sh["t"]) == "galleon":
 				prize_h = int(sh["h"])
-	_check(CFleet.fleet(sc, int(sp["id"])).is_empty() and CFleet.fleets_of(sc, ns).is_empty() and ships_n == 3 and prize_h == CFleet.TAKEN_PCT
+	_check(CFleet.fleet(sc, int(sp["id"])).is_empty() and CFleet.fleets_of(sc, ns).is_empty() and ships_n == 3 + pen_n and prize_h == CFleet.TAKEN_PCT
 		and taken_ev == 1 and _dk_events(sc, "destroyed") == 1,
 		"docking: the city falls: the docked fleet is a prize at %d%% (%d ships, event fleet_taken x%d), its troops destroyed" % [prize_h, ships_n, taken_ev])
 	_check(CFleet.docked_in(sc, hv, eng).size() == 1 and (CFleet.fleet(sc, int(mine["id"]))["ships"] as Array).size() == 3,

@@ -59,6 +59,9 @@ extends RefCounted
 ##     pending battle; the port's blockader first) when it has SORTIE_ODDS_PCT
 ##     of the enemy's power at the spot (SORTIE_HUNT_PCT for a fleet merely
 ##     passing; Skilled only); Easy never. Next turn it follows the rules above.
+## 11. (2026-11-02, docs/AI.md 57) a landing in a region whose port holds our
+##     docked fleets is met by them at the sortie's odds (fights_landing,
+##     called by the rules: CFleet._contest); else they stay in port.
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
 
@@ -723,6 +726,16 @@ static func _sorties(st: Dictionary, f: int, mine: Array, used: Dictionary, fmov
 		fl.erase("job")
 		fmoves.append([int(fl["id"]), -1, f, 0, best])
 		CP.count(CP.C_SORTIES, f)
+
+
+## (2026-11-02, docs/AI.md 57) An AI faction g's fleets docked in a port
+## where an enemy lands troops (CFleet._contest) come out to fight the landing
+## when their power there (pd: with the port's guns) is at least
+## SORTIE_ODDS_PCT % of the landing side's (pa), the sortie's odds; else
+## they stay behind the mole and the troops land. Never at 0 (Easy).
+static func fights_landing(st: Dictionary, g: int, pd: int, pa: int) -> bool:
+	var pct := CP.of(st, g)[CP.SORTIE_ODDS_PCT]
+	return pct > 0 and pd * 100 >= pa * pct
 
 
 ## (Sorties) The enemy's power a sortie against fleet e meets: the fleets at

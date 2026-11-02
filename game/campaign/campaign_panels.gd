@@ -3306,6 +3306,14 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_GOOD if int(e["f"]) == f else (Kit.COL_BAD if int(e["from"]) == f or int(e["to"]) == f else Kit.COL_GOLD)
 		"fleet_taken":
 			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_BAD
+		"fleet_to_sea":
+			return Kit.COL_GOLD
+		"landing_contested":
+			var mine := int(e["f"]) == f
+			var hw := str(e.get("how", ""))
+			if hw == "pending":
+				return Kit.COL_GOLD
+			return Kit.COL_GOOD if mine == (hw == "won" or hw == "withdrew") else Kit.COL_BAD
 		"flota", "flota_arrived", "marque", "marque_end", "blockade_end", "galleon_taken", "galleon_lost", "flota_held", "captain_rise", "captain_fame":
 			return Kit.COL_GOLD
 		"storm", "storm_hit", "storm_end":
@@ -3392,6 +3400,9 @@ func event_text(e: Dictionary, f: int) -> String:
 		"captured":
 			if str(e.get("how", "")) == "surrendered":
 				return "%s surrendered to %s (%s) after a siege." % [city.call(e["r"]), CData.faction_name(int(e["f"])), CData.faction_name(int(e["from"]))]
+			if int(e.get("sea", 0)) > 0:
+				return "%s took %s from %s with the troops it landed from the sea." % [CData.faction_name(int(e["f"])), city.call(e["r"]),
+					CData.faction_name(int(e["from"]))]
 			return "%s took %s from %s." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["from"]))]
 		"siege":
 			return "%s laid siege to %s (%s)." % [CData.faction_name(int(e["f"])), city.call(e["r"]), CData.faction_name(int(e["o"]))]
@@ -3576,7 +3587,14 @@ func event_text(e: Dictionary, f: int) -> String:
 				return ""
 			return "A fleet of ours waits for an army marching to board it, then sails."
 		"landed":
-			return "An army landed in %s." % CData.REGIONS[int(e["r"])]["name"] if int(e["r"]) >= 0 else "An army landed."
+			return landed_text(e, f)
+		"landing_contested":
+			return landing_contested_text(e, f)
+		"fleet_to_sea":
+			var whose := "Your fleet" if int(e["f"]) == f else "A %s fleet" % CData.FACTIONS[int(e["f"])]["adj"]
+			var aboard := " with %d unit%s aboard" % [int(e["units"]), "" if int(e["units"]) == 1 else "s"] if int(e.get("units", 0)) > 0 else ""
+			return "%s at %s (%d ship%s%s) put to sea when the town fell to %s." % [whose, city.call(e["r"]), int(e["ships"]),
+				"" if int(e["ships"]) == 1 else "s", aboard, CData.faction_name(int(e["by"]))]
 		"canoes_sunk":
 			return "A %s army of %d men afloat was caught by %s's fleet and lost." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), CData.faction_name(int(e["by"]))]
 		"army_sunk":
@@ -3612,8 +3630,9 @@ func event_text(e: Dictionary, f: int) -> String:
 				" (%s)" % CData.faction_name(int(e["from"])) if int(e["from"]) >= 0 else "", int(e["gold"]), int(e["buildings"]),
 				"" if int(e["buildings"]) == 1 else "s", "independent" if int(e["from"]) < 0 else CData.FACTIONS[int(e["from"])]["adj"]]
 		"fleet_taken":
-			return "%s took the %d ship%s docked at %s (%s) as prizes when the city fell." % [CData.faction_name(int(e["f"])), int(e["ships"]),
-				"" if int(e["ships"]) == 1 else "s", city.call(e["r"]), CData.faction_name(int(e["from"]))]
+			return "%s took the %d ship%s docked at %s (%s) as prizes when the city fell%s." % [CData.faction_name(int(e["f"])), int(e["ships"]),
+				"" if int(e["ships"]) == 1 else "s", city.call(e["r"]), CData.faction_name(int(e["from"])),
+				": enemy ships lay all round the harbour and they could not get out" if str(e.get("why", "")) == "penned" else ""]
 		"marque":
 			return "%s granted %s a letter of marque for %d turns: they keep the peace and plunder its enemies." % [
 				CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"])), int(e["until"]) - int(e["turn"])]
@@ -3626,6 +3645,40 @@ func event_text(e: Dictionary, f: int) -> String:
 			return captain_text(e)
 		"story":
 			return story_text(e)
+	return ""
+
+
+## (2026-11-02) "Tierra Firme landed 7 units at Bluefields Lagoon from the sea (two Tierra Firme galleons and a Tierra
+## Firme frigate)." An event of the old shape (no "n"): "An army landed in X."
+func landed_text(e: Dictionary, _f: int) -> String:
+	var rn := str(CData.REGIONS[int(e["r"])]["name"]) if int(e["r"]) >= 0 else ""
+	if not e.has("n"):
+		return "An army landed in %s." % rn if rn != "" else "An army landed."
+	var ships: Array = []
+	for k in e.get("ships", []):
+		ships.append([int(e["f"]), str(k)])
+	var fleet := ships_list(ships)
+	if str(e.get("cap", "")) != "":
+		fleet = "%s under %s" % [fleet, str(e["cap"])]
+	var n := int(e["n"])
+	return "%s landed %d unit%s %s from the sea%s." % [CData.faction_name(int(e["f"])), n, "" if n == 1 else "s",
+		"at " + rn if rn != "" else "on the coast", " (%s)" % fleet if fleet != "" else ""]
+
+
+## (2026-11-02) A contested landing: the fleets in the port came out, stayed in, won or lost.
+func landing_contested_text(e: Dictionary, _f: int) -> String:
+	var rn := str(CData.REGIONS[int(e["r"])]["name"]) if int(e.get("r", -1)) >= 0 else "the coast"
+	var who := CData.faction_name(int(e["f"]))
+	var dfn := CData.faction_name(int(e["to"])) if e.has("to") and int(e["to"]) >= 0 else "the defenders"
+	match str(e.get("how", "")):
+		"withdrew":
+			return "%s's ships in port at %s stayed behind the mole: %s landed unopposed." % [dfn, rn, who]
+		"pending":
+			return "%s tried to land at %s; %s's ships came out to meet them: the landing waits on the sea battle." % [who, rn, dfn]
+		"won":
+			return "%s beat %s's ships off %s and put the troops ashore." % [who, dfn, rn]
+		"lost":
+			return "%s's ships beat off %s's landing at %s." % [dfn, who, rn]
 	return ""
 
 

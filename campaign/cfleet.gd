@@ -47,6 +47,16 @@ extends RefCounted
 ## nor fight another battle, nor meet a storm), fought in real time
 ## (campaign/cseabattle.gd, sim/sea_sim.gd) or auto-resolved by the formula,
 ## and written back by apply_sea; AI-only sea battles resolve at once.
+## (2026-11-02) A landing is contested: troops landing in a region whose port
+## holds a docked fleet at war with them (landing_defenders), or whose every
+## approach lies in such a fleet's zone, meet it in a sea battle first
+## (_contest; an AI defender may stay behind the mole by its sortie odds,
+## CAIFleet.fights_landing); they land only if the landing side wins (at once,
+## or after the pending battle: the battle's "land" [fleet, cell], apply_sea).
+## A fleet docked in a port that falls puts to sea (take_docked) unless no
+## open water is left to it. A fleet that lands troops is seen by the landed
+## region's owner (its "lw" [turn, faction, cell], campaign/csight.gd) the
+## turn it lands and the next.
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
@@ -95,6 +105,7 @@ static var _beach: Array[int] = []       # per region: the coast cell nearest th
 static var _cost_w: Array[int] = []      # step cost per direction with the wind
 static var _ccomp := PackedInt32Array()  # coastal water (within COASTAL_CELLS of land) component per sea cell, -1 other
 static var _mlog: Array = []
+static var _att_won := false  # the attackers won the last sea battle resolved (resolve / _apply_fought)
 
 
 static func _rules() -> GDScript:
@@ -109,6 +120,11 @@ static func _csea() -> GDScript:
 ## Notorious captains (N2b; it preloads this file).
 static func _capt() -> GDScript:
 	return load("res://campaign/ccaptain.gd")
+
+
+## The fleets' AI (a defender's choice to meet a landing; it preloads this file).
+static func _ai_fleet() -> GDScript:
+	return load("res://campaign/cai_fleet.gd")
 
 
 ## Treaties (the ship rows' "ally": cdip.gd ship_why).
@@ -938,14 +954,28 @@ static func _land_order(st: Dictionary, f: int, fid: int, id: int, c: int) -> St
 	if dr >= 0 and not into_city:
 		fl.erase("in")  # (Docking) a landing anywhere but the city casts off
 		fl.erase("dk")
+	var dfn := landing_defenders(st, fl, c)
+	if not dfn.is_empty() and not _contest(st, fl, dfn, c, id):
+		return ""  # (2026-11-02) the fleets in the port came out: the landing waits on the sea battle, or was beaten off
 	land(st, fl, c, id)
 	return ""
 
 
 ## Land the troops of fleet fl (army id, or all with -1) on cell c (fit:
-## land_ok). Their move ends for this turn.
+## land_ok). Their move ends for this turn. (2026-11-02) The event "landed"
+## names the region's owner ("to"), the units, the fleet's ships and its
+## captain; the fleet is seen by that owner this turn and the next while it
+## lies where it landed them ("lw" [turn, owner, its cell]: campaign/csight.gd).
 static func land(st: Dictionary, fl: Dictionary, c: int, id: int = -1) -> void:
 	var keep: Array = []
+	var lr := CGrid.region(c)
+	var lo := CState.owner(st, lr) if lr >= 0 else -1
+	var keys: Array = []
+	for sh in fl["ships"]:
+		keys.append(str(sh["t"]))
+	var cap: Dictionary = _capt().of_fleet(st, int(fl["id"]))
+	if lo >= 0 and lo != int(fl["f"]) and not CState.friendly(st, lo, int(fl["f"])):
+		fl["lw"] = [int(st["turn"]), lo, cell(fl)]
 	for a in fl["carry"]:
 		if id >= 0 and int(a["id"]) != id:
 			keep.append(a)
@@ -959,9 +989,123 @@ static func land(st: Dictionary, fl: Dictionary, c: int, id: int = -1) -> void:
 		a["stance"] = CData.ST_DEFAULT
 		_rules()._insert_army(st, a)
 		a["mp"] = 0
-		_rules().event(st, {"k": "landed", "f": int(a["f"]), "army": int(a["id"]), "fleet": int(fl["id"]),
-			"r": CGrid.region(c), "x": CGrid.cx(c), "y": CGrid.cy(c)})
+		var lev := {"k": "landed", "f": int(a["f"]), "army": int(a["id"]), "fleet": int(fl["id"]),
+			"r": lr, "x": CGrid.cx(c), "y": CGrid.cy(c), "n": CState.unit_count(a), "ships": keys}
+		if lo >= 0 and lo != int(a["f"]):
+			lev["to"] = lo
+		if not cap.is_empty():
+			lev["cap"] = str(cap.get("nm", ""))
+		_rules().event(st, lev)
 	fl["carry"] = keep
+
+
+## (2026-11-02) The fleets that defend a landing of fleet fl on land cell lc:
+## those at war with fl's faction lying docked in the port of lc's region
+## that reach fl's cell this turn (straight line at their pace), not in a
+## pending battle, not the flota nor a story fleet, not spared by the
+## tutorial's shield; in id order.
+static func landing_defenders(st: Dictionary, fl: Dictionary, lc: int) -> Array:
+	var out: Array = []
+	var r := CGrid.region(lc)
+	if r < 0:
+		return out
+	var f := int(fl["f"])
+	for e in fleets(st):
+		if docked(e) != r or (e["ships"] as Array).is_empty() or e.has("busy") or e.has("sto") or e.has("flota"):
+			continue
+		if not CState.at_war(st, f, int(e["f"])) or spared(st, f, int(e["f"])):
+			continue
+		if CGrid.octile(cell(e), cell(fl)) > maxi(speed(e), 1):
+			continue
+		out.append(e)
+	return out
+
+
+## (2026-11-02) The fleets docked in the port (dfn, landing_defenders) meet
+## fleet fl's landing on cell lc (army id, or all with -1): an AI defender
+## stays behind the mole when CAIFleet.fights_landing says so (the landing
+## goes on); else they cast off and fight it at fl's cell with fl and the
+## friendly fleets in its zone (a pending battle with a human in it: the
+## landing waits on it, the battle's "land" [fleet, cell, army]; otherwise
+## resolved now). Event "landing_contested" (how: withdrew / pending / won /
+## lost). True: land now.
+static func _contest(st: Dictionary, fl: Dictionary, dfn: Array, lc: int, id: int = -1) -> bool:
+	var f := int(fl["f"])
+	var c := cell(fl)
+	var g := int(dfn[0]["f"])
+	var att: Array = [fl]
+	for e in fleets(st):
+		if e != fl and CState.friendly(st, f, int(e["f"])) and docked(e) < 0 and not e.has("busy") \
+				and not (e["ships"] as Array).is_empty() and CGrid.within(c, cell(e), FLEET_ZONE):
+			att.append(e)
+	var ev := {"k": "landing_contested", "f": f, "to": g, "r": CGrid.region(lc), "fleet": int(fl["id"]),
+		"x": CGrid.cx(c), "y": CGrid.cy(c)}
+	if not _with_human(st, dfn) and not _ai_fleet().fights_landing(st, g, _side_power(st, dfn, true), _side_power(st, att, false)):
+		ev["how"] = "withdrew"
+		_rules().event(st, ev)
+		return true
+	for e in dfn:
+		e.erase("in")  # (they cast off to meet the landing)
+		e.erase("dk")
+	for e in att + dfn:
+		_drop_voyage(e)
+		e.erase("route")
+		e.erase("rgoal")
+		e["moved"] = 1
+	if _with_human(st, att + dfn):
+		_pending(st, att, dfn, c)
+		var b: Dictionary = st["battles"].back()
+		b["land"] = [int(fl["id"]), lc, id]
+		ev["how"] = "pending"
+		ev["battle"] = int(b["id"])
+		_rules().event(st, ev)
+		return false
+	resolve(st, att, dfn, c)
+	ev["how"] = "won" if _att_won else "lost"
+	_rules().event(st, ev)
+	return _att_won and not fleet(st, int(fl["id"])).is_empty() and not (fl["carry"] as Array).is_empty()
+
+
+## (2026-11-02) After a contested landing's pending sea battle (b["land"]
+## [fleet, cell, army, the voyage's last cell (a battle met on the way in;
+## optional)]): a won battle puts the troops ashore now beside the fleet
+## (landing_cell; met on the way in, the fleet first sails on to the voyage's
+## last cell); they may march next turn (the landing's turn is over).
+static func _land_after(st: Dictionary, b: Dictionary, won: bool) -> void:
+	var ld: Array = b["land"]
+	var fl := fleet(st, int(ld[0]))
+	if fl.is_empty() or fl.has("busy") or (fl["carry"] as Array).is_empty():
+		return
+	var f := int(fl["f"])
+	if won and ld.size() > 3 and int(ld[3]) >= 0 and is_sea(int(ld[3])):
+		place(fl, int(ld[3]))
+	var c := cell(fl)
+	var lc := landing_cell(st, f, fl, int(ld[1]))
+	var ev := {"k": "landing_contested", "f": f, "r": CGrid.region(int(ld[1])), "fleet": int(fl["id"]), "x": CGrid.cx(c), "y": CGrid.cy(c),
+		"how": "won" if won else "lost"}
+	if int(b.get("def_f", -1)) >= 0:
+		ev["to"] = int(b["def_f"])
+	_rules().event(st, ev)
+	if not won:
+		return
+	if lc < 0:
+		_rules().event(st, {"k": "fmove_failed", "f": f, "fleet": int(fl["id"]), "why": "nowhere to land"})
+		return
+	var id := int(ld[2]) if ld.size() > 2 else -1
+	var ids: Array = []
+	for a in fl["carry"]:
+		if id < 0 or int(a["id"]) == id:
+			ids.append(int(a["id"]))
+	land(st, fl, lc, id)
+	if fl.has("lw"):
+		fl["lw"][0] = int(st["turn"]) - 1  # (the landing belongs to the turn just resolved)
+	for aid in ids:
+		var a := CState.army(st, int(aid))
+		if a.is_empty():
+			continue
+		a["moved"] = 0
+		if CState.moves_on(st):
+			a["mp"] = CState.full_mp(st, a)
 
 
 static func _fmerge(st: Dictionary, f: int, fid: int, into: int) -> String:
@@ -1001,13 +1145,17 @@ static func _scuttle(st: Dictionary, f: int, fid: int, k: int) -> String:
 
 ## Cells fleet fl of faction f may not enter: the zones of enemy fleets at
 ## war (but the target's: tgt), and for a coastal fleet the open water.
-static func block_mask(st: Dictionary, f: int, tgt: int = -1) -> PackedByteArray:
+## land_at (a landing's land cell, -1 none): the zones of the fleets lying
+## within FLEET_ZONE + 1 of it are left open (the contested landing's way in).
+static func block_mask(st: Dictionary, f: int, tgt: int = -1, land_at: int = -1) -> PackedByteArray:
 	ensure()
 	var m := PackedByteArray()
 	m.resize(CGrid.count())
 	m.fill(0)
 	for e in fleets(st):
 		if int(e["id"]) == tgt or not CState.at_war(st, f, int(e["f"])) or docked(e) >= 0 or spared(st, f, int(e["f"])):
+			continue
+		if land_at >= 0 and CGrid.cheb(cell(e), land_at) <= FLEET_ZONE + 1:
 			continue
 		for c in CGrid.disc(cell(e), FLEET_ZONE):
 			m[c] = 1
@@ -1283,10 +1431,17 @@ static func plan(st: Dictionary, f: int, fid: int, dest: int, tgt: int = -1, max
 	var p := _cached_route(fl, dest, block, max_turns) if (tgt < 0 and join < 0) else {}
 	if p.is_empty():
 		p = find_path(fl, dest, block, landing or tgt >= 0 or join >= 0, max_turns)
+	var contest := 0
+	if p.is_empty() and landing:
+		# (2026-11-02) every way to the beach lies in the zone of a fleet guarding it: the landing is contested
+		# (a sea battle when the voyage enters that zone), not refused.
+		p = find_path(fl, dest, block_mask(st, f, tgt, dest), true, max_turns)
+		contest = 1
 	if p.is_empty():
 		return {"why": "no way there by sea"}
 	p["goal"] = dest
 	p["land"] = 1 if landing else 0
+	p["contest"] = contest
 	p["tgt"] = tgt
 	p["join"] = join
 	return p
@@ -1425,7 +1580,7 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 				fl["dk"] = dk
 		fl["moved"] = 1
 		plans.append({"id": fid, "steps": steps, "done": done, "goal": int(p["goal"]), "land": int(p["land"]),
-			"stop": false, "dk": dk, "tgt": int(p["tgt"])})
+			"stop": false, "dk": dk, "tgt": int(p["tgt"]), "contest": int(p.get("contest", 0)), "after": false})
 	_mlog = []
 	var rounds := 0
 	for p in plans:
@@ -1457,20 +1612,43 @@ static func execute_moves(st: Dictionary, moves: Array) -> void:
 					foes.append(e)
 			if foes.is_empty():
 				continue
+			var nb := (st["battles"] as Array).size()
+			var ns := int(st["stats"].get("sea_battles", 0))
 			var involved := sea_battle(st, fl, foes, c)
 			for q in plans:
 				if involved.has(int(q["id"])):
 					q["stop"] = true
 			p["stop"] = true
+			if int(p["contest"]) != 0 and int(p["land"]) != 0 and bool(p["done"]) and not (fl["carry"] as Array).is_empty():
+				# (2026-11-02) the contested landing's sea battle: it lands if it wins (now, or once the battle is resolved)
+				var lr := CGrid.region(int(p["goal"]))
+				var cev := {"k": "landing_contested", "f": int(fl["f"]), "to": int(foes[0]["f"]), "r": lr, "fleet": int(fl["id"]),
+					"x": CGrid.cx(c), "y": CGrid.cy(c)}
+				if fl.has("busy") and (st["battles"] as Array).size() > nb:
+					var nbat: Dictionary = st["battles"].back()
+					nbat["land"] = [int(fl["id"]), int(p["goal"]), -1, int(p["steps"].back())]  # (the beach-side cell it sails on to)
+					cev["how"] = "pending"
+					cev["battle"] = int(nbat["id"])
+					_rules().event(st, cev)
+				elif int(st["stats"].get("sea_battles", 0)) > ns:
+					cev["how"] = "won" if _att_won else "lost"
+					_rules().event(st, cev)
+					if _att_won and not fleet(st, int(fl["id"])).is_empty():
+						p["after"] = true
 	for p in plans:
-		if bool(p["stop"]) or not bool(p["done"]) or int(p["land"]) == 0:
+		if (bool(p["stop"]) and not bool(p["after"])) or not bool(p["done"]) or int(p["land"]) == 0:
 			continue
 		var fl := fleet(st, int(p["id"]))
-		if fl.is_empty() or (fl["carry"] as Array).is_empty():
+		if fl.is_empty() or (fl["carry"] as Array).is_empty() or fl.has("busy"):
 			continue
+		if bool(p["after"]) and not (p["steps"] as Array).is_empty():
+			place(fl, int(p["steps"].back()))  # (a contested landing won at sea: on to the beach)
 		var lc := landing_cell(st, int(fl["f"]), fl, int(p["goal"]))
 		if lc < 0:
 			_rules().event(st, {"k": "fmove_failed", "f": int(fl["f"]), "fleet": int(fl["id"]), "why": "nowhere to land"})
+			continue
+		var dfn := landing_defenders(st, fl, lc)
+		if not dfn.is_empty() and not _contest(st, fl, dfn, lc):
 			continue
 		land(st, fl, lc)
 	# (Docking) a voyage that ended at its dock docks the fleet (the port still ours / friendly's).
@@ -1624,6 +1802,7 @@ static func resolve(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	var va := pa * (ROLL_MIN + CState.rand(st, ROLL_SPAN)) / 100
 	var vd := pd * (ROLL_MIN + CState.rand(st, ROLL_SPAN)) / 100
 	var att_won := va > vd
+	_att_won = att_won
 	var win: Array = att if att_won else dfn
 	var lose: Array = dfn if att_won else att
 	var wv := va if att_won else vd
@@ -1753,16 +1932,21 @@ static func apply_sea(st: Dictionary, b: Dictionary, outcome: Dictionary) -> voi
 				if not (fl["ships"] as Array).is_empty():
 					(att if k == 0 else dfn).append(fl)
 	if att.is_empty() or dfn.is_empty():
+		if b.has("land") and not att.is_empty():
+			_land_after(st, b, true)  # (2026-11-02) nobody is left to stop the landing
 		return
 	var mode := str(outcome.get("mode", "formula"))
 	if mode != "fought" and mode != "forfeit":
 		resolve(st, att, dfn, c)
-		return
-	_apply_fought(st, att, dfn, c, outcome)
+	else:
+		_apply_fought(st, att, dfn, c, outcome)
+	if b.has("land"):
+		_land_after(st, b, _att_won)  # (2026-11-02) a contested landing: ashore if the landing side won
 
 
 static func _apply_fought(st: Dictionary, att: Array, dfn: Array, c: int, outcome: Dictionary) -> void:
 	var att_won := int(outcome.get("winner", 1)) == 0
+	_att_won = att_won
 	var pa := _side_power(st, att, false)
 	var pd := _side_power(st, dfn, true)
 	var win: Array = att if att_won else dfn
@@ -2001,14 +2185,20 @@ static func end_of_turn(st: Dictionary) -> void:
 			elif int(s["c"]) > SCURVY_FLOOR:
 				s["c"] = maxi(int(s["c"]) - SCURVY, SCURVY_FLOOR)
 		fl["moved"] = 0
+		if fl.has("lw") and (int(st["turn"]) >= int(fl["lw"][0]) + 2 or cell(fl) != int(fl["lw"][2])):
+			fl.erase("lw")  # (2026-11-02) seen after its landing this turn and the next only, where it landed them
 		keep.append(fl)
 	st["fleets"] = keep
 
 
 ## (Docking) Port r has fallen to faction f (CRules._capture): the fleets
-## docked there that are not friendly to f are prizes. Their ships join (or
-## form) a fleet of f's docked at r at TAKEN_PCT hull and crew (event
-## "fleet_taken" {f, from, r, ships, fleet}); the troops aboard are destroyed
+## docked there that are not friendly to f put to sea (2026-11-02): cast off
+## onto the open sea cell nearest the dock within PORT_CELLS of it outside
+## every zone of a fleet at war with them (put_to_sea_cell), ships, crews and
+## troops aboard kept (event "fleet_to_sea" {f, by, r, fleet, ships, units, x,
+## y}). Only a fleet with no such cell is a prize: its ships join (or form) a
+## fleet of f's docked at r at TAKEN_PCT hull and crew (event "fleet_taken" {f,
+## from, r, ships, fleet, why "penned"}); the troops aboard are destroyed
 ## (event "destroyed"). Fleets that are friendly to f are cast off.
 static func take_docked(st: Dictionary, r: int, f: int) -> void:
 	if not on(st):
@@ -2025,6 +2215,14 @@ static func take_docked(st: Dictionary, r: int, f: int) -> void:
 				fl.erase("in")
 			continue
 		var n := (fl["ships"] as Array).size()
+		var sea := put_to_sea_cell(st, fl)
+		if sea >= 0:
+			fl.erase("in")
+			fl.erase("dk")
+			place(fl, sea)
+			_rules().event(st, {"k": "fleet_to_sea", "f": g, "by": f, "r": r, "fleet": id, "ships": n, "units": carried_units(fl),
+				"x": CGrid.cx(sea), "y": CGrid.cy(sea)})
+			continue
 		for a in fl["carry"]:
 			_rules().event(st, {"k": "destroyed", "f": g, "r": r, "army": int(a["id"]), "men": CState.men(a)})
 		fl["carry"] = []
@@ -2050,7 +2248,41 @@ static func take_docked(st: Dictionary, r: int, f: int) -> void:
 		if into.is_empty():
 			continue
 		(into["ships"] as Array).append_array(prizes)
-		_rules().event(st, {"k": "fleet_taken", "f": f, "from": g, "r": r, "ships": n, "fleet": int(into["id"])})
+		_rules().event(st, {"k": "fleet_taken", "f": f, "from": g, "r": r, "ships": n, "fleet": int(into["id"]), "why": "penned"})
+
+
+## (2026-11-02) Where fleet fl, docked in a port that has fallen, puts to sea:
+## the open sea cell within PORT_CELLS of its cell nearest it (ties by cell
+## index; its own cell first) that lies in no zone of a fleet at war with its
+## owner (not docked, not in a pending battle, with ships, not spared) and,
+## for a coastal fleet, within COASTAL_CELLS of land; -1 none (penned in).
+static func put_to_sea_cell(st: Dictionary, fl: Dictionary) -> int:
+	var g := int(fl["f"])
+	var lim := int(CData.ship_const("COASTAL_CELLS", 2))
+	var coast := coastal(fl)
+	var foes: Array = []
+	for e in fleets(st):
+		if e != fl and CState.at_war(st, g, int(e["f"])) and docked(e) < 0 and not e.has("busy") \
+				and not (e["ships"] as Array).is_empty() and not spared(st, g, int(e["f"])):
+			foes.append(e)
+	var c0 := cell(fl)
+	var best := -1
+	var bd := INF
+	for j in CGrid.disc(c0, PORT_CELLS):
+		if not is_sea(j) or CGrid.cheb(j, c0) > PORT_CELLS or (coast and coast_dist(j) > lim):
+			continue
+		var free := true
+		for e in foes:
+			if CGrid.within(cell(e), j, FLEET_ZONE):
+				free = false
+				break
+		if not free:
+			continue
+		var d := CGrid.d2(j, c0)
+		if d < bd or (d == bd and j < best):
+			bd = d
+			best = j
+	return best
 
 
 ## Faction f is eliminated: its fleets go down with it.

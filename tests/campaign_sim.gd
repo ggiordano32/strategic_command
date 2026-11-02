@@ -233,7 +233,8 @@ func _run(sd: int, verbose: bool) -> String:
 		var crossings := 0  # armies that ended a turn on another landmass (sea lanes, or landed from a fleet)
 		var last_land := _army_lands(st)  # army id -> landmass last seen on land (aboard a fleet: kept)
 		ship_kinds = {}
-		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0}
+		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0,
+			"landing_contested": 0, "fleet_to_sea": 0, "fleet_taken": 0}
 		var amph := [0, 0, 0]  # army-turns amphibious, afloat at the end of a turn, captures by an army that was afloat the turn before
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
 		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
@@ -352,6 +353,9 @@ func _run(sd: int, verbose: bool) -> String:
 		dipm["elim"] = ek
 		dipm["battles"] = int(st["stats"]["battles"])
 		dipm["field"] = int(sg["field"])
+		# (2026-11-02, a landing is contested; a fleet puts to sea when its port falls) the sea tallies of the seed
+		for fk in ["sea_battle", "landed", "landing_contested", "fleet_to_sea", "fleet_taken"]:
+			dipm[fk] = int(fl_ev[fk])
 		if not verbose:
 			return CState.hash_text(st)
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [

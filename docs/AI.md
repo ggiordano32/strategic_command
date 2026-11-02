@@ -4441,3 +4441,16 @@ against defenders standing inside. The rule: siege_and_towns.md "Archers walk in
   where the walk is cleared they go in and kill three times as many men behind the wall for 12 more losses.
   `rome_walls` (8 seeds, 144 battles): attacker wins 75 / 50 / 38 / all 54 -> 71 / 48 / 40 / 53 % (walls 1 / 2 /
   3), no cell beyond its interval. Open: men in buildings are not lobbed at; the stand is from the unit's middle.
+
+## 57. A docked fleet meets a landing at the sortie's odds (2026-11-02)
+
+The rule is docs/design/campaign_rules.md "A landing is contested, and a fleet puts to sea when its port falls (as
+built, 2026-11-02)": a landing in a region whose port holds a docked fleet at war with the landing side is a sea battle
+first. The one AI decision it adds is the defender's: `CAIFleet.fights_landing(st, g, pd, pa)` (item 11 of the
+`cai_fleet.gd` header), called by the rules (`CFleet._contest`) for an AI faction's docked fleets. They come out when
+their power there with the port's guns (`pd`, `CFleet._side_power` as the defender) is at least `SORTIE_ODDS_PCT` % of
+the landing side's (`pa`: the transport and the friendly fleets in its zone); else they stay behind the mole and the
+troops land (and, if the town then falls, the fleets put to sea). No new knob: the sortie's odds (Easy 0 = never, a
+deliberate mistake; Average 110; Skilled 100). The landing side's AI is unchanged: its landings already skip a beach
+whose approach lies in an enemy zone (`_approach`) and a route that fleets at war, docked ones included, outgun beyond
+`FERRY_ODDS_PCT` (`_ferry_safe`).

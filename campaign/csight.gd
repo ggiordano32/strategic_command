@@ -14,6 +14,10 @@ extends RefCounted
 ##     when it stands on a hill / ridge cell (CGrid.cell_terrain);
 ##   - each fleet: FLEET_R (5, a masthead lookout on open water; 3 before 2026-10-23) around its sea cell (the armies aboard ride with
 ##     it and see nothing more);
+##   - (2026-11-02) a foreign fleet that landed troops in a region of f's
+##     team (its "lw" [turn, the region's owner, its cell], CFleet.land): its
+##     own cell while it lies where it landed them, the turn it lands and the
+##     next (CFleet.end_of_turn drops the key);
 ##   - each character not riding with an army: CHAR_R around his city;
 ##   - each settlement it owns: CITY_R around the settlement cell (sea cells
 ##     too: a coastal city watches its waters);
@@ -157,6 +161,13 @@ static func compute(st: Dictionary, f: int) -> PackedByteArray:
 		var ff := int(fl["f"])
 		if ff >= 0 and ff < mine.size() and mine[ff] != 0:
 			_square(vis, int(fl["y"]) * CGrid.width() + int(fl["x"]), FLEET_R)
+		elif fl.has("lw"):
+			# (2026-11-02) a fleet that landed troops in our region: seen where it landed them, that turn and the next
+			var lw: Array = fl["lw"]
+			var fc := int(fl["y"]) * CGrid.width() + int(fl["x"])
+			var lo := int(lw[1])
+			if lo >= 0 and lo < mine.size() and mine[lo] != 0 and fc == int(lw[2]):
+				vis[fc] = 1
 	# Characters in a city (the attached ones see with their army).
 	for ch in st.get("chars", []):
 		var cf := int(ch["f"])
