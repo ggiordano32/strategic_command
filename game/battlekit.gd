@@ -73,6 +73,19 @@ const POST_STEP := 2.5          # battlekit.gdshader POST_STEP
 enum {WK_OUT, WK_MERLON, WK_STEP, WK_IN, WK_CAP, WK_WALK, WK_MTOP, WK_RAMP}
 ## A stone stair's rows (_ob_stone_flight) carry this in custom.w, where a stretch's fade goes (stairs never fade).
 const STAIR_ROW := 2.0
+## A gate piece's or a square tower's rows (the oblique view, _ob_gate_rows / _ob_sqtower) carry GATE_ROW + the flash
+## (0 .. 1) in custom.w (the stone, or the ring's timber), DOOR_ROW + the flash for a door's planks and the passage
+## floor (battlekit.gdshader ob_door_col): built as mesh in the gate's own frame, so they follow the wall's angle.
+## A gate or a square tower within this many 1/1024 turns of the axes (1.4 degrees) keeps the oblique kit sheet's sprite
+## (which only stands square to the camera: the plans' straight stretches are unchanged); any other angle is rows.
+## ALL_MESH: every one is rows (one look in every town).
+const AXIS_TOL := 4
+const ALL_MESH := false
+const GATE_ROW := 3.0
+const DOOR_ROW := 5.0
+const GATE_JAMB := 1.4          # the jamb piers' width beside the opening (tools/battlekit b_gate_arch)
+const GATE_DECK := 3.0          # the inner deck's depth
+const GATE_DOOR_V := 1.6        # the door leaves' place in from the outer face
 const FADE_ZOOM := 1.5          # the camera's zoom past which a stretch hiding men behind it fades
 const FADE_BEHIND := 10.0       # metres behind the wall
 const FADE_FRAMES := 6
@@ -148,6 +161,9 @@ var _rubble_node: Node2D
 var _gate_inst := PackedInt32Array()
 var _gate_state := PackedInt32Array()
 var _gate_hit := PackedInt32Array()
+var ob_regate := false              # a gate changed state: the oblique rows again (refresh)
+var _gate_rows: Array = []          # per gate: [first wall row, rows] of its mesh in the oblique view
+var _sq_inst := {}                  # a stone square tower's instance -> [x, y, r, angle] (the oblique view builds it as rows)
 var _timber := false
 var _mm: MultiMesh
 var _mmi: MultiMeshInstance2D
@@ -345,6 +361,7 @@ func _build_instances() -> void:
 		strip_at = 0
 	# Gates over the wall, then the towers over everything.
 	_gate_inst.resize(0)
+	_sq_inst.clear()
 	var gates: Array = lay["gates"]
 	for g in gates.size():
 		var gd: Dictionary = gates[g]
@@ -782,6 +799,7 @@ func _tower(tw: Array, q: int, hs: float) -> void:
 		_add("tower_timber", pos, Vector2(cos(a), sin(a)), r / 6.5, r / 6.5, hs)
 	elif tw.size() > 3 and int(tw[3]) != 0:
 		var ang := float(int(tw[4])) * TAU / 1024.0 if tw.size() > 4 else 0.0
+		_sq_inst[i_piece.size()] = [pos.x, pos.y, r, ang]
 		_add("tower_sq", pos, Vector2(cos(ang), sin(ang)), r / 6.1, r / 6.1, hs)
 	else:
 		var a2 := float((q * 37) % 100) * 0.0628
@@ -1039,6 +1057,8 @@ func _ob_sort() -> void:
 	for i in i_piece.size():
 		if _drum_inst.has(i) and _ob_drums_on():
 			continue   # (a fort's corner tower: a drum of rows at the walls' height, _ob_drum)
+		if _ob_is_mesh(i):
+			continue   # (a gate piece and a square tower off the axes: rows in their own frame, _ob_gate_rows / _ob_sqtower)
 		# A tower or a gate stands out of the wall's line: sorted by its front (its nearest point), so the wall beside it
 		# draws first and the wall in front of it after.
 		var nm: String = Atlas.NAMES[i_piece[i]]
@@ -1283,6 +1303,14 @@ func _ob_walls() -> void:
 					wa.append(pe[e2 * nl + li])
 					wb.append(ps[e2 * nl + li])
 				_ob_wseg_rows(wa, wb, t, hm, false, false)
+	_gate_rows.clear()
+	if not _rings.is_empty():
+		_ob_gate_rows(float(_rings[0][1]), float(_rings[0][2]))
+		for q in _sq_inst:
+			var sqt: Array = _sq_inst[q]
+			if not _ob_is_mesh(q):
+				continue
+			_ob_sqtower(Vector2(float(sqt[0]), float(sqt[1])), float(sqt[2]), float(sqt[3]), float(_rings[0][2]))
 	if not _rings.is_empty() and _ob_drums_on():
 		for dr in _drums:
 			_ob_drum(Vector2(float(dr[0]), float(dr[1])), float(dr[2]), float(_rings[0][2]))
@@ -1326,6 +1354,211 @@ func _ob_drum(c: Vector2, r: float, hm: float) -> void:
 		_ob_top(pi[i], pi[i + 1], c, c, hm, WK_WALK, base)
 		_ob_top(po[i], po[i + 1], pi[i], pi[i + 1], zt, WK_MTOP, base)
 	# (A stretch of its own with no facing, as a stair's: never fades.)
+	_ob_seg.append([c, c, Vector2.ZERO, 0.0, w0, _ob_wkey.size() - w0])
+	for w in _ob_wkey.size() - w0:
+		_ob_wseg.append(_ob_seg.size() - 1)
+
+
+# ------------------------------------------------- gates and square towers as rows ----
+
+## Whether a turn (1/1024) is off the axes by more than AXIS_TOL.
+static func _off_axis(d: int) -> bool:
+	var m := d & 255
+	return ALL_MESH or (m > AXIS_TOL and m < 256 - AXIS_TOL)
+
+
+## Whether instance i is drawn as rows in the oblique view: a gate or a square tower whose stretch is not axis-aligned.
+func _ob_is_mesh(i: int) -> bool:
+	if _rings.is_empty():
+		return false
+	if i_gate[i] >= 0:
+		return _off_axis(int(lay["gates"][i_gate[i]]["dir"]))
+	if _sq_inst.has(i):
+		return _off_axis(int(roundf(float((_sq_inst[i] as Array)[3]) * 1024.0 / TAU)))
+	return false
+
+
+## A prism in a local frame (origin c, `e` along the wall, `n` outward): u in [u0, u1], v in [v0, v1], from z0 to z1,
+## its four faces (bit 0 the outer face (+n), 1 the +e face, 2 the inner face, 3 the -e face) of `kind` and a top of
+## `top` (-1: none), every row carrying `cw` (a gate's flag). The faces run so that each one's right is outward.
+func _ob_prism(c: Vector2, e: Vector2, n: Vector2, u0: float, u1: float, v0: float, v1: float, z0: float, z1: float,
+		base: float, kind: int, top: int, cw: float, sides := 15) -> void:
+	if u1 - u0 < 0.01 or v1 - v0 < 0.01 or z1 - z0 < 0.01:
+		return
+	var p0 := c + e * u0 + n * v1
+	var p1 := c + e * u1 + n * v1
+	var p2 := c + e * u1 + n * v0
+	var p3 := c + e * u0 + n * v0
+	if sides & 1 != 0:
+		_ob_face(p0, p1, z0, z1, kind, base, -1.0, 0.0, cw)
+	if sides & 2 != 0:
+		_ob_face(p1, p2, z0, z1, kind, base, -1.0, 0.0, cw)
+	if sides & 4 != 0:
+		_ob_face(p2, p3, z0, z1, kind, base, -1.0, 0.0, cw)
+	if sides & 8 != 0:
+		_ob_face(p3, p0, z0, z1, kind, base, -1.0, 0.0, cw)
+	if top >= 0:
+		_ob_top(p0, p1, p3, p2, z1, top, base, -1.0, cw)
+
+
+## Every gate's piece as rows in the oblique view, in the gate's own frame (the gate's outward normal, the sim's
+## "dir", is the wall's), so a gate in an angled stretch stands along it: jamb piers either side of the opening
+## (stone; the timber ring's two posts a side), the outer lintel with its merlons, the inner deck, the door leaves
+## (shut: across the opening; open: swung in along the passage sides; broken: the jambs' stumps, stones and a beam
+## down) and the passage floor. Parts are appended back to front as the camera sees them. `t` the wall's thickness,
+## `hm` its height.
+func _ob_gate_rows(t: float, hm: float) -> void:
+	var gates: Array = lay.get("gates", [])
+	_gate_rows.resize(gates.size())
+	for g in gates.size():
+		var gd: Dictionary = gates[g]
+		_gate_rows[g] = []
+		if not _off_axis(int(gd["dir"])):
+			continue
+		var ang := float(int(gd["dir"])) * TAU / 1024.0
+		var n := Vector2(cos(ang), sin(ang))
+		var e := Vector2(-n.y, n.x)
+		var c := Vector2(float(gd["x"]), float(gd["y"]))
+		var hw := float(int(gd.get("hw", 4)))
+		var st: int = _gate_state[g] if g < _gate_state.size() else BattleSim.GATE_CLOSED
+		var flash := 1.0 if (g < _gate_hit.size() and _gate_hit[g] != 0) else 0.0
+		var sw := GATE_ROW + flash
+		var dw := DOOR_ROW + flash
+		var base := BoardView.near_px(c * k) + t * 0.5 * k * BoardView.OBLIQUE_SIN
+		var w0 := _ob_wkey.size()
+		var dd := t + 1.0           # the piece's depth: the wall's thickness and a half metre either side
+		var vh := dd * 0.5
+		var jh := maxf(hm + 1.0, (6.0 if _timber else 7.0) * hw / 4.0)
+		var zd := clampf(4.6 * hw / 4.0, 2.4, jh - 1.4)   # the door's height
+		# The parts, each [depth along the camera's view (n . y x v), builder id]: far parts first.
+		var parts: Array = [[n.y * vh, 0], [n.y * (vh - GATE_DOOR_V), 1], [n.y * (-vh + GATE_DECK * 0.5), 2], [-1000.0, 3]]
+		parts.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+		for pt in parts:
+			match int(pt[1]):
+				0:   # the outer lintel over the opening (the jambs are part 3's); a broken gate has none
+					if st != BattleSim.GATE_BROKEN:
+						_ob_gate_lintel(c, e, n, hw, vh, jh, zd, base, sw)
+				1:   # the door
+					_ob_gate_door(c, e, n, hw, vh, zd, base, dw, st, g)
+				2:   # the inner deck
+					if st != BattleSim.GATE_BROKEN:
+						_ob_gate_deck(c, e, n, hw, vh, jh, zd, base, sw)
+				3:   # the passage floor, then the jambs
+					_ob_prism(c, e, n, -hw, hw, -vh, vh, 0.0, 0.03, base, WK_CAP, WK_RAMP, dw, 0)
+					_ob_gate_jambs(c, e, n, hw, vh, jh, base, sw, st, g)
+		var nr := _ob_wkey.size() - w0
+		_ob_seg.append([c, c, Vector2.ZERO, 0.0, w0, nr])
+		for w in nr:
+			_ob_wseg.append(_ob_seg.size() - 1)
+		_gate_rows[g] = [w0, nr]
+
+
+## The jamb piers: stone blocks (the broken gate's stumps, three heights down the passage), the timber ring's posts.
+func _ob_gate_jambs(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, jh: float, base: float, sw: float,
+		st: int, g: int) -> void:
+	for sd in [-1.0, 1.0]:
+		var u0: float = hw if sd > 0.0 else -hw - GATE_JAMB
+		var u1: float = hw + GATE_JAMB if sd > 0.0 else -hw
+		if st == BattleSim.GATE_BROKEN:
+			var vs := vh * 2.0 / 3.0
+			for q in 3:
+				var hq := (0.9 + 2.6 * _hf(g * 7 + q, int(sd) + 5)) * hw / 4.0
+				var va := -vh + vs * q
+				if _timber:
+					_ob_prism(c, e, n, u0 + 0.2, u1 - 0.2, va + 0.2, va + vs - 0.2, 0.0, hq, base, WK_OUT, -1, sw)
+				else:
+					_ob_prism(c, e, n, u0, u1, va, va + vs, 0.0, hq, base, WK_CAP, WK_WALK, sw)
+			continue
+		if _timber:
+			for vq in [-vh + 0.7, vh - 0.7]:
+				_ob_prism(c, e, n, u0 + 0.2, u1 - 0.2, vq - 0.5, vq + 0.5, 0.0, jh, base, WK_OUT, -1, sw)
+		else:
+			_ob_prism(c, e, n, u0, u1, -vh, vh, 0.0, jh, base, WK_CAP, WK_WALK, sw)
+
+
+## The outer lintel: over the opening from the door's height to the jambs' top, the merlons along its outer edge (the
+## timber ring: a beam).
+func _ob_gate_lintel(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, jh: float, zd: float, base: float,
+		sw: float) -> void:
+	if _timber:
+		_ob_prism(c, e, n, -hw - 0.2, hw + 0.2, vh - 1.0, vh - 0.4, jh - 0.9, jh - 0.35, base, WK_CAP, WK_WALK, sw)
+		return
+	var zt := jh + 0.3 + MERLON_H
+	var v1 := vh - 0.9
+	var v2 := vh - GATE_JAMB
+	var pa := c + e * -hw + n * vh
+	var pb := c + e * hw + n * vh
+	var qa := c + e * -hw + n * v1
+	var qb := c + e * hw + n * v1
+	var ra := c + e * -hw + n * v2
+	var rb := c + e * hw + n * v2
+	_ob_face(rb, ra, zd, jh + 0.3, WK_CAP, base, -1.0, 0.0, sw)             # (its inner face)
+	_ob_face(pa, pb, zd, zt, WK_OUT, base, -1.0, 0.0, sw)                   # (its outer face, the merlon band on top)
+	_ob_face(qb, qa, jh + 0.3, zt, WK_MERLON, base, -1.0, 0.0, sw)
+	_ob_top(pa, pb, ra, rb, jh + 0.3, WK_WALK, base, -1.0, sw)
+	_ob_top(pa, pb, qa, qb, zt, WK_MTOP, base, -1.0, sw)
+
+
+## The inner deck over the passage's inner end (a timber ring: planks on a beam).
+func _ob_gate_deck(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, jh: float, zd: float, base: float,
+		sw: float) -> void:
+	if _timber:
+		_ob_prism(c, e, n, -hw - 0.2, hw + 0.2, -vh, -vh + GATE_DECK, jh - 0.7, jh - 0.4, base, WK_CAP, WK_WALK, sw)
+	else:
+		_ob_prism(c, e, n, -hw, hw, -vh, -vh + GATE_DECK, zd, jh - 0.2, base, WK_CAP, WK_WALK, sw)
+
+
+## The door leaves by the gate's state: shut, two leaves across the opening a little in from the outer face; open,
+## swung back along the passage's sides; broken, a few stones and a fallen beam on the floor.
+func _ob_gate_door(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, zd: float, base: float, dw: float,
+		st: int, g: int) -> void:
+	if st == BattleSim.GATE_CLOSED:
+		var vd := vh - GATE_DOOR_V
+		for sd in [-1.0, 1.0]:
+			var u0: float = 0.04 if sd > 0.0 else -hw
+			var u1: float = hw if sd > 0.0 else -0.04
+			_ob_prism(c, e, n, u0, u1, vd - 0.25, vd + 0.25, 0.0, zd, base, WK_CAP, WK_WALK, dw)
+	elif st == BattleSim.GATE_OPEN:
+		var zl := zd * 0.75
+		for sd in [-1.0, 1.0]:
+			var uc: float = (hw - 0.3) * sd
+			_ob_prism(c, e, n, uc - 0.18, uc + 0.18, -vh + GATE_DECK, vh - 1.8, 0.0, zl, base, WK_CAP, WK_WALK, dw)
+	else:
+		for q in 9:
+			var uu := (_hf(g * 5 + q, 11) * 2.0 - 1.0) * (hw - 0.8)
+			var vv := (_hf(g * 3 + q, 17) * 2.0 - 1.0) * (vh - 0.9)
+			var sz := 0.4 + 0.7 * _hf(g + q * 13, 23)
+			var hq := 0.15 + 0.35 * _hf(g * 11 + q, 29)
+			_ob_prism(c, e, n, uu - sz * 0.5, uu + sz * 0.5, vv - sz * 0.35, vv + sz * 0.35, 0.0, hq, base, WK_CAP, WK_WALK, GATE_ROW)
+		# (the fallen beam: along the passage, a little off its middle)
+		_ob_prism(c, e, n, -0.9, -0.5, -vh + 2.0, vh - 2.5, 0.0, 0.4, base, WK_CAP, WK_WALK, dw)
+
+
+## A stone square tower (the plans' tower_sq: tools/battlekit b_tower_sq, a body 0.87 r a side) as rows along its own
+## angle (the sim's tower list gives it, on the stretch's direction): four faces to the platform at 9.9 / 6.1 r with
+## the merlon band on top, the merlons' inner faces and tops, the platform. A stretch of its own, never fading.
+func _ob_sqtower(c: Vector2, r: float, ang: float, _hm: float) -> void:
+	var sc := r / 6.1
+	var hb := 5.3 * sc
+	var zp := 9.9 * sc
+	var zt := zp + 1.3 * sc
+	var n := Vector2(cos(ang), sin(ang))
+	var e := Vector2(-n.y, n.x)
+	var w0 := _ob_wkey.size()
+	var base := BoardView.near_px(c * k) + r * 0.8 * k * BoardView.OBLIQUE_SIN
+	var po: Array = []
+	var pi: Array = []
+	for q in 4:
+		var a := (e * (hb if q == 1 or q == 2 else -hb)) + (n * (hb if q < 2 else -hb))
+		po.append(c + a)
+		pi.append(c + a * (1.0 - 1.0 / hb))
+	po.append(po[0])
+	pi.append(pi[0])
+	for q in 4:
+		_ob_face(po[q], po[q + 1], 0.0, zt, WK_OUT, base)
+		_ob_face(pi[q + 1], pi[q], zp, zt, WK_MERLON, base)
+		_ob_top(pi[q], pi[q + 1], c, c, zp, WK_WALK, base)
+		_ob_top(po[q], po[q + 1], pi[q], pi[q + 1], zt, WK_MTOP, base)
 	_ob_seg.append([c, c, Vector2.ZERO, 0.0, w0, _ob_wkey.size() - w0])
 	for w in _ob_wkey.size() - w0:
 		_ob_wseg.append(_ob_seg.size() - 1)
@@ -1809,7 +2042,13 @@ func refresh() -> void:
 		i_piece[i] = _name_idx[_gate_name(st)]
 		i_flash[i] = 1.0 if hit != 0 else 0.0
 		changed = true
-		if ob_mm != null:
+		if BoardView.oblique and (ob_mm != null or _low_node != null) and g < _gate_rows.size() and not (_gate_rows[g] as Array).is_empty():
+			# The gate is rows (_ob_gate_rows): a new state builds them again, a hit only turns their flash.
+			if broke:
+				ob_regate = true
+			else:
+				_ob_gate_flash(g, hit)
+		elif ob_mm != null:
 			_ob_put(i)
 		elif _mm != null:
 			var buf := PackedFloat32Array()
@@ -1820,11 +2059,30 @@ func refresh() -> void:
 			_mm.set_instance_custom_data(mi, Color(buf[8], buf[9], buf[10], buf[11]))
 		if broke and _shadow != null:
 			_shadow.rebake_instance(i)
+	if ob_regate:
+		ob_regate = false
+		_ob_sort()
+		if ob_mm != null:
+			_ob_fill()
 	if sim.rub_n != _rub_seen:
 		_rubble_changed()
 		changed = true
 	if changed and _low_node != null:
 		_low_node.queue_redraw()
+
+
+## A struck gate's rows flash (custom.w = the row's flag + the flash); Low redraws them from the buffer.
+func _ob_gate_flash(g: int, hit: int) -> void:
+	if g >= _gate_rows.size() or (_gate_rows[g] as Array).size() < 2:
+		return
+	var w0: int = _gate_rows[g][0]
+	for w in range(w0, w0 + int(_gate_rows[g][1])):
+		var cw: float = _ob_wall[w * 12 + 11]
+		var base_cw := (DOOR_ROW if cw > 4.5 else GATE_ROW)
+		_ob_wall[w * 12 + 11] = base_cw + float(hit)
+		if ob_mm != null and w < _ob_wslot.size() and _ob_wslot[w] >= 0:
+			ob_mm.set_instance_custom_data(_ob_wslot[w], Color(_ob_wall[w * 12 + 8], _ob_wall[w * 12 + 9], _ob_wall[w * 12 + 10],
+				base_cw + float(hit)))
 
 
 # ------------------------------------------------------------- destruction ----
@@ -2014,10 +2272,12 @@ class _LowDraw extends Node2D:
 		var c := int(wb[o + 8]) - int(kit.WALL_ROW)
 		var z := float(c / 8) * 0.1
 		var kind := c % 8
-		if kit._timber:
+		var gw: float = wb[o + 11]
+		var gate := gw > 2.5   # (a gate piece's or a square tower's row: GATE_ROW / DOOR_ROW + the struck flash)
+		if kit._timber and not gate:
 			_timber_row(o, z, kind)
 			return
-		if wb[o + 11] > 1.5:
+		if gw > 1.5 and not gate:
 			_stair_row(o, z, kind, sc)
 			return
 		var pa := Vector2(wb[o], wb[o + 4])
@@ -2039,6 +2299,13 @@ class _LowDraw extends Node2D:
 			poly = PackedVector2Array([bv.to_board(pa, z), bv.to_board(pb, z), bv.to_board(pb2, z), bv.to_board(pa2, z)])
 			col = sc * (0.72 if kind == kit.WK_WALK else (0.62 if kind == kit.WK_RAMP else 1.05))
 		col.a = 1.0
+		if gate:
+			if gw > 4.5:   # (a door's planks, or the passage floor)
+				var dc := Color(0.45, 0.33, 0.22) if kit._timber else Color(0.40, 0.27, 0.15)
+				col = (sc * 0.6 if kind == kit.WK_RAMP else dc * (0.85 if kind == kit.WK_WALK else col.v / maxf(sc.v, 0.01)))
+				col.a = 1.0
+			col = col.lerp(Color(1.0, 0.62, 0.25), (gw - (5.0 if gw > 4.5 else 3.0)) * 0.45)
+			col.a = 1.0
 		# (An edge-on face or a bevel's corner has no area: the triangulation would fail.)
 		var q := PackedVector2Array()
 		for v in poly:

@@ -55,6 +55,7 @@ uniform float contrast = 1.04;
 varying vec2 rot_cs;
 varying float culture;
 varying float flash;
+varying float v_gate;   // a gate piece's or a square tower's row: 1 its stone (the wall's), 2 a door's planks / the passage floor
 varying float v_near;   // the oblique view: nearness (world px)
 varying float v_rock;   // a rock sprite: 0 its top .. 1 its foot (the foot fades into the ground); else 2
 varying vec4 v_wall;    // x: 0 a piece, 3 an oblique-kit piece, 10 + kind a wall row; y: metres along; z: metres up (a
@@ -65,6 +66,7 @@ void vertex() {
 	int pi = int(cd.x + 0.5);
 	vec2 w = (MODEL_MATRIX * vec4(VERTEX, 0.0, 1.0)).xy;
 	v_wall = vec4(0.0);
+	v_gate = 0.0;
 	v_near = 0.0;
 	v_rock = 2.0;
 	vec4 r = rects[clamp(pi, 0, 63)];
@@ -80,7 +82,8 @@ void vertex() {
 		vec2 g;
 		float z;
 		bool tim = ob_timber > 0.5;
-		bool stair = cd.w > 1.5;   // (a stone stair's row: game/battlekit.gd STAIR_ROW, where a stretch's fade goes)
+		bool stair = cd.w > 1.5 && cd.w < 2.5;   // (a stone stair's row: game/battlekit.gd STAIR_ROW, where a stretch's fade goes)
+		bool gate = cd.w > 2.5;   // (a gate piece's row: GATE_ROW / DOOR_ROW + the flash)
 		if (kind < 4.5 || (tim && kind > 6.5)) {   // (a stockade's kind 7: a fence, a face)
 			g = mix(A, B, UV.x);
 			z = mix(C.y, zdm * 0.1, UV.y);
@@ -114,6 +117,10 @@ void vertex() {
 		v_near = ob_near(g, z * ob_ppm);
 		culture = ob_wall_cul;
 		flash = stair ? 0.0 : clamp(cd.w, 0.0, 1.0);   // (a wall row: its fade)
+		if (gate) {
+			v_gate = cd.w > 4.5 ? 2.0 : 1.0;
+			flash = clamp(cd.w - (cd.w > 4.5 ? 5.0 : 3.0), 0.0, 1.0);   // (a gate: the struck flash)
+		}
 		UV = vec2(0.0);
 	} else {
 		if (ob_on > 0.5) {
@@ -324,6 +331,39 @@ vec4 ob_stair_col() {
 	return vec4(clamp(col, 0.0, 1.0), 1.0);
 }
 
+// A gate's door leaves and passage floor (game/battlekit.gd _ob_gate_door): vertical planks with iron straps (a face, the
+// timber ring's the same in its wood), planks across the leaf's top, cobbles (earth in a timber ring) on the floor.
+vec4 ob_door_col() {
+	int kind = int(v_wall.x - 10.0 + 0.5);
+	float u = v_wall.y;
+	bool timber = ob_timber > 0.5;
+	vec3 wood = timber ? vec3(0.50, 0.37, 0.24) : vec3(0.40, 0.27, 0.15);
+	vec3 col;
+	if (kind <= 4) {
+		float z = v_wall.z;
+		float z1 = v_wall.w;
+		float pl = floor(abs(u) / 0.28);
+		float sx = fract(abs(u) / 0.28);
+		col = wood * (0.78 + 0.24 * ob_hash(vec2(pl, 5.0)));
+		col *= 1.0 - 0.28 * (1.0 - smoothstep(0.0, 0.1, min(sx, 1.0 - sx)));
+		float strap = max(step(abs(z - 0.9), 0.14), step(abs(z - (z1 - 0.9)), 0.14));
+		col = mix(col, vec3(0.20, 0.20, 0.22), strap * 0.85);
+		vec2 L = normalize(light_dir.xy);
+		col *= 0.80 + 0.36 * (0.5 + 0.5 * dot(rot_cs, L));
+		col *= 0.74 + 0.26 * smoothstep(0.0, 1.0, z);
+	} else if (kind == 5) {
+		col = wood * 0.85 * (0.85 + 0.15 * step(0.12, fract(abs(u) / 0.3)));
+	} else {
+		float ac = v_wall.z;
+		vec3 floor_c = timber ? vec3(0.42, 0.33, 0.22) : vec3(0.47, 0.43, 0.37);
+		col = floor_c * (0.86 + 0.2 * ob_hash(floor(vec2(u / 0.55, ac * 12.0))));
+	}
+	float lum = dot(col, vec3(0.3, 0.59, 0.11));
+	col = mix(vec3(lum), col, sat);
+	col = (col - 0.5) * contrast + 0.5;
+	return vec4(clamp(col, 0.0, 1.0), 1.0);
+}
+
 const float MERLON_STEP = 2.0;   // tools/battlekit b_wall_strip: 8 merlons a 16 m tile, 1.1 m wide
 const float MERLON_W = 1.1;
 vec4 ob_wall_col() {
@@ -415,12 +455,17 @@ vec4 ob_wall_col() {
 
 void fragment() {
 	if (v_wall.x > 9.5) {
-		vec4 wc = ob_wall_col();
+		vec4 wc = v_gate > 1.5 ? ob_door_col() : ob_wall_col();
 		if (wc.a < 0.5) {
 			discard;
 		}
+		if (v_gate > 0.5) {
+			// A gate piece: never faded; struck, it flashes as the kit's pieces do.
+			COLOR = ob_depth > 0.5 ? ob_near_col(1.0, 0.0) : vec4(mix(wc.rgb, vec3(1.0, 0.62, 0.25), flash * 0.45), 1.0);
+		} else {
 		// (flash: the stretch's fade)
 		COLOR = ob_depth > 0.5 ? ob_near_col(1.0, flash) : vec4(wc.rgb, 1.0 - 0.45 * flash);
+		}
 	} else {
 	// The top-down atlases, or the oblique kit sheet's passes (the same channels).
 	vec4 a;

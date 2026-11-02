@@ -1594,3 +1594,38 @@ and mapgen untouched; no hash, no pin moves.
   4 m). S comes rounded to the metre, so a flight can sit up to about 0.7 m off its stair's cells (a man's height then steps a
   little where he reaches the walk's cells). A man dying on the flight drops to the ground as a corpse. The owner's eye on the stone's tone (the treads are lighter
   than the faces).
+
+### Gates at their wall's angle (as built, 2026-11-02, view only)
+
+The owner: "If a gate is at an angle it should match that angle. Right now they are all straight on, even if the wall is at an angle."
+**Cause.** The sim's gate carries its stretch's outward normal (`dir`, 1/1024 turns), and the top view and the battle kit already turn the
+gate piece by it (`i_e`; `CityDraw.draw_gate`); the oblique view could not: it stands the gate up from the oblique kit sheet
+(`KitOb.index_yaw`: a piece has its 0 / 180 render, a non-square one also 90 / 270), a sprite pre-rendered at 40 degrees that reads from
+one direction only, so on every angled stretch (the polygonal Polis, Punic, Oppidum and Ring plans, the West forts and bastion faces) the
+gate stood square to the camera, askew in its wall. The plans' square towers (`tower_sq`, the gate's two included) had the same defect;
+round and log towers are symmetric. **Probe** (`scratchpad/gate/gate_probe.gd`: Rome plans x walls 1-3 x terrain / coast / level / seed,
+and every West plan town at walls 1-3): of 673 Rome gates 497 are more than 1.4 degrees off the axes (Castrum 0 of 150, Polis 172 of 180, Punic 127 of 143,
+Oppidum 62 of 64, Ring 136 of 136; by walls 1 / 2 / 3: 177 / 173 / 147), of 298 West gates 271 (84 / 84 / 130 at walls 1 / 2 / 3: 76 / 77 / 118).
+**Built (the walls' own route: mesh in the kit shader, like the stretches, the stairs and the fort's corner drums).** `BattleKit._ob_gate_rows`
+builds each off-axis gate as wall rows in the gate's own frame (`e` along the wall, `n` out, depth the wall's thickness + 1 m, height
+`max(wall + 1, 7 x hw / 4)`): jamb piers either side of the opening (the stockade: two log posts a side), the outer lintel over the door's
+height with the merlon band, the inner deck, the passage floor and the door leaves by state: shut, two leaves a little in from the outer face
+(planks, iron straps); open, swung back along the passage sides; broken, the jambs' stumps at three heights, a few stones and a fallen beam,
+no lintel or deck. Parts are appended back to front along the camera's view of the gate (`n.y x v`) and share the gate's sort base (the
+sprite's: the ring's nearest point), so the faces turned away, the tops and the faces toward the camera sort as the stretches' do. The rows
+carry `GATE_ROW` (3, the wall's stone or the ring's timber) or `DOOR_ROW` (5, planks and floor) + the flash in custom.w
+(`battlekit.gdshader` `v_gate`, `ob_door_col`; a stair is 2, a stretch's fade 0 .. 1), so a struck gate flashes (`_ob_gate_flash`, the rows'
+custom data only) and never fades; a state change (`refresh`) builds the oblique rows again as a breach does. `_ob_sqtower` builds a stone
+square tower off the axes the same way (the sprite's size: body 0.87 r, platform 9.9 / 6.1 r, merlon band, a stretch of its own). Graphics
+Low draws the same rows flat-shaded (`_LowDraw._wall_row`: a door brown, the floor dark). The shadow keeps the sprite's instance: the
+shadow bake already rotates a footprint by `i_e`, and the instance stays in the kit's list (the top view, the shadow, `_gate_state`).
+**Kept as before.** A gate or tower within `AXIS_TOL` (4 / 1024, 1.4 degrees) of the axes keeps the sprite (every gate and tower of the
+Castrum plan, 27 of 298 West gates): its oblique shots are pixel-identical to before; `ALL_MESH` (one constant) makes every gate and square
+tower rows for one look in every town. The top view is unchanged (it always followed the angle). **Stockade:** the ring's gate is the
+`pgate_*` piece and is built the same way (log posts, a beam, planks); the native lesson's garden fences have a 3 m gap that is not a gate
+piece (axis-aligned plots), and the ring's own palisade gap is the gate: neither was given a piece. **Checked** with `scratchpad/gate/`
+shots (shut / open / broken, High and Low, the Punic plan's gate 0, Cartagena's fort gate, a Ring village's stockade gate, the Polis' north-facing
+gate) in the oblique view before and after, the top view before and after identical, an axis-aligned Castrum gate before and after
+pixel-identical (`--bare`: no soldiers, no HUD). **Open:** the mesh gate reads lighter and plainer than the sprite (the sprite was
+a dark baked render); a town with one aligned and one angled gate mixes the two looks; the round and log towers beside an angled gate are
+symmetric and unchanged; the owner's eye on the jambs, the lintel height and the door; no phone look.
