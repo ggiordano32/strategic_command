@@ -4,6 +4,7 @@ extends Node2D
 ## draws a destination line (for one unit or a group).
 
 const BattleSim := preload("res://sim/battle_sim.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 const UT := preload("res://sim/unit_types.gd")
 const OccView := preload("res://game/occupy_view.gd")
 const Icons := preload("res://game/unit_icons.gd")
@@ -1533,8 +1534,18 @@ func _draw_impacts(lw: float) -> void:
 		var p := to_px(sim.fx_x[k], sim.fx_y[k])
 		var dir := Vector2(sim.fx_dx[k], sim.fx_dy[k]) / 4096.0
 		var a := 0.85 * (1.0 - f)
+		# A stone that landed on a wall walk (or a tower) lands there, at the height the men on it are drawn at.
+		var up_h := 0.0
+		if BoardView.oblique and sim.obs_on != 0:
+			var ok: int = sim.obs_kind(sim.fx_x[k], sim.fx_y[k])
+			if ok == MapGen.C_WALK or ok == MapGen.C_TOWER:
+				up_h = float(sim.wall_h) / 1024.0 * px_per_m * BoardView.OBLIQUE_SIN
 		_up(p)
-		draw_circle(p + Vector2(0, -px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+		draw_circle(p + Vector2(0, -up_h - px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+		if up_h > 0.0:
+			draw_arc(p + Vector2(0, -up_h), px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
+			_flat()
+			continue
 		_flat()
 		draw_arc(p, px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
 		draw_line(p, p + dir * px_per_m * 8.0, Color(0.35, 0.27, 0.18, a), maxf(lw * 1.5, px_per_m * 0.5))

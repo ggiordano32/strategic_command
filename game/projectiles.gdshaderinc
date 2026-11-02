@@ -12,10 +12,11 @@
 //   0 sx, 1 sy, 2 x, 3 y, 4 t0, 5 t1 (-1 = free slot), 6 shooter unit,
 //   7 unit flags (indexed by unit: bit0 side, bits 1-3 kind: 0 arrow,
 //     1 javelin, 2 bolt, 3 stone, 4 sling bullet, 5 musket / pistol ball),
-//   8 ammunition kind of the slot's missile (fire kinds: bits of fire_mask)
+//   8 ammunition kind of the slot's missile (fire kinds: bits of fire_mask),
+//   9 heights above the ground (dm): the firing point's + 1024 x the landing point's (a wall walk; soldier_layer._pr_heights)
 // CPU-fed variant (skip_vertex_transform), through MODEL_MATRIX: [3].xy
 // firing point, [0].xy landing point, [1].x t0, [1].y t1; INSTANCE_CUSTOM.x
-// the shooter's flags (side + 2 x kind, + 16 for a fire missile).
+// the shooter's flags (side + 2 x kind, + 16 for a fire missile), .y / .z the firing / landing height (dm).
 // Fire missiles (arrows, javelins, pots) glow at the head and trail a short
 // flame fading to smoke (view only).
 
@@ -59,8 +60,11 @@ int fetch_int(int block, int idx) {
 // One missile in flight from s to e (sim units) at fraction f; side 0 / 1,
 // kind 0 arrow, 1 javelin, 2 bolt, 3 stone, 4 sling bullet, 5 gunpowder ball. Returns the corner's position
 // in the layer's space; col: its colour.
-vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out vec4 col) {
+vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, float hs_dm, float he_dm, vec2 uv, out vec4 col) {
 	vec2 p = mix(s, e, f) * px_per_unit;
+	// Its height above the ground (a wall walk, as the men on it are drawn), from the firing point's to the landing point's, in world px.
+	float hs = hs_dm * 0.1 * px_per_unit * 1024.0;
+	float he = he_dm * 0.1 * px_per_unit * 1024.0;
 	vec2 d = e - s;
 	float ang = atan(d.y, d.x);
 	float m = px_per_unit * 1024.0;
@@ -97,11 +101,14 @@ vec2 place(vec2 s, vec2 e, float f, int side, int kind, bool fire, vec2 uv, out 
 	vec2 ep = e * px_per_unit;
 	float l_s = ob_lift_px(sp);
 	float l_e = ob_lift_px(ep);
-	vec2 b0 = vec2(mix(sp.x, ep.x, f0), mix(sp.y, ep.y, f0) * OB_COS) - vec2(0.0, mix(l_s, l_e, f0) + hk * span * 4.0 * f0 * (1.0 - f0) * OB_SIN);
-	vec2 b1 = vec2(mix(sp.x, ep.x, f1), mix(sp.y, ep.y, f1) * OB_COS) - vec2(0.0, mix(l_s, l_e, f1) + hk * span * 4.0 * f1 * (1.0 - f1) * OB_SIN);
+	vec2 b0 = vec2(mix(sp.x, ep.x, f0), mix(sp.y, ep.y, f0) * OB_COS) - vec2(0.0, mix(l_s, l_e, f0) + (mix(hs, he, f0) + hk * span * 4.0 * f0 * (1.0 - f0)) * OB_SIN);
+	vec2 b1 = vec2(mix(sp.x, ep.x, f1), mix(sp.y, ep.y, f1) * OB_COS) - vec2(0.0, mix(l_s, l_e, f1) + (mix(hs, he, f1) + hk * span * 4.0 * f1 * (1.0 - f1)) * OB_SIN);
 	ang = atan(b1.y - b0.y, b1.x - b0.x);
-	p = vec2(p.x, p.y * OB_COS) - vec2(0.0, mix(l_s, l_e, f) + h0 * OB_SIN);
+	p = vec2(p.x, p.y * OB_COS) - vec2(0.0, mix(l_s, l_e, f) + (mix(hs, he, f) + h0) * OB_SIN);
 	lift = 0.0;
+#else
+	// The top view: a missile above the ground (from or onto a wall) is drawn a little larger, as the arc's swell is.
+	lift += 0.06 * mix(hs_dm, he_dm, f) * 0.1;
 #endif
 	size *= 1.0 + lift * sin(3.14159 * f);
 	vec2 v = (uv - vec2(0.5)) * size * m;
@@ -156,7 +163,7 @@ void vertex() {
 			fl -= 16.0;
 		}
 		kind = int(floor(fl / 2.0));
-		VERTEX = place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, f, int(mod(fl, 2.0)), kind, fire, UV, col);
+		VERTEX = place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, f, int(mod(fl, 2.0)), kind, fire, INSTANCE_CUSTOM.y, INSTANCE_CUSTOM.z, UV, col);
 #else
 		vec2 s = vec2(float(fetch_int(0, i)), float(fetch_int(1, i)));
 		vec2 e = vec2(float(fetch_int(2, i)), float(fetch_int(3, i)));
@@ -165,7 +172,9 @@ void vertex() {
 		kind = flags / 2 - (flags / 16) * 8;
 		int ak = fetch_int(8, i);
 		fire = ak >= 0 && mod(floor(fire_mask / exp2(float(ak)) + 0.001), 2.0) > 0.5;
-		VERTEX = place(s, e, f, side, kind, fire, UV, col) - MODEL_MATRIX[3].xy;
+		int hh = fetch_int(9, i);
+		int hsi = hh - (hh / 1024) * 1024;
+		VERTEX = place(s, e, f, side, kind, fire, float(hsi), float(hh / 1024), UV, col) - MODEL_MATRIX[3].xy;
 #endif
 		v_kind = float(kind);
 		if (fire) {

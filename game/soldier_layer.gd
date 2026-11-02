@@ -42,6 +42,7 @@ const BASE_SHADER_OB_CPU := preload("res://game/soldier_bases_ob_cpu.gdshader")
 const PR_SHADER_OB := preload("res://game/projectiles_ob.gdshader")
 const PR_SHADER_OB_CPU := preload("res://game/projectiles_ob_cpu.gdshader")
 const BoardView := preload("res://game/board_view.gd")
+const MapGen := preload("res://sim/mapgen.gd")
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const UT := preload("res://sim/unit_types.gd")
 const SpriteAtlas := preload("res://game/sprite_atlas.gd")
@@ -52,7 +53,7 @@ const ATLAS_SHADE_PATH := "res://assets/sprites/atlas_shade.png"
 const ATLAS_MASK_PATH := "res://assets/sprites/atlas_mask.png"
 const TEX_W := 1024
 const BLOCKS := 9
-const PR_BLOCKS := 9
+const PR_BLOCKS := 10   # block 9: the missile's firing height (dm) + 1024 x its landing height (dm)
 ## CPU-fed MultiMesh buffer: floats per instance (2D transform 8, custom 4)
 ## and where each field goes (the shaders read them through MODEL_MATRIX:
 ## [3].xy = floats 3, 7; [0].xy = 0, 4; [1].xy = 1, 5; INSTANCE_CUSTOM = 8-11).
@@ -230,6 +231,13 @@ var _ak_fire := {}                        # ammunition rows that set fire
 var _pr_t0_seen := PackedInt32Array()
 var _pr_t1_seen := PackedInt32Array()
 var _pr_free_tail := PackedInt32Array()   # cap x -1 (t1 of free slots)
+# Missile heights (view only): per slot, the height above the ground at the firing point and at the landing point in dm (a wall
+# walk, as the men on it are drawn), worked out once when the slot's t0 changes.
+var _pr_hs := PackedInt32Array()
+var _pr_he := PackedInt32Array()
+var _pr_hpack := PackedInt32Array()       # hs + 1024 x he (the texture path's block 9)
+var _pr_h_t0 := PackedInt32Array()
+var _pr_hi := 0                           # one past the highest slot used so far
 # The oblique view.
 var oblique := false
 var _unit_ext := PackedInt32Array()       # per unit: its wall walk's height (dm), 0 on the ground
@@ -270,6 +278,11 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	_unit_ext.resize(sim.n_units)
 	_unit_ext.fill(0)
 	_pr_cap = sim.pr_t1.size()
+	_pr_hs.resize(_pr_cap)
+	_pr_he.resize(_pr_cap)
+	_pr_hpack.resize(_pr_cap)
+	_pr_h_t0.resize(_pr_cap)
+	_pr_h_t0.fill(-2)
 	for k in UT.AMMO.size():
 		if UT.ammo_stat(k, "fire") > 0:
 			_ak_fire[k] = true
@@ -791,6 +804,8 @@ func upload() -> void:
 	var active: bool = sim.pr_count > 0
 	var missiles := active or _pr_was_active  # skip while nothing flies (and nothing flew)
 	_pr_was_active = active
+	if missiles and _pr_cap > 0:
+		_pr_heights()
 	if cpu_fed:
 		_upload_cpu(xs, ys, pxs, pys, fs, sts, missiles)
 	else:
@@ -1086,7 +1101,7 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		var pblock := _pr_rows * TEX_W * 4
 		_pr_image.set_data(TEX_W, PR_BLOCKS * _pr_rows, false, Image.FORMAT_RGBA8, _pack([
 			sim.pr_sx, sim.pr_sy, sim.pr_x, sim.pr_y, sim.pr_t0, sim.pr_t1, sim.pr_unit,
-			_pr_flags, sim.pr_ak], pblock))
+			_pr_flags, sim.pr_ak, _pr_hpack], pblock))
 		_pr_tex.update(_pr_image)
 
 
@@ -1121,6 +1136,8 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		_column(_pr_cbuf, _pr_ccol, C_PREV_Y, sim.pr_y, m)
 		_column(_pr_cbuf, _pr_ccol, C_A, sim.pr_t0, m)
 		_column(_pr_cbuf, _pr_ccol, C_B, sim.pr_t1, m)
+		_column(_pr_cbuf, _pr_ccol, C_FLAGS, _pr_hs, m)
+		_column(_pr_cbuf, _pr_ccol, C_LOOK, _pr_he, m)
 		var pu: PackedInt32Array = sim.pr_unit.slice(0, m)
 		var pa: PackedInt32Array = sim.pr_ak.slice(0, m)
 		if pu != _pr_unit_seen or pa != _pr_ak_seen:
@@ -1235,6 +1252,58 @@ static func _pack(arrays: Array, block: int) -> PackedByteArray:
 			pad.resize(block - b.size())
 			out.append_array(pad)
 	return out
+
+
+## A missile's heights above the ground (view only), for the slots fired since the last call: the height a man stands at (a wall
+## walk: `wall_h`, as `_unit_ext` lifts the men on it) at the firing point (the shooter's, else the point's cell: walk, tower,
+## stair) and at the landing point (the unit aimed at, else the point's cell). The shaders fly the shot from one to the other.
+## Testing aid (before / after shots): false draws every missile from and to the ground, as before.
+static var missile_heights := true
+
+
+func _pr_heights() -> void:
+	if not missile_heights or sim.pr_t0 == _pr_h_t0:
+		return
+	var wdm: int = sim.wall_h * 10 / 1024
+	var t0: PackedInt32Array = sim.pr_t0
+	var t1: PackedInt32Array = sim.pr_t1
+	var limit := mini(_pr_cap, _pr_hi + sim.pr_count + 1)
+	var hi := _pr_hi
+	for i in limit:
+		if t0[i] == _pr_h_t0[i]:
+			continue
+		_pr_h_t0[i] = t0[i]
+		if t1[i] < 0:
+			continue
+		var su: int = sim.pr_unit[i]
+		var hs := 0
+		if su >= 0 and su < sim.n_units and sim.u_wall[su] > 0:
+			hs = wdm
+		else:
+			hs = _cell_dm(sim.pr_sx[i], sim.pr_sy[i], wdm)
+		var tu: int = sim.pr_tu[i]
+		var he := 0
+		if tu >= 0 and tu < sim.n_units and sim.u_wall[tu] > 0:
+			he = wdm
+		else:
+			he = _cell_dm(sim.pr_x[i], sim.pr_y[i], wdm)
+		_pr_hs[i] = hs
+		_pr_he[i] = he
+		_pr_hpack[i] = hs + 1024 * he
+		hi = maxi(hi, i + 1)
+	_pr_hi = hi
+
+
+## The wall walk's height (dm) if the point stands on a walk, a tower or (half) a stair, else 0.
+func _cell_dm(x: int, y: int, wdm: int) -> int:
+	if sim.obs_on == 0:
+		return 0
+	var k: int = sim.obs_kind(x, y)
+	if k == MapGen.C_WALK or k == MapGen.C_TOWER:
+		return wdm
+	if k == MapGen.C_STAIR:
+		return wdm / 2
+	return 0
 
 
 ## Instance i's index for the texture path's shaders (INSTANCE_CUSTOM: i =
