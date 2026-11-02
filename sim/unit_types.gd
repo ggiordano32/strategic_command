@@ -665,7 +665,8 @@ const TIER_DELTA := {
 ## and pikes and least to missile troops, whose numbers are their fire.
 const TIER_PRICE := {"heavy": [135, 190], "light": [140, 180], "spear": [153, 262],
 	"pike": [161, 275], "archer": [122, 128], "javelin": [120, 160], "cav": [147, 210],
-	"cav_missile": [125], "sling": [120], "musket": [125], "pistol": [140]}
+	"cav_missile": [125], "sling": [120], "musket": [125], "pistol": [140],
+	"canoe": [120], "maroon": [125]}
 ## Attack and defence gains per line, % of TIER_DELTA: a formed pike wall
 ## multiplies small gains over four ranks of points.
 const TIER_SKILL := {"pike": 50}
@@ -1891,7 +1892,7 @@ const WEST_LATE: Array[Dictionary] = [
 		"climb": 13,
 	},
 	{
-		"key": "canoe_raiders", "role": "skirmish", "line": "light", "pack": "west", "tier": 2, "name": "Canoe Raiders", "short": "Raiders",
+		"key": "canoe_raiders", "role": "skirmish", "line": "canoe", "pack": "west", "tier": 2, "name": "Canoe Raiders", "short": "Raiders",
 		"icon": 32, "sprite": 4, "sprite_set": 31,
 		"size": 60, "files0": 15,
 		"what": "Amphibious javelin raiders",
@@ -2310,6 +2311,21 @@ const WEST_LATE: Array[Dictionary] = [
 	},
 ]
 
+## The tribes' tier-2 rows (owner 2026-11-02: "level 2 warriors and canoe men and maroons for the tribes"), appended
+## after WEST_LATE so no earlier index moves: derived like WEST_TIERS (TIER_DELTA tier 2, "add", "price_add") from a
+## West row by key ("of" may name a WEST_LATE row). They draw the tier-1 row's sprite set. Canoe men and maroons
+## have their own TIER_PRICE lines ("canoe": the javelinmen's 120 %, "maroon": the musketeers' 125 %).
+const WEST_TIERS2: Array[Dictionary] = [
+	{"key": "native_warriors2", "role": "shock", "of": "native_warriors", "tier": 2, "name": "War Band", "short": "War Band",
+		"blurb": "Painted veterans of many raids, led by their war-chief's picked men."},
+	{"key": "canoe_raiders2", "role": "skirmish", "of": "canoe_raiders", "tier": 2, "name": "Canoe Captains", "short": "Canoe Capt.",
+		"blurb": "The best paddlers and javelin throwers of the coast, who have taken ships from their decks.",
+		"add": {"m_damage": 3}},
+	{"key": "maroon_vets", "role": "skirmish", "of": "maroons", "tier": 2, "name": "Cimarron Veterans", "short": "Cimarrons",
+		"blurb": "Free fighters of the old palenques who have beaten every column sent into the hills.",
+		"add": {"m_reload": -20}},
+]
+
 
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
@@ -2331,9 +2347,9 @@ static var _by_key := {}
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
 ## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS, FORT_ROWS, WEST_LATE).
-static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size() - WEST_LATE.size()
+static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size() - WEST_LATE.size() - WEST_TIERS2.size()
 ## The West fort's gun (slice 2c): the last row but WEST_LATE.
-static var FORT_GUN: int = TYPES.size() - WEST_LATE.size() - FORT_ROWS.size()
+static var FORT_GUN: int = TYPES.size() - WEST_TIERS2.size() - WEST_LATE.size() - FORT_ROWS.size()
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -2462,6 +2478,12 @@ static func _build_types() -> Array[Dictionary]:
 		row["base"] = out.size()
 		row["price"] = int(row["cost"]) * int(row["size"])
 		out.append(row)
+	for t in WEST_TIERS2:
+		var b := first
+		while str(out[b]["key"]) != str(t["of"]):
+			b += 1
+		var br: Dictionary = out[b]
+		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
 	# Roles step 2: skirmishers stand in loose order (at least the javelinmen's
 	# 1.8 x 2.0 m; the line keeps its close files): native bowmen and the
 	# slingers open up, the rest had it already.

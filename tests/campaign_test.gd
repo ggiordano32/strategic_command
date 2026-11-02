@@ -458,6 +458,23 @@ func _recruit_lists() -> void:
 		if str(o["t"]) == "native_bowmen":
 			o1 = str(o.get("ak", ""))
 	_check(o1 == "poison_arrows" and seen_ak > 0, "West: a Range 2 gives the Miskito's bowmen poison arrows in the list ('%s'; the army card says so as the raise dialog does)" % o1)
+	# The tribes' tier-2 rows (2026-11-02): rosters, needs (a Barracks 2, within the natives' chain cap), the tier-1 sprite set and ammunition.
+	var iz := _f("itza")
+	_check(CState.roster_type(iz, "light", 2) == "native_warriors2" and CState.roster_type(mi, "light", 2) == "native_warriors2"
+		and CState.roster_type(mi, "canoe", 1) == "canoe_raiders" and CState.roster_type(mi, "canoe", 2) == "canoe_raiders2"
+		and CState.roster_type(mi, "maroon", 2) == "maroon_vets" and CState.roster_type(_f("brethren"), "maroon", 2) == ""
+		and CState.roster_type(_f("new_spain"), "light", 2) == "",
+		"West: War Band in the Itza's and Miskito's light line, Canoe Captains over the raiders, Cimarron Veterans in the Miskito's maroons (the Brethren's unchanged)")
+	var tier_ok := true
+	for pr in [["native_warriors", "native_warriors2"], ["canoe_raiders", "canoe_raiders2"], ["maroons", "maroon_vets"]]:
+		var t1 := UT.index_of(pr[0])
+		var t2 := UT.index_of(pr[1])
+		tier_ok = tier_ok and UT.stat(t2, "attack") == UT.stat(t1, "attack") + 5 and UT.stat(t2, "defence") == UT.stat(t1, "defence") + 5 \
+			and UT.stat(t2, "morale") == UT.stat(t1, "morale") + 70 and UT.stat(t2, "sprite_set") == UT.stat(t1, "sprite_set") \
+			and UT.stat(t2, "m_ak") == UT.stat(t1, "m_ak") and UT.stat(t2, "m_ammo") == UT.stat(t1, "m_ammo") \
+			and UT.line_of(t2) == UT.line_of(t1) and UT.price_of(t2) > UT.price_of(t1) and UT.size_of(t2) == UT.size_of(t1) \
+			and CRules.needs(pr[1]) == [CData.BARRACKS, 2] and CData.chain_cap(mi, CData.BARRACKS) >= 2
+	_check(tier_ok, "West: the tribes' tier-2 rows add the tier's attack / defence / morale to tier 1, keep its line, size, sprite set and ammunition, cost more, and need a War lodge 2")
 	CData.use_pack("rome")
 
 
@@ -5443,12 +5460,13 @@ func _amphibious() -> void:
 	var cu := _r("cumana")
 	var ps := _r("port_of_spain")
 	var ty := UT.index_of("canoe_raiders")
+	var ty2 := UT.index_of("canoe_raiders2")  # (the Canoe Captains, the raiders' tier-2 row, keep the trait)
 	var only := true
 	for t in UT.TYPES.size():
-		if (UT.stat(t, "amphib") != 0) != (t == ty):
+		if (UT.stat(t, "amphib") != 0) != (t == ty or t == ty2):
 			only = false
 	_check(UT.stat(ty, "amphib") == 1 and only and UT.stat(UT.index_of("general"), "amphib") == 0,
-		"amphibious: only the canoe raiders' row has the trait (the general's is 0)")
+		"amphibious: only the canoe raiders' rows (raiders and captains) have the trait (the general's is 0)")
 	var st := CState.new_campaign("amph", 5150, [eng], {}, [], "west")
 	st["fleets"] = []
 	st["regions"][cu]["owner"] = eng

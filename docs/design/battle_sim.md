@@ -2841,6 +2841,60 @@ move is the right size (the Spanish keep a clear edge in the open, the natives k
 strongest piece measured, a campaign-scale prisoner machine rather than a battle-winner (+3 Spanish wins, 20 of 24
 battles with prisoners); the sea captain is neutral in a land fight, as designed.
 
+### The tribes' tier-2 rows (as built, 2026-11-02)
+
+The owner, playing the natives: "Can we have level 2 warriors and canoe men and maroons for the tribes?" Three rows
+appended after `WEST_LATE` as `WEST_TIERS2` in `sim/unit_types.gd` (derived by `_derived` from the tier-1 row named
+by `of`, so no earlier index moves: `FORT_GUN` 90 and `ROME_N` 76 as before, `UT.TYPES` 111 -> 114; the equites
+rows' trick, TIERS, cannot derive from West rows). They draw the tier-1 row's sprite set (23, 31, 38), keep its
+ammunition, size, abilities and the Canoe Captains' `amphib`.
+
+| Row | Name (short) | Of | Line | Attack / defence / armour / hp / morale / damage | Price | Needs |
+|---|---|---|---|---|---|---|
+| `native_warriors2` | War Band (War Band; "Itza War Band" / "Miskito War Band" by faction) | `native_warriors` 38 / 24 / 2 / 85 / 620 / 36 | `light`, slot 2 | 43 / 29 / 5 / 91 / 690 / 38 | 560 (400 x 140 %) | War lodge 2 |
+| `canoe_raiders2` | Canoe Captains (Canoe Capt.) | `canoe_raiders` 38 / 24 / 2 / 85 / 620 / 34, javelin 42 | `canoe`, slot 2 | 43 / 29 / 5 / 91 / 690 / 36, javelin 45 (`m_damage` +3) | 288 (240 x 120 %) | War lodge 2 (`UNIT_NEEDS`; the raiders keep their Barracks 1) |
+| `maroon_vets` | Cimarron Veterans (Cimarrons) | `maroons` 38 / 24 / 0 / 90 / 660 / 38, `m_reload` 200 | `maroon`, slot 2 | 43 / 29 / 3 / 96 / 730 / 40, `m_reload` 180 (-20) | 375 (300 x 125 %) | War lodge 2 |
+
+Ratios: exactly the existing tier-2 rows' (`TIER_DELTA` 2: attack +5, defence +5, armour +3, hp +6, morale +70,
+damage +2). The prices follow each arm's pair: warriors the light line's 140 % (`light2`), the canoe men the
+javelinmen's 120 % with `javelin2`'s +3 `m_damage` (`TIER_PRICE` "canoe" 120), the maroons the musketeers' 125 % with
+`musketeers2`'s -20 `m_reload` (`TIER_PRICE` "maroon" 125). Ammunition (the Miskito's poisoned arrows are a bowmen
+rule, untouched), abilities and roles as tier 1. The holcan stay the Itza's separate heavy line (tier 2, War lodge 2,
+360 a unit of 60): they are a picked heavy unit, not the Itza's warriors' veterans, and the Itza get War Band in the
+light line's second slot beside them.
+
+Rosters (`campaign/data/west.gd`): Itza `light` ["native_warriors", "native_warriors2", ""]; Miskito `light` the same,
+`maroon` ["maroons", "maroon_vets", ""] (the Brethren's `maroon` stays ["maroons"]: "for the tribes" read as the tribes
+only), and a new `canoe` line ["canoe_raiders", "canoe_raiders2", ""]. The canoe raiders sat in the Miskito's `light`
+slot 2 already (tier 2 by name, a Barracks 1 by `UNIT_NEEDS`), so there was no slot for their veterans: the row's line
+is now `canoe` (`CData.LINE_ORDER` after `light`, `LINE_CHAIN` Barracks) and the Miskito's mix splits `light` 39 into
+`light` 28 and `canoe` 11 (the raiders were about the AI's 30 % specialist share of the line). The chain cap needs no
+change: the Itza already build a War lodge 2 (holcan) and the Miskito one (torch raiders), so `CHAIN_CAP_FACTIONS`
+stands. The AI raises them through `MIX_LIVE` and `_best_type` (best tier a centre allows) with no `cai.gd` change.
+
+Measured (`campaign_sim`, West, 72 seeds x 60 turns, before = HEAD 5be2425, `tests/campaign_sim.gd` now also counts
+the tribes' recruits):
+
+| | format 6 before -> after | format 10 before -> after |
+|---|---|---|
+| eliminations (England / France / Dutch / Brethren / Itza / Miskito) | 4 / 0 / 5 / 16 / 9 / 6 -> 3 / 0 / 6 / 16 / 4 / 10 | 2 / 0 / 0 / 15 / 9 / 9 -> 0 / 2 / 1 / 22 / 8 / 5 |
+| total | 40 -> 39 | 35 -> 38 |
+| battles / field battles a seed | 60.6 / 6.0 -> 57.7 / 5.8 | 47.8 / 3.5 -> 48.5 / 3.5 |
+| War Band raised (Itza / Miskito) | 8 / 7 | 33 / 58 |
+| Canoe Captains / Cimarron Veterans raised (Miskito) | 3 / 1 | 30 / 9 |
+
+The AI seldom reaches a War lodge 2 (Itza warriors 1,633 against 8 War Bands at format 6), so the rows are mostly the
+player's; the eliminations swing both ways by seed (the rows change the unit keys, so every trajectory differs), no
+single faction beyond what unrelated changes have moved it (Dutch 2 -> 7 once, the Brethren 22 of 72 here at format 10
+against 15). No tuning round was run. Asymmetry probe (`tests/asym_probe.gd --tier2`: the natives' warriors and canoe
+raiders swapped for the new rows, 48 seeds, seed0 16; the natives' army costs more): `asym_woods` natives 48 of 48
+either way; `asym_field` Spanish / natives / draws 26 / 21 / 1 -> 20 / 27 / 1.
+
+Pins: West format 6, 8 and 10 moved (Rome, ROME_20 and the AI goldens unchanged); no `CState.VERSION` bump; the rules
+hash moves. Known: the AI rarely raises the rows (it seldom builds a War lodge 2); the Cimarron Veterans' numbers
+follow the musketeers' pair, the maroons' own pace and woods traits untouched; the Canoe Captains are amphibious like
+the raiders; the unit cards show the tier rows by name (a short "Canoe Capt.").
+
 ## Roles and abilities (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: units should fall into categories a player reads at a glance, richer than ranged versus

@@ -75,7 +75,9 @@ var ship_kinds := {}          # "faction:ship" -> ships launched this seed (the 
 var bu_all := {}              # faction -> build-up sums over the seeds (_buildup)
 var built := []               # buildings finished per chain (this seed)
 var char_ev := {}             # heroes and agents (this seed): raised / wounded / captured / ransom gold
-var elim_all := {}            # faction -> turns it was eliminated, over the seeds
+var elim_all := {}
+const TIER_COUNT := ["native_warriors", "native_warriors2", "canoe_raiders", "canoe_raiders2", "maroons", "maroon_vets", "holcan"]
+var tier_all := {}            # "faction:unit key" -> recruits over the seeds (the tribes' tier rows; docs/design/battle_sim.md "The tribes' tier-2 rows")            # faction -> turns it was eliminated, over the seeds
 var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
 var ai_alliances := -1
 var dipm := {}               # this seed's diplomacy tallies (wars, calls, alliances, trust gains), in the --json line
@@ -159,6 +161,9 @@ func _init() -> void:
 	print("\npacing (format %d): seed | largest at 15 / 30 / 60 | eliminated by 60 | first win (20 regions, 3 key cities) | battles | field | mustering refusals | ms/turn mean max" % fmt)
 	for row in pacing:
 		print("  " + str(row))
+	var tks: Array = tier_all.keys()
+	tks.sort()
+	print("\nrecruits of the tribes' lines over the seeds (faction:unit n): " + ", ".join(tks.map(func(k): return "%s %d" % [k, int(tier_all[k])])))
 	print("\nsurvival over the seeds: faction | eliminated in N of %d seeds | at turns (sorted)" % seeds)
 	for f in CState.nf():
 		var ts: Array = elim_all.get(f, [])
@@ -280,6 +285,11 @@ func _run(sd: int, verbose: bool) -> String:
 				if int(e["turn"]) == t and str(e["k"]) == "ship_built":
 					var bk := "%s:%s" % [str(CData.FACTIONS[int(e["f"])]["key"]) if int(e["f"]) >= 0 else "indep", str(e.get("ship", ""))]
 					ship_kinds[bk] = int(ship_kinds.get(bk, 0)) + 1
+				if int(e["turn"]) == t and str(e["k"]) == "recruited" and int(e["f"]) >= 0:
+					for uk in e["units"]:
+						if TIER_COUNT.has(str(uk)):
+							var tk := "%s:%s" % [str(CData.FACTIONS[int(e["f"])]["key"]), str(uk)]
+							tier_all[tk] = int(tier_all.get(tk, 0)) + 1
 				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
 					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
 				if int(e["turn"]) == t and str(e["k"]) == "captured" and CData.ships_on():

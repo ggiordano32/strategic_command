@@ -226,7 +226,7 @@ const FACTIONS: Array[Dictionary] = [
 		"armies": [["cabo_gracias", ["native_warriors", "native_warriors", "native_warriors", "native_bowmen", "native_bowmen", "musketeers", "chieftain"]],
 			["bluefields", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]],
 			["talamanca", ["native_warriors", "native_warriors", "native_bowmen", "chieftain"]]],
-		"mix": {"light": 39, "sling": 6, "archer": 30, "musket": 10, "maroon": 5, "siege": 5, "general": 4},
+		"mix": {"light": 28, "canoe": 11, "sling": 6, "archer": 30, "musket": 10, "maroon": 5, "siege": 5, "general": 4},
 		"ai_style": AI_CAUTIOUS, "composition": {"arms": ["light", "archer", "musket"], "art_pct": 0, "cav_pct": 0, "upgrade": 0}},
 ]
 
@@ -240,7 +240,7 @@ const CHAINS: Array[Dictionary] = [
 	{"key": "market", "name": "Market", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
 		"desc": "+90 income per level; +15% trade income per level"},
 	{"key": "barracks", "name": "Barracks", "levels": 3, "cost": [400, 900, 1600], "turns": [1, 2, 3],
-		"desc": "Pikemen (veterans at level 2), rodeleros, cutlass men and native warriors, and the general's guard (level 1; one general an army); Miskito canoe raiders, the Brethren's and Miskito's maroons, the Itza's and Miskito's slingers and every nation's colonial militia (level 1); the marines of England and the Dutch (level 2, with a Shipyard); boarding grenadiers (the Brethren) and holcan (the Itza) at level 2; England's grenadiers at level 3; war dogs (level 1, with Stables 1); faster replenishment"},
+		"desc": "Pikemen (veterans at level 2), rodeleros, cutlass men and native warriors (the tribes' war bands at level 2), and the general's guard (level 1; one general an army); Miskito canoe raiders (their captains at level 2), the Brethren's and Miskito's maroons (the Miskito's veterans at level 2), the Itza's and Miskito's slingers and every nation's colonial militia (level 1); the marines of England and the Dutch (level 2, with a Shipyard); boarding grenadiers (the Brethren) and holcan (the Itza) at level 2; England's grenadiers at level 3; war dogs (level 1, with Stables 1); faster replenishment"},
 	{"key": "range", "name": "Range", "levels": 3, "cost": [350, 800, 1400], "turns": [1, 2, 3],
 		"desc": "Musketeers (level 1; veterans level 2), buccaneers (France's coureurs des bois at level 2) and native bowmen; the pistol horse, the dragoons and Spain's mounted arquebusiers need a Range 1 too; the Itza's atlatl dart throwers (level 1); faster replenishment"},
 	{"key": "stables", "name": "Stables", "levels": 3, "cost": [500, 1000, 1800], "turns": [1, 2, 3],
@@ -279,10 +279,10 @@ const ROSTERS := {
 		"militia": ["colonial_militia"], "siege": ["wagon", "wagon2", "wagon3"], "general": ["general"]},
 	"brethren": {"buccaneer": ["buccaneers", "", ""], "musket": ["musketeers", "", ""], "heavy": ["cutlass", "boarding_grenadiers", ""],
 		"light_gun": ["light_gun"], "naval_gun": ["naval_gun"], "maroon": ["maroons"], "siege": ["wagon", "", ""], "general": ["general"]},
-	"itza": {"light": ["native_warriors", "", ""], "heavy": ["", "holcan", ""], "archer": ["native_bowmen", "", ""], "javelin": ["atlatl"], "sling": ["w_slingers"], "siege": ["wagon", "", ""],
+	"itza": {"light": ["native_warriors", "native_warriors2", ""], "heavy": ["", "holcan", ""], "archer": ["native_bowmen", "", ""], "javelin": ["atlatl"], "sling": ["w_slingers"], "siege": ["wagon", "", ""],
 		"general": ["chieftain"]},
-	"miskito": {"light": ["native_warriors", "canoe_raiders", ""], "archer": ["native_bowmen", "", ""], "musket": ["musketeers", "", ""],
-		"maroon": ["maroons"], "sling": ["w_slingers"], "siege": ["torch_raiders", "", ""], "general": ["chieftain"]},
+	"miskito": {"light": ["native_warriors", "native_warriors2", ""], "canoe": ["canoe_raiders", "canoe_raiders2", ""], "archer": ["native_bowmen", "", ""], "musket": ["musketeers", "", ""],
+		"maroon": ["maroons", "maroon_vets", ""], "sling": ["w_slingers"], "siege": ["torch_raiders", "", ""], "general": ["chieftain"]},
 	"independent": {"musket": ["musketeers", "musketeers2", ""], "pike": ["w_pikemen", "w_pikemen2", ""],
 		"light": ["native_warriors", "", ""], "archer": ["native_bowmen", "", ""]},
 }
@@ -294,9 +294,9 @@ const ROSTERS := {
 ## English patronage from the 1680s (the King's Guard); the Brethren's
 ## "general" is a pirate captain. Rows not listed keep their own name.
 const UNIT_NAMES := {
-	"itza": {"native_warriors": ["Itza Warriors", "Warriors"], "native_bowmen": ["Itza Bowmen", "Bowmen"],
+	"itza": {"native_warriors": ["Itza Warriors", "Warriors"], "native_warriors2": ["Itza War Band", "War Band"], "native_bowmen": ["Itza Bowmen", "Bowmen"],
 		"w_slingers": ["Itza Slingers", "Slingers"], "chieftain": ["Batab's Guard", "Batab"], "shaman": ["Ah Kin", "Ah Kin"]},
-	"miskito": {"native_warriors": ["Miskito Warriors", "Warriors"], "native_bowmen": ["Miskito Bowmen", "Bowmen"],
+	"miskito": {"native_warriors": ["Miskito Warriors", "Warriors"], "native_warriors2": ["Miskito War Band", "War Band"], "native_bowmen": ["Miskito Bowmen", "Bowmen"],
 		"w_slingers": ["Miskito Slingers", "Slingers"], "musketeers": ["Miskito Musketmen", "Musketmen"],
 		"chieftain": ["King's Guard", "King's Guard"], "shaman": ["Sukia", "Sukia"], "torch_raiders": ["Torch Raiders", "Torches"]},
 	"brethren": {"general": ["Captain's Crew", "Captain"], "musketeers": ["Ship's Musketeers", "Musketeers"]},

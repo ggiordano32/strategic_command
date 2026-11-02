@@ -44,6 +44,7 @@ func _init() -> void:
 	var plays := -2  # (-2: the scenario's own; else side 0's ai_plays)
 	var plays1 := -2  # (... side 1's)
 	var trace := false
+	var tier2 := false  # --tier2: the natives' warriors and canoe raiders swapped for their tier-2 rows (War Band, Canoe Captains)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--scen="):
 			scen = a.substr(7)
@@ -55,6 +56,8 @@ func _init() -> void:
 			plays = int(a.substr(8))
 		elif a.begins_with("--plays1="):
 			plays1 = int(a.substr(9))
+		elif a == "--tier2":
+			tier2 = true
 		elif a == "--trace-amb":
 			trace = true
 		elif a.begins_with("--knob="):
@@ -82,6 +85,12 @@ func _init() -> void:
 		if plays != -2 or plays1 != -2:
 			var pl: Array = sc.get("ai_plays", [-1, -1])
 			sc["ai_plays"] = [plays if plays != -2 else pl[0], plays1 if plays1 != -2 else pl[1]]
+		if tier2:
+			for un in sc["units"]:
+				if int(un["side"]) == 1:
+					var tk := UT.key_of(int(un["type"]))
+					if tk == "native_warriors" or tk == "canoe_raiders":
+						un["type"] = UT.index_of(tk + "2")
 		sim.setup(sc, sd)
 		var n1_0 := 0
 		var n0_0 := 0

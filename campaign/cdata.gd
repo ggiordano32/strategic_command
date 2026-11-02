@@ -141,7 +141,7 @@ const INDEPENDENT_COLOR := "8c8c84"
 ## Display order of lines in recruitment lists.
 ## (The West pack's lines: musket after the pikes, buccaneer after the
 ## javelins, pistol after the cavalry, its guns before the bolt throwers.)
-const LINE_ORDER: Array[String] = ["heavy", "grenadier", "light", "spear", "pike", "musket", "marine", "militia", "archer", "belly_bow", "sling", "javelin",
+const LINE_ORDER: Array[String] = ["heavy", "grenadier", "light", "canoe", "spear", "pike", "musket", "marine", "militia", "archer", "belly_bow", "sling", "javelin",
 	"buccaneer", "maroon", "dogs", "cav", "pistol", "dragoon", "cav_missile", "camel", "camel_archer", "elephant", "general", "light_art",
 	"light_gun", "field_gun", "naval_gun", "mortar", "bolt", "stone", "siege"]
 
@@ -190,7 +190,7 @@ const LINE_CHAIN := {"heavy": BARRACKS, "light": BARRACKS, "spear": BARRACKS, "p
 	"general": BARRACKS, "dogs": BARRACKS, "light_art": WORKSHOP, "belly_bow": RANGE,
 	"musket": RANGE, "buccaneer": RANGE, "pistol": STABLES, "light_gun": WORKSHOP, "field_gun": WORKSHOP,
 	"grenadier": BARRACKS, "dragoon": STABLES, "mortar": WORKSHOP,
-	"marine": BARRACKS, "naval_gun": WORKSHOP, "militia": BARRACKS, "maroon": BARRACKS}
+	"marine": BARRACKS, "naval_gun": WORKSHOP, "militia": BARRACKS, "maroon": BARRACKS, "canoe": BARRACKS}
 ## Buildings a unit type needs where they differ from its line's chain at
 ## its tier (the ammunition wagons: the Workshop, and Stables for the
 ## horses): key -> [[chain, level], ...], all of them.
@@ -224,7 +224,9 @@ const UNIT_NEEDS := {"wagon": [[WORKSHOP, 1]], "wagon2": [[WORKSHOP, 2], [STABLE
 	"atlatl": [[RANGE, 1]], "w_slingers": [[BARRACKS, 1]],
 	# Native siege (2026-10-29): the Miskito's torch raiders, in the siege line (a Workshop line) but made at the War
 	# lodge 2 (the Barracks).
-	"torch_raiders": [[BARRACKS, 2]]}
+	"torch_raiders": [[BARRACKS, 2]],
+	# The tribes' tier-2 rows (2026-11-02): the canoe men's own line (canoe raiders Barracks 1 as before, the captains 2).
+	"canoe_raiders2": [[BARRACKS, 2]]}
 ## Workshop level needed per artillery line (other lines: level = tier).
 const ART_LEVEL := {"bolt": 1, "stone": 2, "light_art": 1, "light_gun": 1, "field_gun": 2, "mortar": 3, "naval_gun": 1}
 ## Buildings standing at the start: capitals and the other regions per level.
