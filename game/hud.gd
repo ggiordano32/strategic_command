@@ -2440,6 +2440,10 @@ func update_cards(sim) -> void:
 				var al := maxi(sim.u_alive[u], 1)
 				spl = (spl + al - 1) / al
 			summary += " %s %d%s" % [UT.ammo_text(sk, "short"), spl, " (shooting)" if sim.u_akind[u] != 0 else ""]
+			f.ak_use = 2 if spl <= 0 else (1 if sim.u_akind[u] != 0 else 0)
+		else:
+			f.ak_use = 0
+		f.ak = sk
 		# Short state word: art set-up / refill state, else the morale word
 		# unless steady.
 		var word := mstate if mstate != "Steady" else ""
@@ -2516,7 +2520,7 @@ func _card_state_strip(u: int, f: CardFace) -> void:
 	if not card_states.is_valid() or f.role == "":
 		return
 	var st: Array = card_states.call(u)
-	var key := str(st)
+	var key := str(st) + "|%d.%d" % [f.ak, f.ak_use]
 	if _card_key.get(u, "") == key:
 		return
 	_card_key[u] = key
@@ -2529,6 +2533,8 @@ func _card_state_strip(u: int, f: CardFace) -> void:
 	var body := RoleBadge.plays(f.role)
 	if not words.is_empty():
 		body += "\n" + ", ".join(words)
+	if f.ak >= 0:
+		body += "\n" + Traits.ammo_mark_text(f.ak) + [" (shooting it now)", " (held back)", " (all spent)"][f.ak_use]
 	Kit.tip(_cards[u] as Button, str(UT.ROLES[f.role]["name"]), body)
 
 
@@ -2851,6 +2857,11 @@ class CardFace extends Control:
 	## The state strip (top right): a glyph per chip not at its default, "icon" (a state), "icon!" (on Hold: struck
 	## through) or "icon*" (a Use now waiting for its target, gold).
 	var glyphs: Array[String] = []
+	## The special ammunition kind its weapon carries (UT.AMMO row, -1 none): its glyph left of the shot count and its
+	## adjective after the name. ak_use: 0 held back, 1 shooting it, 2 all spent (struck through).
+	var ak := -1
+	var ak_use := 0
+	var ak_rc := Rect2()   # where the glyph was last drawn (empty: none)
 
 	func _draw() -> void:
 		var sz := size
@@ -2916,7 +2927,15 @@ class CardFace extends Control:
 			draw_string(font, Vector2(x0, 14), number_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2 - strip_w, 13, txt)
 		else:
 			Icons.draw_marker(self, icon, Vector2(r + 3, sz.y * 0.5), r, disc, glyph)
-			draw_string(font, Vector2(x0, 14), name_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2 - strip_w, 13, txt)
+			var ntxt := txt if (ak < 0 or state != ST_OK) else txt.lerp(Traits.ammo_color(ak), 0.45)   # (a special arrow: the name tinted)
+			draw_string(font, Vector2(x0, 14), name_text, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 2 - strip_w, 13, ntxt)
+			if ak >= 0 and state != ST_GONE:
+				# "Bowmen 3 poisoned": the carried kind's adjective after the name, where the card has the room.
+				var nx := x0 + font.get_string_size(name_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13).x + 4
+				var adj := Traits.ammo_adj(ak)
+				var aw2 := font.get_string_size(adj, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
+				if nx + aw2 <= sz.x - 2 - strip_w:
+					draw_string(font, Vector2(nx, 14), adj, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(Traits.ammo_color(ak), 0.9))
 		# Line 2: headcount bar with the count and state word; ammunition
 		# (artillery: shots + reserve) at its right end.
 		var bx := 3.0 if narrow else x0
@@ -2941,10 +2960,24 @@ class CardFace extends Control:
 			aw = font.get_string_size(ammo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 3
 			draw_string(font, Vector2(bx + bw - aw, by + 10), ammo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
 				Color(0.55, 0.85, 1.0) if refilling else Color(1.0, 0.88, 0.55))
+		var kw := 0.0
+		ak_rc = Rect2()
+		if ak >= 0 and state != ST_GONE:
+			# The kind's glyph left of the shot count: lit while it is the kind shot, dim held back, struck through when spent.
+			kw = 13.0
+			var kc := Traits.ammo_color(ak)
+			var krc := Rect2(bx + bw - aw - kw, by + 0.5, 11, 11)
+			ak_rc = krc
+			Kit.UiIcons.draw_icon(self, Traits.ammo_icon(ak), krc,
+				Color(0.55, 0.55, 0.55, 0.8) if ak_use == 2 else (kc if ak_use == 1 else Color(kc, 0.8)))
+			if ak_use == 1:
+				draw_rect(Rect2(krc.position.x, krc.end.y + 0.5, 11, 1.5), kc)   # (lit: the kind it shoots now)
+			if ak_use == 2:
+				draw_line(krc.position + Vector2(0, 11), krc.position + Vector2(11, 0), Color(0.95, 0.35, 0.3), 1.4)
 		var line := str(alive)
 		if state_text != "" and not narrow:
 			line += " " + state_text
-		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - 4, 8), 11, txt)
+		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - kw - 4, 8), 11, txt)
 		if narrow and state_text != "" and state != ST_OK:
 			draw_rect(Rect2(sz.x - 6, 3, 3, 8), txt)
 		if narrow and car_phase:

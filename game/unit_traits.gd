@@ -126,6 +126,48 @@ static func has_fire(ty: int, faction: int) -> bool:
 	return false
 
 
+## The mark of a unit that carries a special ammunition kind (its "ak", a UT.AMMO row): glyph, the adjective after its
+## name ("Bowmen - poisoned") and the words the long press says. Per unit, not per type: a plain Bowmen has none.
+const AMMO_ICONS := {
+	"poison_arrows": "am_poison", "fire_arrows": "am_fire", "fire_javelins": "am_fire", "heavy_bolts": "am_heavy",
+	"lead_bullets": "am_lead", "fire_pots": "am_pots", "explosive": "am_blast",
+}
+const AMMO_ADJ := {
+	"poison_arrows": "poisoned", "fire_arrows": "fire arrows", "fire_javelins": "fire javelins", "heavy_bolts": "heavy bolts",
+	"lead_bullets": "lead shot", "fire_pots": "fire pots", "explosive": "explosive",
+}
+## The mark's colour: poison green, flame orange, the rest brass.
+static func ammo_color(k: int) -> Color:
+	var key := str(UT.AMMO[k]["key"]) if k >= 0 and k < UT.AMMO.size() else ""
+	if key == "poison_arrows":
+		return Color(0.55, 0.9, 0.3)
+	if UT.ammo_stat(k, "fire") > 0:
+		return Color(1.0, 0.62, 0.25)
+	return Color(0.95, 0.82, 0.45)
+
+
+static func ammo_icon(k: int) -> String:
+	if k < 0 or k >= UT.AMMO.size():
+		return ""
+	return str(AMMO_ICONS.get(str(UT.AMMO[k]["key"]), "ammo"))
+
+
+static func ammo_adj(k: int) -> String:
+	if k < 0 or k >= UT.AMMO.size():
+		return ""
+	return str(AMMO_ADJ.get(str(UT.AMMO[k]["key"]), UT.ammo_text(k, "short")))
+
+
+## What the carried kind does, for a long press: "Carries poisoned arrows (...)".
+static func ammo_mark_text(k: int) -> String:
+	if k < 0 or k >= UT.AMMO.size():
+		return ""
+	return "Carries %s (%d%% of the load, %d%% damage, %d%% range%s): %s" % [UT.ammo_text(k, "name").to_lower(),
+		UT.ammo_stat(k, "share"), UT.ammo_stat(k, "dmg"), UT.ammo_stat(k, "range"),
+		", sets things alight" if UT.ammo_stat(k, "fire") > 0 else (", poisons" if UT.ammo_stat(k, "poison") > 0 else ""),
+		UT.ammo_text(k, "desc")]
+
+
 static func trait_text(t: String) -> String:
 	return str(TRAIT_TEXT.get(t, t))
 

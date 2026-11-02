@@ -1833,10 +1833,10 @@ func _update_deselect() -> void:
 
 ## Unit book page as a recruitment card: the UnitEntry view with a Recruit
 ## button.
-func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String, fac: int = -1) -> void:
+func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String, fac: int = -1, ak: int = -1) -> void:
 	var entry := UnitEntry.new()
 	entry.custom_minimum_size = Vector2(0, minf(_vp().y * 0.62, 520))
-	entry.set_unit_type(ty, CData.faction_color(f), fac)
+	entry.set_unit_type(ty, CData.faction_color(f), fac, ak)
 	var btns: Array = [["Close", Callable()]]
 	if recruit_cb.is_valid():
 		btns.push_front([recruit_text, func():

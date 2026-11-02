@@ -785,8 +785,10 @@ class UnitCard extends Control:
 			Kit.UiIcons.draw_icon(self, str(Traits.TRAIT_ICONS[t]), Rect2(gx, 17, 11, 11), Color(1, 0.9, 0.6) if fielded else Kit.COL_DIM)
 		if ak >= 0:
 			# Its special ammunition kind (fire, heavy, pots, blast).
-			draw_string(font, Vector2(x0, 31), "+" + UT.ammo_text(ak, "short"), HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
-				Color(1.0, 0.62, 0.3))
+			var kc := Traits.ammo_color(ak)
+			Kit.UiIcons.draw_icon(self, Traits.ammo_icon(ak), Rect2(x0, 21, 11, 11), kc if fielded else Kit.COL_DIM)
+			draw_string(font, Vector2(x0 + 13, 31), Traits.ammo_adj(ak), HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - 16, 10,
+				kc if fielded else Kit.COL_DIM)
 		var nm := CData.unit_short(UT.key_of(ty), name_f)
 		if not fielded:
 			nm = "(reserve)"

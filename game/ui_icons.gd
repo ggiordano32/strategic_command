@@ -33,6 +33,7 @@ const NAMES: Array[String] = [
 	"details", "embark", "more",
 	"grenade", "pistol", "caracole", "target", "hand", "countermarch",
 	"hat", "knife", "cross", "feathers", "broken_shield",
+	"am_poison", "am_fire", "am_heavy", "am_lead", "am_pots", "am_blast",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
 ## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
@@ -859,6 +860,28 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 		"tr_fire":  # trait: fire ammunition (a flame)
 			_pl([0.05, -0.95, 0.5, -0.25, 0.6, 0.3, 0.3, 0.8, -0.1, 0.9, -0.5, 0.65, -0.6, 0.15, -0.3, -0.2, -0.15, -0.5], true)
 			_pl([0.05, 0.25, 0.22, 0.52, 0.0, 0.72, -0.2, 0.55], true, 0.8)
+		"am_poison":  # a unit's special ammunition: an arrow and a drop of poison
+			_arrow(-0.95, 0.35, 0.3, -0.75, 0.5)
+			_fill([0.6, 0.0, 0.88, 0.5, 0.78, 0.82, 0.6, 0.92, 0.42, 0.82, 0.32, 0.5])
+		"am_fire":  # ... an arrow with a flame at its head
+			_arrow(-0.95, 0.85, -0.05, 0.05, 0.42)
+			_sub("tr_fire", 0.4, -0.38, 0.62)
+		"am_heavy":  # ... a heavy bolt (thick shaft, big head)
+			_l(-0.9, 0.7, 0.35, -0.4, 1.9)
+			_head(0.95, -0.9, 0.8, -0.7, 0.8)
+		"am_lead":  # ... cast lead shot
+			_dot(-0.4, 0.42, 0.42)
+			_dot(0.45, 0.3, 0.42)
+			_dot(0.0, -0.4, 0.42)
+		"am_pots":  # ... a pot of burning pitch
+			_pl([-0.6, -0.05, -0.5, 0.8, 0.5, 0.8, 0.6, -0.05], true)
+			_l(-0.72, -0.05, 0.72, -0.05)
+			_sub("tr_fire", 0.0, -0.55, 0.5)
+		"am_blast":  # ... a burst
+			for q in 8:
+				var a := TAU * float(q) / 8.0
+				_l(cos(a) * 0.3, sin(a) * 0.3, cos(a) * 0.92, sin(a) * 0.92, 1.0)
+			_dot(0.0, 0.0, 0.22)
 		"tr_fast":  # trait: fast (double chevron)
 			_pl([-0.7, -0.7, 0.0, 0.0, -0.7, 0.7], false, 1.1)
 			_pl([0.05, -0.7, 0.75, 0.0, 0.05, 0.7], false, 1.1)

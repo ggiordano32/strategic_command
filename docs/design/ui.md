@@ -475,6 +475,30 @@ Owner: "What determines how many units can be built from a location each turn?" 
   scrolls to the last row), with the same number of rows (17 / 18 / 22); a full army of 12 or a treasury of 10
   greys the army's rows ("the army is full", "not enough money") and hides none; no West roster line has two bowmen
   tiers (Rome's archer lines list in both).
+- **A unit's special arrow is marked (as built, 2026-11-02, view only).** Owner (the Miskito, phone): "I can't tell the
+  difference between level 1 and level 2 bowmen on the bottom bar once an army is selected in the overworld, or in the
+  battlefield." Cause: the arrow a unit carries is per unit (the entry's `ak`, set by `CRules.new_unit` from the
+  `AMMO_AVAIL` row whose building stands where it was raised; the battle sim's `u_sk`), but only the raise dialog's text
+  said it; the army bar's chit, the battle HUD's card, the unit page and the result cards drew a plain Bowmen. The
+  campaign has no experience or veterancy (tier is the only rank, the three pips), so the arrow was the one per-unit
+  difference hidden; in battle the other one was which kind it shoots and whether it is spent.
+  The mark (`game/unit_traits.gd` `ammo_icon` / `ammo_adj` / `ammo_color` / `ammo_mark_text`; icons `am_poison`, `am_fire`,
+  `am_heavy`, `am_lead`, `am_pots`, `am_blast` in `ui_icons.gd`, two-colour strokes like the trait glyphs: an arrow and a
+  drop, an arrow with a flame, a thick bolt, three shot, a pot with a flame, a burst; poison green, flame orange, the rest
+  brass): (1) the overworld army bar's chit (`command_bar.gd` `UnitCard.ak`): a dark badge ringed in the kind's colour on
+  the symbol's lower right, and the card's title in the kind's colour; the hover row and the long-press unit page say
+  "Miskito Bowmen - poisoned" and lead with "Carries poisoned arrows (33% of the load, 67% damage, ...): <what it does>"
+  (`UnitEntry.set_unit_type(.., ak)`, `open_unit_page(.., ak)`); (2) every `Kit.UnitRow` that lists a raised unit (army
+  panel rows, exchange rows) or a recruit row with a special arrow: the adjective after the name where it fits and the glyph
+  with the trait glyphs (tap: the same words), the recruit rows keep their "+ poisoned arrows" text; (3) the battle HUD's
+  `CardFace`: the glyph left of the shot count (lit with a bar under it while the unit shoots the special kind, dimmer
+  while it is held back, struck through grey when it is all spent), the name tinted, the adjective after the name when the
+  card is wide enough (not on a phone's narrow cards), the card's tip adds the words and the state; (4) the fought battle's
+  result cards (`battle_screen.gd`): glyph and adjective in place of "+poison". The custom battle's army rows already say
+  "Ammo: Poisoned arrows" on a tinted button and are unchanged. Not marked: the garrison cards (derived from the rules,
+  no per-unit entry), the field tokens, the unit book (a reference by type: it already lists every special kind with who
+  carries it). Tests: `hud_fit_test _ammo_mark_check` (every size: the glyph inside the card, none on a plain unit, lit
+  state, icons exist); shots `tests/bows_shot.gd`.
 
 ### Per-faction unit names (as built, 2026-10-26)
 

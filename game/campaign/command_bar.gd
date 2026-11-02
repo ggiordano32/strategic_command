@@ -475,9 +475,10 @@ func _card_h() -> float:
 	return (PHONE_H if phone else DESK_H) - 12.0 - (4.0 if phone else 14.0)
 
 
-func _card(ty: int, men: int, full: int, fac: int) -> UnitCard:
+func _card(ty: int, men: int, full: int, fac: int, ak := -1) -> UnitCard:
 	var c := UnitCard.new(0.0, _card_h())
 	c.ty = ty
+	c.ak = ak
 	c.men = men
 	c.full = maxi(full, 1)
 	c.faction = fac
@@ -485,6 +486,8 @@ func _card(ty: int, men: int, full: int, fac: int) -> UnitCard:
 	c.title = CData.unit_short(UT.key_of(ty), fac)   # the card is narrow: the short name
 	c.pips = UT.tier_of(ty)
 	c.tooltip_text = CData.unit_name(UT.key_of(ty), fac)
+	if ak >= 0:
+		c.tooltip_text += ", " + Traits.ammo_adj(ak)
 	return c
 
 
@@ -652,18 +655,19 @@ func _build_army(id: int) -> void:
 		reorder.name = "unit_reorder"
 		reorder.vertical = false
 		reorder.moved.connect(func(from: int, to: int): s.panels._arrange(id, from, to))
-		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af, UT.ammo_index(str(units[i].get("ak", "")))))
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
-		var c := _card(ty, int(u["n"]), UT.size_of(ty), af)
+		var uak := UT.ammo_index(str(u.get("ak", "")))
+		var c := _card(ty, int(u["n"]), UT.size_of(ty), af, uak)
 		c.name = "unit_card_%d" % k
 		c.custom_minimum_size.x = cw
 		c.selected = sel.has(k)
 		var kk := k
 		c.pressed.connect(func():
 			if not mine or busy:
-				s.open_unit_page(ty, Callable(), "", af)
+				s.open_unit_page(ty, Callable(), "", af, uak)
 				return
 			var cur_sel: Array = s.panels._split_sel.get(id, [])
 			if cur_sel.has(kk):
@@ -676,7 +680,7 @@ func _build_army(id: int) -> void:
 			reorder.items.append(c)
 			c.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af))
+			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, uak))
 		cards.append(c)
 	for k in arriving.size():
 		var rty := UT.index_of(str(arriving[k]["unit"]))
@@ -1080,6 +1084,7 @@ class UnitCard extends Control:
 	var dim := false
 	var sub := ""              # replaces "men/full" under the bar
 	var pips := 0              # filled tier pips
+	var ak := -1               # the special ammunition kind it carries (UT.AMMO row, -1 none): a badge on the symbol
 	var _press_t := -1.0
 	var _long_fired := false
 	var _hits: Array = []
@@ -1098,6 +1103,7 @@ class UnitCard extends Control:
 		var row := Kit.UnitRow.new(ty, men, col)
 		row.faction = faction
 		row.name_f = faction
+		row.ak = ak
 		p.add_child(row)
 		return p
 
@@ -1158,7 +1164,8 @@ class UnitCard extends Control:
 			Kit.draw_trim(self, Rect2(Vector2.ZERO, sz), 2.0, 9.0)   # the gold trim: only the selected card has it
 		var font := ThemeDB.fallback_font
 		var fs := 10 if compact else 11
-		draw_string(font, Vector2(3, fs + 2), title, HORIZONTAL_ALIGNMENT_CENTER, sz.x - 6, fs, Color(1, 1, 1, a))
+		draw_string(font, Vector2(3, fs + 2), title, HORIZONTAL_ALIGNMENT_CENTER, sz.x - 6, fs,
+			Color(1, 1, 1, a) if ak < 0 else Color(Traits.ammo_color(ak).lightened(0.35), a))   # (a special arrow: the title in its colour)
 		var r := 13.0 if compact else 17.0
 		var cy := fs + 5 + r
 		var cx := sz.x * 0.5
@@ -1168,6 +1175,14 @@ class UnitCard extends Control:
 			IconRaster.draw_icon(self, glyph, Rect2(cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5), Color(1, 1, 1, 0.95 * a))
 		elif ty >= 0:
 			Icons.draw_marker(self, Icons.icon_of(ty), Vector2(cx, cy), r, Color(col, a))
+		if ak >= 0:
+			# The special arrow it carries: a dark badge ringed in the kind's colour on the symbol's lower right corner.
+			var br := 8.0 if compact else 9.0
+			var bc := Vector2(cx + r * 0.8, cy + r * 0.72)
+			var kc := Traits.ammo_color(ak)
+			draw_circle(bc, br, Color(0.1, 0.09, 0.07, 0.95 * a))
+			draw_arc(bc, br, 0, TAU, 20, Color(kc, a), 1.5, true)
+			IconRaster.draw_icon(self, Traits.ammo_icon(ak), Rect2(bc.x - br * 0.72, bc.y - br * 0.72, br * 1.44, br * 1.44), Color(kc, a))
 		# Tier pips down the left edge (the campaign has no experience: tier).
 		for k in 3:
 			var py := cy + (k - 1) * 8.0

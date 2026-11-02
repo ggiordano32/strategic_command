@@ -18,6 +18,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const AbilityChip := preload("res://game/ability_chip.gd")
+const Traits := preload("res://game/unit_traits.gd")
 
 const SIZES := [[780, 360, true], [844, 390, true], [393, 851, true], [1180, 820, false], [1280, 720, false], [2560, 1440, false]]
 const GAP := 5.0
@@ -700,6 +701,7 @@ func _run() -> void:
 			await _frames(4)
 			root.get_texture().get_image().save_png("%s/hud_phone_mixed_more.png" % _shots)
 			b.hud._set_more_open(false)
+		await _ammo_mark_check()
 	await _states(by_role)
 	await _resize_check(by_role)
 	await _siege()
@@ -707,6 +709,49 @@ func _run() -> void:
 	UiScale._touch_override = -1
 	print("RESULT: ", "PASS" if failures == 0 else "FAIL (%d)" % failures)
 	quit(0 if failures == 0 else 1)
+
+
+## A unit's special arrow: its card carries the kind's glyph (and a tip saying what it does) inside the card, a plain unit's
+## carries none (docs/design/ui.md "A unit's special arrow is marked").
+func _ammo_mark_check() -> void:
+	var ba := UT.index_of("native_bowmen")
+	var units: Array = [Scenarios.unit(0, ba, UT.size_of(ba), 100, 150, 0), Scenarios.unit(0, ba, UT.size_of(ba), 130, 150, 0),
+		Scenarios.unit(0, UT.index_of("archer"), 60, 160, 150, 0), Scenarios.unit(1, UT.index_of("spear"), 80, 150, 40, 512)]
+	units[1]["ak"] = UT.ammo_index("poison_arrows")
+	units[2]["ak"] = UT.ammo_index("fire_arrows")
+	var sc := Scenarios._test(units, [])
+	sc["ai_sides"] = [1]
+	await _new_battle(sc)
+	var h = b.hud
+	var mine: Array[int] = []
+	for u in b.sim.n_units:
+		if b.sim.u_side[u] == 0:
+			mine.append(u)
+	b.sim.u_akind[mine[1]] = 1   # (shooting its special kind: lit)
+	await _pick(mine)
+	h.update_cards(b.sim)   # (the cards refresh on a 0.25 s timer, not per frame: refresh them now)
+	await _frames(3)
+	var bad: Array[String] = []
+	var want := [-1, UT.ammo_index("poison_arrows"), UT.ammo_index("fire_arrows")]
+	for k in 3:
+		var f = h._faces[mine[k]]
+		if f.ak != want[k]:
+			bad.append("card %d ak %d, want %d" % [k, f.ak, want[k]])
+		if k == 0:
+			if f.ak_rc.size != Vector2.ZERO:
+				bad.append("a plain unit's card has a mark")
+			continue
+		var inside: bool = Rect2(Vector2.ZERO, f.size).grow(0.5).encloses(f.ak_rc) and f.ak_rc.size.x > 0.0
+		if not inside:
+			bad.append("card %d mark %s outside the card %s" % [k, str(f.ak_rc), str(f.size)])
+	_check(f_ok(bad), "%s: a special arrow's card carries its glyph inside the card, a plain unit's none (%s)" % [_size_name, ", ".join(bad)])
+	_check(h._faces[mine[1]].ak_use == 1 and h._faces[mine[2]].ak_use == 0, "%s: the glyph is lit for the kind shot now, held back otherwise" % _size_name)
+	_check(Traits.ammo_icon(want[1]) != "" and Kit.UiIcons.has(Traits.ammo_icon(want[1])) and Kit.UiIcons.has(Traits.ammo_icon(want[2])),
+		"%s: both kinds have a drawn icon" % _size_name)
+
+
+func f_ok(bad: Array[String]) -> bool:
+	return bad.is_empty()
 
 
 ## The chips' states: a cycle, Mixed, Pistols' two states, the armed text, the card strip.

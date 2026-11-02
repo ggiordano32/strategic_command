@@ -990,6 +990,7 @@ func _recruit(box: VBoxContainer, r: int) -> void:
 		row.sub_bad = not o["ok"]
 		if o["ok"] and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
+			row.ak = UT.ammo_index(str(o["ak"]))
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
 		if o["lower"]:
@@ -1296,6 +1297,7 @@ func show_raise(r: int, tab: String = "") -> void:
 		row.sub_bad = not ok
 		if ok and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
+			row.ak = UT.ammo_index(str(o["ak"]))
 		row.pressed.connect(func(): s.open_unit_page(ty, Callable(), "", f))
 		var h := Kit.hbox(4)
 		h.add_child(row)
@@ -1486,7 +1488,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		reorder.scroll = s.side_scroll
 		box.add_child(reorder)
 		reorder.moved.connect(func(from: int, to: int): _arrange(id, from, to))
-		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af, UT.ammo_index(str(units[i].get("ak", "")))))
 	# Composition strip: class glyphs with unit counts; a tap shows / hides the
 	# unit rows (state per army for the session; small armies start open).
 	var host: Control = Kit.vbox(0)
@@ -1527,6 +1529,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		var ty := CState.unit_type(u)
 		var row := Kit.UnitRow.new(ty, int(u["n"]), _fc(af), "", mine)
 		row.name_f = af
+		row.ak = UT.ammo_index(str(u.get("ak", "")))
 		row.selected = sel.has(k)
 		row.name = "unit_%d" % k
 		var kk := k
@@ -1534,7 +1537,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			reorder.items.append(row)
 			row.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af))
+			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, UT.ammo_index(str(u.get("ak", "")))))
 		row.pressed.connect(func():
 			var cur: Array = _split_sel.get(id, [])
 			if cur.has(kk):
@@ -1837,6 +1840,7 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		row.sub_bad = not ok
 		if ok and str(o.get("ak", "")) != "":
 			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
+			row.ak = UT.ammo_index(str(o["ak"]))
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
 		if o["lower"]:
@@ -2004,6 +2008,7 @@ func show_exchange(id: int, other: int) -> void:
 func _xc_row(u: Dictionary, uf: int, tag: String, nm: String, active: bool, cb: Callable) -> Control:
 	var row := Kit.UnitRow.new(CState.unit_type(u), int(u["n"]), _fc(uf), tag, false)
 	row.name_f = uf
+	row.ak = UT.ammo_index(str(u.get("ak", "")))
 	row.name = nm
 	row.selected = tag != ""
 	if active:

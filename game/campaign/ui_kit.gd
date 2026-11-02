@@ -1027,6 +1027,12 @@ class UnitRow extends PressRow:
 	## The faction whose display name the card shows (CData.unit_name); -1 the
 	## row's own name. Apart from `faction` so the fire trait is unchanged.
 	var name_f := -1
+	## The special ammunition kind this unit carries (UT.AMMO row, -1 none): its glyph after the name, the adjective on the
+	## name ("Bowmen - poisoned") and its words on a tap of the glyph.
+	var ak := -1:
+		set(v):
+			ak = v
+			queue_redraw()
 	## Set on a lower tier of a line whose better tier is listed too: an upgrade
 	## arrow by the price, this text its tip ("Upgrades to X at Range 2").
 	var upgrade_tip := "":
@@ -1084,6 +1090,13 @@ class UnitRow extends PressRow:
 		var nm := display_name()
 		var nw := minf(font.get_string_size(nm, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x, sz.x - x0 - rw - 4)
 		draw_string(font, Vector2(x0, 16), nm, HORIZONTAL_ALIGNMENT_LEFT, sz.x - x0 - rw - 4, 14, Color.WHITE)
+		if ak >= 0:
+			# "Bowmen - poisoned": the carried kind's adjective in its colour after the name, where the row has the room.
+			var adj := " - " + Traits.ammo_adj(ak)
+			var aw := font.get_string_size(adj, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+			if x0 + nw + aw + 28 <= sz.x - rw:
+				draw_string(font, Vector2(x0 + nw, 16), adj, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Traits.ammo_color(ak))
+				nw += aw
 		if detail:
 			# Line 1: up to three trait glyphs after the name.
 			var gx := x0 + nw + 8
@@ -1094,6 +1107,10 @@ class UnitRow extends PressRow:
 				IconRaster.draw_icon(self, str(Traits.TRAIT_ICONS[t]), rc, Color(1, 0.9, 0.6))
 				_hits.append([rc, Traits.trait_text(t)])
 				gx += 20
+			if ak >= 0 and gx + 16 <= sz.x - rw:
+				var arc := Rect2(gx, 3, 16, 16)
+				IconRaster.draw_icon(self, Traits.ammo_icon(ak), arc, Traits.ammo_color(ak))
+				_hits.append([arc, Traits.ammo_mark_text(ak)])
 			# Line 2: green row (good against), red row (weak against).
 			var cx := x0
 			var y2 := 24.0

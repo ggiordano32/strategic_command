@@ -133,7 +133,8 @@ func _init() -> void:
 	_box.add_child(_grid)
 
 
-func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_faction: int = -1) -> void:
+## ak: the special ammunition kind of the very unit shown (a raised unit's own, UT.AMMO row, -1 none): its line leads the page.
+func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_faction: int = -1, ak: int = -1) -> void:
 	unit_type = ty
 	side_color = p_side_color
 	scroll_vertical = 0
@@ -196,6 +197,9 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_facti
 	var aml := ammo_line(ty)
 	if aml != "":
 		_tier.text += "\n" + aml
+	if ak >= 0:
+		_tier.text = Traits.ammo_mark_text(ak) + "\n" + _tier.text
+		_name.text += " - " + Traits.ammo_adj(ak)
 	if UT.cls(ty) == UT.CLS_ART:
 		_formation.text = "%d engines with %d crew each (%d soldiers), %d m apart. Cost %d per crew member (%d per battery)." % [
 			value(ty, "_engines"), UT.stat(ty, "crew"), soldiers, UT.stat(ty, "file_sp") / 1024,
