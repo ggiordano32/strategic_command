@@ -727,6 +727,39 @@ The siege AI's covering archers walk in to a stand inside the lob's reach once t
 are clear (2026-11-02, `S_LOB_PCT`): siege_and_towns.md "Archers walk in to lob over the wall (as built,
 2026-11-02)", docs/AI.md 56.
 
+### Guns on a tower fire over their own parapet (as built, 2026-11-02)
+
+The owner, defending a West harbour-fort town (Portobelo) against the AI on a phone: "If cannons are on a wall they
+should not be blocked by their own tower, they should be able to fire on armies out in the field." The fort's guns
+(`UT.FORT_GUN` on the trace's platforms, wall units of their stretch) drew their lines to the attackers red with "NO
+LINE OF FIRE", the gun by the gate too.
+
+- **Cause.** `lof_block` ignored obstacles near the shooter only for a man whose own cell is a walkway (`wall_t` + 2 m)
+  or within a tower engine's `tower_r` + 1 m (`_skip0`, 5 m for a fort gun). A fort gun stands on its platform's wall
+  body (`C_WALL`) 7 m inside the round corner tower that the sim stands at every turreted vertex (radius 11-15 m,
+  `MapGen.fort_towers`; its cells' top `wall_h` + 4 m, the gun's eye `wall_h` + 1.5 m), so its line out met its own
+  tower 11 m away and stopped there. On Portobelo at walls 1 two of the four guns had a line to no attacker at the
+  start and the fort's guns fired 1 shot in 8 battles at walls 1 and 1 at walls 2.
+- **The rule** (`own_works_skip`, read by `lof_block` for every caller: `lof_units` (fire at will, the artillery scan
+  and `art_safe`, the attack order), the men's own lines, `_shot_ok`, the siege and battle AI's spot tests and the
+  overlay's preview, which now also passes `_skip0` / `_skip1`). A shooter standing on a wall's body, walkway, stair,
+  gate or tower cell shoots from its top: along its line, the structure it stands on does not block: wall cells up to
+  `wall_t` + `OWN_WALL_EXTRA` (2 m) from it (its stretch and the parapet: the walkway's old rule, now for every works
+  cell), the first tower whose cells begin within `OWN_TOWER_NEAR` (10 m: the tower it stands on or beside) and the wall
+  cells within 2 m past that tower; nor does the ground under those cells (a wall across a slope). The first cell that
+  is not its own ends it: another tower (a gun on the north tower does not shoot through the south tower), a wall cell
+  farther on (the far side of the fort), a house or open ground; terrain crests, rocks, cliffs and trees beyond block as
+  before. Agrees with the lob rule (`lob_over_wall` already exempts fire from a wall unit and tower engines). No knob,
+  no new state.
+- **Measured** (`tools/balance`, 8 seeds, before a clean copy of HEAD; the zone change of the same day is not in these battles, which have no deployment phase). The fort guns (a scratch probe, the session scratchpad siege/fortgun_probe.gd: AI against AI, walls 1 / 2, 8 seeds): Portobelo shots 1 / 1 -> 163 / 151, kills 0 / 0 -> 315 / 326 (attacker wins 4 / 1 -> 1 / 0); Cartagena 101 / 164 -> 109 / 158 shots, 287 / 351 -> 299 / 327 kills; Havana identical (its guns were not blocked). `west_walls` attacker wins pooled walls 0 / 1 / 2 52 / 44 / 27 -> 52 / 34 / 27 % (overall 41 -> 38 %); two cells beyond their interval, both walls 1: Portobelo 50 -> 12 %, St. Augustine 75 -> 25 %. `rome_walls` walls 1 / 2 / 3 71 / 48 / 40 -> 75 / 52 / 42 % (overall 53 -> 56 %, no cell beyond its interval: the walk men near a tower). No tuning round (under the 8-point stop overall; the walls-1 drop is the owner's call). campaign_pins Rome and West MATCH (battles settle by formula); settlement battle hashes move where a man or gun on the works shoots; the rules hash moves; no VERSION bump).
+- **Tests.** determinism_test `--only=deploy` `_check_tower_gun_lof` (Portobelo walls 1: each fort gun whose line out
+  from the fort crosses its own tower within 10 m has a line of fire into the field; a line from it through another
+  tower of the fort 30 m or more away stops at that tower).
+- **Known.** The seaward curtain's gun on Portobelo stands on a walk whose ground is 2.8 m while the fort's pad is 25.5
+  m (the walls cross the fall to the shore), so landward it still sees nothing (out of its sector anyway); a walk unit
+  within 10 m of a tower now shoots past that tower's body; the fort guns' 60-degree sector (`FORT_GUN_SECTOR`) is
+  unchanged.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

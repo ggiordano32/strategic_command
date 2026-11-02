@@ -679,23 +679,36 @@ func _font_size(base: float) -> int:
 
 
 ## Deployment phase: this player's zone (blue, filled) and the enemy's
-## (red outline). A settlement defenders' zone is the open ground inside
-## the walls and the walkways: its box is outlined and labelled.
+## (red outline). A settlement defenders' zone is the whole town: inside
+## the walls and on the walkways (DZ_INSIDE, its box outlined) and, in a
+## West town with a harbour fort (2026-11-02), the town's box as well; the
+## first of them is labelled.
 func _draw_deploy_zones(lw: float) -> void:
 	var z: PackedInt32Array = sim.dep_z
 	var k := 0
+	var labelled := false
+	var kinds := 0  # (bit per kind of the defenders' zones: both, a West town with its fort)
+	if sim.city_on != 0:
+		for k2 in range(0, z.size() - 5, 6):
+			if z[k2] == sim.city_def:
+				kinds |= 1 << z[k2 + 1]
+	var fort := kinds == (1 << BattleSim.DZ_RECT) | (1 << BattleSim.DZ_INSIDE)
+	var town_text := "Deploy anywhere in the town, on its walls or in the fort" if fort \
+		else "Deploy anywhere in the town or on its walls"
 	while k + 5 < z.size():
 		var mine := z[k] == player_side
 		var r := Rect2(Vector2(z[k + 2], z[k + 3]) / 1024.0 * px_per_m,
 			Vector2(z[k + 4] - z[k + 2], z[k + 5] - z[k + 3]) / 1024.0 * px_per_m)
 		var col := Color(0.35, 0.65, 1.0) if mine else Color(1.0, 0.4, 0.3)
+		var town_z: bool = sim.city_on != 0 and z[k] == sim.city_def
+		if mine and town_z and not labelled and (z[k + 1] == BattleSim.DZ_RECT or not fort):
+			labelled = true
+			var fs := _font_size(14.0)
+			_dstr(r.position + Vector2(fs * 0.4, fs * 1.4),
+				town_text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
 		if z[k + 1] == BattleSim.DZ_INSIDE:
 			draw_rect(r, Color(col, 0.07 if mine else 0.0))
 			draw_rect(r, Color(col, 0.75 if mine else 0.45), false, lw * (1.5 if mine else 1.0))
-			if mine:
-				var fs := _font_size(14.0)
-				_dstr(r.position + Vector2(fs * 0.4, -fs * 0.4),
-					"Deploy inside the walls or on them", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(col, 0.95))
 		elif mine:
 			# (The brass ruler: the line of my deployment zone, ticks from each corner.)
 			draw_rect(r, Color(col, 0.10))
@@ -1638,7 +1651,7 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var dist := maxf(Vector2(x1 - x0, y1 - y0).length(), 1.0)
 	var apex: int = int(dist) * UT.stat(ty, "m_apex") / 100
 	var blk: int = sim.lof_block(x0, y0, sim.u_h[u] + BattleSim.LOF_EYE, x1, y1,
-		sim.u_h[t] + BattleSim.LOF_BODY, apex, 0, BattleSim.LOF_STEP)
+		sim.u_h[t] + BattleSim.LOF_BODY, apex, 0, BattleSim.LOF_STEP, sim._skip0(u), sim._skip1(t))
 	var a := to_px(x0, y0)
 	var b := to_px(x1, y1)
 	var crest := a.lerp(b, clampf(blk / dist, 0.05, 0.95)) if blk >= 0 else (a + b) * 0.5

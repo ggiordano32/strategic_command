@@ -169,6 +169,7 @@ const Plays := preload("res://sim/plays.gd")
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
+const CTown := preload("res://campaign/ctown.gd")
 
 const M := 1024
 
@@ -414,6 +415,8 @@ func _init() -> void:
 	_check_wp_atk()
 	_check_deploy()
 	_check_deploy_unlimited()
+	_check_town_zone()
+	_check_tower_gun_lof()
 	_check_kills_by()
 	if "--only=deploy" in OS.get_cmdline_user_args():
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -5011,6 +5014,202 @@ func _check_rout() -> void:
 		else:
 			for x in bad:
 				_fail(str(x))
+
+
+## The owner's kind of map (2026-11-02): Portobelo on its campaign plan at
+## walls 2 (the harbour fort and the stake palisade), AI against AI, the
+## West sets' armies; deploy_time 60 when `dep`.
+func _portobelo(walls: int, dep: bool) -> Dictionary:
+	CData.use_pack("west")
+	var key := "portobelo"
+	var r := CData.region_index(key)
+	var st := CState.new_campaign("bal", 5, [], {}, [], "west")
+	var level := maxi(1, int(st["regions"][r]["level"]))
+	st["regions"][r]["level"] = level
+	var got := false
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = walls
+			got = true
+	if not got:
+		st["regions"][r]["slots"].append([CData.WALLS, walls])
+	var rd: Dictionary = CData.REGIONS[r]
+	var cseed := 0
+	for ch in key.to_utf8_buffer():
+		cseed = (cseed * 31 + int(ch)) % 100000
+	var att: Array = []
+	for e in Scenarios.WEST_ATT:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var cul := CData.region_culture(r)
+	var terr := {"kind": int(rd["terrain"]), "seed": cseed * 7 + 3, "forest": int(rd["forest"]), "ground": int(rd["ground"])}
+	var city := {"seed": cseed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": cul, "coast": 1, "founder": cul,
+		"west": 1, "tp": CTown.battle_plan(st, r)}
+	var sc: Dictionary = Scenarios.settlement(city, terr, att, att.duplicate(true), 1, [0, 1],
+		{"ladders": 3, "ram": 1})["scenario"]
+	if dep:
+		sc["deploy_time"] = 60
+	return sc
+
+
+## Deploying anywhere in the town (2026-11-02; "--only=deploy"): on a West
+## harbour-fort town at walls 1 and 2 the defenders' zone takes the plaza,
+## the ground just inside the stake palisade (walls 2) and the fort's
+## inside; a point in the attackers' band is clamped out of it, and every
+## defender rectangle stays 30 m short of the band; a Rome walled town keeps
+## its one zone inside the walls.
+func _check_town_zone() -> void:
+	var bad: Array = []
+	for walls in [1, 2]:
+		var sc := _portobelo(walls, true)
+		var sim := BattleSim.new()
+		sim.setup(sc, 4711)
+		var lay: Dictionary = sim.map_info["city"]
+		var dside: int = sim.city_def
+		var z: PackedInt32Array = sim.dep_z
+		var att_y0 := -1
+		var n_def := 0
+		for k in range(0, z.size(), 6):
+			if z[k] != dside:
+				att_y0 = z[k + 3]
+			else:
+				n_def += 1
+		if n_def != 2:
+			bad.append("walls %d: %d defender zones, not the fort's and the town's" % [walls, n_def])
+		for k in range(0, z.size(), 6):
+			if z[k] == dside and z[k + 5] > att_y0 - Scenarios.DEP_TOWN_GAP * M:
+				bad.append("walls %d: a defender zone reaches %d m, the attackers' band starts at %d m" % [walls, z[k + 5] / M, att_y0 / M])
+		var pl: Array = lay["plaza"]
+		var px: int = int(pl[0]) * M
+		var py: int = int(pl[1]) * M
+		var pc := BattleSim.deploy_clamp(sim, dside, px, py)
+		if pc != Vector3i(px, py, 1):
+			bad.append("walls %d: the plaza (%d, %d) is not in the zone: %s" % [walls, px / M, py / M, str(pc)])
+		var cit: Dictionary = lay["cit"]
+		var fx: int = int(cit["x"]) * M
+		var fy: int = int(cit["y"]) * M
+		var fc := BattleSim.deploy_clamp(sim, dside, fx, fy)
+		if fc != Vector3i(fx, fy, 1):
+			bad.append("walls %d: the fort's inside (%d, %d) is not in the zone: %s" % [walls, fx / M, fy / M, str(fc)])
+		if walls == 2:
+			# (The palisade: the middle of its stakes, a point 4 m inside them toward the town.)
+			var sx0 := 1 << 30
+			var sx1 := 0
+			var sy1 := 0
+			for b in lay["buildings"]:
+				if int(b[4]) == MapGen.B_STAKES:
+					sx0 = mini(sx0, int(b[0]))
+					sx1 = maxi(sx1, int(b[2]))
+					sy1 = maxi(sy1, int(b[3]))
+			var ix := (sx0 + sx1) / 2 * M
+			var iy := (sy1 - 6) * M
+			var ic := BattleSim.deploy_clamp(sim, dside, ix, iy)
+			if sx1 == 0 or ic != Vector3i(ix, iy, 1):
+				bad.append("walls 2: inside the palisade (%d, %d) is not in the zone: %s" % [ix / M, iy / M, str(ic)])
+		var ax: int = int(lay["att_x"]) * M
+		var ay: int = int(lay["att_y"]) * M
+		var ac := BattleSim.deploy_clamp(sim, dside, ax, ay)
+		if ac.z != 0 and ac.y > att_y0 - Scenarios.DEP_TOWN_GAP * M:
+			bad.append("walls %d: the attackers' front (%d, %d) clamps to %s, in their band" % [walls, ax / M, ay / M, str(ac)])
+		var ap := BattleSim.deploy_clamp(sim, 1 - dside, px, py)
+		if ap == Vector3i(px, py, 1):
+			bad.append("walls %d: the plaza is in the attackers' zone" % walls)
+	# Rome: a walled town keeps its one zone (inside the walls and on them).
+	var rsc := Scenarios.fair_siege(700, 2, MapGen.PLAN_POLIS, {})
+	rsc["deploy_time"] = 60
+	var rs := BattleSim.new()
+	rs.setup(rsc, 4711)
+	var rn := 0
+	for k in range(0, rs.dep_z.size(), 6):
+		if rs.dep_z[k] == rs.city_def:
+			rn += 1
+			if rs.dep_z[k + 1] != BattleSim.DZ_INSIDE:
+				bad.append("Rome polis walls 2: the defenders' zone is not inside the walls")
+	if rn != 1:
+		bad.append("Rome polis walls 2: %d defender zones" % rn)
+	if bad.is_empty():
+		print("PASS town zone: Portobelo walls 1 / 2, the plaza, inside the palisade and the fort's inside in the defenders' zone, the attackers' band 30 m clear; Rome's walled zone unchanged")
+	for x in bad:
+		_fail("town zone: " + str(x))
+
+
+## Guns on a tower fire over their own parapet (2026-11-02; "--only=deploy"):
+## on Portobelo at walls 1 a fort gun whose line to a field point crosses
+## its own corner tower within 10 m has a line of fire there (its own tower,
+## walk and parapet do not block), while a line from it through another
+## tower of the fort is blocked; the gun's line to an attacker agrees with
+## lof_units.
+func _check_tower_gun_lof() -> void:
+	var sim := BattleSim.new()
+	sim.setup(_portobelo(1, false), 4711)
+	var bad: Array = []
+	var own_ok := 0
+	var other_blk := 0
+	var tried_own := 0
+	var tried_other := 0
+	for g in sim.n_units:
+		if sim.u_type[g] != UT.FORT_GUN:
+			continue
+		var gx: int = sim.u_cx[g]
+		var gy: int = sim.u_cy[g]
+		var z0: int = sim.u_h[g] + BattleSim.LOF_EYE
+		# Its own tower: out from the fort's middle, 160 m into the field.
+		var ox := gx - sim.cit_x
+		var oy := gy - sim.cit_y
+		var ol := maxi(FM.approx_len(ox, oy), 1)
+		var tx := clampi(gx + ox * 160 * M / ol, 0, sim.field_w)
+		var ty := clampi(gy + oy * 160 * M / ol, 0, sim.field_h)
+		var dd := maxi(FM.approx_len(tx - gx, ty - gy), 1)
+		var tower_near := false
+		for a in range(0, BattleSim.OWN_TOWER_NEAR, M):
+			if sim.obs_kind(gx + (tx - gx) * a / dd, gy + (ty - gy) * a / dd) == MapGen.C_TOWER:
+				tower_near = true
+		var crosses := false
+		for a in range(0, mini(BattleSim.OWN_TOWER_NEAR + 20 * M, dd), M):
+			if sim.obs_kind(gx + (tx - gx) * a / dd, gy + (ty - gy) * a / dd) == MapGen.C_TOWER:
+				crosses = true
+		if crosses and tower_near:
+			tried_own += 1
+			var b := sim.lof_block(gx, gy, z0, tx, ty, sim.height_at(tx, ty) + BattleSim.LOF_BODY, 0, 0,
+				2 * BattleSim.LOF_STEP, sim._skip0(g))
+			if b < 0 or b > 40 * M:
+				own_ok += 1  # (beyond the fort: the field's ground, not the tower)
+			else:
+				bad.append("gun %d: blocked %d m out by its own works toward the field" % [g, b / M])
+		# Another tower: the nearest C_TOWER cell 30 m or more away, the line on 40 m past it.
+		var best := -1
+		var bd := 1 << 40
+		for j in sim.ob_h:
+			for i in sim.ob_w:
+				if sim.obs[j * sim.ob_w + i] != MapGen.C_TOWER:
+					continue
+				var cx := i * 2 * M + M
+				var cy := j * 2 * M + M
+				var d2 := FM.approx_len(cx - gx, cy - gy)
+				if d2 >= 30 * M and d2 < bd:
+					bd = d2
+					best = j * sim.ob_w + i
+		if best >= 0:
+			var cx2 := (best % sim.ob_w) * 2 * M + M
+			var cy2 := (best / sim.ob_w) * 2 * M + M
+			var ex := gx + (cx2 - gx) * (bd + 40 * M) / bd
+			var ey := gy + (cy2 - gy) * (bd + 40 * M) / bd
+			if ex > 0 and ey > 0 and ex < sim.field_w and ey < sim.field_h:
+				tried_other += 1
+				var b2 := sim.lof_block(gx, gy, z0, ex, ey, sim.height_at(ex, ey) + BattleSim.LOF_BODY, 0, 0,
+					BattleSim.LOF_STEP / 2, sim._skip0(g))
+				if b2 >= 0 and b2 <= bd + 4 * M:
+					other_blk += 1
+				else:
+					bad.append("gun %d: shoots through the tower %d m away (block %d)" % [g, bd / M, b2])
+	if tried_own == 0:
+		bad.append("no fort gun whose line out crosses its own tower (the map changed?)")
+	if tried_other == 0:
+		bad.append("no fort gun with another tower to test")
+	if bad.is_empty():
+		print("PASS tower gun: %d / %d fort guns fire out over their own tower, %d / %d blocked by another tower" % [
+			own_ok, tried_own, other_blk, tried_other])
+	for x in bad:
+		_fail("tower gun: " + str(x))
 
 
 ## Unlimited deployment (scenario "deploy_time" -1; "--only=deploy"): no

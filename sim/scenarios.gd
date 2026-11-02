@@ -1355,14 +1355,18 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 	# Deployment zones (used when the battle has a deployment phase): the
 	# attackers the approach band (from 40 m ahead of their front to their
 	# edge), the defenders inside the walls and on the walkways (an open
-	# town: the square round it).
+	# town: the square round it). A West town whose only walls are its
+	# harbour fort's (walls 1-2): the whole town, the fort and its walls
+	# (docs/design/siege_and_towns.md "Deploying anywhere in the town").
 	var zones: Array = []
 	var att_front: int = lay["att_y"]
 	if def_side == 1:
 		zones.append([att_side, 0, 0, clampi(att_front - 40, 0, h), w, h])
 	else:
 		zones.append([att_side, 0, 0, 0, w, clampi(att_front + 40, 0, h)])
-	if int(lay.get("walls", 0)) > 0 and not segs.is_empty():
+	if int(lay.get("west", 0)) != 0 and int(lay.get("wwalls", 0)) > 0 and not segs.is_empty():
+		zones.append_array(_west_fort_town_zones(lay, segs, def_side, w, h, att_front))
+	elif int(lay.get("walls", 0)) > 0 and not segs.is_empty():
 		var x0 := w
 		var y0 := h
 		var x1 := 0
@@ -1440,6 +1444,61 @@ static func settlement(city: Dictionary, terr: Dictionary, att: Array, dfn: Arra
 			mt[att_side] = eq_m
 			sc["mantlets"] = mt
 	return {"scenario": sc, "order": order, "layout": lay}
+
+
+## The defenders' deployment zones of a West town whose walls are its
+## harbour fort's alone (walls 1-2; docs/design/siege_and_towns.md
+## "Deploying anywhere in the town (as built, 2026-11-02)"): the fort
+## (DZ_INSIDE: its open ground inside the walls within the box of its
+## stretches, its walkways by the wall snap) and the town (DZ_RECT: the box
+## of the town's outline and its stake palisade, TOWN_ZONE_PAD round it,
+## kept DEP_TOWN_GAP m short of the attackers' band). Metres, from the plan.
+const TOWN_ZONE_PAD := 4      # m round the town's outline and palisade
+const DEP_TOWN_GAP := 30      # m kept between the defenders' town zone and the attackers' band
+
+static func _west_fort_town_zones(lay: Dictionary, segs: Array, def_side: int, w: int, h: int, att_front: int) -> Array:
+	var out: Array = []
+	var x0 := w
+	var y0 := h
+	var x1 := 0
+	var y1 := 0
+	for sg in segs:
+		x0 = mini(x0, mini(int(sg[0]), int(sg[2])))
+		y0 = mini(y0, mini(int(sg[1]), int(sg[3])))
+		x1 = maxi(x1, maxi(int(sg[0]), int(sg[2])))
+		y1 = maxi(y1, maxi(int(sg[1]), int(sg[3])))
+	out.append([def_side, 1, maxi(x0 - 4, 0), maxi(y0 - 4, 0), mini(x1 + 4, w), mini(y1 + 4, h)])
+	var wp: PackedInt32Array = lay["poly"]
+	if wp.size() < 6:
+		return out
+	var tx0 := w
+	var ty0 := h
+	var tx1 := 0
+	var ty1 := 0
+	for q in wp.size() / 2:
+		tx0 = mini(tx0, wp[q * 2])
+		ty0 = mini(ty0, wp[q * 2 + 1])
+		tx1 = maxi(tx1, wp[q * 2])
+		ty1 = maxi(ty1, wp[q * 2 + 1])
+	for b in lay.get("buildings", []):
+		var ba: Array = b
+		if int(ba[4]) == MapGen.B_STAKES:
+			tx0 = mini(tx0, int(ba[0]))
+			ty0 = mini(ty0, int(ba[1]))
+			tx1 = maxi(tx1, int(ba[2]))
+			ty1 = maxi(ty1, int(ba[3]))
+	var rx0 := maxi(tx0 - TOWN_ZONE_PAD, 0)
+	var ry0 := maxi(ty0 - TOWN_ZONE_PAD, 0)
+	var rx1 := mini(tx1 + TOWN_ZONE_PAD, w)
+	var ry1 := mini(ty1 + TOWN_ZONE_PAD, h)
+	# (Never into the attackers' band: their edge's side kept DEP_TOWN_GAP short of it.)
+	if def_side == 1:
+		ry1 = mini(ry1, att_front - 40 - DEP_TOWN_GAP)
+	else:
+		ry0 = maxi(ry0, att_front + 40 + DEP_TOWN_GAP)
+	if rx1 > rx0 and ry1 > ry0:
+		out.append([def_side, 0, rx0, ry0, rx1, ry1])
+	return out
 
 
 ## Deployment zones for a field battle (metres): each side's part of the

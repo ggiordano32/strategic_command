@@ -3049,3 +3049,39 @@ outline in the map's corner, while the town-end fort stood 90 m from the plaza a
   cell beyond its interval; decided at walls 1 / 2 in 7.6 / 7.9 -> 8.1 / 7.3 min). `west_named` and `open_town`
   identical (no Portobelo in them). campaign_pins Rome and West MATCH (battles settle by formula); settlement battle
   hashes move on Portobelo's maps only; the rules hash moves; no VERSION bump.
+
+### Deploying anywhere in the town (as built, 2026-11-02)
+
+The owner, defending a West harbour-fort town against the AI on a phone: "Looks like we are only allowed to deploy in
+the forts, we should be able to deploy anywhere in the city/town." At walls 1-2 a West town's only wall stretches
+(`lay["segs"]`) are its harbour fort's, so `Scenarios.settlement` gave the defenders one zone, `DZ_INSIDE` round the
+box of those stretches: the fort's inside and its walls, with the streets, the plaza and the stake palisade outside it
+(the overlay said "Deploy inside the walls or on them" round the fort). The AI's street posts were placed in the town
+anyway (not kept to the zone), so only a human defender met it.
+
+- **The rule.** A West town whose walls are its fort's (`lay` "west" and "wwalls" 1-2; `Scenarios._west_fort_town_zones`)
+  gives the defenders two zones: the fort as before (`DZ_INSIDE`: its open ground inside the walls within the box of
+  its stretches; its walks by the wall snap of `place_rule`, as before) and the town (`DZ_RECT`: the box of the town's
+  outline `lay["poly"]` and its stake palisade's runs (`B_STAKES`, walls 2), `TOWN_ZONE_PAD` 4 m round it, its
+  attackers' side kept `DEP_TOWN_GAP` 30 m short of the attackers' band). The town box is the walls-0 open town's zone
+  plus the palisade, so streets, plaza, the ground beside houses and just inside the stakes are in it; houses, walls
+  and gateways stay refused by `place_rule` as before (`_piece0` < 0), and a unit placed past the zone is clamped into
+  the town box. Everything from the plan in metres, the same for both peers (`dep_z` is hashed as before). Portobelo
+  (walls 2): town box 116-436 x 44-285 m, fort box 430-510 x 156-236 m, attackers' band from 325 m (gap 40 m); Havana,
+  Cartagena, Campeche, Santo Domingo gaps 39-40 m.
+- **Not changed.** Walls 3 (the West's walled plan), every Rome plan (Castrum, Polis, Punic, Oppidum, Ring) and the
+  native villages' ring keep one `DZ_INSIDE` zone round their wall stretches: there the walls are the whole town
+  already (the city's open ground inside the walls and its walks). Walls 0 keeps the town box. The attackers' zone is
+  unchanged.
+- **The siege AI.** Its deployment (`SiegeAI.deploy_defenders`, S_DEF_ZONE) keeps its fort-first garrison and street
+  posts; a street unit is now placed at its post only when the post is inside the zone (`deploy_clamp` returns it
+  unmoved), else it walks there as from any other unplaced post. No new knob (the posts are in the town, so the zone
+  rarely refuses one).
+- **View.** The overlay draws the town box with the brass ruler as a field zone and the fort's box outlined; the
+  label, now inside the top edge of the first defender zone, reads "Deploy anywhere in the town, on its walls or in the
+  fort" (a West fort town) or "Deploy anywhere in the town or on its walls" (one zone).
+- **Measured.** The zones are read only in a battle with a deployment phase (`_setup_deploy` returns before them otherwise), so `tools/balance` (no deployment) does not see this change; measured with the guns' rule of the same day (battle_sim.md "Guns on a tower fire over their own parapet"). Campaign pins MATCH; the rules hash moves; no VERSION bump.
+- **Tests.** determinism_test `--only=deploy` `_check_town_zone` (Portobelo walls 1 and 2: the plaza, a point 6 m
+  inside the stakes and the fort's inside in the zone; the attackers' front clamped out of the band; every defender
+  rectangle 30 m short of the band; the plaza not in the attackers' zone; Rome polis walls 2 keeps one inside zone).
+  Shots: `tests/siege_zone_shot.gd` (`--mode=zone|gun`, `--view`, `--walls`).

@@ -3292,8 +3292,10 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		return -1
 	var tw := 0
 	var oskip := LOF_SKIP
-	if obs_on != 0 and obs_kind(x0, y0) == MapGen.C_WALK:
-		oskip = wall_t + 2 * M
+	var own := 0
+	if obs_on != 0:
+		own = own_works_skip(x0, y0, x1, y1)  # a man or gun on a wall or tower shoots over its own (and the ground it stands on)
+		oskip = maxi(oskip, own)
 	oskip = maxi(oskip, skip0)  # a tower's engine shoots over its own tower
 	while a <= end:
 		var px := x0 + dx * a / d
@@ -3312,7 +3314,7 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 				# be shot; cover troops take far fewer hits there.)
 				stat_obs_lof += 1
 				return a
-		if gz > z:
+		if gz > z and a >= own:
 			return a
 		if veg_on != 0 and a >= tskip:  # (tskip: a cover man shoots out of his own woods' edge)
 			tw += TREE_W[veg_d(px, py)]
@@ -3321,6 +3323,64 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 				return a
 		a += stride
 	return -1
+
+
+## Guns on a tower fire over their own parapet (docs/design/battle_sim.md,
+## as built 2026-11-02): a shooter standing on a wall's body, walkway,
+## stair, gate or tower shoots from its top, so the structure it stands on
+## never blocks its line: from (x0, y0) toward (x1, y1) the distance to the
+## first obstacle cell that is not its own (0 when it stands on none). Its
+## own: the wall cells within OWN_WALL_EXTRA past the wall's thickness
+## (its stretch and the parapet; the old walkway rule), and the first tower
+## the line enters within OWN_TOWER_NEAR (the tower it stands on or beside)
+## with the wall cells just past it. Another tower, a wall cell farther on
+## (the far side of a fort) or anything else ends it; terrain, rocks and
+## cliffs are lof_block's as before.
+const OWN_TOWER_NEAR := 10 * M  # a tower whose cells begin this near the shooter is its own
+const OWN_WALL_EXTRA := 2 * M   # wall cells this far past the wall's thickness (or its own tower) are its own
+
+func own_works_skip(x0: int, y0: int, x1: int, y1: int) -> int:
+	var k0 := obs_kind(x0, y0)
+	if not _works_cell(k0):
+		return 0
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	var wcap := wall_t + OWN_WALL_EXTRA
+	if d <= 0:
+		return wcap if k0 == MapGen.C_WALK else 0
+	var t_in := k0 == MapGen.C_TOWER  # in its own tower now
+	var t_done := false               # its own tower passed
+	var t_end := 0
+	var a := 0
+	while a <= d:
+		var k := obs_kind(x0 + dx * a / d, y0 + dy * a / d)
+		if k == MapGen.C_TOWER:
+			if t_done:
+				break  # another tower
+			if not t_in:
+				if a > OWN_TOWER_NEAR:
+					break  # a tower farther on is not its own
+				t_in = true
+			t_end = a
+		elif _works_cell(k):
+			if t_in:
+				t_in = false
+				t_done = true
+			if a > wcap and not (t_done and a <= t_end + OWN_WALL_EXTRA):
+				break  # a wall farther on
+		else:
+			break
+		a += M
+	if k0 == MapGen.C_WALK:
+		a = maxi(a, wcap)  # (the walkway's rule before: its wall's thickness)
+	return a
+
+
+## The 2 m obstacle kind k is part of a wall or tower (body, walkway, stair,
+## tower, a gate's cells).
+static func _works_cell(k: int) -> bool:
+	return k == MapGen.C_WALL or k == MapGen.C_WALK or k == MapGen.C_STAIR or k == MapGen.C_TOWER or MapGen.is_gate(k)
 
 
 ## Unit-level line of fire for a flat weapon of unit u at unit t (centroid
@@ -19520,10 +19580,14 @@ func _setup_deploy(sc: Dictionary) -> void:
 		for u in n_units:
 			if u_side[u] != city_def or u_state[u] != U_READY or not SiegeAI.placed_at_post(self, u):
 				continue
-			# (Its post is in the town, as the scenario's own placement is: not
-			# kept to the zone, which at walls 1-2 is the fort's box.)
+			# (Its post is in the town, inside the zone: the whole town since
+			# 2026-11-02. A post outside the zone, or off the open ground: it
+			# walks there.)
 			if (nav_at(u_ai_x[u], u_ai_y[u]) & MapGen.NAV_GROUND) == 0 or (n_cmp > 0 and _piece0(u_ai_x[u], u_ai_y[u]) < 0):
-				continue  # (off the open ground: it walks there)
+				continue
+			var pz := deploy_clamp(self, city_def, u_ai_x[u], u_ai_y[u])
+			if pz.z == 0 or pz.x != u_ai_x[u] or pz.y != u_ai_y[u]:
+				continue
 			u_ax[u] = u_ai_x[u]
 			u_ay[u] = u_ai_y[u]
 			if u_order[u] == O_MOVE:
