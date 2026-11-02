@@ -2390,6 +2390,9 @@ func set_board(army: int, fid: int) -> void:
 ## it plans the merge.
 func _merge_tap_at(id: int) -> void:
 	if merge_tap == id:
+		if _toast != null:   # the second tap (a double tap) is the answer: the Merge / Select popup goes away
+			_toast.queue_free()
+			_toast = null
 		set_join(sel_army, id)
 		if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
 			show_side(func(box): panels.army_panel(box, sel_army))

@@ -3737,6 +3737,9 @@ func _m_merged() -> void:
 		if str(o["t"]) == "merge" and int(o["army"]) == g0 and int(o["into"]) == g1:
 			n += 1
 	_check(n == 1 and CState.army(cs.ps, g0).is_empty() and cs.sel_army == g1, "the second tap merges (next to it: a merge order now)")
+	await process_frame
+	var tn := cs.find_child("toast", true, false)
+	_check(cs._toast == null and (tn == null or tn.is_queued_for_deletion()), "the double tap closes the Merge / Select popup (no popup left open)")
 	cs.orders = []
 	cs._replan()
 

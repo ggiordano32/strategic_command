@@ -569,3 +569,16 @@ only: `sim/` and `campaign/` untouched, no state, no hash (the plan stays determ
   bast walls read cream on sand); the star forts are small and pale on sand at zoom 1.2 (a darker coquina or an ink edge on the
   faces would help); cannons on the star's bastions; the draw-call cost (join the south half into one soup); a house on the wall line
   (the plan puts houses within the footprint, the ring is at 0.93 of it: a few stand in the wall as before); the palisade has no earth bank.
+
+### The double tap on an army to merge (as built, 2026-11-02, view only)
+
+With one of our armies selected, a tap on another of ours previews the merge
+(`CampaignScreen._merge_tap_at`: path, glyph, a toast "Merge into army ...
+Tap it again, or Merge" with Merge / Select it). A second tap on the same
+army (a double tap, a double click; no timer: the preview itself is the
+first tap) issues the merge through the same `set_join` as the Merge button
+(next to it a merge order, further a march that merges on arrival, a refused
+merge keeps its `merge_check` text) and now also closes that toast, which used
+to stay open over the merged army. A single tap keeps the preview; no
+selection change happens on the double tap (Select it is only its button).
+`campaign_input_test` `_m_merged` checks no toast is left.
