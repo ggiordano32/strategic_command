@@ -480,6 +480,18 @@ func _initialize() -> void:
 		_step_pl_off_hold_wait,
 		_step_pl_off_hold_up,
 		_step_pl_check_off_hold,
+		# The placement tool in the deployment phase (the zone's rule kept).
+		_step_pd_start,
+		_step_pd_tap_in,
+		_step_pd_check_in,
+		_step_pd_go,
+		_step_pd_settle,
+		_step_pd_check_go,
+		_step_pd_tap_out,
+		_step_pd_check_out,
+		_step_pd_go_out,
+		_step_pd_settle,
+		_step_pd_check_go_out,
 		# Attack as the last waypoint (needs the sim's WP_ATTACK).
 		_step_wa_start,
 		_step_wa_tap_ground,
@@ -4605,6 +4617,108 @@ func _step_pl_check_off_hold() -> void:
 	_check(_pl_pending() == _pl_orders + 1 and b.orders.value(_pl_u, "order") == BattleSim.O_MOVE, "guard: ... a held tap (0.25 s) orders it (%d)" % (_pl_pending() - _pl_orders))
 	_check(b.selection.size() == 1, "guard: Confirm off keeps today's rule: the selection stays after the order")
 	b.sim.u_fighting[_pl_u] = 0
+	ConfirmOrders.force = "off"
+
+
+# ----------------------------- the placement tool in the deployment ---
+
+var _pd_u := -1
+var _pd_target := Vector2.ZERO
+
+
+func _step_pd_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	ConfirmOrders.force = "on"
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 270, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 60, Scenarios.FACE_DOWN)],
+		"terrain": {"kind": 0}, "deploy_time": 600}
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_pd_tap_in() -> void:
+	_no_double_tap()
+	var sim := battle.sim
+	for u in sim.n_units:
+		if sim.u_side[u] == 0:
+			_pd_u = u
+	battle._select(_pd_u)
+	_focus(150 * 1024, 240 * 1024)
+	_pd_target = Vector2(110.0, 240.0) * Battle.PX_PER_M
+	var p := _world_to_screen(_pd_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pd_check_in() -> void:
+	var b := battle
+	var sim := b.sim
+	_check(sim.phase == BattleSim.PHASE_DEPLOY and b._confirm_on(), "deployment placement: Confirm on in the deployment phase")
+	_check(b.place_on and b.hud.place_bar.visible, "deployment placement: a tap on the ground in the zone shows the ghost and the toolbar")
+	_check(b.place_c.distance_to(_pd_target) < 6.0, "deployment placement: ... at the tap")
+	_check(b.hud.place_wp.disabled and b.hud.place_run.disabled, "deployment placement: ... Waypoint and Run are off (no march yet)")
+	_check(sim.u_ax[_pd_u] == 150 * 1024, "deployment placement: ... the unit has not moved yet (ax %d)" % sim.u_ax[_pd_u])
+
+
+var _pd_tries := 0
+
+
+## The placement is an order for the next tick: step the sim (it may be paused) until nothing is pending.
+func _step_pd_settle() -> void:
+	if battle.paused:
+		battle._toggle_pause()
+	if battle.sim.pending_orders.size() > 0 and _pd_tries < 200:
+		_pd_tries += 1
+		steps.push_front(_step_pd_settle)
+		return
+	_pd_tries = 0
+
+
+func _step_pd_go() -> void:
+	_tap_control(battle.hud.place_go)
+
+
+func _step_pd_check_go() -> void:
+	var b := battle
+	var sim := b.sim
+	_check(not b.place_on and b.selection.is_empty() and not b.hud.place_bar.visible, "deployment placement: Go clears the ghost and the selection")
+	_check(absf(float(sim.u_ax[_pd_u]) / 1024.0 - 110.0) < 4.0 and absf(float(sim.u_ay[_pd_u]) / 1024.0 - 240.0) < 12.0,
+		"deployment placement: ... and the unit stands at the ghost (%.1f, %.1f)" % [sim.u_ax[_pd_u] / 1024.0, sim.u_ay[_pd_u] / 1024.0])
+	_check(sim.phase == BattleSim.PHASE_DEPLOY, "deployment placement: ... still deploying")
+
+
+func _step_pd_tap_out() -> void:
+	_no_double_tap()
+	battle._select(_pd_u)
+	_focus(150 * 1024, 150 * 1024)
+	_pd_target = Vector2(150.0, 120.0) * Battle.PX_PER_M   # (the enemy's half: outside our zone)
+	var p := _world_to_screen(_pd_target)
+	_touch(0, p, true)
+	_touch(0, p, false)
+
+
+func _step_pd_check_out() -> void:
+	var b := battle
+	var sim := b.sim
+	_check(b.place_on and not b._place_layout.is_empty(), "deployment placement: a tap outside the zone still shows the ghost")
+	var c: Vector2 = (b._place_layout[0] as Dictionary)["centre"] / Battle.PX_PER_M * 1024.0
+	var zp := BattleSim.deploy_clamp(sim, 0, int(c.x), int(c.y))
+	_check(zp.z == 1 and absi(zp.x - int(c.x)) <= 1 and absi(zp.y - int(c.y)) <= 1 and c.y > 120.0 * 1024.0 + 1024.0,
+		"deployment placement: ... its footprint is held inside the zone (y %.0f m)" % (c.y / 1024.0))
+
+
+func _step_pd_go_out() -> void:
+	_tap_control(battle.hud.place_go)
+
+
+func _step_pd_check_go_out() -> void:
+	var sim := battle.sim
+	var zp := BattleSim.deploy_clamp(sim, 0, sim.u_ax[_pd_u], sim.u_ay[_pd_u])
+	_check(zp.x == sim.u_ax[_pd_u] and zp.y == sim.u_ay[_pd_u] and sim.u_ay[_pd_u] > 120 * 1024,
+		"deployment placement: Go outside the zone puts the unit in the zone's edge (y %.0f m)" % (sim.u_ay[_pd_u] / 1024.0))
 	ConfirmOrders.force = "off"
 
 

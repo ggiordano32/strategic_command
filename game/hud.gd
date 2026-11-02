@@ -211,6 +211,8 @@ var place_wp: Button
 var place_x: Button
 var undo_toast: PanelContainer  # the Undo toast: the order's name and the Undo button (undo_button is its child)
 var undo_toast_label: Label
+var _undo_on := false        # the Undo toast is due (battle.gd: after an order, for UNDO_SHOW_SEC)
+var _toast_covered := false  # ... but waits under a popover that reaches it
 var undo_button: Button  # the command bar's Undo (battle.gd shows it for a few seconds after each order batch)
 ## Shift / Ctrl / Cmd was held when the last card was clicked.
 var card_mod_add := false
@@ -3038,27 +3040,62 @@ func _build_place_ui(root: Control, groups: Control) -> void:
 	groups.remove_child(undo_button)   # (the button of the bar's group row moves into the toast)
 	trow.add_child(undo_button)
 	_ui_controls.append(undo_toast)
+	# Both sit under the popovers (More, a chip's options, the long-press explanation, the Withdraw confirmation): they were
+	# built after them and so drew over them (the owner: the Undo floated in front of the Run chip's explanation).
+	var low := root.get_child_count()
+	for pnl in [more_panel, opt_panel, explain_panel, confirm_panel]:
+		if pnl != null and pnl.get_parent() == root:
+			low = mini(low, pnl.get_index())
+	if low < root.get_child_count():
+		root.move_child(place_bar, low)
+		root.move_child(undo_toast, low + 1)
 
 
 ## The Undo toast: shown with the order's name, or hidden (the button keeps its name `undo` and its `visible`).
 func set_undo_toast(on: bool, text := "") -> void:
 	if undo_toast == null:
 		return
+	_undo_on = on
 	undo_button.visible = on
-	undo_toast.visible = on
+	undo_toast.visible = on and not _toast_covered
 	if on:
 		undo_toast_label.text = text
 	undo_toast.reset_size()
 
 
+## Whether the Undo toast is due (its time has not run out), shown or hidden under a popover.
+func undo_wanted() -> bool:
+	return _undo_on
+
+
+## The popovers that open over the bar's top (More, options, explanation, confirmation, speed): visible rects.
+func _popover_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for pnl in [more_panel, opt_panel, explain_panel, confirm_panel, speed_panel]:
+		if pnl != null and (pnl as Control).visible:
+			out.append((pnl as Control).get_global_rect())
+	return out
+
+
+## The top of the bar's visible content (the bar's own rect can lag a frame behind its rows).
+func _bar_top() -> float:
+	var vp := get_viewport().get_visible_rect().size
+	var y := _bottom.get_global_rect().position.y if _bottom != null else vp.y
+	for c in [chips_up, chips_box, actions_box, group_box, cards_bar]:
+		if c != null and (c as Control).is_visible_in_tree():
+			y = minf(y, (c as Control).get_global_rect().position.y)
+	return y
+
+
 ## Show or hide the placement toolbar; `run_on`: the ghost's Run; `waypoint_ok`: the Waypoint button is enabled.
-func set_place_bar(on: bool, run_on := false, waypoint_ok := true) -> void:
+func set_place_bar(on: bool, run_on := false, waypoint_ok := true, run_ok := true) -> void:
 	if place_bar == null:
 		return
 	place_bar.visible = on
 	if on:
 		place_run.set_pressed_no_signal(run_on)
 		place_wp.disabled = not waypoint_ok
+		place_run.disabled = not run_ok   # (deployment: no pace to give yet)
 		place_bar.reset_size()
 
 
@@ -3069,8 +3106,10 @@ func layout_floaters(anchor: Vector2, avoid: PackedVector2Array) -> void:
 		return
 	var vp := get_viewport().get_visible_rect().size
 	var top_y := (_top.get_global_rect().end.y if _top != null else 0.0) + MARGIN
-	var bot_y := (_bottom.get_global_rect().position.y if _bottom != null else vp.y) - GAP
+	var bot_y := _bar_top() - GAP
 	var dock_y := bot_y
+	var tsz := undo_toast.get_combined_minimum_size() if undo_toast != null and _undo_on else Vector2.ZERO
+	var toast_at := Rect2(Vector2(clampf((vp.x - tsz.x) * 0.5, MARGIN, maxf(vp.x - tsz.x - MARGIN, MARGIN)), bot_y - tsz.y), tsz)
 	if place_bar.visible:
 		var sz := place_bar.get_combined_minimum_size()
 		place_bar.size = sz
@@ -3084,6 +3123,8 @@ func layout_floaters(anchor: Vector2, avoid: PackedVector2Array) -> void:
 				var r := Rect2(c, sz)
 				if r.position.x < MARGIN or r.end.x > vp.x - MARGIN or r.position.y < top_y or r.end.y > bot_y:
 					continue
+				if tsz != Vector2.ZERO and r.grow(GAP).intersects(toast_at):
+					continue   # (the toast keeps the dock; the toolbar takes another side)
 				var clear := true
 				for a in avoid:
 					if r.grow(34.0).has_point(a):
@@ -3096,7 +3137,13 @@ func layout_floaters(anchor: Vector2, avoid: PackedVector2Array) -> void:
 			pos = Vector2(clampf((vp.x - sz.x) * 0.5, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)), bot_y - sz.y)
 			dock_y = pos.y - GAP
 		place_bar.position = pos
-	if undo_toast != null and undo_toast.visible:
-		var tsz := undo_toast.get_combined_minimum_size()
+	if undo_toast != null and _undo_on:
 		undo_toast.size = tsz
-		undo_toast.position = Vector2(clampf((vp.x - tsz.x) * 0.5, MARGIN, maxf(vp.x - tsz.x - MARGIN, MARGIN)), dock_y - tsz.y)
+		undo_toast.position = Vector2(toast_at.position.x, dock_y - tsz.y)
+		# Under a popover that reaches it the toast waits (it comes back when the popover closes).
+		var covered := false
+		for pr in _popover_rects():
+			if pr.intersects(Rect2(undo_toast.position, tsz)):
+				covered = true
+		_toast_covered = covered
+		undo_toast.visible = not covered

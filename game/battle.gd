@@ -5189,6 +5189,7 @@ var _multi_end_ms := -100000       # when the last pinch / two-finger pan ended
 var _stray_press := false          # the finger now down came soon after one
 var _hold_hint_done := false       # "Hold to order a fighting unit" was said this battle
 var place_on := false
+var _place_phase := 0        # the sim phase the ghost was placed in (deployment or battle; a change drops it)
 var place_kind := ""               # "line" | "group"
 var place_c := Vector2.ZERO        # world px: the front rank's middle (a group: the tap point)
 var place_face := 0                # 0..1023
@@ -5214,8 +5215,8 @@ var _order_tag := ""               # the next order batch's name for the Undo to
 
 ## Orders are confirmed now: Confirm orders is on (or auto after a touch), units are selected, the battle runs.
 func _confirm_on() -> bool:
-	return interactive and sim.phase == BattleSim.PHASE_BATTLE and _exit_timer <= 0.0 and not selection.is_empty() \
-		and ConfirmOrders.active(_last_touch)
+	return interactive and (sim.phase == BattleSim.PHASE_BATTLE or sim.phase == BattleSim.PHASE_DEPLOY) \
+		and _exit_timer <= 0.0 and not selection.is_empty() and ConfirmOrders.active(_last_touch)
 
 
 func _place_connect() -> void:
@@ -5260,6 +5261,7 @@ func _place_run_start() -> bool:
 func _place_open() -> void:
 	if not place_on:
 		place_on = true
+		_place_phase = sim.phase
 		_place_sel = selection.duplicate()
 		place_run = _place_run_start()
 		_place_run_touched = false
@@ -5385,7 +5387,25 @@ func _place_refresh() -> void:
 	overlay.place_face = place_face
 	overlay.place_clamped = place_clamped
 	overlay.queue_redraw()
-	hud.set_place_bar(true, place_run, true)
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		_place_zone_fit()
+	hud.set_place_bar(true, place_run, sim.phase != BattleSim.PHASE_DEPLOY, sim.phase != BattleSim.PHASE_DEPLOY)
+
+
+## Deployment: each footprint of the ghost shows where its unit will stand, the sim's own rule (a placement outside the side's
+## zone goes to the nearest point of it; a unit that can man a wall snaps to the wall; refused in a settlement zone's
+## outside: marked "refused", left where it is, not sent).
+func _place_zone_fit() -> void:
+	for q in _place_layout:
+		var u: int = q["unit"]
+		var c: Vector2 = q["centre"] / PX_PER_M * M
+		if BattleSim.can_man_walls(sim, u) and BattleSim.wall_snap(sim, int(c.x), int(c.y)).z >= 0:
+			continue
+		var zp := BattleSim.deploy_clamp(sim, sim.u_side[u], int(c.x), int(c.y))
+		if zp.z == 0:
+			q["refused"] = true
+		else:
+			q["centre"] = Vector2(zp.x, zp.y) / M * PX_PER_M
 
 
 ## Which handle (Overlay.PH_*) is under screen point sp, or -1. The small ones win over the body.
@@ -5524,6 +5544,10 @@ func _place_send(as_stop: bool) -> void:
 	for p in _place_layout:
 		var u: int = p["unit"]
 		var c: Vector2 = p["centre"] / PX_PER_M * M
+		if p.get("refused", false):
+			_count("place_refused")
+			overlay.flash("Place your units in the blue zone", p["centre"])
+			continue
 		var why: String = orders.wall_refusal(u, int(c.x), int(c.y))
 		if why != "":
 			_count("wall_refused")
@@ -5570,11 +5594,11 @@ func _place_process() -> void:
 				place_face = int(round(float(pf[2]) * 1024.0 / 360.0)) & 1023
 				_place_refresh()
 	if place_on:
-		if not _confirm_on():
+		if not _confirm_on() or _place_phase != sim.phase:
 			_place_clear()
 		elif (sim.tick != _place_tick and sim.tick % 5 == 0 and _place_drag < 0) or camera.zoom.x != _place_zoom:
 			_place_refresh()
-	var toast: bool = hud.undo_toast != null and hud.undo_toast.visible
+	var toast: bool = hud.undo_toast != null and hud.undo_wanted()
 	if place_on or toast:
 		var avoid := PackedVector2Array()
 		for h in overlay.place_handles:

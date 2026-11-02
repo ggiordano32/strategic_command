@@ -1354,7 +1354,7 @@ set by every non-emulated touch press, cleared by a mouse click or a right press
 for the mouse. Options has the capsule Auto / On / Off beside UI size (same row, as Battle view shares Battle look's:
 the page keeps its height, `menu_test` checks it at 1024 x 576). The Controls page has two rows (battle section): the
 Placement tool and Stray touches; the touch cells of Move, Run, Line and Undo say what changes. The tool works in the
-battle phase only: the deployment's placing is already instant and free.
+battle phase only (2026-11-02: the deployment too, see "The tool in the deployment phase" below).
 
 **The tool** (`game/battle.gd`, section "confirm orders and the placement tool"; drawing in `game/overlay.gd`
 `_draw_place`; the toolbar and the toast in `game/hud.gd`). With confirm on and units selected, a tap on the ground
@@ -1404,6 +1404,27 @@ sent by Go: "line, N m"). It shows `UNDO_SHOW_SEC` (6 s), the batches and the ke
 | Two-finger tap | deselect | drops the ghost and deselects |
 | Chips, Withdraw, gates, buildings | direct | direct |
 
+**The tool in the deployment phase, and the Undo toast under the popovers (as built, 2026-11-02, view only).** The owner's
+phone report: "The positioning tool doesn't show during the deployment phase" and "The undo button floats in front of the
+'run selection' chit in the battlefield menu". (1) `Battle._confirm_on` required the battle phase, so a tap or a line drag
+in the deployment placed at once (the old instant path) and no ghost, handles or toolbar showed. It now holds in the
+deployment too (the same setting: Auto is on after a touch). The ghost is the same; `_place_zone_fit` holds each footprint
+to the sim's own rule (`BattleSim.deploy_clamp`: outside the side's zone goes to its nearest point, a unit that can man a
+wall snaps to the wall, a refusal in a settlement zone is marked and flashes "Place your units in the blue zone" at Go);
+Go sends the same move orders, which `_queue` already turns into `ORDER_PLACE` in the deployment (and refuses where another
+unit stands); Waypoint and Run are disabled there (`Hud.set_place_bar(..., run_ok)`: nothing marches, `ORDER_RUN` stays the
+chip's), no Undo toast (placing is free); a change of phase drops the ghost (`_place_phase`). With Confirm off (the mouse)
+the instant placement is as before; the deployment's pick-up, group move and rotate are untouched. Test: `_step_pd_*` in
+`tests/input_test.gd`. (2) The toast and the toolbar were built after the chip popovers, so they drew over them: with the
+Run chip's long-press explanation open ("Run or walk: the selection's pace.") the toast sat across it. They now sit under
+the popovers in the draw order (`Hud._build_place_ui` moves them below More / options / explanation / confirmation), and the
+toast steps aside (hidden, due time kept) while a popover reaches it (`Hud._popover_rects`, `undo_wanted`). The docking
+reads the top of the bar's visible content (`_bar_top`: the chip rows, actions, capsule, cards) rather than the bar
+container's rect alone, and on a wide window the toolbar's slot beside the ghost avoids the toast's. Test:
+`hud_fit_test._undo_toast_check` at every size including a portrait phone 393 x 851 (toast and toolbar clear of every chip
+and button of the bar, inside the viewport, under the popovers, the toast back when the explanation closes).
+`tests/hud_undo_shot.gd` takes the shots (`--explain`, `--ghost`, `--menu`, `--ctl`, `--stress`, `--late`, `--flow`).
+
 **Attack as the last waypoint (the owner's addition, view built against the sim contract).** "Waypoints are working well,
 can we add attacking as a point?" In the waypoints tool (the lit Waypoints chip, the toolbar's Waypoint flow, Shift + right
 click) a tap on an enemy unit or its symbol no longer attacks at once: it queues `make_attack_order` with `"append": 1`, which
@@ -1432,7 +1453,8 @@ double tap (a key the sim already reads; no sim change). Test: `_step_car_*` in 
   move already shows its own ghost and places on lifting a finger.
 - The mouse with Auto is off, so a right click orders as before; with On the right click and right drag place the ghost and
   the left button drags the handles.
-- The deployment phase is not covered (placing there is instant and free).
+- The deployment phase is not covered (placing there is instant and free). *Superseded 2026-11-02: see the paragraph after
+  the table.*
 - The Undo toast replaces the bar's button: the bar loses a 58 px item.
 - `--demo-place=dx_m,dy_m[,deg]` (with `--select=`) puts a ghost up for screenshots and `--frame-stats`.
 

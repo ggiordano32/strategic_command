@@ -19,7 +19,7 @@ const Kit := preload("res://game/campaign/ui_kit.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const AbilityChip := preload("res://game/ability_chip.gd")
 
-const SIZES := [[780, 360, true], [844, 390, true], [1180, 820, false], [1280, 720, false], [2560, 1440, false]]
+const SIZES := [[780, 360, true], [844, 390, true], [393, 851, true], [1180, 820, false], [1280, 720, false], [2560, 1440, false]]
 const GAP := 5.0
 
 var _wd := 0
@@ -326,6 +326,63 @@ func _more_headings_check(label: String) -> void:
 	_check(bad.is_empty(), "%s %s: the More popover has a heading per cluster, inside the viewport (%s)" % [_size_name, label, ", ".join(bad)])
 
 
+## The Undo toast and the placement toolbar never overlap a control of the bar (any chip, any row), the toast stays inside the
+## viewport, a popover (the Run chip's explanation, More) draws over them and the toast steps aside under it (the owner: the
+## Undo floated in front of the Run chip's explanation).
+func _undo_toast_check(label: String) -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var bad: Array[String] = []
+	h.set_undo_toast(true, "3 units: move")
+	b._place_process()
+	await _frames(2)
+	b._place_process()
+	var t: Rect2 = h.undo_toast.get_global_rect()
+	if not h.undo_toast.visible or not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(t):
+		bad.append("toast %s not shown inside %s" % [str(t), str(vp)])
+	for c in _all_controls(h._bottom):
+		if c.is_visible_in_tree() and (c is BaseButton or c is AbilityChip or c is Label) and t.grow(-0.5).intersects(c.get_global_rect()):
+			bad.append("toast over %s %s" % [c.name, str(c.get_global_rect())])
+	# The placement toolbar with it: both on screen, clear of each other and of the bar.
+	h.set_place_bar(true)
+	b._place_process()
+	await _frames(2)
+	b._place_process()
+	var pb: Rect2 = h.place_bar.get_global_rect()
+	t = h.undo_toast.get_global_rect()
+	if pb.intersects(t.grow(-0.5)) or not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(pb):
+		bad.append("toolbar %s and toast %s" % [str(pb), str(t)])
+	for c in _all_controls(h._bottom):
+		if c.is_visible_in_tree() and (c is BaseButton or c is AbilityChip) and pb.grow(-0.5).intersects(c.get_global_rect()):
+			bad.append("toolbar over %s" % c.name)
+	h.set_place_bar(false)
+	# A popover on the Run chip: above the toast and toolbar in the draw order, the toast waits under it.
+	h._open_explain(h.run_button)
+	await _frames(2)
+	b._place_process()
+	var ex: Rect2 = h.explain_panel.get_global_rect()
+	if h.explain_panel.get_index() < h.undo_toast.get_index() or h.explain_panel.get_index() < h.place_bar.get_index():
+		bad.append("explanation drawn under the toast")
+	if h.undo_toast.visible and h.undo_toast.get_global_rect().intersects(ex):
+		bad.append("toast shown over the explanation")
+	h._close_explain()
+	await _frames(2)
+	b._place_process()
+	if not h.undo_toast.visible:
+		bad.append("toast did not come back after the explanation closed")
+	h.set_undo_toast(false)
+	_check(bad.is_empty(), "%s %s: the Undo toast and the toolbar clear of every bar control, under the popovers (%s)" % [_size_name, label, ", ".join(bad)])
+
+
+func _all_controls(n: Node) -> Array:
+	var out: Array = []
+	for c in n.get_children():
+		if c is Control:
+			out.append(c)
+		out.append_array(_all_controls(c))
+	return out
+
+
 func _click_at(h, p: Vector2) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -607,10 +664,13 @@ func _run() -> void:
 		await _select_types([], by_role)
 		await _fit("everything (mixed)")
 		await _confirm_test()
+		await _select_types([], by_role)
+		await _undo_toast_check("everything (mixed)")
 		await _select_types(["line", "skirmish", "guns_field"], by_role)
 		await _fit("line + skirmish + guns")
 		await _stress()
 		await _fit("stress: every chip")
+		await _undo_toast_check("stress: every chip")
 		_check(h.two_rows == (sz[0] < 2000) and h.chips_up.visible == h.two_rows,
 			"%s: the stress bar is double stacked exactly where one row overflows (two_rows %s)" % [_size_name, str(h.two_rows)])
 		if h.two_rows:
