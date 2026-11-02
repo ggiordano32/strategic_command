@@ -461,6 +461,20 @@ Owner: "What determines how many units can be built from a location each turn?" 
   other). A lower tier is a touch dimmer and carries an upgrade arrow by its price (`UnitRow.upgrade_tip`), the tip
   naming the better row ("Upgrades to Canoe Raiders at War lodge 1"). Locked rows keep the one "needs ..." fold.
   "Trains here" already shows one row per line and is unchanged.
+- **The army's list says the special arrow too (2026-11-02, view only).** Owner (West, phone): "When recruiting units
+  through an army, the tier 2 Bowman don't show. The tier 2 Bowman can be recruited fine in the same town itself."
+  Both dialogs are one listing: the settlement's "Raise new army" and the army's Recruit popup / card section both
+  call `best_options(ps, f, r)` with `r` the settlement the army stands at (`CRules.recruit_region`), and
+  a built-up state of every West and Rome settlement gives equal lists (`campaign_test _recruit_lists`). The West
+  has no second bowmen tier row; what a Range 2 adds is the natives' special arrow (`AMMO_AVAIL`: the Miskito's
+  poisoned arrows, the Itza's fire arrows), which the raise dialog's rows state ("Tier 1 - upkeep 48 - + poisoned
+  arrows") and the army's rows left out, so the army's Bowmen looked like the plain tier 1 row. `_army_recruit`'s
+  rows now add the same "+ <arrow>" text. No rules change (the recruit already carried the arrow, `new_unit`).
+  Checked on a phone-sized window (windowed, 393 x 851 logical and dpr 3, New Spain, England and Rome at max
+  buildings): the army's popup is the same `show_dialog` scroll as the raise dialog (page 560, content 1700-2100,
+  scrolls to the last row), with the same number of rows (17 / 18 / 22); a full army of 12 or a treasury of 10
+  greys the army's rows ("the army is full", "not enough money") and hides none; no West roster line has two bowmen
+  tiers (Rome's archer lines list in both).
 
 ### Per-faction unit names (as built, 2026-10-26)
 

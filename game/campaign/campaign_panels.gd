@@ -1835,6 +1835,8 @@ func _army_recruit(box: VBoxContainer, a: Dictionary) -> void:
 		row.faction = f
 		row.sub_text = "Tier %d  -  upkeep %d" % [int(o["tier"]), CState.upkeep_of(ty)] if ok else (CData.local_text(why_a, f) if o["ok"] else CData.local_text(str(o["why"]), f))
 		row.sub_bad = not ok
+		if ok and str(o.get("ak", "")) != "":
+			row.sub_text += "  -  + " + UT.ammo_text(UT.ammo_index(str(o["ak"])), "name").to_lower()
 		var key := str(o["t"])
 		row.name = "recruit_row_" + key
 		if o["lower"]:

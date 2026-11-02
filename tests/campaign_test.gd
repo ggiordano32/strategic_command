@@ -74,6 +74,7 @@ const CStorm := preload("res://campaign/cstorm.gd")
 const CSea := preload("res://campaign/csea.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
+const Panels := preload("res://game/campaign/campaign_panels.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const CDip := preload("res://campaign/cdip.gd")
 const Tutorial := preload("res://game/campaign/tutorial.gd")
@@ -89,6 +90,7 @@ func _init() -> void:
 	_economy()
 	_building()
 	_recruiting()
+	_recruit_lists()
 	_replenish()
 	_armies()
 	_battles()
@@ -408,6 +410,54 @@ func _recruiting() -> void:
 	var st2 := CTurn.resolve_turn(st, [])
 	var after := CState.unit_count(CState.army(st2, int(CState.armies_of(st, rome)[0]["id"])))
 	_check(after == mini(before + 3, CData.ARMY_MAX), "recruits join the army in the region next turn (%d -> %d)" % [before, after])
+
+
+## Owner's report (2026-11-02, West): "When recruiting units through an army, the tier 2 Bowman don't show. The tier 2
+## Bowman can be recruited fine in the same town itself." The army's recruit list and the settlement's raise list are
+## one listing (Panels.best_options for the settlement the army stands at: CRules.recruit_region); the one difference
+## was the army rows leaving out the special arrow a Range 2 gives the natives' bowmen (the settlement rows say
+## "+ poisoned arrows"). Every settlement of both packs in a built-up state (every chain at level 2, index order).
+func _recruit_lists() -> void:
+	var seen_ak := 0
+	for pk in ["rome", "west"]:
+		CData.use_pack(pk)
+		var st := CState.new_campaign("lists", 77, [], {}, [], pk)
+		for r in CData.region_count():
+			for c in CData.CHAINS.size():
+				CState._add_building(st["regions"][r], c, mini(2, int(CData.CHAINS[c]["levels"])), 99)
+		var bad := 0
+		var empty := 0
+		for r in CData.region_count():
+			var f := int(st["regions"][r]["owner"])
+			if f < 0:
+				continue
+			var a := {"id": 9999, "f": f, "units": [], "from": -1, "moved": 0, "busy": 0}
+			CState.place(a, CGrid.site(r))
+			var rr := CRules.recruit_region(st, a)
+			var here := Panels.best_options(st, f, r)
+			var there := Panels.best_options(st, f, rr) if rr >= 0 else []
+			if rr != r or here != there:
+				bad += 1
+			if here.is_empty():
+				empty += 1
+			for o in here:
+				if str(o.get("ak", "")) != "":
+					seen_ak += 1
+		_check(bad == 0 and empty == 0, "%s: every settlement's raise list equals the list of an army standing in it (%d differ, %d empty)" % [pk, bad, empty])
+	var mi := _f("miskito")
+	var stw := CState.new_campaign("lists", 77, [], {}, [], "west")
+	var cab := _r("cabo_gracias")
+	var o1 := ""
+	for o in Panels.best_options(stw, mi, cab):
+		if str(o["t"]) == "native_bowmen":
+			o1 = str(o.get("ak", ""))
+	_check(o1 == "", "West: the Miskito's bowmen carry no special arrow without a Range 2")
+	CState._add_building(stw["regions"][cab], CData.RANGE, 2, 99)
+	for o in Panels.best_options(stw, mi, cab):
+		if str(o["t"]) == "native_bowmen":
+			o1 = str(o.get("ak", ""))
+	_check(o1 == "poison_arrows" and seen_ak > 0, "West: a Range 2 gives the Miskito's bowmen poison arrows in the list ('%s'; the army card says so as the raise dialog does)" % o1)
+	CData.use_pack("rome")
 
 
 func _replenish() -> void:
