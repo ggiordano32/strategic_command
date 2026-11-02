@@ -1176,7 +1176,8 @@ func move_toast(army: int) -> void:
 		return
 	var po: Dictionary = panels.plan_odds(to)
 	var od: Dictionary = po["od"]
-	var odds := "%d%% (%s)" % [int(od["win"]), Kit.BAND_WORDS[int(od["band"])]]
+	var odds := "%d%% (%s)%s" % [Kit.shown_pct(od), Kit.BAND_WORDS[int(od["band"])],
+		" " + str(od["no_way"]) if str(od.get("no_way", "")) != "" else ""]
 	var city := str(CData.REGIONS[to]["city"])
 	if CState.moves_on(ps):
 		_march_toast(army, kind, to, odds)
@@ -1231,7 +1232,7 @@ func _march_toast(army: int, kind: String, to: int, odds: String) -> void:
 	var fo: Dictionary = panels.field_odds(army, to)
 	if not fo.is_empty():
 		text += " %s's army in the field there must be beaten first: %d%% (%s)." % [
-			CData.faction_name(int(fo["by"])), int(fo["od"]["win"]), Kit.BAND_WORDS[int(fo["od"]["band"])]]
+			CData.faction_name(int(fo["by"])), Kit.shown_pct(fo["od"]), Kit.BAND_WORDS[int(fo["od"]["band"])]]
 	show_toast(text, acts)
 
 

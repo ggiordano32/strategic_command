@@ -1001,6 +1001,67 @@ the AI gathers or musters instead. The campaign's AI aggression setting shifts e
 Aggressive -10). Skilled never shelters inside the walls. Measured with `tests/ai_odds_probe.gd`; numbers, tables and
 the head-to-head in docs/AI.md 12.1.
 
+### The shown odds are the auto-resolve's own (as built, 2026-11-02)
+
+The owner (West, playing the natives): "Sometimes the auto resolve fails against a city, even when it says 100 % victory,
+I'm not sure why" and "It seems to happen the most with the natives". **Why.** A battle with a player in it auto-resolves
+through the battle sim (`game/campaign/auto_resolve.gd`, AI against AI from the battle's own seed), while every odds box
+showed the formula (`CBattle.odds` / `battle_odds`), which knows strengths, walls and ground but none of the sim's hard
+rules; and the formula's 999 per mille rounded to "100 %". Two hard rules decide such battles whatever the strengths:
+(1) the West towns of the European plan (`MapGen.is_west`: walls 1-2, not a native founder's) have a fort with an
+inside and an open town round it; the battle AI storms the fort only with a ram, ladders, poles or guns of its own and at
+`FORT_STORM_ODDS` 250 % of the defenders' men x cost (or with the fort holding 35 % of them; `sim/siege_ai.gd`
+`_fort_choice`), else it takes the town and leaves the fort be; measured, a ram, ladders or poles without guns never got
+into the fort before the town fell (0 of 32 at walls 1, natives and English). A won battle with the fort holding
+(`fort_holds`) takes nothing: the siege goes on (`CRules.apply_outcome`). The natives have no guns at all. (2) Stone ring walls (level 2+, any other town: the native towns, Rome) cannot be passed without
+ladders, poles, a ram, a tower, guns, gate batterers, grenades or fire (walls-2 gates are not hackable,
+`BattleSim.gate_hackable`): the attackers never get in and the time limit gives the battle to the defenders. The plan
+previews also passed kit 0 (no siege turns, no poles) where the stored battle uses `kit_of`.
+
+Headless (`odds_probe.gd` in the session scratchpad: the battle built and run as the auto-resolve does, battle seeds
+1000 + 77 n, a Miskito / Itza / English army of nine units against the town's own garrison at 100 %):
+
+| attacker | town, walls | kit | shown before | sim battles won | town taken |
+|---|---|---|---|---|---|
+| Miskito (warriors, War Band, poisoned bowmen, canoe raiders, Cimarron Veterans, chief) | Cumana 1 | none | 100 % | 16 / 16 | 0 / 16 (fort held 16) |
+| Itza (warriors, War Band, Holcan, fire bowmen, atlatl, slingers, chief) | Cumana 1 | none | 100 % | 16 / 16 | 1 / 16 |
+| Miskito | Cumana 2 | none / poles / ladders, ram, tower | 88 % | 16 / 16 each | 2 / 16 each |
+| Itza | Cumana 2 | none | 86 % | 16 / 16 | 2 / 16 |
+| English foot (no guns) | Cumana 1 / 2 | none; ladders + ram (2 turns) | 100 / 99 % | 16 / 16 | 0 / 16 |
+| Miskito x 2 (5 x the garrison) | Cumana 1 | poles; ladders + ram | 100 % | 8 / 8 each | 0 / 8 each |
+| English with a light and a field gun | Cumana 1 / 2 / 2 (army x 2) | none | 100 / 99 / 100 % | 8 / 8 each | 6 / 8, 0 / 8, 8 / 8 |
+| Miskito | Cumana 0 (open) | none | 100 % | 16 / 16 | 16 / 16 |
+| English foot | Tayasal 2 (stone ring) / 1 (palisade) | none | 100 % | 0 / 16 (all by time) / 8 / 8 | 0 / 16 / 8 / 8 |
+| Rome (legion mix, no artillery) | Zeugitana 2 (Rome) | none / ladders, ram, tower | 100 % | 0 / 16 by time / 8 / 8 | 0 / 16 / 8 / 8 |
+
+**Built (view and one pure helper; the resolution, the formula and the AI's odds unchanged).** `CBattle.shown_odds(st, b)`
+(the pending battle, or `CBattle.preview_battle(st, attackers, defenders, r)`: the assault a plan would start, with the
+siege's kit by now and the attackers' poles, as `start_siege_battle` would store it) = `battle_odds` plus `shown` (the
+attackers' chance as a whole %, clamped to 1-99: the formula keeps a roll and the sim can always go either way, so never
+100 % or 0 %), and `capture_block` (`block` "fort" / "walls", `no_way` its sentence, `take` the chance of taking the town).
+"walls": `shown` 1 % and the band "decisive defeat", "No way through the walls: ...". "fort": `shown` stays the battle's
+chance, the box says "Your chance of winning the battle 99 %" with "The fort will hold: with no ram, ladders or guns the
+attackers take the town round it and leave the fort be, so even their victory does not take Cumana (the siege goes on).
+Bring guns, or starve it out." ("without guns the town round it falls before the attackers' ladders, poles or ram get
+into the fort" when they have kit; "The fort will likely hold: the attackers storm it only at 250 % of the defenders'
+strength (they have 212 %) ..." with guns and too small an edge), and `take` 1 % (measured: 5 of 112 battles without
+guns took the town). The English rows above match the rule seed for seed in kind (212 %: 0 / 8; 4 x: 6 / 8; x 2: 8 / 8). `CBattle.with_shown` caps the field previews (sally, relief, an army in the field) and the sea screen. Every
+odds box (`Kit.odds_view`, `Kit.shown_pct`) and the march toasts read `shown`; the plan previews' titles say "if nothing
+changes" (the garrison regrows and armies move before the turn resolves); the battle screen's title says the auto-resolve
+fights it out with the battle AI. `CBattle.odds` / `odds_of` / `formula` and every AI call are untouched, so no AI
+decision, pin or golden moves.
+
+**Open.** The formula (AI against AI) knows neither rule: an AI native army takes a Spanish walled town on arrival by the
+formula where the player's could not, and a Rome army storms walls 2 on arrival by the formula where the sim never gets in
+(a resolution change would move the pins: the owner's call). The fort's 35 % share is not seen by the campaign (the
+battle map places the fort's companies), so with guns and under 250 % a fort holding a third of the defenders may still be
+stormed. Natives can take a Spanish walled town only by starving it (no guns in their rosters): a design question for the
+owner (let poles or a ram storm the fort in the siege AI, or give the natives the town without its fort). The natives' weights against the fought battles: the native walls measure of 2026-10-31 (equal price, the six
+walled native towns, the West set defending) had the Itza at 58 / 4 % at walls 1 / 2 and the Miskito at 18 / 5 %, where
+the formula's walls row (fitted to European kit-1 sieges at 39.8 / 33.6 %) predicts about a third; a refit would run
+`tools/balance/measure.py tools/balance/plans/native_walls_itza.json` / `native_walls_miskito.json` and the open-field
+`tests/asym_probe.gd`, then `tests/campaign_battles.gd --only=fit` with a native row (not done here; no weights changed).
+
 ### Amphibious armies (2026-10-23)
 
 A per-type unit trait `amphib` (`sim/unit_types.gd` DEFAULTS, 0 / 1; no row has it yet, the Miskito canoe raiders of the

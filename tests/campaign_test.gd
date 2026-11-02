@@ -162,6 +162,7 @@ func _init() -> void:
 	_west_raid_defence()
 	_chain_levels()
 	_native_siege()
+	_shown_odds()
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
@@ -4602,6 +4603,96 @@ func _native_siege() -> void:
 	CData.use_pack("rome")
 	var sr := CState.new_campaign("t", 77, [], {}, [], "rome")
 	_check(CData.POLE_FACTIONS.is_empty() and CBattle.poles_of(sr, 0, 0) == 0, "Rome: no poles")
+
+
+## The shown odds (2026-11-02): CBattle.shown_odds is the auto-resolve's own chance for the battle (the formula's
+## win_chance of side_strengths with the assault's kit and poles), shown 1-99 % (never 100 %); a West town's fort
+## that the attackers' kit cannot storm (no ram, ladders, poles or guns) holds even when they win, and stone ring
+## walls with no way through lose: both say so.
+func _shown_odds() -> void:
+	CData.use_pack("west")
+	var mi := _f("miskito")
+	var iz := _f("itza")
+	var tf := _f("tierra_firme")
+	var en := _f("england")
+	var st := CState.new_campaign("t", 77, [mi], {}, [], "west")
+	var cu := CData.region_index("cumana")
+	st["regions"][cu]["owner"] = tf
+	st["regions"][cu]["gar"] = 25  # (a small garrison: the formula says 100 %)
+	_set_level(st, cu, CData.WALLS, 2)
+	for r2 in CState.regions_of(st, mi) + CState.regions_of(st, iz):
+		for sl in st["regions"][r2]["slots"]:
+			if int(sl[0]) == CData.BARRACKS:
+				sl[1] = mini(int(sl[1]), 1)
+	var units: Array = []
+	for k in ["native_warriors", "native_warriors", "native_warriors2", "native_bowmen", "native_bowmen", "canoe_raiders", "chieftain"]:
+		units.append({"t": k, "n": UT.size_of(UT.index_of(k))})
+	(units[3] as Dictionary)["ak"] = "poison_arrows"
+	var a := {"id": 9001, "f": mi, "r": cu, "units": units, "from": -1, "moved": 1, "busy": 0}
+	(st["armies"] as Array).append(a)
+	var b := CBattle.preview_battle(st, [a], [], cu)
+	var od := CBattle.shown_odds(st, b)
+	var s := CBattle.side_strengths(st, b)
+	_check(int(od["win_pm"]) == CBattle.win_chance(int(s[0]), int(s[1])) and int(od["att"]) == int(s[0]),
+		"shown odds: the formula's own win_chance of the battle's strengths (%d per mille)" % int(od["win_pm"]))
+	_check(int(od["win_pm"]) >= 995 and int(od["win"]) == 100 and int(od["shown"]) == CBattle.SHOWN_MAX,
+		"shown odds: a 100 %% formula chance is shown as 99 %% (win %d, shown %d)" % [int(od["win"]), int(od["shown"])])
+	var wins := 0
+	var st2 := st.duplicate(true)
+	st2["battles"] = [b]
+	for i in 400:
+		if int(CBattle.formula(st2, b)["winner"]) == 0:
+			wins += 1
+	_check(wins >= 395, "shown odds: the formula wins %d of 400 at %d per mille" % [wins, int(od["win_pm"])])
+	# The owner's case: natives storming a Spanish walled town on arrival: the battle is theirs, the fort holds.
+	_check(CBattle.fort_town(st, cu) and str(od["block"]) == "fort" and str(od["no_way"]).begins_with("The fort will hold")
+		and int(od["take"]) == CBattle.SHOWN_MIN and int(od["shown"]) == CBattle.SHOWN_MAX,
+		"shown odds: Miskito on arrival at Cumana's fort: battle %d %%, take %d %%: \"%s\"" % [int(od["shown"]), int(od["take"]), str(od["no_way"])])
+	_set_level(st, cu, CData.WALLS, 1)
+	_check(str(CBattle.shown_odds(st, b)["block"]) == "fort", "... a walls-1 fort holds too (the AI storms a fort only with kit)")
+	_set_level(st, cu, CData.WALLS, 0)
+	_check(str(CBattle.shown_odds(st, b)["block"]) == "", "an open town: nothing blocks")
+	_set_level(st, cu, CData.WALLS, 2)
+	st["sieges"] = [{"r": cu, "f": mi, "turn": int(st["turn"]) - 1, "supply": 3, "from": [], "held": 0}]
+	_check(str(CBattle.shown_odds(st, b)["block"]) == "fort" and str(CBattle.shown_odds(st, b)["no_way"]).contains("without guns"),
+		"after a siege turn (ladders) but no guns: the fort still holds (measured)")
+	st["sieges"] = []
+	_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, 2)
+	_check(str(CBattle.shown_odds(st, b)["block"]) == "fort", "with a War lodge 2 (poles) but no guns: the fort still holds")
+	_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, 1)
+	var e := {"id": 9002, "f": en, "r": cu, "units": [{"t": "musketeers", "n": 120}, {"t": "light_gun", "n": UT.size_of(UT.index_of("light_gun"))}],
+		"from": -1, "moved": 1, "busy": 0}
+	(st["armies"] as Array).append(e)
+	var be := CBattle.preview_battle(st, [e], [], cu)
+	var oe := CBattle.shown_odds(st, be)
+	_check(str(oe["block"]) == "fort" and str(oe["no_way"]).begins_with("The fort will likely hold"),
+		"guns but under 250 % of the defenders: the fort likely holds: " + str(oe["no_way"]))
+	for i in 6:
+		(e["units"] as Array).insert(0, {"t": "musketeers", "n": 120})
+	_check(str(CBattle.shown_odds(st, be)["block"]) == "", "guns and 250 % of the defenders: the fort can be stormed")
+	(e["units"] as Array).pop_back()
+	_check(str(CBattle.shown_odds(st, be)["block"]) == "fort", "Europeans without guns: the fort holds")
+	# Stone ring walls (a native town): no way in at all.
+	var ty := CData.region_index("tayasal")
+	st["regions"][ty]["owner"] = iz
+	_set_level(st, ty, CData.WALLS, 2)
+	e["r"] = ty
+	var bt := CBattle.preview_battle(st, [e], [], ty)
+	var ot := CBattle.shown_odds(st, bt)
+	_check(not CBattle.fort_town(st, ty) and str(ot["block"]) == "walls" and str(ot["no_way"]).begins_with("No way through the walls")
+		and int(ot["shown"]) == CBattle.SHOWN_MIN and int(ot["band"]) == 0, "Tayasal's stone walls with no kit: no way in, shown 1 %")
+	_set_level(st, ty, CData.WALLS, 1)
+	_check(str(CBattle.shown_odds(st, bt)["block"]) == "", "a palisade (walls 1): the gate can be hacked")
+	_set_level(st, ty, CData.WALLS, 2)
+	st["regions"][ty]["breach"] = 1
+	_check(str(CBattle.shown_odds(st, bt)["block"]) == "", "a breach standing: a way in")
+	st["regions"][ty].erase("breach")
+	(e["units"] as Array).append({"t": "grenadiers", "n": UT.size_of(UT.index_of("grenadiers"))})
+	_check(str(CBattle.shown_odds(st, bt)["block"]) == "", "grenades (a gate): a way in")
+	# A field battle has no walls: shown is the formula's, capped.
+	var fo := CBattle.with_shown(CBattle.odds(st, [a], [e], cu, false, -1))
+	_check(int(fo["shown"]) == clampi((int(fo["win_pm"]) + 5) / 10, 1, 99) and str(fo["no_way"]) == "", "field odds: shown capped 1-99")
+	CData.use_pack("rome")
 
 
 ## Region r's building of chain c set to level lv (added if missing).

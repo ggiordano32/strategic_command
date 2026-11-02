@@ -1530,6 +1530,162 @@ static func battle_odds(st: Dictionary, b: Dictionary) -> Dictionary:
 	return odds_of(s[0], s[1])
 
 
+## The shown odds (as built 2026-11-02, docs/design/campaign_rules.md "The shown odds are the auto-resolve's own"):
+## what the view shows for battle b, a pending battle or one a plan would start (preview_battle). A battle with a
+## player in it auto-resolves through the battle sim (game/campaign/auto_resolve.gd), which the formula predicts
+## (side_strengths with the assault's own kit, WIN_EXP): battle_odds plus
+##   "shown": the attackers' chance as a whole %, SHOWN_MIN..SHOWN_MAX: the formula keeps a roll (win_chance tops
+##     out at 999 per mille) and the sim can go either way, so never 100 % or 0 %;
+##   "no_way" / "block": what keeps the attackers from taking the town whatever the strengths (capture_block's
+##     sentence and kind, "" when nothing does). "walls": they cannot get in, the defenders win: "shown" is
+##     SHOWN_MIN and the band 0. "fort": the battle can be won ("shown" is its chance) but the fort holds and the
+##     town is not taken: "take" (the chance of taking it) is SHOWN_MIN; else "take" is "shown".
+## The AI's odds (odds / odds_of, "win") are not changed by this.
+const SHOWN_MIN := 1
+const SHOWN_MAX := 99
+
+
+static func shown_odds(st: Dictionary, b: Dictionary) -> Dictionary:
+	return with_shown(battle_odds(st, b), capture_block(st, b))
+
+
+## odds dictionary od (odds / odds_of / battle_odds) with "shown", "take", "no_way" and "block" (shown_odds); a
+## field battle the view previews (a sally, a relief, an army in the field) passes no block.
+static func with_shown(od: Dictionary, block: Dictionary = {}) -> Dictionary:
+	od["shown"] = clampi((int(od["win_pm"]) + 5) / 10, SHOWN_MIN, SHOWN_MAX)
+	od["no_way"] = str(block.get("why", ""))
+	od["block"] = str(block.get("k", ""))
+	if od["block"] == "walls":
+		od["shown"] = SHOWN_MIN
+		od["band"] = 0
+	od["take"] = SHOWN_MIN if od["block"] == "fort" else int(od["shown"])
+	return od
+
+
+## The battle a plan would start: armies `attackers` storming region r this turn (the garrison and `defenders`
+## behind the walls, the kit the siege has built by now and the poles the attackers' faction brings), as
+## start_siege_battle would store it. Not stored; for shown_odds.
+static func preview_battle(st: Dictionary, attackers: Array, defenders: Array, r: int) -> Dictionary:
+	var ids := [[], []]
+	for side in 2:
+		for a in (attackers if side == 0 else defenders):
+			ids[side].append(int(a["id"]))
+	var fa := -1
+	var sg := CState.siege_at(st, r)
+	for a in attackers:
+		if fa < 0 or (not sg.is_empty() and int(a["f"]) == int(sg["f"])):
+			fa = int(a["f"])
+	return {"id": -1, "r": r, "turn": int(st["turn"]), "att": ids[0], "def": ids[1], "att_f": fa,
+		"def_f": CState.owner(st, r), "reinf": [], "settlement": 1, "kind": "assault"}
+
+
+## What the battle sim's rules keep the attackers of assault b from taking the town, whatever the strengths
+## (shown_odds; the player's auto-resolve is the sim, the formula knows neither rule): {} when nothing does, else
+## {"k": "fort" | "walls", "why": the sentence the view shows}.
+##  - "fort": a West town of the European plan at walls 1-2 (MapGen.is_west: its walls are a fort with an inside,
+##    the town round it open) stormed with no guns of the attackers' own, or with guns at under FORT_STORM_ODDS % of
+##    the defenders' men x cost. The battle AI storms the fort only with a ram, ladders, poles or guns and that edge
+##    (sim/siege_ai.gd _fort_choice; also when the fort holds 35 % of the defenders, which only the battle map
+##    knows), else it takes the town and leaves the fort be; and measured (odds_probe, 2026-11-02) a ram, ladders or
+##    poles without guns never got into the fort before the town fell (0 of 32 at walls 1, natives and English).
+##    A won battle then ends with the fort holding (fort_holds): the settlement does not change hands and the siege
+##    goes on (CRules.apply_outcome). The natives have no guns at all.
+##  - "walls": a ring of stone walls (level 2+, any other town; gates foot cannot hack, BattleSim.gate_hackable),
+##    no breach standing, no ladders, poles, ram or tower, and no attacking unit that opens a gate on its own
+##    (_opens_gate): the attackers cannot get in, and the sim gives the battle at its time limit to the defenders.
+static func capture_block(st: Dictionary, b: Dictionary) -> Dictionary:
+	if b.has("sea") or str(b.get("kind", "")) != "assault" or int(b.get("settlement", 1)) == 0:
+		return {}
+	var r := int(b["r"])
+	var w := CState.walls(st, r)
+	if w <= 0:
+		return {}
+	var eq := siege_equipment(st, b)
+	var arm := CRules.battle_armies(st, b)
+	var fa := int(b.get("att_f", -1))
+	var native := fa >= 0 and CData.POLE_FACTIONS.has(str(CData.FACTIONS[fa]["key"]))
+	var poles := "; scaling poles with a War lodge 2" if native and int(eq.get("poles", 0)) == 0 else ""
+	if fort_town(st, r):
+		var guns := false
+		for a in arm[0]:
+			for u in a["units"]:
+				var ty := UT.index_of(str(u["t"]))
+				if int(u["n"]) > 0 and ty >= 0 and UT.cls(ty) == UT.CLS_ART and UT.stat(ty, "m_gun") != 0:
+					guns = true
+		var city := str(CData.REGIONS[r]["city"])
+		if not guns:
+			var kit := int(eq.get("ram", 0)) > 0 or int(eq.get("ladders", 0)) > 0 or int(eq.get("poles", 0)) > 0
+			return {"k": "fort", "why": ("The fort will hold: %s, so even their victory does not take %s (the siege goes on). "
+				+ "Bring guns, or starve it out.") % [("without guns the town round it falls before the attackers' ladders, "
+				+ "poles or ram get into the fort") if kit else "with no ram, ladders or guns the attackers take the town round it and leave the fort be", city]}
+		# The battle AI storms the fort with its guns only at FORT_STORM_ODDS (250 %) of the defenders' men x cost (or
+		# when the fort holds 35 % of them, which the campaign cannot see: the battle map places the fort's companies).
+		var own := 0
+		var dfn := 0
+		for a in arm[0]:
+			own += _cost_men(a["units"])
+		for a in arm[1]:
+			dfn += _cost_men(a["units"])
+		dfn += _cost_men(CRules.garrison(st, r))
+		if own * 100 < dfn * FORT_STORM_ODDS:
+			return {"k": "fort", "why": ("The fort will likely hold: the attackers storm it only at %d %% of the defenders' "
+				+ "strength (they have %d %%), else they take the town round it and leave the fort be, so even their victory "
+				+ "does not take %s (the siege goes on).") % [FORT_STORM_ODDS, own * 100 / maxi(dfn, 1), city]}
+		return {}
+	if w < 2 or CState.breach(st, r) > 0:
+		return {}
+	for k in ["ladders", "poles", "ram", "towers"]:
+		if int(eq.get(k, 0)) > 0:
+			return {}
+	for a in arm[0]:
+		for u in a["units"]:
+			if int(u["n"]) > 0 and _opens_gate(u):
+				return {}
+	return {"k": "walls", "why": ("No way through the walls: stone walls, and the attackers have no ladders, ram, guns or fire "
+		+ "to get past them; the defenders win when time runs out. Ladders come after a turn of siege, a ram after two%s.") % poles}
+
+
+## The battle AI's measure of a side for the fort (sim/siege_ai.gd _fort_choice): men x the row's "cost".
+const FORT_STORM_ODDS := 250   # (sim/siege_ai.gd FORT_STORM_ODDS)
+
+
+static func _cost_men(units: Array) -> int:
+	var t := 0
+	for u in units:
+		var ty := UT.index_of(str(u["t"]))
+		if ty >= 0:
+			t += int(u["n"]) * UT.stat(ty, "cost")
+	return t
+
+
+## Region r's walls are a West fort with an inside (the town round it open): the West pack, walls 1-2, a town of
+## the European plan (MapGen.is_west: not a native founder's; the battle map's own test).
+static func fort_town(st: Dictionary, r: int) -> bool:
+	return MapGen.is_west({"west": 1 if CData.pack == "west" else 0, "walls": CState.walls(st, r),
+		"founder": CData.region_culture(r)}) and CState.walls(st, r) >= 1
+
+
+## Campaign unit u can open a shut stone gate by itself in the sim (capture_block "walls"): guns, a gate batterer,
+## grenades or a fire missile (its standard kind or the special kind it carries, "ak").
+static func _opens_gate(u: Dictionary) -> bool:
+	var ty := UT.index_of(str(u["t"]))
+	if ty < 0:
+		return false
+	if UT.cls(ty) == UT.CLS_ART or UT.stat(ty, "batter") > 0 or UT.stat(ty, "grenades") > 0:
+		return true
+	var gk := UT.ammo_index("grenade")
+	var mk := UT.stat(ty, "m_ak")
+	if mk >= 0 and (mk == gk or UT.ammo_stat(mk, "fire") > 0):
+		return true
+	var ak := UT.ammo_index(str(u.get("ak", "")))
+	return ak >= 0 and UT.ammo_stat(ak, "fire") > 0
+
+
+## The text of capture_block for assault b ("" when nothing blocks it).
+static func no_way_in(st: Dictionary, b: Dictionary) -> String:
+	return str(capture_block(st, b).get("why", ""))
+
+
 static func odds_of(sa: int, sd: int) -> Dictionary:
 	var p := win_chance(sa, sd)
 	var q_att_wins := clampi(sd * 1000 / maxi(sa, 1), 0, 3000)

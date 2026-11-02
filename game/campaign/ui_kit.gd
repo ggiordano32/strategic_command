@@ -1292,17 +1292,30 @@ static func odds_view(od: Dictionary, me: int, names: Array, cols: Array, p_titl
 	var bar := OddsBar.new(share, cols, ["%s %d%%" % [names[0], share], "%d%% %s" % [100 - share, names[1]]])
 	bar.name = "odds_bar"
 	v.add_child(bar)
-	var win := int(od["win"]) if me != 1 else 100 - int(od["win"])
+	var pct := shown_pct(od)
+	var win := pct if me != 1 else 100 - pct
 	var band := int(od["band"]) if me != 1 else 4 - int(od["band"])
 	var mine := int(od["att_loss"]) if me != 1 else int(od["def_loss"])
 	var theirs := int(od["def_loss"]) if me != 1 else int(od["att_loss"])
 	var who := "Your" if me >= 0 else "%s's" % names[0]
-	var t := "%s chance %d%%: %s. Expected losses: %s %d%%, %s %d%%." % [who, win, BAND_WORDS[band],
+	var t := "%s chance%s %d%%: %s. Expected losses: %s %d%%, %s %d%%." % [who,
+		" of winning the battle" if str(od.get("block", "")) == "fort" else "", win, BAND_WORDS[band],
 		"yours" if me >= 0 else str(names[0]), mine, "theirs" if me >= 0 else str(names[1]), theirs]
 	var l := label(t, FONT_SMALL, BAND_COLS[band], true)
 	l.name = "odds_text"
 	v.add_child(l)
+	var nw := str(od.get("no_way", ""))
+	if nw != "":
+		var nl := label(nw, FONT_SMALL, COL_BAD, true)
+		nl.name = "odds_no_way"
+		v.add_child(nl)
 	return v
+
+
+## The attackers' chance the view shows for odds od (CBattle.shown_odds / with_shown "shown": 1-99 %, never 100 %
+## or 0 % since the auto-resolve can go either way); the formula's "win" for a dictionary without it.
+static func shown_pct(od: Dictionary) -> int:
+	return int(od["shown"]) if od.has("shown") else clampi(int(od["win"]), 1, 99)
 
 
 # ------------------------------------------------------------ text entry ---

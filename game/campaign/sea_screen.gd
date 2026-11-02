@@ -114,7 +114,7 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var hs := CRules.battle_humans(st, b)
 	var human_att: bool = not hs.is_empty() and (facs[0] as Array).has(hs[0])
 	var lead: Array = snap["lead"]
-	info.add_child(Kit.odds_view(CBattle.battle_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
+	info.add_child(Kit.odds_view(CBattle.with_shown(CBattle.battle_odds(st, b)), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
 		[CData.faction_color(int(lead[0])), CData.faction_color(int(lead[1]))], "Balance of power (the fleets' guns, hulls and crews):"))
 	var status := Kit.vbox(4)
 	status.name = "battle_status"

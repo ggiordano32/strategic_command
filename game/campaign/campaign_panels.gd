@@ -575,7 +575,7 @@ func plan_odds(r: int) -> Dictionary:
 	var att := planned_into(r)
 	var sg := CState.siege_at(ps, r)
 	if not sg.is_empty() and CState.friendly(ps, f, o):
-		var od := CBattle.odds(ps, att + CRules.besieged_armies(ps, r), CRules.besiegers(ps, r), r, false, 0)
+		var od := CBattle.with_shown(CBattle.odds(ps, att + CRules.besieged_armies(ps, r), CRules.besiegers(ps, r), r, false, 0))
 		return {"od": od, "me": 0, "names": [_fname(f), _fname(int(sg["f"]))], "cols": [_fc(f), _fc(int(sg["f"]))],
 			"kind": "relief", "n": att.size()}
 	for a in CRules.besiegers(ps, r):
@@ -586,7 +586,8 @@ func plan_odds(r: int) -> Dictionary:
 		for a in CState.armies_in(ps, r):
 			if CState.friendly(ps, int(a["f"]), o):
 				defs.append(a)
-	var od2 := CBattle.odds(ps, att, defs, r, true)
+	var od2 := CBattle.shown_odds(ps, CBattle.preview_battle(ps, att, defs, r)) if not att.is_empty() \
+		else CBattle.with_shown(CBattle.odds(ps, att, defs, r, true))
 	return {"od": od2, "me": 0, "names": [_fname(f), _fname(o)], "cols": [_fc(f), _fc(o)], "kind": "assault", "n": att.size()}
 
 
@@ -630,7 +631,7 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 			mine = true
 	if mine:
 		var po := plan_odds(r)
-		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn (all besiegers%s):" % (
+		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn, if nothing changes (all besiegers%s):" % (
 			" and the armies marching in" if planned_into(r).size() > 0 else "")))
 		var ordered := _has_order("assault", r)
 		v.add_child(Kit.label("Orders: storm the walls at the end of the turn." if ordered else "Orders: keep up the siege.",
@@ -648,7 +649,7 @@ func _siege_section(box: VBoxContainer, r: int) -> void:
 		v.add_child(note)
 	elif CState.friendly(ps, f, o):
 		var inside := CRules.besieged_armies(ps, r)
-		var od := CBattle.odds(ps, inside, bs, r, false, 0)
+		var od := CBattle.with_shown(CBattle.odds(ps, inside, bs, r, false, 0))
 		v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(int(sg["f"]))], [_fc(f), _fc(int(sg["f"]))],
 			"If the garrison and the armies inside sally (a field battle outside the walls):" if not inside.is_empty()
 			else "If the garrison sallies (a field battle outside the walls):"))
@@ -690,7 +691,7 @@ func field_odds(army: int, r: int) -> Dictionary:
 	var ours := planned_into(r)
 	if not ours.has(a):
 		ours.append(a)
-	return {"od": CBattle.odds(ps, ours, foes, r, false, -1), "by": int(foes[0]["f"])}
+	return {"od": CBattle.with_shown(CBattle.odds(ps, ours, foes, r, false, -1)), "by": int(foes[0]["f"])}
 
 
 ## Region panel of an enemy region where our armies stand without a siege
@@ -716,7 +717,7 @@ func _raid_section(box: VBoxContainer, r: int) -> void:
 	v.add_child(Kit.label(what, Kit.FONT, Kit.COL_GOLD, true))
 	var foes := CRules.hostile_field(ps, r, f)
 	if not foes.is_empty():
-		var fo := CBattle.odds(ps, mine, foes, r, false, -1)
+		var fo := CBattle.with_shown(CBattle.odds(ps, mine, foes, r, false, -1))
 		v.add_child(Kit.odds_view(fo, 0, [_fname(f), _fname(int(foes[0]["f"]))], [_fc(f), _fc(int(foes[0]["f"]))],
 			"Their army stands in the field here: a siege or an assault starts with a field battle:"))
 	var h := Kit.hbox(8)
@@ -739,8 +740,9 @@ func _raid_section(box: VBoxContainer, r: int) -> void:
 	ab.disabled = not storming and CRules.can_assault(ps, f, r) != ""
 	h.add_child(ab)
 	v.add_child(h)
-	var od := CBattle.odds(ps, mine, _defs_of(ps, r), r, true)
-	v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(o)], [_fc(f), _fc(o)], "If you storm it now (garrison, walls and the armies inside):"))
+	var od := CBattle.shown_odds(ps, CBattle.preview_battle(ps, mine, _defs_of(ps, r), r)) if not mine.is_empty() \
+		else CBattle.with_shown(CBattle.odds(ps, mine, _defs_of(ps, r), r, true))
+	v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(o)], [_fc(f), _fc(o)], "If you storm it now, if nothing changes (garrison, walls and the armies inside):"))
 
 
 static func _defs_of(ps: Dictionary, r: int) -> Array:
@@ -786,7 +788,7 @@ func _attack_section(box: VBoxContainer, r: int) -> void:
 	var v := Kit.vbox(6)
 	p.add_child(v)
 	v.add_child(Kit.label(what, Kit.FONT, Kit.COL_GOLD, true))
-	v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "Odds of storming it (garrison and walls included):"))
+	v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "Odds of storming it, if nothing changes (garrison and walls included):"))
 	if CState.sieges_on(ps) and assault == 0:
 		v.add_child(Kit.label("A siege starves it: supplies %d turns, then the garrison weakens each turn." % CState.siege_supply(ps, r),
 			Kit.FONT_SMALL, Kit.COL_DIM, true))
@@ -4234,7 +4236,7 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 		return
 	if not mine.is_empty():
 		var po := plan_odds(r)
-		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn (all besiegers):"))
+		v.add_child(Kit.odds_view(po["od"], 0, po["names"], po["cols"], "If you storm it this turn, if nothing changes (all besiegers):"))
 		var ordered := _has_order("assault", r)
 		var leaving := _withdrawing(mine, r)
 		var txt := "Orders: keep up the siege."
@@ -4249,7 +4251,7 @@ func _siege_section6(box: VBoxContainer, r: int) -> void:
 	elif CState.friendly(ps, f, o):
 		var inside := CRules.besieged_armies(ps, r)
 		if not inside.is_empty():
-			var od := CBattle.odds(ps, inside, bs, r, false, 0)
+			var od := CBattle.with_shown(CBattle.odds(ps, inside, bs, r, false, 0))
 			v.add_child(Kit.odds_view(od, 0, [_fname(f), _fname(int(sg["f"]))], [_fc(f), _fc(int(sg["f"]))],
 				"If the armies inside sally with the garrison (a field battle outside the walls):"))
 			var hl := Kit.label("To sally: select an army inside (its banner under the city) and tap a besieger.", Kit.FONT_SMALL, Color.WHITE, true)

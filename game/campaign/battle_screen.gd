@@ -336,8 +336,9 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var hs := CRules.battle_humans(st, b)
 	var human_att: bool = not hs.is_empty() and facs[0].has(hs[0])
 	var lead: Array = snap["lead"]
-	info.add_child(Kit.odds_view(CBattle.battle_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
-		[CData.faction_color(int(lead[0])), CData.faction_color(int(lead[1]))], "Balance of power (estimate from the battle formula):"))
+	info.add_child(Kit.odds_view(CBattle.shown_odds(st, b), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
+		[CData.faction_color(int(lead[0])), CData.faction_color(int(lead[1]))],
+		"Balance of power (the battle formula's estimate of the auto-resolve, which fights it out with the battle AI):"))
 	var jl := join_line(st, b)
 	if jl != "":
 		var jlab := Kit.label(jl, Kit.FONT_SMALL, Color.WHITE, true)
