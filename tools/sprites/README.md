@@ -24,6 +24,7 @@ _frames/           raw renders (git-ignored, .gdignore'd)
 ~/.local/bin/blender -b --factory-startup -P tools/sprites/build.py 2>&1 | grep -v Saved:
 #   options after --: --units heavy_swords,spearmen   --no-iso   --iso-only   --out DIR
 python3 tools/sprites/pack.py            # ~1 s; --contact /tmp/x.png for a quick look
+python3 tools/sprites/pack.py --oblique --mirror   # the oblique pack: ALWAYS with --mirror (the committed sheets render 5 directions, SE / E / NE are flipped); without it the atlas doubles (4096x11708)
 godot --headless --import                # re-import the atlas after a change
 godot --path . --resolution 2400x1350 res://tools/sprites/preview/preview.tscn
 #   -- --shot=/tmp/top.png [--scroll=520]   screenshot and quit

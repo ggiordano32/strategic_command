@@ -2833,7 +2833,7 @@ are `line` (they hold a front), the Gallic Warband `shock`. Missile infantry (`m
 | skirmish | javelin, javelin2, javelin3, slinger, balearic, rhodians, iberian_slingers | buccaneers, native_bowmen, coureurs, canoe_raiders |
 | missile | archer, archer2, archer3, cretans, gastraphetes | none |
 | shock | warband, dog_handlers, war_dogs | rodeleros, cutlass, native_warriors, grenadiers, boarding_grenadiers, holcan |
-| horse_shock | cav, cav2, cav3, companions, agema, noble_cav, bodyguard | lancers |
+| horse_shock | cav, cav2, cav3, equites, equites_extra, companions, agema, noble_cav, bodyguard | lancers |
 | horse_skirmish | cav_jav, numidians, tarentines, gallic_horse, iberian_horse, camel_archer | pistoleers, cuirassiers, dragoons |
 | guns_field | bolt, tower_bolt, scorpions | light_gun, field_gun, fort_gun |
 | guns_siege | stone, tower_stone | heavy_gun, mortar |

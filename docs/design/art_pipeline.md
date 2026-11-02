@@ -1452,6 +1452,35 @@ counts, fps and render_box (the pose and table shape unchanged), built within th
 - Aids: `tests/rome_audit_shot.gd` (the contact sheet of those rows, `--top` for the top view), `tests/rome_battle_shot.gd` (principes against hoplites, 40 a
   side; `--view=top`); both load the atlases from the files (the imported copies are stale until the next import).
 
+### The Roman equites (as built, 2026-11-02)
+
+The owner: "Let's give Romans their own horseman. Model and line name." Rome's shock cavalry drew the generic `shock_cavalry` set (4) under the shared
+names Shock Cavalry / Veteran Cavalry / Guard Cavalry. Set 49 `equites` is appended after `hoplites` (`atlas.sets` 49 of 63; every earlier id unchanged),
+a copy of the `shock_cavalry` entry (same rig, horse body, rider seat, render box, actions, frame counts), with new `rider_parts` only (no new mesh code):
+
+- **49 `equites`** (a Republican citizen horseman of the Punic Wars): the legionaries' Montefortino (dome, neck guard, cheek box, crest knob in the secondary,
+  crest disc), a mail shirt (box, `metal`) over the red tunic with the shoulder doubling and a short mail skirt at the hips, a small round parma (a flattened
+  sphere, team-coloured face, `bronze` rim and boss) on `forearm.L`, the hasta (wood shaft, iron head, butt spike, 2.7 m) on `forearm.R` so it follows the attack
+  pose as the legionaries' pilum does, a sword scabbard and hilt at the right hip. The horse and its team-coloured saddle cloth with trim are the base set's body
+  (the cloth was already `primary`, so nothing was added there).
+- **Rows.** `equites` (tier 2, `"Equites"`, short `Equites`, +5 charge) and `equites_extra` (tier 3, `"Equites Extraordinarii"`, short `Eq. Extraord.`, +10
+  charge) are appended at the end of `TIERS` in `sim/unit_types.gd` with `"sprite_set": 49`; their numbers are cav2's and cav3's. Rome's tier-1 cavalry is still
+  the shared base row `cav` ("Shock Cavalry"), and the legate's bodyguard row is unchanged.
+- **Rome's roster.** `ROSTERS["rome"]["cav"]` in `campaign/data/rome.gd` is `["cav", "equites", "equites_extra"]` (was `["cav", "cav2", ""]`): Rome now has a
+  tier-3 cavalry row, and the Rome AI recruits the new keys. The campaign state hash holds unit keys, so the Rome `campaign_sim` pins moved on 2026-11-02 (format 6
+  seed 4 `59dc0582` -> `7eb76327`; format 10 seeds 5 and 6 `6e903a40 61462ab2` -> `871032c7 a28f5226`; format 8 seed 4 `e8075f25` -> `c1e4bbe0`; the same
+  seeds moved with tier 3 left empty, so it is the renamed keys); the West pins, the Easy and Average goldens and pack_test's ROME_20 / V7 / V8 are equal.
+  Appending to `TIERS` shifts the siege, wagon, beast and West row indices by two (`ROME_N` moves with them). The Rome cavalry rows are no longer the generic
+  horsemen except the tier-1 `cav` and the bodyguard.
+- Fixed meshes: as the legionaries (domes and boxes, a flattened sphere for the shield), so the difference from the generic horseman is the grey helmet and mail
+  against the red tunic, the small round bronze-rimmed parma, the shorter hasta without a pennant and the missing crest; from behind the rider's back reads red
+  (the tunic over the mail box) and the horse's rump the same as every other cavalry set.
+- Build: all 49 units re-rendered (the raw frames are not kept) and both packs rewritten (oblique with `pack.py --oblique --mirror`, as the committed sheets).
+  Top-down atlas 1024x2732 -> 1024x2808, shade 1,082,605 -> 1,114,654 B, mask 495,711 -> 509,492 B, manifest 166,956 -> 170,082 B. Oblique atlas 4096x5648 ->
+  4096x5784, shade 7,043,598 -> 7,252,952 B, mask 2,901,566 -> 2,975,295 B, manifest 1,081,760 -> 1,102,922 B.
+- Aids: `tests/rome_audit_shot.gd` lists equites and equites_extra beside cav, cav2 and cav3; `tests/rome_battle_shot.gd --cav` shoots two squadrons charging
+  hoplites, one along the board (from the side), one away from the camera (from behind).
+
 ### The timber stockade (as built, 2026-11-01)
 
 The owner on the palisade walls: "They should be raised platforms behind the wooden palisade, not a solid block wall just wooden

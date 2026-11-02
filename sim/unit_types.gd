@@ -738,6 +738,11 @@ const TIERS: Array[Dictionary] = [
 		"blurb": "Mailed Gallic nobles and their sworn retainers."},
 	{"key": "noble_cav", "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Noble Cavalry", "short": "Noble Cav",
 		"blurb": "Gallic nobles on horseback in mail shirts."},
+	# Rome's own horse (the cav2 / cav3 numbers under their own names and the equites set).
+	{"key": "equites", "sprite_set": 49, "role": "horse_shock", "base": CAVALRY, "tier": 2, "name": "Equites", "short": "Equites",
+		"blurb": "Roman citizen cavalry: the richer men of the census, mailed, with spear and parma.", "add": {"charge": 5}},
+	{"key": "equites_extra", "sprite_set": 49, "role": "horse_shock", "base": CAVALRY, "tier": 3, "name": "Equites Extraordinarii", "short": "Eq. Extraord.",
+		"blurb": "The picked horse of the Italian allies, kept at the consul's hand.", "add": {"charge": 10}},
 ]
 
 ## Siege types (docs/DESIGN.md "Siege equipment and wall towers"): never

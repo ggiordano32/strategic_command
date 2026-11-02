@@ -189,7 +189,7 @@ const FACTIONS: Array[Dictionary] = [
 const ROSTERS := {
 	"rome": {"heavy": ["heavy", "principes", "extraordinarii"], "light": ["light", "light2", ""],
 		"spear": ["spear", "spear2", "triarii"], "javelin": ["javelin", "javelin2", "javelin3"],
-		"cav": ["cav", "cav2", ""], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
+		"cav": ["cav", "equites", "equites_extra"], "siege": ["wagon", "wagon2", "wagon3"], "bolt": ["bolt"], "stone": ["stone"],
 		"general": ["legate"], "dogs": ["dog_handlers"], "light_art": ["scorpions"]},
 	"carthage": {"heavy": ["heavy", "heavy2", ""], "light": ["light", "light2", "light3"],
 		"spear": ["spear", "spear2", "sacred_band"], "archer": ["archer", "archer2", ""],

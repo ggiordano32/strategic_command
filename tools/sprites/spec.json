@@ -2188,9 +2188,48 @@
         {"n": "emblem", "shape": "cyl", "bone": "forearm.L", "mat": "accent", "pos": [0.5, 0.22, 1.1], "r": 0.2, "len": 0.05, "verts": 12, "rot": [0, 58, 0]},
         {"n": "greave.L", "shape": "limb", "bone": "shin.L", "mat": "bronze", "a": [0.03, 0.12, 0.44], "b": [0.0, 0.12, 0.14], "t": 0.15, "mirror": 1}
       ]
+    },
+    "equites": {
+      "name": "Equites",
+      "look": "Republican Roman horseman: Montefortino helmet with a crest knob, mail shirt with shoulder doubling, small round parma, hasta, sword at the hip, team-coloured saddle cloth",
+      "rig": "horse",
+      "body": "horse",
+      "rider": {
+        "rig": "humanoid",
+        "body": "humanoid",
+        "seat": [-0.08, 0, 0.66],
+        "parent_bone": "body"
+      },
+      "render_box": [
+        -3.0,
+        3.5,
+        -2.0,
+        2.0
+      ],
+      "parts": [
+
+      ],
+      "rider_parts": [
+        {"n": "helmet", "shape": "sphere", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.68], "r": 0.18, "scale": [1.0, 1.0, 0.95]},
+        {"n": "neckguard", "shape": "box", "bone": "head", "mat": "accent", "pos": [-0.16, 0, 1.62], "size": [0.1, 0.3, 0.05], "rot": [0, 25, 0]},
+        {"n": "cheek", "shape": "box", "bone": "head", "mat": "accent", "pos": [0.02, 0, 1.58], "size": [0.2, 0.34, 0.1], "bevel": 0.02},
+        {"n": "knob", "shape": "sphere", "bone": "head", "mat": "secondary", "pos": [0.0, 0, 1.88], "r": 0.06},
+        {"n": "crest_disc", "shape": "cyl", "bone": "head", "mat": "accent", "pos": [0.0, 0, 1.84], "r": 0.09, "len": 0.04, "verts": 10, "rot": [90, 0, 0]},
+        {"n": "mail", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.3], "size": [0.34, 0.54, 0.46], "bevel": 0.06},
+        {"n": "shoulder_double", "shape": "box", "bone": "spine", "mat": "metal", "pos": [0, 0, 1.46], "size": [0.32, 0.6, 0.1], "bevel": 0.03},
+        {"n": "mail_skirt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0, 0, 0.99], "size": [0.36, 0.5, 0.1], "bevel": 0.03},
+        {"n": "parma_rim", "shape": "sphere", "bone": "forearm.L", "mat": "bronze", "pos": [0.3, 0.34, 1.16], "r": 0.42, "scale": [0.1, 1.0, 1.0], "verts": 14, "rot": [0, -30, 0]},
+        {"n": "parma", "shape": "sphere", "bone": "forearm.L", "mat": "primary", "pos": [0.33, 0.34, 1.16], "r": 0.4, "scale": [0.1, 0.9, 0.9], "verts": 14, "rot": [0, -30, 0]},
+        {"n": "boss", "shape": "sphere", "bone": "forearm.L", "mat": "bronze", "pos": [0.38, 0.34, 1.18], "r": 0.09},
+        {"n": "hasta", "shape": "limb", "bone": "forearm.R", "mat": "wood", "a": [-0.6, -0.31, 1.02], "b": [1.75, -0.29, 1.12], "t": 0.055},
+        {"n": "hasta_head", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [1.73, -0.29, 1.12], "b": [2.08, -0.29, 1.13], "r": 0.055},
+        {"n": "hasta_butt", "shape": "cone", "bone": "forearm.R", "mat": "metal", "a": [-0.58, -0.31, 1.02], "b": [-0.72, -0.31, 1.01], "r": 0.04},
+        {"n": "sword_scab", "shape": "limb", "bone": "hips", "mat": "leather", "a": [0.08, -0.27, 1.0], "b": [0.4, -0.27, 0.82], "t": [0.05, 0.07]},
+        {"n": "sword_hilt", "shape": "box", "bone": "hips", "mat": "metal", "pos": [0.06, -0.27, 1.02], "size": [0.06, 0.1, 0.06]}
+      ]
     }
   },
   "iso": {"unit": "heavy_swords", "elevation_deg": 32, "directions": 8, "action": "walk", "box": [3.5, 3.0]},
   "oblique": {"_doc": "Pass 3 (tabletop): every unit in 8 directions of its facing at this elevation, ground plane at px_per_m; build.py --oblique, pack.py --oblique -> assets/sprites_ob/", "elevation_deg": 40, "directions": 8},
-  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman", "torch_raiders", "legionaries", "triarii", "hoplites"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
+  "atlas": {"_doc": "Step 1b: the game's atlas. sets: sprite_set / engine_set ids (unit_types.gd 'sprite_set', 'engine_set'; 0 = procedural) in order from 1, at most 63 (a 6-bit field since 2026-10-23: soldiers.gdshaderinc / soldier_layer.gd; see README); props: frames the overlay draws (game/overlay.gd: wagons), not in the shaders' table; palettes: in campaign/cdata.gd FACTIONS order (faction index = palette row).", "sets": ["heavy_swords", "spearmen", "pikemen", "shock_cavalry", "archers", "javelinmen", "slingers", "gastraphetes", "elephant", "camel", "camel_archer", "crew", "bolt_thrower", "stone_thrower", "scorpion", "musketeers", "w_pikemen", "buccaneers", "rodeleros", "cutlass", "lancers", "pistoleers", "native_warriors", "native_bowmen", "w_crew", "cannon", "grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar", "mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers", "sea_captain", "privateer", "missionary", "shaman", "torch_raiders", "legionaries", "triarii", "hoplites", "equites"], "align": 4, "gutter": 4, "props": ["cart", "wagon", "draft_horse"]}
 }

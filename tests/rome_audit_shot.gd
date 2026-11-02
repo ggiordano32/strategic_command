@@ -38,7 +38,7 @@ func _initialize() -> void:
 	SpriteOb.mask = _file_tex("res://assets/sprites_ob/atlas_mask.png")
 	SpriteOb.sheet = SpriteOb.shade.get_size()
 	var units: Array = []
-	var keys := ["principes", "triarii", "hoplites", "cav", "cav2", "cav3", "bodyguard", "scorpions", "tower_bolt", "tower_stone"]
+	var keys := ["principes", "triarii", "hoplites", "cav", "cav2", "cav3", "equites", "equites_extra", "bodyguard", "scorpions", "tower_bolt", "tower_stone"]
 	for k in keys:
 		var ty := -1
 		for t in UT.TYPES.size():
