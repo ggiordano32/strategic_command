@@ -864,6 +864,32 @@ existing systems.
   to it (9 of them FAIL on HEAD). campaign_input_test's merge-glyph set-up
   moved its army out of the enemy's zone (from inside it the merge is now
   allowed). Causes 1, 4 and 5 change the AI's play: the pins move (STATUS).
+- **(2026-11-02) The AI reckons with the zones it stands in.** The owner:
+  "Let's update the AI's distance estimates", the open item of the bullet
+  above. The campaign AI picks two kinds of cells against the side's enemy
+  zone mask (`cx["zone"]`, every enemy zone closed): `_toward`'s waypoint
+  (about a turn down the destination's distance field, the farthest trail
+  cell outside every zone) and `_fall_back`'s refuge (Skilled: a friendly
+  field cell or one of our armies, outside every zone). For an army inside
+  an enemy zone that mask still read the old lock: a cell in the zone it
+  stands in was refused although `plan_path` now lets the march go there.
+  Both now take the army's own mask, `CAI._zm_of`: the side's cached mask,
+  or for an army inside a zone a copy opened by `CRules.held_zones`, exactly
+  as `plan_path` opens it (the zones it stands in passable, the cells next
+  to that enemy army and every other army's zone closed). The gathering
+  point of an attack (`_attack6`, the lead's trail) keeps the side's mask:
+  every gathering army must be able to end its march there, not only the
+  lead. `CRules._move_targets6` (the targets list of the view's move menu
+  and the test bots) used the plain mask while `reach6` and `plan_path`
+  used `held_zones`; it now does too. Nothing else in the AI read the lock:
+  its turn estimates (`eta`, `site_dist`, the octile hunt and rally ranges)
+  never counted zones, and attack, hunt and siege orders aim at settlements
+  and enemy armies, whose zones `plan_path` opens for the march. The case
+  is rare: a free AI field army stands in an enemy zone at planning time in
+  about 1 army-turn of 1,000 (21 in 6 + 6 seeds), and the changed pick
+  showed in 1 seed of 288 (72 seeds x Rome / West x formats 6 / 10); no pin
+  moved. Test: campaign_test (the zone set-up of `_grid_two_army_attacks`:
+  the AI's mask opens the cell two from Y, keeps the cells next to it).
 
 ### Fog of war on the overworld (as built 2026-10-17, state format 8)
 

@@ -2255,8 +2255,19 @@ func _grid_two_army_attacks() -> void:
 		var off := CGrid.at(CGrid.cx(rg[8]), CGrid.cy(rg[8]) + 3)
 		if off >= 0 and CGrid.passable(off):
 			var stz2 := _empty6()
-			_put(stz2, ep, rg[7], ["spear", "spear"])
+			var yz := _put(stz2, ep, rg[7], ["spear", "spear"])
 			var az2 := _put(stz2, rome, rg[8], ["heavy", "heavy"])
+			# (2026-11-02) The AI reckons by the same zones (CAI._zm_of): inside
+			# the zone it stands in open, next to that army closed, the side's
+			# cached mask untouched.
+			var zr := CRules.zone_r(stz2, yz)
+			if zr >= 2 and 7 + zr < rg.size():
+				var cxz := {}
+				var zma := CAI._zm_of(stz2, rome, az2, cxz)
+				var zside: PackedInt32Array = cxz["zone"]
+				_check(zma[rg[7 + zr]] == 0 and zside[rg[7 + zr]] > 0 and zma[rg[6]] > 0 and zma[rg[8]] > 0,
+					"the AI's zone mask opens the zone its army stands in, not the cells next to that army (%d %d %d %d)"
+					% [zma[rg[7 + zr]], zside[rg[7 + zr]], zma[rg[6]], zma[rg[8]]])
 			var why_o := CRules.apply_order(stz2, rome, _move6(az2, off))
 			_check(why_o == "" or why_o.begins_with("held in"),
 				"an army next to an enemy army may march clear of it, or is told it is held ('%s')" % why_o)

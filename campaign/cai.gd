@@ -2549,10 +2549,7 @@ static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictio
 	var c := CState.cell(a)
 	if fld[c] >= CGrid.INF or fld[c] - fld[dest] <= full * CP.of(st, f)[CP.TOWARD_PCT] / 100:
 		return dest
-	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
-	if zm.is_empty():
-		zm = CRules.zone_mask(st, f)
-		cx["zone"] = zm
+	var zm := _zm_of(st, f, a, cx)
 	var trail: Array[int] = []
 	var start_d := fld[c]
 	for guard in 60:
@@ -2566,6 +2563,23 @@ static func _toward(st: Dictionary, f: int, a: Dictionary, dest: int, cx: Dictio
 		if zm[tc] == 0 and CGrid.site_region(tc) < 0 and CRules.can_enter(st, f, CGrid.region(tc)) == "":
 			return tc
 	return dest
+
+
+## The enemy zones army a of faction f marches by (docs/AI.md 54): the
+## side's mask (cached in cx "zone"); when a stands inside an enemy zone, a
+## copy with the zones it stands in opened as CRules.plan_path opens them
+## (CRules.held_zones: the cells next to that enemy and every other army's
+## zone stay closed), so a waypoint or a refuge the march can reach is not
+## refused and none it cannot is picked (2026-11-02).
+static func _zm_of(st: Dictionary, f: int, a: Dictionary, cx: Dictionary) -> PackedInt32Array:
+	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
+	if zm.is_empty():
+		zm = CRules.zone_mask(st, f)
+		cx["zone"] = zm
+	if zm[CState.cell(a)] > 0:
+		zm = zm.duplicate()
+		CRules.held_zones(st, a, zm)
+	return zm
 
 
 static func _go(out: Array, a: Dictionary, c: int, f: int, mode: int, tgt: int = -1) -> void:
@@ -2918,6 +2932,8 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, 
 		CFleet.ensure()
 	var fld := CGrid.field(site, FIELD_SEA, wet)
 	var full := CState.max_mp6(_default_of(lead))
+	# (The side's mask, no zone opened: every gathering army must be able to
+	# end its march there, not only the lead; 2026-11-02.)
 	var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
 	if zm.is_empty():
 		zm = CRules.zone_mask(st, f)
@@ -3268,10 +3284,7 @@ static func _fall_back(st: Dictionary, f: int, free: Array, etas: Dictionary, us
 			if int(b["id"]) != id and int(b["busy"]) == 0 and not CRules.inside(st, b) \
 					and CGrid.octile(CState.cell(a), CState.cell(b)) * kn[CP.HUNT_COST] / 10 <= full:
 				cands.append(CState.cell(b))
-		var zm: PackedInt32Array = cx["zone"] if cx.has("zone") else PackedInt32Array()
-		if zm.is_empty():
-			zm = CRules.zone_mask(st, f)
-			cx["zone"] = zm
+		var zm := _zm_of(st, f, a, cx)  # (2026-11-02: inside the zones it stands in, as its march may go)
 		for c in cands:
 			if zm[c] != 0:
 				continue

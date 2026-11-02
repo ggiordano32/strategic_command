@@ -4357,3 +4357,29 @@ The joint boarding (`docs/design/sea.md` "Joint boarding by dugouts (as built, 2
   `CANOE_BOARD_PCT` 60 / 80: 2, 130: 1 (kept at 100); + the pack's target (as built): 3 / 5 (27 boardings, 5 joins). Before the
   pack's target the canoes took the war canoe first and the sloop's and brigantine's guns cut their crews until they struck
   (crew under 18 % with an enemy near) or were boarded in turn.
+
+## 54. The AI reckons with the zones it stands in (2026-11-02)
+
+The open item of the attack fixes (`docs/design/campaign_rules.md` "(2026-11-01) Two armies attacking one", cause 5, and
+"(2026-11-02) The AI reckons with the zones it stands in"; the owner: "Let's update the AI's distance estimates"). Code:
+`campaign/cai.gd` `_zm_of`, `_toward`, `_fall_back`; `campaign/crules.gd` `_move_targets6`.
+
+- **What read the old lock.** Two pickers test cells against the side's enemy zone mask (`cx["zone"]`): `_toward`'s waypoint
+  (the farthest cell about a turn down the destination's distance field outside every zone) and `_fall_back`'s refuge
+  (Skilled, `SK_SAFE_WIN`). `plan_path` now lets an army inside an enemy zone move within it (`CRules.held_zones`), so for that
+  army the shared mask refused cells its march can reach.
+- **The change.** `_zm_of(st, f, a, cx)`: the side's cached mask, or, when army a stands inside an enemy zone, a copy with the
+  zones it stands in opened by `held_zones` (the cells next to that enemy army and every other army's zone stay closed), the
+  same mask `plan_path` searches. `_toward` and `_fall_back` use it. The gathering point of `_attack6` keeps the side's mask
+  (all the gathering armies must be able to end there). `_move_targets6` (the view's move targets, the test bots) opens the
+  zones it stands in as `reach6` does.
+- **What did not need it.** The turn estimates (`eta`, `site_dist`, the static settlement fields) and the octile ranges of the
+  hunt, rally and support never counted zones; attack, hunt, siege and relief orders aim at settlements or enemy armies, whose
+  zones `plan_path` opens for the march.
+- **Measured** (campaign sim, 72 seeds x 60 turns, Rome and West, formats 10 and 6): 287 of 288 final hashes equal; the one
+  that differs (Rome format 6, seed 6236) keeps its eliminations (battles 76 -> 64). Eliminations, battles a seed, field
+  battles and armies trickled in are unchanged per pack and format; the pins and goldens hold. A free AI field army stands in
+  an enemy zone at planning time in about 1 army-turn of 1,000 (format 10, 6 seeds a pack: 6 Rome, 15 West), and in 12 seeds of
+  each pack and format neither picker met one (the opened mask was never built): those armies are planned elsewhere (attack,
+  hunt, siege) or hold. The AI was hardly ever trapped by its own reckoning; the march itself was (fixed 2026-11-01). Test:
+  `campaign_test` `_grid_two_army_attacks` (the AI's mask opens the cell two from the enemy, keeps the cells next to it).

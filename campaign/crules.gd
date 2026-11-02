@@ -4432,8 +4432,11 @@ static func _move_targets6(st: Dictionary, a: Dictionary, this_turn: bool) -> Ar
 	var amph := amphibious(st, a)
 	if amph:
 		CFleet.ensure()
+	var zm := zone_mask(st, f)
+	if zm[CState.cell(a)] > 0:
+		held_zones(st, a, zm)  # (2026-11-02: the zones it stands in, as plan_path and reach6)
 	var rt := CGrid.reach(CState.cell(a), CState.full_mp(st, a), CState.mp(a), block_mask(st, f),
-		0 if this_turn else 3, zone_mask(st, f), amph)
+		0 if this_turn else 3, zm, amph)
 	for r in CData.region_count():
 		if r == int(a["r"]) or can_enter(st, f, r) != "":
 			continue
