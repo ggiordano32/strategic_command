@@ -4990,6 +4990,24 @@ static func _f_w(fort: Dictionary, lx: int, ly: int, cm: int = 1) -> Vector2i:
 		int(fort["y"]) * cm + (sn * lx + cs * ly) / FM.TRIG_ONE)
 
 
+## A trace fort's corner towers as the sim builds them (_w_fort_tr: a round solid of the piece's tower radius on
+## every vertex whose radius is over half the wall's thickness), [x, y, r, 0, 0] metres a tower (the layout's
+## "towers" form); [] for the square fort and a trace without towers. Read by the view, which draws them as
+## towers in place of the piece under the walls ("Portobelo and the fort's place").
+static func fort_towers(fort: Dictionary) -> Array:
+	var out: Array = []
+	if fort.is_empty() or not fort.has("tr"):
+		return out
+	var tw := _tr_world(fort)
+	var vx: PackedInt32Array = tw[0]
+	var vy: PackedInt32Array = tw[1]
+	var twr: Array = Array(fort["tw"])
+	for k in mini(vx.size(), twr.size()):
+		if int(twr[k]) > F_T / 2:
+			out.append([vx[k], vy[k], int(twr[k]), 0, 0])
+	return out
+
+
 ## Build the fort into the West town's grids (wc, _city_west's context):
 ## returns {"gates", "segs", "cit", "poly"} for the layout; adds its
 ## magazine and barracks to the buildings, its gun platforms to fort["guns"]
@@ -6055,18 +6073,25 @@ static func tp_coast(p: Dictionary, g: Dictionary, w_m: int, cx: int, cy: int) -
 
 ## The landmark that is the town's fort with an inside: a fort piece of the town's own table first (the Morro,
 ## San Felipe, the Ulua; not the governor's alcazar), else the generic harbour fort, else the generic city fort;
-## -1 none.
+## of two of the same rank the one nearest the plaza (bx, by: metres from it; Portobelo's harbour forts, the
+## one at the town's end of the harbour, not the headland's; docs/design/siege_and_towns.md "Portobelo and the
+## fort's place"); -1 none.
 static func tp_fort_pick(lms: Array) -> int:
 	var best := -1
 	var rank := 9
+	var bd := 0
 	for i in lms.size():
 		var d: Dictionary = lms[i]
 		if str(d["kind"]) != "fort" or str(d["p"]) == "alcazar":
 			continue
 		var rk := 0 if int(d.get("gen", 0)) == 0 and int(d.get("hf", 0)) != 2 else (1 if int(d.get("hf", 0)) == 2 else 2)
-		if rk < rank:
+		var dx := int(d.get("bx", 0))
+		var dy := int(d.get("by", 0))
+		var dd := dx * dx + dy * dy
+		if rk < rank or (rk == rank and dd < bd):
 			rank = rk
 			best = i
+			bd = dd
 	return best
 
 

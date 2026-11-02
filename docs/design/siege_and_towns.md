@@ -3005,3 +3005,44 @@ half the approach: kills behind the wall 64 -> 201, their losses 60 -> 72, the b
 attackers' dead 139 -> 101. `rome_walls` (8 seeds, 144 battles) attacker wins 75 / 50 / 38 / all 54 -> 71 / 48 / 40 /
 53 %, no cell beyond its interval. Open: the cut is per unit pair, centre to centre, so a stand is chosen from the
 unit's middle; the stand ignores men in buildings; a unit walking in under a wall that is re-manned walks back.
+
+### Portobelo and the fort's place (as built, 2026-11-02)
+
+The owner, from a phone playtest of the West campaign: "Some of the towns need another pass. The defendable position
+should be closer to the city center in places like Portobelo. And the walled fort does not look very good on that
+map." Portobelo's plan has two harbour forts of its own (`CTown.LM`: one at the harbour mouth's seaward headland,
+`mouth0`, one at the shore's other end, the town's, `mouth1`). `MapGen.tp_fort_pick` took the first of the best rank,
+the headland's: the fort with an inside stood 245 m from the plaza (264 m from the church) at the far west end of the
+outline in the map's corner, while the town-end fort stood 90 m from the plaza as a solid fort body nobody could hold.
+
+- **The rule.** Of the fort pieces of the same rank (the town's own table first, then the generic harbour fort, then
+  the generic city fort; unchanged), the fort with an inside is the one nearest the plaza (`tp_fort_pick`, by the
+  landmarks' metres from it; the first in the table on a tie). Portobelo's walled fort is now the town-end harbour
+  fort, 133 m from the plaza centre (94 m along the shore, 95 m landward; about 100 m from the church), its seaward
+  corner on the shore at the harbour's inner end and its gate toward the streets; the headland fort is the solid
+  scenery body. The walled plan (walls 3) takes the same pick for its citadel. Havana keeps the Morro (229 m against
+  the Fuerza's 242 m); no other town has two forts of one rank, so only Portobelo's maps change (walls 1-3; the 48
+  other West plan towns' layouts hash the same, checked with a headless probe at walls 1, 2 and 3).
+- **The fort's look (view only).** A fort with an inside no longer draws its landmark piece under its walls
+  (`CityDraw.is_fort_piece`: `draw_pieces`, `BattleKit._ob_landmarks`): scaled 2.5-6.6 times to the trace (the
+  harbour fort 4.9, the Morro 4.7) the piece's rock slab spread a dark blob about 115 m across round the fort and its
+  turret roofs lay flat outside the corners. The trace's corner towers, which the sim stands as round solids of the
+  piece's turret radius times the scale on every vertex whose radius is over half the wall's thickness
+  (`MapGen.fort_towers`, the same test as `_w_fort_tr`), are drawn: the round tower piece in the top view
+  (`BattleKit.all_towers`, also the preview's `_draw_tower`), and in the oblique view (High and Low) a drum of the
+  walls' rows (`BattleKit._ob_drum`, `DRUM_SIDES` 20 faces of the outer stone to the merlons' top, its platform at
+  the walk's height where the fort's guns stand, a ring of merlons `DRUM_MERLON_T` 1 m thick round the rim), since
+  the round tower sprite at the sim's 11-15 m radius stood 18 m tall over 6 m walls with its men and guns sunk in it.
+  Every trace fort with turrets (the Morro, the harbour fort, the generic city fort) shows them; bastioned traces
+  (the Fuerza, San Marcos, the Ulua, San Felipe, Fort Charles, the Morro of San Juan, the rock fort) are their walls
+  alone now, on their knoll.
+- **Not changed.** The generic harbour fort of the other ports stays on the headland (`CTown._landmarks`, as the
+  overworld draws it): 200-310 m from the plaza in most of them (Santo Domingo 247 m, Campeche 265 m); bringing it
+  to the town end would re-lay about 30 of the 49 West towns and the overworld, so it is the owner's call. The
+  generic level-2 city fort on the high ground (a solid body, Portobelo's in the middle of the town) is scenery as
+  before.
+- **Measured** (`tools/balance`, 8 seeds, before a clean copy of HEAD): `west_walls` attacker wins pooled walls 0 / 1 /
+  2 52 / 34 / 29 -> 52 / 33 / 30 %, every town but Portobelo identical; Portobelo 38 / 50 / 0 -> 38 / 38 / 25 % (no
+  cell beyond its interval; decided at walls 1 / 2 in 7.6 / 7.9 -> 8.1 / 7.3 min). `west_named` and `open_town`
+  identical (no Portobelo in them). campaign_pins Rome and West MATCH (battles settle by formula); settlement battle
+  hashes move on Portobelo's maps only; the rules hash moves; no VERSION bump.

@@ -142,7 +142,7 @@ static func draw_static(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2, f
 		var cit: Dictionary = lay.get("cit", {})
 		if not cit.is_empty():
 			_draw_ring(ci, lay, cit["poly"], k, o, fine, false)
-		for tw in lay["towers"]:
+		for tw in BattleKit.all_towers(lay):
 			_draw_tower(ci, tw, k, o, pal)
 		if fine:
 			_draw_stairs(ci, lay, k, o)
@@ -208,6 +208,8 @@ static func _p(o: Vector2, k: float, x: float, y: float) -> Vector2:
 static func draw_pieces(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -> void:
 	for pc in lay.get("pieces", []):
 		var a: Array = pc
+		if is_fort_piece(a):
+			continue
 		var nm := MapGen.tp_kit_name(MapGen.tp_name(int(a[0])))
 		if not BattleKit.has_piece(nm):
 			continue
@@ -215,6 +217,13 @@ static func draw_pieces(ci: CanvasItem, lay: Dictionary, k: float, o: Vector2) -
 		# (The piece's front is image up at yaw 0; the plan's front angle is the map's: atan2 with y down.)
 		var yaw := float(int(a[3]) - 768) * TAU / 1024.0
 		BattleKit.draw_piece(ci, nm, (o / k + Vector2(float(int(a[1])), float(int(a[2])))) / sc, yaw, Color.WHITE, k * sc)
+
+
+## The fort with an inside's piece (entry 6 = 1): not drawn. Its walls, corner towers (BattleKit.all_towers),
+## gates and buildings are the fort; the piece scaled 2.5-6.6 times to the trace spread its rock base and tower
+## roofs round the walls ("Portobelo and the fort's place", docs/design/siege_and_towns.md).
+static func is_fort_piece(a: Array) -> bool:
+	return a.size() > 6 and int(a[6]) == 1
 
 
 ## A building record drawn as a landmark piece (draw_pieces), not as a house.

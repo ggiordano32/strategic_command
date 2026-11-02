@@ -49,6 +49,8 @@ const WALL_ROW := 400           # a wall row's custom.x: WALL_ROW + kind + 8 x h
                                 # data in (below 2048); the culture is the kit's
 const WALL_SEG := 8.0
 const MITRE_MAX := 2.5          # a mitre longer than this many wall thicknesses is bevelled instead
+const DRUM_SIDES := 20            # a trace fort's corner tower in the oblique view (_ob_drum): faces round
+const DRUM_MERLON_T := 1.0        # its parapet's thickness (m)
 const MERLON_H := 1.2           # the merlons above the walk (tools/battlekit b_wall_sim); a palisade's stake tips: STAKE_TIP
 const STAKE_TIP := 0.8
 const RAMP_DROP := 1.1          # the inner rampart below the walk
@@ -137,6 +139,8 @@ var shadow_cell := 0.5              # metres per cell of the baked shadow
 var tropic := false                 # palms and the Caribbean palette (pack "west")
 var i_flash := PackedFloat32Array()
 var i_bld := PackedInt32Array()     # the layout building the instance draws (-1 none): hidden once it has fallen
+var _drums: Array = []               # a trace fort's corner towers [x, y, r] (m): drum rows in the oblique view
+var _drum_inst := {}                 # their sprite instances (the top view's): left out of the oblique sort
 var _cur_bld := -1                  # (set while a building's pieces are added)
 var _rub_seen := 0                  # sim.rub_n drawn (destruction: rubble, hidden houses)
 var _rubble_cells := PackedInt32Array()
@@ -358,6 +362,13 @@ func _build_instances() -> void:
 	var q := 0
 	for tw in lay["towers"]:
 		q += 1
+		_tower(tw, q, hs)
+	_drums.clear()
+	_drum_inst.clear()
+	for tw in MapGen.fort_towers(lay.get("fort", {})):
+		q += 1
+		_drum_inst[i_piece.size()] = 1
+		_drums.append([float(tw[0]), float(tw[1]), float(tw[2])])
 		_tower(tw, q, hs)
 	var sea: Dictionary = lay.get("sea", {})
 	if not sea.is_empty() and not (sea["gate"] as Array).is_empty():
@@ -755,6 +766,14 @@ func _gate_name(st: int) -> String:
 	return ("pgate_" if _timber else "gate_") + c
 
 
+## The layout's towers and a trace fort's corner towers (MapGen.fort_towers: the sim's round solids there, drawn
+## as towers in place of the fort's piece, which is not drawn under its walls).
+static func all_towers(p_lay: Dictionary) -> Array:
+	var out: Array = (p_lay.get("towers", []) as Array).duplicate()
+	out.append_array(MapGen.fort_towers(p_lay.get("fort", {})))
+	return out
+
+
 func _tower(tw: Array, q: int, hs: float) -> void:
 	var r := float(tw[2])
 	var pos := Vector2(float(tw[0]), float(tw[1]))
@@ -1018,6 +1037,8 @@ func _ob_sort() -> void:
 	if not _rings.is_empty():
 		tw = float(_rings[0][1])
 	for i in i_piece.size():
+		if _drum_inst.has(i) and _ob_drums_on():
+			continue   # (a fort's corner tower: a drum of rows at the walls' height, _ob_drum)
 		# A tower or a gate stands out of the wall's line: sorted by its front (its nearest point), so the wall beside it
 		# draws first and the wall in front of it after.
 		var nm: String = Atlas.NAMES[i_piece[i]]
@@ -1064,6 +1085,8 @@ func _ob_sprite(i: int) -> int:
 func _ob_landmarks() -> void:
 	for pc in lay.get("pieces", []):
 		var a: Array = pc
+		if CityDraw.is_fort_piece(a):
+			continue
 		var nm := MapGen.tp_kit_name(MapGen.tp_name(int(a[0])))
 		var yaw := float(int(a[3]) - 768) * TAU / 1024.0
 		var q := KitOb.index(nm, cos(yaw) < 0.0)
@@ -1095,7 +1118,7 @@ func _ob_walls() -> void:
 	_ob_wseg.clear()
 	_ob_nwall = 0
 	var gates: Array = lay.get("gates", [])
-	var towers: Array = lay.get("towers", [])
+	var towers: Array = all_towers(lay)
 	var pp := clampf(float(int(lay.get("pp", 2))), 1.0, 4.0)
 	var rub: PackedByteArray = sim.obs if sim != null and sim.rub_n > 0 else PackedByteArray()
 	# (A stone wall's stairs: each flight stands in a notch cut in the inner rampart, _ob_stone_flight.)
@@ -1260,6 +1283,9 @@ func _ob_walls() -> void:
 					wa.append(pe[e2 * nl + li])
 					wb.append(ps[e2 * nl + li])
 				_ob_wseg_rows(wa, wb, t, hm, false, false)
+	if not _rings.is_empty() and _ob_drums_on():
+		for dr in _drums:
+			_ob_drum(Vector2(float(dr[0]), float(dr[1])), float(dr[2]), float(_rings[0][2]))
 	if not _rings.is_empty():
 		_ob_stairs(float(_rings[0][2]))
 		if _timber and int(lay.get("wring", 0)) != 0:
@@ -1270,6 +1296,39 @@ func _ob_walls() -> void:
 	_seg_want.resize(_ob_seg.size())
 	_seg_want.fill(0)
 	_fade_live.clear()
+
+
+## The fort's corner towers as drums of rows in the oblique view (High and Low; the top view draws the round tower
+## piece).
+func _ob_drums_on() -> bool:
+	return not _drums.is_empty()
+
+
+## A trace fort's corner tower in the oblique view (Portobelo and the fort's place, docs/design/siege_and_towns.md):
+## a round drum of radius r (the sim's round solid on the trace's corner) in DRUM_SIDES faces of the wall's outer
+## stone from the ground to the merlons' top, its platform at the walk's height hm (the walk turns the corner over
+## it, the fort's guns stand on it), a ring of merlons DRUM_MERLON_T thick round its rim. The round tower piece at
+## the sim's radius stood 18 m tall over 6 m walls, its men and guns sunk in it.
+func _ob_drum(c: Vector2, r: float, hm: float) -> void:
+	var w0 := _ob_wkey.size()
+	var zt := hm + MERLON_H + 0.3
+	var base := BoardView.near_px(c * k) + r * 0.8 * k * BoardView.OBLIQUE_SIN
+	var po := PackedVector2Array()
+	var pi := PackedVector2Array()
+	for i in DRUM_SIDES + 1:
+		var a := TAU * float(i % DRUM_SIDES) / float(DRUM_SIDES)
+		var u := Vector2(cos(a), sin(a))
+		po.append(c + u * r)
+		pi.append(c + u * maxf(r - DRUM_MERLON_T, 0.5))
+	for i in DRUM_SIDES:
+		_ob_face(po[i], po[i + 1], 0.0, zt, WK_OUT, base)
+		_ob_face(pi[i + 1], pi[i], hm, zt, WK_MERLON, base)
+		_ob_top(pi[i], pi[i + 1], c, c, hm, WK_WALK, base)
+		_ob_top(po[i], po[i + 1], pi[i], pi[i + 1], zt, WK_MTOP, base)
+	# (A stretch of its own with no facing, as a stair's: never fades.)
+	_ob_seg.append([c, c, Vector2.ZERO, 0.0, w0, _ob_wkey.size() - w0])
+	for w in _ob_wkey.size() - w0:
+		_ob_wseg.append(_ob_seg.size() - 1)
 
 
 ## A wall ring's vertices (metres): close points merged, counter-clockwise (area > 0: the inside on the left), as
