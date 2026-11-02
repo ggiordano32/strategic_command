@@ -2482,12 +2482,14 @@ func _regard_why(why: String) -> String:
 	return {"war": "you declared war on them", "city_taken": "you took a city of theirs", "sacked": "you sacked a town of theirs",
 		"trespass": "your armies trespassed in their land", "call_refused": "you left their call to arms unanswered",
 		"trade_cancelled": "you cancelled trade", "left_at_war": "you left the alliance while they were at war",
-		"peace": "peace made", "fought_together": "a battle fought side by side", "gift": "your gift", "treaty": "starting treaty"}.get(why, why.replace("_", " "))
+		"peace": "peace made", "fought_together": "a battle fought side by side", "gift": "your gift", "treaty": "starting treaty",
+		"kept_faith": "you answered their call to arms", "took_from_enemy": "you took a city from their enemy",
+		"won_vs_enemy": "you beat their enemy in battle"}.get(why, why.replace("_", " "))
 
 
 func _repute_why(why: String) -> String:
 	return {"treaty_broken": "a broken treaty", "unprovoked_war": "an unprovoked war", "sack": "a town sacked",
-		"call_refused": "a call to arms refused", "fought_together": "a battle fought beside an ally"}.get(why, why.replace("_", " "))
+		"call_refused": "a call to arms refused", "fought_together": "a battle fought beside an ally", "kept_faith": "a call to arms answered"}.get(why, why.replace("_", " "))
 
 
 ## Incoming proposals (not the city offers): team, alliance, passage and the calls to arms.
@@ -2514,6 +2516,8 @@ func _dip_inbox(box: VBoxContainer, ps: Dictionary, f: int) -> void:
 			"call":
 				ptxt = "%s calls you to arms against %s: accepting declares war; refusing costs regard %d and repute %d." % [fn,
 					CData.faction_name(int(p.get("vs", -1))) if int(p.get("vs", -1)) >= 0 else "an enemy", CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED]
+				ptxt += " Answering earns regard %+d and repute %+d, every city you take from them while %s fights them %+d, every battle won %+d." % [
+					CDip.REG_KEPT_FAITH, CDip.REP_KEPT_FAITH, fn, CDip.REG_CALL_TOWN, CDip.REG_CALL_BATTLE]
 		var l := Kit.label(ptxt, Kit.FONT, Kit.COL_GOLD, true)
 		l.name = "proposal_text_%d" % pid
 		h.add_child(l)
@@ -3415,13 +3419,28 @@ func event_text(e: Dictionary, f: int) -> String:
 				return "%s declared war on %s, answering an ally's call to arms." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
 			return "%s declared war on %s." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]
 		"regard":
-			# Only what moves another faction's regard of us, and only the larger moves (the log on the Diplomacy screen has the rest).
-			if f < 0 or int(e["b"]) != f or absi(int(e["d"])) < 5:
+			# Only what moves another faction's regard of us, and only the larger moves (the log on the Diplomacy screen has the rest);
+			# (2026-11-02) a call to arms kept always says so, with its reason.
+			if f < 0 or int(e["b"]) != f:
+				return ""
+			var gn := CData.faction_name(int(e["a"]))
+			var vn := CData.faction_name(int(e.get("vs", -1))) if int(e.get("vs", -1)) >= 0 else "the enemy"
+			match str(e["why"]):
+				"kept_faith":
+					return "Kept faith with %s against %s: their regard of you %+d." % [gn, vn, int(e["d"])]
+				"took_from_enemy":
+					return "Took %s from %s, %s's enemy: %s's regard of you %+d." % [city.call(e["r"]) if int(e.get("r", -1)) >= 0 else "a city",
+						vn, gn, gn, int(e["d"])]
+				"won_vs_enemy":
+					return "Beat %s, %s's enemy, in battle: %s's regard of you %+d." % [vn, gn, gn, int(e["d"])]
+			if absi(int(e["d"])) < 5:
 				return ""
 			return "%s's regard of you: %+d (%s)." % [CData.faction_name(int(e["a"])), int(e["d"]), _regard_why(str(e["why"]))]
 		"repute":
 			if f < 0 or int(e["f"]) != f:
 				return ""
+			if str(e["why"]) == "kept_faith" and int(e.get("with", -1)) >= 0:
+				return "Your repute: %+d (kept faith with %s)." % [int(e["d"]), CData.faction_name(int(e["with"]))]
 			return "Your repute: %+d (%s)." % [int(e["d"]), _repute_why(str(e["why"]))]
 		"alliance":
 			return "%s and %s signed an alliance." % [CData.faction_name(int(e["a"])), CData.faction_name(int(e["b"]))]

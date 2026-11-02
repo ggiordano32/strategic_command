@@ -253,6 +253,73 @@ plan left a point open or was changed:
   armies (7 / 7) overshot at format 6. No cooling period for a former
   ally was built: no death followed an ended alliance.
 
+**Answering a call to arms pays (as built, 2026-11-02).** The owner (phone,
+the West as the Miskito): "England called me to join in on a war with Terra
+Firma as Miskito, but it didn't really benefit my repute or relationship
+with England, even as I was taking their towns." Diagnosis (reproduced
+headless: England attacked by Tierra Firme, the Miskito called): answering
+moved nothing (a "called" war only avoided the unprovoked-war repute);
+battles and towns won from the common enemy moved nothing with England
+(`on_battle` paid `fought_together` +10 only when both had armies in the
+same battle; `on_capture` only cost the loser's regard); the call's
+proposal lapses after its turn while its window ("called", sitting out at
+5 turns) stays open, and a war order declared inside that window was an
+ordinary war: repute -10 "unprovoked war" (-30 on a trade partner); and
+the starting treaty's +30 faded 1 a turn the whole time. Ignoring the call
+already cost regard -20 and repute -5.
+
+- **Rule** (`campaign/cdip.gd`). Answering a call (the inbox, or any war
+  order on the enemy while a call against it is open: `war_answers_call`,
+  the war is "called" and answers every open call) keeps faith: the
+  caller's regard of the answerer +15 (`REG_KEPT_FAITH`), the answerer's
+  repute +5 (`REP_KEPT_FAITH`, the mirror of the refusal), and an
+  `answered [[a, b, c, turn]]` record (optional key, absent = none, sorted;
+  no `CState.VERSION` bump: a new key with a default read). While the
+  record lives (caller and answerer allied, both at war with `c`, all
+  alive), each settlement the answerer takes from `c` gives the caller +8
+  (`REG_CALL_TOWN`) and every other faction at war with `c` +3
+  (`REG_CALL_TOWN_OTHER`), index order; each battle won with `c` on the
+  losing side +2 (`REG_CALL_BATTLE`, once per caller and battle). The
+  record goes at the caller's (or answerer's) peace with `c` (`on_peace`)
+  and at the end of a turn when no longer live, so the gains stop. An AI
+  answering an AI's call keeps faith the same way. Ignoring: unchanged
+  (regard -20, repute -5, an AI caller leaves).
+- **Numbers.** An alliance today earns almost nothing from the rules: 12
+  AI seeds x 60 turns at format 10, the positive regard events between
+  allies were `fought_together` alone, 1.3 (Rome) / 1.1 (West) a pair per
+  ten turns, the mean regard while allied 0.3 / 2.4; so a standing
+  alliance is carried by its start, the treaty's +30 (`REG_TREATY`), which
+  the fade spends in 30 turns. Answering and taking two towns is 15 + 2 x 8
+  = 31, one treaty's worth: it lifts the caller's regard over
+  `NO_WAR_REGARD` 30 and the alliance floor 25 by itself, and halfway to
+  the team's 50 from a starting treaty. The owner's case: England's regard
+  30 -> 45 (answered) -> 47 (a field battle) -> 55 -> 63 (La Guaira, Coro),
+  repute 0 -> 5; the Brethren, at war with Tierra Firme, +3 a town.
+- **The AI.** No decision code changed (no knob): the caller's higher
+  regard feeds `CAI.why`'s score for the answerer's proposals and the
+  no-war line as any regard does; the AI's own answer to a call is
+  unchanged (`CAI.why "call"`: the gains are not weighed; a knob if ever).
+- **The view** (`game/campaign/campaign_panels.gd`). The turn report and the
+  battle result show every gain of a call, small ones included: "Kept faith
+  with England against Tierra Firme: their regard of you +15.", "Took La
+  Guaira from Tierra Firme, England's enemy: England's regard of you +8.",
+  "Beat Tierra Firme, England's enemy, in battle: England's regard of you
+  +2.", "Your repute: +5 (kept faith with England)."; the regard log on the
+  diplomacy screen says "you answered their call to arms", "you took a city
+  from their enemy", "you beat their enemy in battle"; the call's inbox
+  text adds what answering earns.
+- **Measured** (`tests/campaign_sim.gd`, 72 seeds x 60 turns, HEAD ->
+  as built; the per-seed diplomacy tallies are in its `--json` line): Rome
+  formats 6 and 10 and West format 6 identical seed for seed (no AI call is
+  answered in Rome; no diplomacy below format 10); West format 10: 19 of
+  72 seeds identical, eliminations 35 -> 35 (Brethren 15, England 2, Itza 9,
+  Miskito 9, each unchanged), battles 47.8 -> 47.7 a seed, field 3.5 ->
+  3.5, wars 9.75 -> 9.68, calls answered 1.10 -> 1.10, refused 1.86 ->
+  1.82, alliances standing at turn 60 3.82 -> 3.82; per seed 1.1 calls kept,
+  0.25 towns and 0.25 battles paid. Pins: `campaign_sim --format=10` West
+  seeds 1, 4, 5, 6 moved; Rome, formats 6 and 8, `ROME_20` and the AI
+  goldens unchanged.
+
 ### Settlement attacks
 
 - v1: attacking a settlement is a field battle in which the garrison joins the defender.

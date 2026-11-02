@@ -146,6 +146,7 @@ func _init() -> void:
 	_teams()
 	_diplomacy()
 	_dip_calls()
+	_dip_call_gains()
 	_dip_shield()
 	_dip_shield_attacks()
 	_shield_sea()
@@ -7347,8 +7348,9 @@ func _dip_calls() -> void:
 			u["n"] = int(u["n"]) * 20
 	CRules.declare_war(strong, mace, gaul)
 	var we := _ev(strong, "war", {"a": iber, "b": mace})
-	_check(CState.at_war(strong, iber, mace) and str(we.get("why", "")) == "called" and CDip.repute(strong, iber) == 0 and CDip.regard(strong, mace, iber) == -40,
-		"a strong AI ally joins: war on the enemy as called, no repute lost")
+	_check(CState.at_war(strong, iber, mace) and str(we.get("why", "")) == "called" and CDip.repute(strong, iber) == CDip.REP_KEPT_FAITH
+		and CDip.regard(strong, mace, iber) == -40 and CDip.regard(strong, gaul, iber) == CDip.REG_KEPT_FAITH,
+		"a strong AI ally joins: war on the enemy as called, no repute lost, the call kept (gauls' regard +%d, repute +%d)" % [CDip.REG_KEPT_FAITH, CDip.REP_KEPT_FAITH])
 	var weak := CState.copy(base)
 	for a in CState.armies_of(weak, iber):
 		for u in a["units"]:
@@ -7365,7 +7367,7 @@ func _dip_calls() -> void:
 		"a human refuses: regard -20, repute -5, the record gone")
 	var ha := CState.copy(w)
 	_check(CRules.apply_order(ha, rome, {"t": "answer", "id": pid, "accept": 1}) == "" and CState.at_war(ha, rome, mace)
-		and CDip.repute(ha, rome) == 0 and _chron(ha, "call_answered"), "a human answers the call: at war with the enemy, no repute lost")
+		and CDip.repute(ha, rome) == CDip.REP_KEPT_FAITH and _chron(ha, "call_answered"), "a human answers the call: at war with the enemy, no repute lost (kept faith)")
 	# Through a turn: the proposal waits a turn.
 	var tw2 := CState.copy(base)
 	CRules.declare_war(tw2, mace, gaul)
@@ -7423,6 +7425,122 @@ func _dip_calls() -> void:
 	sp["turn"] = 17
 	CDip.end_turn(sp)
 	_check(_ev(sp, "call_sat_out").is_empty() and not sp.has("called"), "a war that ended: the call is forgotten")
+
+
+## (2026-11-02) Answering a call to arms pays: the owner's case (West, the
+## Miskito human, allied to England; Tierra Firme attacks England). The
+## answer (inbox, or a war order after the proposal lapsed), each battle
+## won and each town taken from the common enemy while the caller fights
+## it, the cost of sitting out, the stop at the peace.
+func _dip_call_gains() -> void:
+	CData.use_pack("west")
+	var misk := _f("miskito")
+	var eng := _f("england")
+	var tf := _f("tierra_firme")
+	var st := CState.new_campaign("test", 4242, [misk], {}, [], "west")
+	st["turn"] = 10
+	for g in [misk, eng]:
+		if CState.dip(st, g, tf) == CState.WAR:
+			CState.set_dip(st, g, tf, CState.PEACE)
+	var r0 := CDip.regard(st, eng, misk)
+	CRules.declare_war(st, tf, eng)
+	var pid := -1
+	for p in st["proposals"]:
+		if str(p["what"]) == "call" and int(p["to"]) == misk and int(p["vs"]) == tf:
+			pid = int(p["id"])
+	_check(pid >= 0 and CDip.open_calls(st, misk, tf) == [eng], "West: England attacked, the Miskito called (the call open)")
+	# The answer: inbox.
+	var a := CState.copy(st)
+	CRules.apply_order(a, misk, {"t": "answer", "id": pid, "accept": 1})
+	_check(CState.at_war(a, misk, tf) and CDip.regard(a, eng, misk) == r0 + CDip.REG_KEPT_FAITH and CDip.repute(a, misk) == CDip.REP_KEPT_FAITH
+		and not _ev(a, "regard", {"a": eng, "b": misk, "why": "kept_faith", "vs": tf}).is_empty()
+		and not _ev(a, "repute", {"f": misk, "why": "kept_faith", "with": eng}).is_empty() and CDip.callers_vs(a, misk, tf) == [eng],
+		"the answer gain: England's regard %d -> %d, repute %d" % [r0, CDip.regard(a, eng, misk), CDip.repute(a, misk)])
+	# The answer: a war order after the proposal lapsed, inside the window.
+	var b := CState.copy(st)
+	b["proposals"] = []
+	b["turn"] = 12
+	_check(CRules.apply_order(b, misk, {"t": "war", "to": tf}) == "" and str(_ev(b, "war", {"a": misk, "b": tf}).get("why", "")) == "called"
+		and _ev(b, "repute", {"f": misk, "why": "unprovoked_war"}).is_empty() and CDip.repute(b, misk) == CDip.REP_KEPT_FAITH
+		and CDip.regard(b, eng, misk) == r0 + CDip.REG_KEPT_FAITH and not b.has("called"),
+		"a war order on the enemy while the call is open answers it (no unprovoked war, the gain)")
+	# A war order with no call open stays an ordinary war.
+	var c0 := CState.copy(st)
+	c0.erase("called")
+	c0["proposals"] = []
+	CRules.apply_order(c0, misk, {"t": "war", "to": tf})
+	_check(str(_ev(c0, "war", {"a": misk, "b": tf}).get("why", "")) == "" and CDip.regard(c0, eng, misk) == r0, "no call open: an ordinary war, no gain")
+	# A battle won against the common enemy.
+	var t0: Dictionary = CState.armies_of(a, tf)[0]
+	var m0: Dictionary = CState.armies_of(a, misk)[0]
+	CState.place(m0, CState.cell(t0))
+	var fb := CRules.start_field_battle(a, int(t0["r"]), [m0], [t0])
+	fb["x"] = int(t0["x"])
+	fb["y"] = int(t0["y"])
+	fb.erase("new")
+	var oc := CBattle.formula(a, fb)
+	oc["winner"] = 0
+	var rb := CDip.regard(a, eng, misk)
+	CRules.apply_outcome(a, int(fb["id"]), oc)
+	_check(CDip.regard(a, eng, misk) == rb + CDip.REG_CALL_BATTLE and not _ev(a, "regard", {"a": eng, "b": misk, "why": "won_vs_enemy"}).is_empty(),
+		"the battle gain: +%d" % CDip.REG_CALL_BATTLE)
+	# A lost battle pays nothing.
+	var lost := CState.copy(st)
+	CRules.apply_order(lost, misk, {"t": "answer", "id": pid, "accept": 1})
+	var t1: Dictionary = CState.armies_of(lost, tf)[0]
+	var m1: Dictionary = CState.armies_of(lost, misk)[0]
+	CState.place(m1, CState.cell(t1))
+	var fb1 := CRules.start_field_battle(lost, int(t1["r"]), [m1], [t1])
+	fb1["x"] = int(t1["x"])
+	fb1["y"] = int(t1["y"])
+	fb1.erase("new")
+	var oc1 := CBattle.formula(lost, fb1)
+	oc1["winner"] = 1
+	var rl := CDip.regard(lost, eng, misk)
+	CRules.apply_outcome(lost, int(fb1["id"]), oc1)
+	_check(CDip.regard(lost, eng, misk) == rl, "a battle lost: no gain")
+	# Towns taken from the common enemy: the caller +8, every other faction at war with it +3 (index order).
+	var n := CState.nf()
+	for k in 2:
+		var trs: Array = CState.regions_of(a, tf)
+		var r := int(trs[trs.size() - 1])
+		var before: Array = []
+		for g in n:
+			before.append(CDip.regard(a, g, misk))
+		CRules._capture(a, r, misk)
+		var ok := true
+		for g in n:
+			var want := 0
+			if g == tf:
+				want = CDip.REG_CITY_TAKEN
+			elif g == eng:
+				want = CDip.REG_CALL_TOWN
+			elif g != misk and CState.alive(a, g) and CState.at_war(a, g, tf):
+				want = CDip.REG_CALL_TOWN_OTHER
+			if g != misk and CDip.regard(a, g, misk) - int(before[g]) != want:
+				ok = false
+		_check(ok and int(_ev(a, "regard", {"a": eng, "b": misk, "why": "took_from_enemy", "r": r}).get("d", 0)) == CDip.REG_CALL_TOWN,
+			"the town gain (%s): England +%d, the others at war with Tierra Firme +%d" % [CData.REGIONS[r]["city"], CDip.REG_CALL_TOWN, CDip.REG_CALL_TOWN_OTHER])
+	_check(CDip.regard(a, eng, misk) == r0 + CDip.REG_KEPT_FAITH + CDip.REG_CALL_BATTLE + 2 * CDip.REG_CALL_TOWN,
+		"answer, a battle and two towns: England's regard %d -> %d" % [r0, CDip.regard(a, eng, misk)])
+	# The stop at the peace: England makes peace with Tierra Firme.
+	var pc := CState.copy(a)
+	CRules.make_peace(pc, eng, tf)
+	var rp := CDip.regard(pc, eng, misk)
+	var tr2: Array = CState.regions_of(pc, tf)
+	CRules._capture(pc, int(tr2[tr2.size() - 1]), misk)
+	_check(not pc.has("answered") and CDip.regard(pc, eng, misk) == rp and _ev(pc, "regard", {"why": "took_from_enemy", "r": int(tr2[tr2.size() - 1])}).is_empty(),
+		"the caller made peace: no more gains, the record gone")
+	# Ignoring the call: sat out after CALL_WAIT turns.
+	var so := CState.copy(st)
+	so["proposals"] = []
+	so["turn"] = 10 + CDip.CALL_WAIT
+	CDip.end_turn(so)
+	_check(not _ev(so, "call_sat_out", {"from": eng, "to": misk, "vs": tf}).is_empty() and CDip.regard(so, eng, misk) == r0 + CDip.REG_CALL_REFUSED - 1
+		and CDip.repute(so, misk) == CDip.REP_CALL_REFUSED + 1 and not so.has("answered"),
+		"the ignore cost: regard %+d, repute %+d (then the fade)" % [CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED])
+	# The format 9 view of a state with the record: the key goes.
+	_check(not CState.as_format(a, 9).has("answered"), "as format 9: no answered record")
 
 
 ## Military passage: granted for 10 turns, entry allowed, no trespass cost, lapses.

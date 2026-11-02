@@ -64,7 +64,8 @@ extends RefCounted
 ##        receiver lets the proposer's armies cross its land for
 ##        CDip.PASSAGE_TURNS turns); "cancel_trade" costs regard; a "call"
 ##        (to arms) is never proposed: the rules post it to a human ally
-##        when a war starts, answered with "answer")
+##        when a war starts, answered with "answer", or (2026-11-02) by a
+##        "war" order on the enemy while the call is open: CDip.war_answers_call)
 ##   {"t": "leave_alliance", "with": faction}   (version 10: notice of
 ##        CDip.ALLIANCE_NOTICE turns, then TRADE)
 ##   {"t": "gift", "to": faction, "gold": n}    (version 10: n >= 50 from the
@@ -2122,7 +2123,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		var sfacs := battle_factions(st, b)
 		st["battles"].erase(b)
 		CFleet.apply_sea(st, b, outcome)
-		CDip.on_battle(st, sfacs)  # (version 10) fought side by side
+		CDip.on_battle(st, sfacs, 0 if int(outcome.get("winner", 1)) == 0 else 1)  # (version 10) fought side by side
 		check_eliminations(st)
 		CChars.sweep(st)
 		check_victory(st)
@@ -2273,7 +2274,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	if int(outcome.get("fort_holds", 0)) != 0 and winner == 0 and new_owner < 0 and sacked < 0:
 		ev["fort_holds"] = 1
 	event(st, ev)
-	CDip.on_battle(st, facs)  # (version 10) fought side by side
+	CDip.on_battle(st, facs, winner)  # (version 10) fought side by side; (2026-11-02) won against a common enemy
 	check_eliminations(st)
 	CChars.sweep(st)
 	check_sieges(st)
@@ -2296,7 +2297,7 @@ static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
 	if how != "":
 		e["how"] = how
 	event(st, e)
-	CDip.on_capture(st, old, f)  # (version 10)
+	CDip.on_capture(st, old, f, r)  # (version 10)
 	var sg := CState.siege_at(st, r)
 	if not sg.is_empty():
 		st["sieges"].erase(sg)
@@ -2433,6 +2434,8 @@ static func _declare_war(st: Dictionary, f: int, g: int) -> String:
 		return "allies cannot go to war"  # (team mates; an alliance is broken by the war: CDip.on_war)
 	if CState.dip(st, f, g) == CState.WAR:
 		return "already at war"
+	if CDip.war_answers_call(st, f, g) and CState.at_war(st, f, g):
+		return ""  # (2026-11-02) an open call to arms against g: the war answers it ("called")
 	declare_war(st, f, g)
 	return ""
 

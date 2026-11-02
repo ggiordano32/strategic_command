@@ -78,6 +78,7 @@ var char_ev := {}             # heroes and agents (this seed): raised / wounded 
 var elim_all := {}            # faction -> turns it was eliminated, over the seeds
 var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
 var ai_alliances := -1
+var dipm := {}               # this seed's diplomacy tallies (wars, calls, alliances, trust gains), in the --json line
 var _tr_allies: Array = []   # trace: the traced faction's allies at the end of the last turn
 var _tr_landed := {}         # trace: "f:r" -> turn of the last landing (a fleet's army put ashore) there
 var _trace_key := ""        # --ai-alliances=0|1: the creation setting (format 10; -1 the default)
@@ -150,7 +151,7 @@ func _init() -> void:
 	for sd in range(seed0, seed0 + seeds):
 		var h1 := _run(sd, true)
 		if jf != null:
-			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1}))
+			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm}))
 			jf.flush()
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
@@ -230,9 +231,35 @@ func _run(sd: int, verbose: bool) -> String:
 		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0}
 		var amph := [0, 0, 0]  # army-turns amphibious, afloat at the end of a turn, captures by an army that was afloat the turn before
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
+		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
+			"alliances_left": 0, "kept_faith": 0, "town_gain": 0, "battle_gain": 0}
 		for t in turns:
 			var t0 := Time.get_ticks_usec()
 			st = CTurn.resolve_turn(st, [])
+			for e in st["events"]:
+				if int(e["turn"]) != t:
+					continue
+				match str(e["k"]):
+					"war":
+						dipm["wars"] += 1
+						if str(e.get("why", "")) == "called":
+							dipm["wars_called"] += 1
+					"call_answered":
+						dipm["calls_answered" if int(e["accept"]) != 0 else "calls_refused"] += 1
+					"call_sat_out":
+						dipm["calls_sat_out"] += 1
+					"alliance":
+						dipm["alliances_made"] += 1
+					"alliance_left":
+						dipm["alliances_left"] += 1
+					"regard":
+						var wy := str(e["why"])
+						if wy == "kept_faith":
+							dipm["kept_faith"] += 1
+						elif wy == "took_from_enemy" or wy == "took_from_common_enemy":
+							dipm["town_gain"] += 1
+						elif wy == "won_vs_enemy":
+							dipm["battle_gain"] += 1
 			var us := Time.get_ticks_usec() - t0
 			t_total += us
 			t_max = maxi(t_max, us)
@@ -302,6 +329,19 @@ func _run(sd: int, verbose: bool) -> String:
 		for f in CState.nf():
 			if not CState.alive(st, f):
 				elim.append(short[f])
+		var standing := 0
+		for f in CState.nf():
+			for g in range(f + 1, CState.nf()):
+				if CState.alive(st, f) and CState.alive(st, g) and CDip.allied(st, f, g):
+					standing += 1
+		var ek: Array = []
+		for f in CState.nf():
+			if dead_at.has(f):
+				ek.append(str(CData.FACTIONS[f]["key"]))
+		dipm["alliances_t60"] = standing
+		dipm["elim"] = ek
+		dipm["battles"] = int(st["stats"]["battles"])
+		dipm["field"] = int(sg["field"])
 		if not verbose:
 			return CState.hash_text(st)
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [

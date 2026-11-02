@@ -2651,8 +2651,10 @@ func _dp_run() -> void:
 	for k in 4:
 		await process_frame
 	var ct = cs.dialog_box.find_child("proposal_text_901", true, false)
-	_check(ct != null and (ct as Label).text == "%s calls you to arms against %s: accepting declares war; refusing costs regard %d and repute %d." % [
-		CData.faction_name(eng), CData.faction_name(enemy), CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED], "inbox: a call reads as agreed (%s)" % ((ct as Label).text if ct else "missing"))
+	_check(ct != null and (ct as Label).text.begins_with("%s calls you to arms against %s: accepting declares war; refusing costs regard %d and repute %d." % [
+		CData.faction_name(eng), CData.faction_name(enemy), CDip.REG_CALL_REFUSED, CDip.REP_CALL_REFUSED])
+		and (ct as Label).text.contains("Answering earns regard %+d and repute %+d" % [CDip.REG_KEPT_FAITH, CDip.REP_KEPT_FAITH]),
+		"inbox: a call reads as agreed, with what answering earns (%s)" % ((ct as Label).text if ct else "missing"))
 	_check(cs.dialog_box.find_child("proposal_refuse_901", true, false) != null and cs.dialog_box.find_child("proposal_accept_901", true, false) != null, "inbox: the call has Accept and Refuse")
 	var at = cs.dialog_box.find_child("proposal_text_902", true, false)
 	_check(at != null and (at as Label).text.contains("shared sight") and (at as Label).text.contains("each other's ports") and (at as Label).text.contains("call to arms"), "inbox: an alliance offer states what it gives")
@@ -2803,11 +2805,20 @@ func _dp_run() -> void:
 		"call": {"k": "call", "from": eng, "to": f, "vs": e1, "turn": 5},
 		"call_answered": {"k": "call_answered", "from": eng, "to": f, "vs": e1, "accept": 0, "why": "refused", "turn": 5},
 		"call_sat_out": {"k": "call_sat_out", "from": eng, "to": f, "vs": e1, "turn": 5},
-		"war": {"k": "war", "a": e1, "b": f, "why": "trespass", "turn": 5}}
+		"war": {"k": "war", "a": e1, "b": f, "why": "trespass", "turn": 5},
+		"kept_faith": {"k": "regard", "a": eng, "b": f, "d": CDip.REG_KEPT_FAITH, "why": "kept_faith", "vs": e1, "turn": 5},
+		"took_from_enemy": {"k": "regard", "a": eng, "b": f, "d": CDip.REG_CALL_TOWN, "why": "took_from_enemy", "vs": e1, "r": 0, "turn": 5},
+		"won_vs_enemy": {"k": "regard", "a": eng, "b": f, "d": CDip.REG_CALL_BATTLE, "why": "won_vs_enemy", "vs": e1, "turn": 5},
+		"repute_kept": {"k": "repute", "f": f, "d": CDip.REP_KEPT_FAITH, "why": "kept_faith", "with": eng, "vs": e1, "turn": 5}}
 	for k in evs:
 		_check(cs.panels.event_text(evs[k], f) != "", "chronicle: a line for %s (%s)" % [k, cs.panels.event_text(evs[k], f)])
 	_check(cs.panels.event_text({"k": "regard", "a": e1, "b": f, "d": -4, "why": "trespass", "turn": 5}, f) == "", "chronicle: a regard move under 5 stays out")
 	_check(cs.panels.event_text(evs["war"], f).contains("trespassed in its land"), "chronicle: the trespass war says why")
+	_check(cs.panels.event_text(evs["kept_faith"], f).begins_with("Kept faith with %s" % CData.faction_name(eng))
+		and cs.panels.event_text(evs["took_from_enemy"], f).begins_with("Took %s from %s, %s's enemy" % [str(CData.REGIONS[0]["city"]), CData.faction_name(e1), CData.faction_name(eng)])
+		and cs.panels.event_text(evs["won_vs_enemy"], f).contains("%+d" % CDip.REG_CALL_BATTLE)
+		and cs.panels.event_text(evs["repute_kept"], f).contains("kept faith with %s" % CData.faction_name(eng)),
+		"chronicle: a call kept says why, small gains included (%s | %s)" % [cs.panels.event_text(evs["kept_faith"], f), cs.panels.event_text(evs["took_from_enemy"], f)])
 	CData.use_pack("rome")
 	cs.close_dialog()
 	root.content_scale_size = win

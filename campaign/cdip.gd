@@ -23,9 +23,15 @@ extends RefCounted
 ##   optional called [[a, b, c, turn]]: a human ally b was called by a to
 ##     its war on c at turn and has not answered (sitting out is judged from
 ##     it: end_turn; sorted by a, b, c; absent when empty);
+##   optional answered [[a, b, c, turn]] (2026-11-02, no format bump: absent
+##     reads empty): b answered a's call to its war on c at turn and both
+##     are still at war with c, allied (the gains of a call kept: towns and
+##     battles won from c; dropped when a or b makes peace with c, the
+##     alliance ends or one of the three is gone; sorted by a, b, c);
 ##   settings ai_alliances (absent = 1; 0: AI factions never propose an
 ##     alliance to one another).
-## Events: regard {a, b, d, why}, repute {f, d, why}, alliance {a, b},
+## Events: regard {a, b, d, why; optional vs, r: a call kept (2026-11-02)},
+## repute {f, d, why; optional with, vs}, alliance {a, b},
 ## alliance_notice {f, with, turns}, alliance_left {f, with, why}, passage {a
 ## grantor, b, until}, passage_end {a, b}, call {from, to, vs} (a human's
 ## proposal), call_answered {from, to, vs, accept, why}, call_sat_out {from,
@@ -48,6 +54,7 @@ const REP_UNPROVOKED := -10     # war on a faction with no army trespassing in o
 const REP_SACK := -5
 const REP_CALL_REFUSED := -5    # a call to arms refused or sat out
 const REP_FOUGHT := 2           # a battle fought beside an ally (or a team mate)
+const REP_KEPT_FAITH := 5       # (2026-11-02) a call to arms answered (the mirror of REP_CALL_REFUSED)
 # Regard (of the faction it was done to, for the one that did it).
 const REG_WAR := -40            # war declared on us
 const REG_CITY_TAKEN := -15
@@ -59,6 +66,13 @@ const REG_LEFT_AT_WAR := -20    # an alliance left while we are at war
 const REG_PEACE := 5            # both ways
 const REG_FOUGHT := 10          # both ways
 const REG_TREATY := 30          # a starting treaty, both ways
+# (2026-11-02) A call to arms kept: the caller's regard of the answerer
+# (answering and two towns taken = 31, about the REG_TREATY a standing
+# alliance carries; an alliance earns ~1 a ten turns from battles shared).
+const REG_KEPT_FAITH := 15      # the call answered (war declared on the enemy)
+const REG_CALL_TOWN := 8        # each settlement taken from the common enemy while the caller fights it
+const REG_CALL_TOWN_OTHER := 3  # the same, every other faction at war with that enemy
+const REG_CALL_BATTLE := 2      # each battle won against the common enemy
 # Gifts.
 const GIFT_MIN := 50            # gold
 const GIFT_GOLD := 50           # gold per point of regard
@@ -209,7 +223,7 @@ static func leaving_since(st: Dictionary, f: int, g: int) -> int:
 # ------------------------------------------------------------- changing ---
 
 ## regard[a][b] += d (clamped), logged and evented.
-static func add_regard(st: Dictionary, a: int, b: int, d: int, why: String) -> void:
+static func add_regard(st: Dictionary, a: int, b: int, d: int, why: String, extra: Dictionary = {}) -> void:
 	if not on(st) or a < 0 or b < 0 or a == b or d == 0:
 		return
 	var i := a * _n() + b
@@ -218,14 +232,22 @@ static func add_regard(st: Dictionary, a: int, b: int, d: int, why: String) -> v
 	lg.append([int(st["turn"]), d, why])
 	while lg.size() > LOG_MAX:
 		lg.remove_at(0)
-	_rules().event(st, {"k": "regard", "a": a, "b": b, "d": d, "why": why})
+	var e := {"k": "regard", "a": a, "b": b, "d": d, "why": why}
+	for k in ["vs", "r", "with"]:  # (fixed key order: a Dictionary is never iterated)
+		if extra.has(k):
+			e[k] = int(extra[k])
+	_rules().event(st, e)
 
 
-static func add_repute(st: Dictionary, f: int, d: int, why: String) -> void:
+static func add_repute(st: Dictionary, f: int, d: int, why: String, extra: Dictionary = {}) -> void:
 	if not on(st) or f < 0 or d == 0:
 		return
 	st["repute"][f] = clampi(int(st["repute"][f]) + d, -REPUTE_MAX, REPUTE_MAX)
-	_rules().event(st, {"k": "repute", "f": f, "d": d, "why": why})
+	var e := {"k": "repute", "f": f, "d": d, "why": why}
+	for k in ["vs", "r", "with"]:
+		if extra.has(k):
+			e[k] = int(extra[k])
+	_rules().event(st, e)
 
 
 ## The fade, once a turn (end_turn): repute and the rest of a regard step
@@ -314,12 +336,75 @@ static func _trespassing(st: Dictionary, f: int, g: int) -> bool:
 static func on_peace(st: Dictionary, f: int, g: int) -> void:
 	add_regard(st, f, g, REG_PEACE, "peace")
 	add_regard(st, g, f, REG_PEACE, "peace")
+	_prune_answered(st)  # (2026-11-02) the gains of a call stop at the peace
 
 
-## A city of `old` taken by f.
-static func on_capture(st: Dictionary, old: int, f: int) -> void:
+## (2026-11-02) The callers a in index order whose call to their war on c
+## faction b answered and who still fight c beside b (the "answered"
+## records still live).
+static func callers_vs(st: Dictionary, b: int, c: int) -> Array:
+	var out: Array = []
+	for e in st.get("answered", []):
+		var a := int(e[0])
+		if int(e[1]) == b and int(e[2]) == c and _answered_live(st, a, b, c) and not out.has(a):
+			out.append(a)
+	out.sort()
+	return out
+
+
+static func _answered_live(st: Dictionary, a: int, b: int, c: int) -> bool:
+	return CState.alive(st, a) and CState.alive(st, b) and CState.alive(st, c) and allied(st, a, b) \
+		and CState.at_war(st, a, c) and CState.at_war(st, b, c)
+
+
+## Drop the "answered" records no longer live (array order kept).
+static func _prune_answered(st: Dictionary) -> void:
+	if not st.has("answered"):
+		return
+	var keep: Array = []
+	for e in st["answered"]:
+		if _answered_live(st, int(e[0]), int(e[1]), int(e[2])):
+			keep.append(e)
+	if keep.is_empty():
+		st.erase("answered")
+	else:
+		st["answered"] = keep
+
+
+## b kept faith with a against c (the call answered and b at war with c):
+## regard[a][b] + REG_KEPT_FAITH, repute[b] + REP_KEPT_FAITH, the
+## "answered" record for the gains of the war. Once per (a, b, c).
+static func _kept_faith(st: Dictionary, a: int, b: int, c: int) -> void:
+	if not on(st) or not CState.at_war(st, b, c):
+		return
+	var l: Array = (st["answered"] as Array).duplicate() if st.has("answered") else []
+	for e in l:
+		if int(e[0]) == a and int(e[1]) == b and int(e[2]) == c:
+			return
+	l.append([a, b, c, int(st["turn"])])
+	l.sort_custom(func(x, y): return int(x[0]) * 10000 + int(x[1]) * 100 + int(x[2]) < int(y[0]) * 10000 + int(y[1]) * 100 + int(y[2]))
+	st["answered"] = l
+	add_regard(st, a, b, REG_KEPT_FAITH, "kept_faith", {"vs": c})
+	add_repute(st, b, REP_KEPT_FAITH, "kept_faith", {"with": a, "vs": c})
+
+
+## A city of `old` taken by f (r its region). (2026-11-02) Taken from a
+## common enemy whose war f joined on a call: each caller still at war with
+## `old` regards f REG_CALL_TOWN more, every other faction at war with `old`
+## REG_CALL_TOWN_OTHER (index order).
+static func on_capture(st: Dictionary, old: int, f: int, r: int = -1) -> void:
 	if old >= 0 and f >= 0 and old != f:
 		add_regard(st, old, f, REG_CITY_TAKEN, "city_taken")
+		if not on(st):
+			return
+		var callers := callers_vs(st, f, old)
+		if callers.is_empty():
+			return
+		for g in _n():
+			if g == f or g == old or not CState.alive(st, g) or not CState.at_war(st, g, old):
+				continue
+			var d := REG_CALL_TOWN if callers.has(g) else REG_CALL_TOWN_OTHER
+			add_regard(st, g, f, d, "took_from_enemy", {"vs": old, "r": r})
 
 
 ## A town of o sacked by f.
@@ -331,10 +416,26 @@ static func on_sack(st: Dictionary, o: int, f: int) -> void:
 
 ## A battle resolved: sides [attackers, defenders] (factions). Every pair
 ## on one side that is allied or on one team fought together: fought +1,
-## regard +REG_FOUGHT both ways, repute +REP_FOUGHT each.
-static func on_battle(st: Dictionary, sides: Array) -> void:
+## regard +REG_FOUGHT both ways, repute +REP_FOUGHT each. (2026-11-02)
+## winner (0 the attackers, 1 the defenders, -1 not known): each faction b
+## on the winning side that answered a's call to its war on c, c on the
+## losing side, earns regard[a][b] + REG_CALL_BATTLE (once per battle and
+## caller).
+static func on_battle(st: Dictionary, sides: Array, winner: int = -1) -> void:
 	if not on(st):
 		return
+	if winner == 0 or winner == 1:
+		var win: Array = (sides[winner] as Array).duplicate()
+		var lose: Array = (sides[1 - winner] as Array).duplicate()
+		win.sort()
+		lose.sort()
+		for b in win:
+			var paid: Array = []
+			for c in lose:
+				for a in callers_vs(st, int(b), int(c)):
+					if not paid.has(a):
+						paid.append(a)
+						add_regard(st, a, int(b), REG_CALL_BATTLE, "won_vs_enemy", {"vs": int(c)})
 	var n := _n()
 	for side in sides:
 		var l: Array = (side as Array).duplicate()
@@ -484,6 +585,8 @@ static func _answered(st: Dictionary, a: int, b: int, c: int, accept: bool, why:
 		if CState.alive(st, c) and not CState.at_war(st, b, c) and not CState.friendly(st, b, c) \
 				and not _ai().call("tutorial_shield", st, c):
 			_rules().call("declare_war", st, b, c, "called")
+		if CState.at_war(st, a, c):
+			_kept_faith(st, a, b, c)  # (2026-11-02) answering pays
 		return
 	_rules().event(st, {"k": "call_answered", "from": a, "to": b, "vs": c, "accept": 0, "why": why})
 	_refusal_costs(st, a, b)
@@ -492,6 +595,37 @@ static func _answered(st: Dictionary, a: int, b: int, c: int, accept: bool, why:
 static func _refusal_costs(st: Dictionary, a: int, b: int) -> void:
 	add_regard(st, a, b, REG_CALL_REFUSED, "call_refused")
 	add_repute(st, b, REP_CALL_REFUSED, "call_refused")
+
+
+## (2026-11-02) The allies a (index order) whose call to their war on c is
+## still open for b (a "called" record: the window is CALL_WAIT turns).
+static func open_calls(st: Dictionary, b: int, c: int) -> Array:
+	var out: Array = []
+	for e in st.get("called", []):
+		if int(e[1]) == b and int(e[2]) == c and not out.has(int(e[0])):
+			out.append(int(e[0]))
+	out.sort()
+	return out
+
+
+## (2026-11-02) b's war order on c while a call against c is open (the
+## proposal may have lapsed after its turn): the war answers every open
+## call (why "called": no unprovoked-war repute) and each counts as kept.
+## Returns false when no call is open (the order is an ordinary war).
+static func war_answers_call(st: Dictionary, b: int, c: int) -> bool:
+	if not on(st):
+		return false
+	var callers := open_calls(st, b, c)
+	if callers.is_empty():
+		return false
+	var keep: Array = []
+	for p in st["proposals"]:
+		if not (str(p["what"]) == "call" and int(p["to"]) == b and int(p.get("vs", -1)) == c):
+			keep.append(p)
+	st["proposals"] = keep
+	for a in callers:
+		_answered(st, int(a), b, c, true, "")
+	return true
 
 
 static func _drop_called(st: Dictionary, a: int, b: int, c: int) -> void:
@@ -693,6 +827,7 @@ static func end_turn(st: Dictionary) -> void:
 			_refusal_costs(st, a, b)
 			if not CState.is_human(st, a):
 				leave_now(st, a, b, "sat_out")
+	_prune_answered(st)  # (2026-11-02) calls kept whose war or alliance is over
 	fade(st)
 	# Trespass.
 	var cnt := PackedInt32Array()

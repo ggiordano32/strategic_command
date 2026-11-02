@@ -507,7 +507,7 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 			for fs in c["factions"]:
 				(fs as Dictionary).erase("mem")
 			_sight().call("update_memory", c)
-		for k in ["repute", "regard", "gift", "passage", "fought", "regard_log", "aleaving", "called"]:
+		for k in ["repute", "regard", "gift", "passage", "fought", "regard_log", "aleaving", "called", "answered"]:
 			c.erase(k)
 		(c["settings"] as Dictionary).erase("ai_alliances")
 	if v < 9:
