@@ -75,6 +75,7 @@ const CSea := preload("res://campaign/csea.gd")
 const CAIFleet := preload("res://campaign/cai_fleet.gd")
 const CTown := preload("res://campaign/ctown.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
+const SeaScreen := preload("res://game/campaign/sea_screen.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const CDip := preload("res://campaign/cdip.gd")
 const Tutorial := preload("res://game/campaign/tutorial.gd")
@@ -6258,6 +6259,50 @@ func _pl_setup(humans: Array, mk_ships: Array, troops_aboard: bool = false) -> A
 	return [st, mfl, tfl]
 
 
+## (2026-11-05) The defender's choice at a contested landing: fight at sea (the checks above) or stand off.
+func _stand_off_checks(st: Dictionary, b: Dictionary, mid: int, tid: int, army_id: int, pan) -> void:
+	var mk := _f("miskito")
+	var tf := _f("tierra_firme")
+	var bf := _r("bluefields")
+	_check(CFleet.can_stand_off(st, b) and SeaScreen.stand_off_for(st, b, mk) and not SeaScreen.stand_off_for(st, b, tf)
+		and (b.get("dock", []) as Array) == [[mid, bf]],
+		"stand off: the human defender of a contested landing may stand off (the attacker may not); the port it cast off from is kept (%s)" % str(b.get("dock", [])))
+	var line := SeaScreen.landing_line(st, b, true)
+	_check(line.contains("landing") and line.contains("Stand off") and line.contains("Fight at sea"), "stand off: the card's line names the choices (%s)" % line)
+	var ships_before: Array = (CFleet.fleet(st, mid)["ships"] as Array).duplicate(true)
+	var ns := int(st["stats"].get("sea_battles", 0))
+	var so := CTurn.apply_battle(st, int(b["id"]), {"mode": CFleet.STAND_OFF})
+	var la := CState.army(so, army_id)
+	var hows: Array = []
+	for e in so["events"]:
+		if str(e["k"]) == "landing_contested":
+			hows.append(str(e.get("how", "")))
+	var mfl := CFleet.fleet(so, mid)
+	_check(not la.is_empty() and CGrid.region(CState.cell(la)) == bf and int(la["moved"]) == 0 and (CFleet.fleet(so, tid)["carry"] as Array).is_empty()
+		and not _pl_event(so, "landed").is_empty() and _pl_event(so, "sea_battle").is_empty() and int(so["stats"].get("sea_battles", 0)) == ns
+		and hows == ["pending", "stood_off"] and (so["battles"] as Array).is_empty(),
+		"stand off: no sea battle, the troops land at once (free to march next turn), event stood_off (events %s)" % str(hows))
+	_check(CFleet.docked(mfl) == bf and not mfl.has("busy") and (mfl["ships"] as Array) == ships_before and not CFleet.fleet(so, tid).has("busy"),
+		"stand off: the defender's fleet lies in port again, unhurt; neither fleet busy")
+	var txt: String = pan.event_text(_pl_event_how(so, "stood_off"), mk)
+	_check(txt.contains("stood off") and txt.contains("unopposed"), "stand off: the report line (%s)" % txt)
+	# A stand-off on a battle that carries no landing, or with no human defender, is not one: the formula decides.
+	var plain := (b as Dictionary).duplicate(true)
+	plain.erase("land")
+	_check(not CFleet.can_stand_off(st, plain), "stand off: a sea battle without a landing cannot be stood off")
+	var st2 := CState.copy(st)
+	st2["humans"] = []
+	var b2 := CState.battle(st2, int(b["id"]))
+	_check(not CFleet.can_stand_off(st2, b2), "stand off: only a human defender chooses (an AI's choice is the sortie odds)")
+
+
+func _pl_event_how(st: Dictionary, how: String) -> Dictionary:
+	for e in st["events"]:
+		if str(e["k"]) == "landing_contested" and str(e.get("how", "")) == how:
+			return e
+	return {}
+
+
 func _pl_event(st: Dictionary, kind: String) -> Dictionary:
 	for e in st["events"]:
 		if str(e["k"]) == kind:
@@ -6307,6 +6352,7 @@ func _port_landing() -> void:
 		if str(e["k"]) == "sea_battle":
 			auto_won = int(e["won"]) == 0
 	_check(auto_landed == auto_won, "port landing: auto-resolved, the troops land exactly when the landing side won (won %s)" % str(auto_won))
+	_stand_off_checks(st, b, mid, tid, army_id, pan)
 	# 2. An AI defender: a strong docked fleet comes out (resolved at once), a weak one stays behind the mole.
 	var sa: Array = _pl_setup([], ["frigate", "frigate", "frigate", "frigate", "frigate"])
 	var sta: Dictionary = sa[0]

@@ -15,6 +15,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const SeaScreen := preload("res://game/campaign/sea_screen.gd")
 const NetScript := preload("res://game/net/net.gd")
 
 var s  # the campaign screen
@@ -477,6 +478,8 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			if not wanting.is_empty():
 				tb.add_theme_color_override("font_color", Kit.COL_GOLD)
 				h.add_child(tb)
+		if SeaScreen.stand_off_for(st, b, oc.f):
+			h.add_child(SeaScreen.stand_off_button(s, bid))  # (2026-11-05) decline the contested landing
 		var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
 		ab.name = "auto_%d" % bid
 		h.add_child(ab)

@@ -3271,3 +3271,60 @@ the scenarios `west_harbour_assault` and `tayasal` (`sim/scenarios.gd` `harbour_
 
 Open: a landing into a
 breach or onto the mole is not modelled; routers afloat follow no flow field over water (they head for their edge).
+
+### A fleet at the shore (design and cost, 2026-11-05; not built)
+
+The third choice at a contested landing (campaign_rules.md "The defender's choice at a landing: fight at sea, stand
+off, support the shore"): the fleet's ships lie off the coast in the land battle for the region, their guns firing as
+shore batteries and their crews landing by boat. The brief built it only if it reused the harbour assault's amphibious
+machinery ("Amphibious units and the sea gate (as built)"); it does not, so it stopped after the stand-off. What the
+sim and the campaign have today, read for this:
+
+- **No boats in the land sim.** The harbour assault's canoes are men: an amphibious unit's men stand on `C_WATER`
+  cells at 60 % pace and are drawn as men anywhere (the session scratchpad `shore/harbour_boats_top.png` and
+  `harbour_boats_oblique.png`: the Miskito raiders upright on the sea off the quay, no hull). There is no ship entity,
+  no fixed-position unit, no hull on the water to aim at, and no ship sprite in either battle view (the sea battle's
+  hulls live in `sim/sea_sim.gd` and `game/sea_battle.gd`, a different sim).
+- **Only port towns' battles have the sea.** A settlement battle of a coastal region (`CBattle.city_dict` `coast` 1)
+  has the sea, the shore and (an open West town) the quay (`_find_quay`, `sea_on`); a field battle
+  (`CBattle._build0`, non-settlement) has no water at all, so the "field battle on the beach" has no coast to put a
+  ship on.
+- **No land battle the turn of the landing.** The troops land and may march next turn; the land battle for the region
+  is next turn's siege, assault or interception (or later). A supporting fleet must keep its choice across the turn
+  (a fleet key such as `sh` [region, the turn], dropped when it sails or the region's battle is resolved).
+- **The landing party has no men of its own.** A defender's docked fleet usually carries no troops (the sea sim's deck
+  troops are the armies aboard, `CSeaBattle.build`'s `share = men x cap / capacity`); its men are the ships' crews
+  (frigate 200, sloop 60, piragua 60, war canoe 40), which the campaign keeps as a crew % per ship.
+
+The design, if the owner wants it built (settlement battles of port towns only in a first cut):
+
+1. **A ship battery unit** (sim, new): a row trait `ship` on a fixed unit placed on water cells off the quay or the
+   shore by the side's zone (`place_rule`: water as for `amphib`), which never moves (the order rule and both AIs
+   refuse moves; its anchor is fixed), shooting with the landed naval guns' numbers (shot 400, range 450 m, reload
+   48 s) a gun pair per 8 of the hull's `guns` (frigate 30 -> 4 guns, sloop 8 -> 1, the canoes 0-2 -> none, so a
+   native fleet supports only by landing), under the artillery scan and the player's attack orders; its "men" the gun
+   crews (4 a gun); silenced when they are down, which the campaign reads as hull and crew damage. Hashed state: the
+   unit as any unit; no new arrays beyond a trait. About 300-500 lines in `sim/battle_sim.gd` (placement, the fixed
+   anchor, the line of fire from the water, the AI scans), with determinism, lockstep and snapshot checks.
+2. **The Land order**: a lockstep order on the ship that releases its landing party, a reserve unit built with the
+   battle (`CBattle._settlement_reserves` already holds reserves that arrive mid-battle), amphibious, entering at the
+   ship's cell and paddling to the quay as the harbour raiders do: European crews as marines (`marines` row, 80 a
+   unit; the men a quarter of the crew, frigate 50, sloop 15, so three ships make one unit), native crews as canoe
+   raiders (`canoe_raiders`, a piragua 15, a war canoe 10). New: the order, the reserve's entry point on water, the
+   button on the ship's card. About 150 lines sim + 100 view.
+3. **The view**: a ship sprite on the water in both views (the sea battle's hull sprites scaled to the land map), the
+   batteries' range ring, the Land button. About 200-300 lines and an art check.
+4. **The campaign**: the choice as the outcome mode "support" (the landing goes ahead as in the stand-off, the fleets
+   keep their place in the port with `sh`); `CBattle.build` adds each supporting fleet's batteries and parties to its
+   side of the next settlement battle of the region; `outcome_from_result` maps the battery's and the party's losses
+   back to the ship's crew and hull; the auto-resolve formula a modest term (each supporting ship's guns x a weight
+   fitted from 8-seed probes, capped at 10 % of the side's strength); the report "Your fleet at X supported the
+   shore: N men landed, M lost, the guns fired". The attacker's transports alike (the AI by a knob). About 300 lines
+   and campaign_test checks; the pins move (the AI uses it).
+
+Cost in all: about two to three agent days, the larger part in the sim and the view (a new unit kind and a hull on the
+water are exactly the pieces the amphibious machinery lacks), then the measure (a town battle with a frigate and two
+sloops, and a native piragua and two war canoes, against an AI landing of 8-12 units) and the campaign runs. A smaller
+alternative: no ships on the map, the support as campaign-only effects (the guns as a bombardment of the besiegers
+before the battle, like the siege's attrition, and the crews as a garrison unit for the battle, raised from the
+crews and paid back after it): a day, no sim change, but nothing to see or command in the battle.

@@ -75,6 +75,7 @@ const UT := preload("res://sim/unit_types.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
 const CDip := preload("res://campaign/cdip.gd")
+const CFleetS := preload("res://campaign/cfleet.gd")
 
 var cs: CampaignScreen
 var frame := 0
@@ -141,7 +142,7 @@ func _initialize() -> void:
 		_gf_dip, _gf_money, _gf_money_check, _gf_buy, _gf_buy_check, _gf_deal_cancel, _gf_deal_cancel_check,
 		_gf_offer, _gf_accept, _gf_accept_check, _gf_accept_undo, _gf_done,
 		_n_open, _n_tap_rome, _n_tap_carthage, _n_tap_greeks, _n_idle, _n_picks, _n_one_team, _n_idle, _n_one_team_check, _n_dropdown, _n_dropdown_check, _n_start, _n_idle, _n_idle, _n_idle, _n_check,
-		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _c3_bar, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _c3_fleet, _dp_run, _j_done, _s_done,
+		_t_setup, _t_dip, _t_stance, _t_propose, _n_idle, _t_incoming, _t_tap_accept, _n_idle, _t_accept, _t_leave, _n_idle, _t_leave_dialog, _n_idle, _t_leave_planned, _t_notice, _t_text, _t_done, _f_fog, _f_fog2, _c3_bar, _j_setup, _j_adjacent, _j_far, _jm_run, _j_lanes, _j_dock, _j_barfit, _j_ship, _j_board, _c3_fleet, _dp_run, _so_run, _j_done, _s_done,
 	]
 
 
@@ -2829,6 +2830,112 @@ func _dp_run() -> void:
 	if DisplayServer.get_name() == "headless":
 		root.size = root_size
 	Panels.dip_open_all = true
+	hold = false
+
+
+## (2026-11-05) The defender's choice at a contested landing: a human Miskito's fleet docked at Bluefields, a Tierra
+## Firme transport landing beside it: the pending sea battle's card offers Stand off, Auto-resolve and Fight (at the
+## phone size 393 x 851 too, the buttons inside the card); a tap on Stand off lands the troops with no battle and the
+## Miskito fleet back in port. --shot-landing=DIR saves the card at 393 x 851 as DIR/landing_choice.png.
+func _so_run() -> void:
+	hold = true
+	cs.queue_free()
+	await process_frame
+	CData.use_pack("west")
+	var mk := CData.faction_index("miskito")
+	var tf := CData.faction_index("tierra_firme")
+	var bf := CData.region_index("bluefields")
+	var pb := CData.region_index("portobelo")
+	var st := CState.new_campaign("Landing", 7, [mk], {}, [], "west")
+	for g in CState.nf():
+		for h in CState.nf():
+			if g != h:
+				CState.set_dip(st, g, h, CState.PEACE)
+	CState.set_dip(st, mk, tf, CState.WAR)
+	st["fleets"] = []
+	var ships: Array = []
+	for k in ["frigate", "sloop", "sloop"]:
+		ships.append({"t": k, "h": 100, "c": 100})
+	var mfl := CFleetS._new_fleet(st, mk, CFleetS.dock(bf), ships)
+	CFleetS.dock_at(mfl, bf)
+	var tships: Array = []
+	for k in ["galleon", "galleon", "frigate"]:
+		tships.append({"t": k, "h": 100, "c": 100})
+	var tfl := CFleetS._new_fleet(st, tf, CFleetS.dock(pb), tships)
+	var army: Dictionary = {}
+	for a in st["armies"]:
+		if int(a["f"]) == tf:
+			army = a
+			break
+	st["armies"].erase(army)
+	(tfl["carry"] as Array).append(army)
+	CFleetS.execute_moves(st, [[int(tfl["id"]), CFleetS.beach(bf), tf, 0, -1]])
+	if not (st["battles"] as Array).is_empty():
+		st["phase"] = "battles"
+	cs = CampaignScreen.new()
+	cs.no_bar = true
+	cs.open({"state": st, "session": {"subs": [], "plans": {}, "seen": {}}}, "input_test_landing")
+	root.add_child(cs)
+	_key_off()
+	for k in 3:
+		await process_frame
+	cs.close_dialog()
+	cs.cover.visible = false
+	var win := root.content_scale_size
+	var root_size := root.size
+	var b: Dictionary = cs.st["battles"][0] if not (cs.st["battles"] as Array).is_empty() else {}
+	_check(not b.is_empty() and b.has("land"), "landing choice: the landing at Bluefields is a pending sea battle carrying the landing")
+	var shot_dir := ""
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shot-landing="):
+			shot_dir = a.get_slice("=", 1)
+	for vp in [Vector2i(393, 851), Vector2i(1280, 720)]:
+		root.content_scale_size = vp
+		root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_KEEP
+		if DisplayServer.get_name() == "headless":
+			root.size = vp
+		for k in 3:
+			await process_frame
+		cs.close_dialog()
+		cs.panels.show_battles()
+		for k in 4:
+			await process_frame
+		var sb := _button("standoff_")
+		var ab := _button("auto_")
+		var fb := _button("fight_")
+		_check(sb != null and ab != null and fb != null, "landing choice (%dx%d): the card offers Stand off, Auto-resolve and Fight" % [vp.x, vp.y])
+		var card = cs.dialog_box.find_child("battle_screen", true, false)
+		if sb != null and fb != null and card != null:
+			var cr: Rect2 = (card as Control).get_global_rect()
+			_check(cr.encloses(sb.get_global_rect()) and cr.encloses(fb.get_global_rect()),
+				"landing choice (%dx%d): the three buttons lie inside the card" % [vp.x, vp.y])
+		_check(_texts(cs.dialog_box).contains("Stand off: your ships stay in port"), "landing choice (%dx%d): the card says what each choice does" % [vp.x, vp.y])
+		if shot_dir != "" and vp.x == 393 and sb != null:
+			var sp := sb.get_parent()
+			while sp != null and not sp is ScrollContainer:
+				sp = sp.get_parent()
+			if sp != null:
+				(sp as ScrollContainer).ensure_control_visible(sb)
+			for k in 3:
+				await process_frame
+			await RenderingServer.frame_post_draw
+			root.get_texture().get_image().save_png(shot_dir.path_join("landing_choice.png"))
+	_tap_button("standoff_", "landing choice: tap Stand off")
+	for k in 6:
+		await process_frame
+	var st2: Dictionary = cs.st
+	var landed := not CState.army(st2, int(army["id"])).is_empty()
+	_check((st2["battles"] as Array).is_empty() and landed and CFleetS.docked(CFleetS.fleet(st2, int(mfl["id"]))) == bf,
+		"landing choice: Stand off applied: no battle, the troops ashore, the Miskito fleet back in port")
+	_check(_texts(cs.dialog_box).contains("stood off"), "landing choice: the result dialog reports the stand-off")
+	if shot_dir != "":
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png(shot_dir.path_join("landing_standoff_result.png"))
+	cs.close_dialog()
+	root.content_scale_size = win
+	root.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND  # (project.godot)
+	if DisplayServer.get_name() == "headless":
+		root.size = root_size
 	hold = false
 
 

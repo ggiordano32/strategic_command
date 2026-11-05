@@ -116,6 +116,9 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var lead: Array = snap["lead"]
 	info.add_child(Kit.odds_view(CBattle.with_shown(CBattle.battle_odds(st, b)), 0 if human_att else 1, [_names([lead[0]]), _names([lead[1]])],
 		[CData.faction_color(int(lead[0])), CData.faction_color(int(lead[1]))], "Balance of power (the fleets' guns, hulls and crews):"))
+	var standoff := stand_off_for(st, b, int(s.f))
+	if b.has("land"):
+		info.add_child(Kit.label(landing_line(st, b, standoff), Kit.FONT_SMALL, Kit.COL_GOLD, true))
 	var status := Kit.vbox(4)
 	status.name = "battle_status"
 	info.add_child(status)
@@ -123,6 +126,8 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	h.name = "battle_buttons"
 	h.alignment = BoxContainer.ALIGNMENT_END
 	var bid := int(b["id"])
+	if standoff:
+		h.add_child(stand_off_button(s, bid))
 	var ab := Kit.icon_button("Auto-resolve", "end_turn", func(): s.auto_resolve(bid), 130)
 	ab.name = "auto_%d" % bid
 	h.add_child(ab)
@@ -132,6 +137,40 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	info.add_child(h)
 	v.add_child(_sides_view(snap, {}, wide))
 	return p
+
+
+## (2026-11-05) Viewer f may decline the contested landing of pending sea
+## battle b (CFleet.can_stand_off, f on the defending side).
+static func stand_off_for(st: Dictionary, b: Dictionary, f: int) -> bool:
+	return f >= 0 and CFleet.can_stand_off(st, b) and CRules.battle_side_of(st, b, f) == 1
+
+
+## (2026-11-05) The landing's line on a contested landing's card: who lands
+## where, and the defender's choices.
+static func landing_line(st: Dictionary, b: Dictionary, standoff: bool) -> String:
+	var ld: Array = b["land"]
+	var lr := CGrid.region(int(ld[1]))
+	var rn := str(CData.REGIONS[lr]["city"]) if lr >= 0 else "the coast"
+	var who := CData.faction_name(int(b["att_f"]))
+	var fl := CFleet.fleet(st, int(ld[0]))
+	var n := 0
+	if not fl.is_empty():
+		for a in fl["carry"]:
+			if int(ld[2]) < 0 or int(a["id"]) == int(ld[2]):
+				n += CState.unit_count(a)
+	var line := "%s is landing %d unit%s at %s." % [who, n, "" if n == 1 else "s", rn]
+	if standoff:
+		line += " Fight at sea (Fight or Auto-resolve): the troops land only if their ships win. Stand off: your ships stay in port, nobody is hurt, and the troops land unopposed."
+	else:
+		line += " The ships in port came out: the troops land only if their ships win."
+	return line
+
+
+static func stand_off_button(s, bid: int) -> Button:
+	var sb := Kit.button("Stand off", func(): s.stand_off(bid), 120)
+	sb.name = "standoff_%d" % bid
+	Kit.tip(sb, "Stand off", "Let the landing go: your ships stay in port and the troops come ashore unopposed. No sea battle.")
+	return sb
 
 
 static func _sides_view(snap: Dictionary, fates: Dictionary, wide: bool) -> Control:

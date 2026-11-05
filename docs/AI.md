@@ -4454,3 +4454,15 @@ troops land (and, if the town then falls, the fleets put to sea). No new knob: t
 deliberate mistake; Average 110; Skilled 100). The landing side's AI is unchanged: its landings already skip a beach
 whose approach lies in an enemy zone (`_approach`) and a route that fleets at war, docked ones included, outgun beyond
 `FERRY_ODDS_PCT` (`_ferry_safe`).
+
+## 58. The defender's choice at a landing (2026-11-05)
+
+The rule is docs/design/campaign_rules.md "The defender's choice at a landing: fight at sea, stand off, support the
+shore (as built, 2026-11-05; the stand-off only)": a human defender of a contested landing may now stand off (no sea
+battle, the troops land, the ships stay in port). The AI defender's choice was already this one and is unchanged: note
+57's `CAIFleet.fights_landing` at the sortie's odds (`SORTIE_ODDS_PCT`: Easy 0 never fights, Average 110, Skilled 100);
+below them the fleet stays behind the mole, which is the stand-off. No new knob, no change to any AI decision, so the
+pins and goldens do not move. The third choice, support the shore, is designed and not built (battle_sim.md "A fleet
+at the shore (design and cost, 2026-11-05; not built)"); when it is, the AI's knobs it would add: the defender's
+support when its fleet is below the sortie's odds but has guns or crews to give, the defender's crews landing when the
+walls are stormed or the guns have no targets, and the attacker's transports landing their crews by the assault's odds.

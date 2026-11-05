@@ -3068,7 +3068,8 @@ func show_battle_result(events_before: int, outcome: Dictionary) -> void:
 			box.add_child(Kit.label(t2, Kit.FONT, Color.WHITE, true))
 		if int(outcome.get("forfeit", 0)) != 0:
 			box.add_child(Kit.label("You left the battle: your army withdrew (a defeat).", Kit.FONT_SMALL, Kit.COL_DIM, true))
-		s.show_dialog("Battle result", box, [["Continue", func(): s._next_step()]], 560)
+		var head := "The landing" if str(outcome.get("mode", "")) == "standoff" else "Battle result"  # (2026-11-05) a stand-off: no battle
+		s.show_dialog(head, box, [["Continue", func(): s._next_step()]], 560)
 		return
 	s.show_dialog("Battle result", BattleScreen.result(s, snap, outcome, st, texts), [["Continue", func(): s._next_step()]], 900, true)
 
@@ -3315,7 +3316,7 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			var hw := str(e.get("how", ""))
 			if hw == "pending":
 				return Kit.COL_GOLD
-			return Kit.COL_GOOD if mine == (hw == "won" or hw == "withdrew") else Kit.COL_BAD
+			return Kit.COL_GOOD if mine == (hw == "won" or hw == "withdrew" or hw == "stood_off") else Kit.COL_BAD
 		"flota", "flota_arrived", "marque", "marque_end", "blockade_end", "galleon_taken", "galleon_lost", "flota_held", "captain_rise", "captain_fame":
 			return Kit.COL_GOLD
 		"storm", "storm_hit", "storm_end":
@@ -3675,6 +3676,8 @@ func landing_contested_text(e: Dictionary, _f: int) -> String:
 	match str(e.get("how", "")):
 		"withdrew":
 			return "%s's ships in port at %s stayed behind the mole: %s landed unopposed." % [dfn, rn, who]
+		"stood_off":
+			return "%s's ships at %s stood off and let the landing go: %s put the troops ashore unopposed." % [dfn, rn, who]
 		"pending":
 			return "%s tried to land at %s; %s's ships came out to meet them: the landing waits on the sea battle." % [who, rn, dfn]
 		"won":

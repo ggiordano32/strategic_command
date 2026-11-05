@@ -67,6 +67,9 @@ const INF := 1 << 30
 ## A fleet's zone (cells, the circle of CGrid.within): an enemy fleet at war
 ## stepping into it fights it; paths avoid it unless it is the target.
 const FLEET_ZONE := 2
+## (2026-11-05) The outcome mode of a contested landing's pending sea battle
+## the defender declined (can_stand_off, apply_sea).
+const STAND_OFF := "standoff"
 ## A harbour (the coast cell ships are built and boarded at) is at most this
 ## far (Chebyshev) from the settlement (2026-10-23: 2, was 4, which made inland
 ## towns ports); a pack's ships script may set its own HARBOUR_MAX and a
@@ -1044,7 +1047,9 @@ static func _contest(st: Dictionary, fl: Dictionary, dfn: Array, lc: int, id: in
 		ev["how"] = "withdrew"
 		_rules().event(st, ev)
 		return true
+	var docks: Array = []  # (2026-11-05) [fleet id, the port it lay in], for a stand-off (apply_sea)
 	for e in dfn:
+		docks.append([int(e["id"]), docked(e)])
 		e.erase("in")  # (they cast off to meet the landing)
 		e.erase("dk")
 	for e in att + dfn:
@@ -1056,6 +1061,7 @@ static func _contest(st: Dictionary, fl: Dictionary, dfn: Array, lc: int, id: in
 		_pending(st, att, dfn, c)
 		var b: Dictionary = st["battles"].back()
 		b["land"] = [int(fl["id"]), lc, id]
+		b["dock"] = docks
 		ev["how"] = "pending"
 		ev["battle"] = int(b["id"])
 		_rules().event(st, ev)
@@ -1071,7 +1077,7 @@ static func _contest(st: Dictionary, fl: Dictionary, dfn: Array, lc: int, id: in
 ## optional)]): a won battle puts the troops ashore now beside the fleet
 ## (landing_cell; met on the way in, the fleet first sails on to the voyage's
 ## last cell); they may march next turn (the landing's turn is over).
-static func _land_after(st: Dictionary, b: Dictionary, won: bool) -> void:
+static func _land_after(st: Dictionary, b: Dictionary, won: bool, how: String = "") -> void:
 	var ld: Array = b["land"]
 	var fl := fleet(st, int(ld[0]))
 	if fl.is_empty() or fl.has("busy") or (fl["carry"] as Array).is_empty():
@@ -1082,7 +1088,7 @@ static func _land_after(st: Dictionary, b: Dictionary, won: bool) -> void:
 	var c := cell(fl)
 	var lc := landing_cell(st, f, fl, int(ld[1]))
 	var ev := {"k": "landing_contested", "f": f, "r": CGrid.region(int(ld[1])), "fleet": int(fl["id"]), "x": CGrid.cx(c), "y": CGrid.cy(c),
-		"how": "won" if won else "lost"}
+		"how": how if how != "" else ("won" if won else "lost")}
 	if int(b.get("def_f", -1)) >= 0:
 		ev["to"] = int(b["def_f"])
 	_rules().event(st, ev)
@@ -1936,12 +1942,45 @@ static func apply_sea(st: Dictionary, b: Dictionary, outcome: Dictionary) -> voi
 			_land_after(st, b, true)  # (2026-11-02) nobody is left to stop the landing
 		return
 	var mode := str(outcome.get("mode", "formula"))
+	if mode == STAND_OFF and can_stand_off(st, b):
+		_stand_off(st, b, dfn)
+		return
 	if mode != "fought" and mode != "forfeit":
 		resolve(st, att, dfn, c)
 	else:
 		_apply_fought(st, att, dfn, c, outcome)
 	if b.has("land"):
 		_land_after(st, b, _att_won)  # (2026-11-02) a contested landing: ashore if the landing side won
+
+
+## (2026-11-05) The defender's choice at a contested landing (the pending
+## sea battle carrying "land"): fight at sea (the battle, fought or
+## auto-resolved) or stand off: an outcome of mode STAND_OFF. True when
+## pending battle b carries a landing and a human faction holds a fleet on
+## the defending side (an AI defender chose already: CAIFleet.fights_landing).
+static func can_stand_off(st: Dictionary, b: Dictionary) -> bool:
+	if not b.has("sea") or not b.has("land"):
+		return false
+	for id in b.get("df", []):
+		var fl := fleet(st, int(id))
+		if not fl.is_empty() and CState.is_human(st, int(fl["f"])):
+			return true
+	return false
+
+
+## (2026-11-05) A stand-off: no battle. The defending fleets that cast off
+## from the port (b["dock"]) lie in it again where they still may dock (a
+## guard met on the way in stays where it is); the troops land as after a
+## won battle (_land_after, how "stood_off"); nobody is hurt, no sea battle
+## is counted.
+static func _stand_off(st: Dictionary, b: Dictionary, dfn: Array) -> void:
+	for row in b.get("dock", []):
+		var e := fleet(st, int(row[0]))
+		var r := int(row[1])
+		if e.is_empty() or r < 0 or not dfn.has(e) or not can_dock(st, int(e["f"]), r):
+			continue
+		e["in"] = r
+	_land_after(st, b, true, "stood_off")
 
 
 static func _apply_fought(st: Dictionary, att: Array, dfn: Array, c: int, outcome: Dictionary) -> void:

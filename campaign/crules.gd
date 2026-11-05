@@ -2121,9 +2121,11 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	if b.has("sea"):
 		# (N3a) A sea battle: the fleets (campaign/cfleet.gd apply_sea).
 		var sfacs := battle_factions(st, b)
+		var stood := str(outcome.get("mode", "")) == CFleet.STAND_OFF and CFleet.can_stand_off(st, b)  # (2026-11-05) no battle
 		st["battles"].erase(b)
 		CFleet.apply_sea(st, b, outcome)
-		CDip.on_battle(st, sfacs, 0 if int(outcome.get("winner", 1)) == 0 else 1)  # (version 10) fought side by side
+		if not stood:
+			CDip.on_battle(st, sfacs, 0 if int(outcome.get("winner", 1)) == 0 else 1)  # (version 10) fought side by side
 		check_eliminations(st)
 		CChars.sweep(st)
 		check_victory(st)

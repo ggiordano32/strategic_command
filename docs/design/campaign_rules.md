@@ -1817,3 +1817,40 @@ and dropped out of sight again with the town, whose coast had been the player's 
   324 towns), no longer get their galleons, and the Spanish fleets that escape carry troops back (the Itza lost 152
   -> 197 towns, 62 of them now by troops landed from the sea). Not tuned: the rule is the decided design; open for the
   main session.
+
+### The defender's choice at a landing: fight at sea, stand off, support the shore (as built, 2026-11-05; the stand-off only)
+
+The owner, after the contested landing: "Yeah we should figure out a decline option, but we should also allow the ships
+to either fire on the land, or land their boat to contribute warriors to the fight." The main session's design gives
+the defender three choices on the pending contested landing: fight at sea (the sea battle of 2026-11-02), stand off
+(decline: no battle, the landing goes ahead) and support the shore (the landing goes ahead and the fleet takes part in
+the land battle for the region: its guns as shore batteries, its crews landing by boat). Built: the first two. The
+third needs more than the harbour assault's amphibious machinery, so the build stopped there by the brief's rule; its
+design and cost are battle_sim.md "A fleet at the shore (design and cost, 2026-11-05; not built)".
+
+- **Stand off** (`campaign/cfleet.gd`). A pending sea battle that carries a landing (`"land"`) may be stood off when a
+  human faction holds a fleet on its defending side (`CFleet.can_stand_off`; an AI defender chose already when the
+  landing met it: `CAIFleet.fights_landing`, docs/AI.md 57 and 58). The choice is the battle's outcome: mode
+  `CFleet.STAND_OFF` ("standoff"), applied by `CTurn.apply_battle` as any outcome (online: claimed as an auto-resolve
+  and uploaded, so the co-op peers and the server's compare-and-swap see one input). `apply_sea` then: no sea battle
+  (not counted in `stats.sea_battles`, no `sea_battle` event, no diplomatic "fought side by side"), nobody hurt; the
+  fleets that cast off from the port to meet the landing lie in it again (`_contest` keeps them on the battle record,
+  `"dock"` [[fleet, region]], restored where the fleet may still dock there; a guard met at sea on the way in stays
+  where it is); the troops land beside the transport as after a won battle (`_land_after`, free to march next turn),
+  the fleet seen by the region's owner as any landing. A stand-off outcome on a battle that is not a landing, or with
+  no human defender, is ignored (the formula decides, as for any outcome mode but "fought" / "forfeit").
+- **The dialog** (`game/campaign/sea_screen.gd`, the pending battle card, and `online_ui.gd`'s card): a contested
+  landing's card says "Tierra Firme is landing 4 units at Bluefields." and, to the defender, "Fight at sea (Fight or
+  Auto-resolve): the troops land only if their ships win. Stand off: your ships stay in port, nobody is hurt, and the
+  troops land unopposed."; a Stand off button stands before Auto-resolve and Fight (the attacker sees the line without
+  the choice). The result is the plain result dialog with the report lines.
+- **The report.** `landing_contested` with how `stood_off`: "Miskito's ships at Bluefields Lagoon stood off and let the
+  landing go: Tierra Firme put the troops ashore unopposed.", then the usual `landed` line.
+- **The AI.** Its choice is unchanged: the sortie's odds (`SORTIE_ODDS_PCT`) decide fight or stay behind the mole,
+  which is the stand-off (docs/AI.md 58). No new knob.
+- **State.** New optional battle key `"dock"`, the outcome mode and the event's how; no `CState.VERSION` bump; the rules
+  hash moves. AI-only games never meet a pending battle, so `campaign_sim`, the pins, ROME_20 and the AI goldens are
+  unchanged.
+
+Open: support the shore (designed, not built); the attacker's transports supporting the shore; the stand-off for a
+human attacker (the attacker cannot decline the sea battle; he may withdraw only by forfeiting it).

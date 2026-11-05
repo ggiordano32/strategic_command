@@ -3085,6 +3085,24 @@ func auto_resolve(bid: int) -> void:
 	_resolver.finished.connect(_on_auto_done)
 
 
+## (2026-11-05) The defender declines a contested landing (sea_screen.gd's
+## Stand off): the pending sea battle is applied with the outcome mode
+## CFleet.STAND_OFF (no battle; the troops land, the ships stay in port).
+func stand_off(bid: int) -> void:
+	var b := CState.battle(st, bid)
+	if b.is_empty() or _resolver != null or not CFleet.can_stand_off(st, b):
+		return
+	if online != null and not await onl.claim(bid, "auto"):
+		return
+	b = CState.battle(st, bid)
+	if b.is_empty() or not CFleet.can_stand_off(st, b):
+		return
+	_battle_snap = {}
+	_battle_id = bid
+	_t("campaign_battle", {"mode": "standoff", "turn": int(st["turn"]), "region": int(b.get("r", -1)), "sea": 1})
+	_apply_battle(bid, {"mode": CFleet.STAND_OFF})
+
+
 func _process(delta: float) -> void:
 	var t0 := ZProf.begin()
 	_tick(delta)
