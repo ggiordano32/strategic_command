@@ -1641,3 +1641,27 @@ gate) in the oblique view before and after, the top view before and after identi
 pixel-identical (`--bare`: no soldiers, no HUD). **Open:** the mesh gate reads lighter and plainer than the sprite (the sprite was
 a dark baked render); a town with one aligned and one angled gate mixes the two looks; the round and log towers beside an angled gate are
 symmetric and unchanged; the owner's eye on the jambs, the lintel height and the door; no phone look.
+
+### (2026-11-05) The ship on the board (as built, view only)
+
+A fleet supporting the shore lies on the water of a port town's battle (battle_sim.md "A fleet at the shore (as built,
+2026-11-05)"); `game/ship_layer.gd` draws each hull under the men (added after the field works, before the trays and
+the soldiers, lifted by the board like them: `BoardView.lift_node`), so her gun crews stand on her deck and her guns
+(the engines' own sprites, the landed naval guns' set) on top of it. **Which route:** the sea screen's hull drawing,
+placed on the battle board, not a mesh piece: the top view draws `game/sea_battle.gd` `_draw_ship`'s hull outline
+(seven points; a canoe's pointed both ends) flat at the sim's anchor and keel (`sh_x` / `sh_y` / `sh_head`, `sh_len` /
+`sh_beam` from the sea sim's row): the waterline's foam, the hull, the deck, the rail in the owner's colour, the
+gunports, the masts with their sails furled on the yards across the hull, the ensign at the stern; the oblique view
+stands the same outline up as a small solid in the siege gear's way (`ShipLayer.Solid` extends `game/siege_gear_ob.gd`:
+drawn in the lifted node's upright groups, `BoardView.up_xf`, with the board's oblique constants): the hull's sides
+(shaded by the key light, the faces turned away left out) and the deck 0.5-2.6 m above the water, gunports along the
+near side, the masts (a miniature's: 0.42 x her length, at most 18 m), two yards a mast braced round 23 degrees so the
+furled sails (a pale roll under each yard) show from the table's side, a pennant at the masthead. A canoe has paddles
+shipped along both sides and no mast; a piragua one mast. A ship whose guns are all silenced is drawn dark and lower,
+her masts but the first shot away to stumps; one out of the fight fades. The colours are her fleet's faction's
+(the scenario's `f`; else her side's); the men aboard and her party wear the same (battle.gd extends `unit_faction`
+over the units the sim adds). Redrawn only when a ship's state changes. The landing party is drawn as the amphibious
+men are (figures standing on the water while they paddle). Shots: the session scratchpad `shore2/` (top and oblique, a
+party coming ashore at the quay). Open: the deck is a flat plank colour (no hatches or boats); the hull does not rock;
+the crew figures stand at water level under a deck drawn 0.5-2.6 m up (a few pixels low in the oblique view); the
+owner's eye on the masts' height and the yards' brace.

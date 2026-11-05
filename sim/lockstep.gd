@@ -176,6 +176,16 @@ func setup(scenario: Dictionary, p_seed: int, home: Array, present: Array, host:
 	for u in n_units:
 		if u < mini(home.size(), n_scn):
 			u_home[u] = int(home[u])
+		elif u >= n_scn and sim.shp_on != 0 and sim.u_ship[u] >= 0:
+			# (2026-11-05) A ship's hull or landing party: the controller the scenario gave her ("ctl"), else the player
+			# of her side's first scenario unit.
+			var sc_ctl: int = sim.sh_ctl[sim.u_ship[u]]
+			u_home[u] = sc_ctl if sc_ctl >= -1 else -1
+			if sc_ctl < -1:
+				for k in mini(home.size(), n_scn):
+					if sim.u_side[k] == sim.u_side[u]:
+						u_home[u] = int(home[k])
+						break
 		elif u >= n_scn and home.size() > n_scn and sim.is_tower(u):
 			u_home[u] = int(home[n_scn])
 		elif u >= n_scn and sim.u_hand[u] >= 0:

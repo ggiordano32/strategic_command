@@ -25,6 +25,9 @@ extends RefCounted
 ## canoe (1: a native dugout; the
 ## sea sim's own rows say so too: rowed but not a war galley).
 
+## (2026-11-05) Fleets may support the shore (campaign/cfleet.gd "support the shore"; a pack without it: none).
+const SHORE_SUPPORT := 1
+
 const ROWS: Array[Dictionary] = [
 	{"key": "sloop", "name": "Sloop", "cost": 300, "upkeep": 15, "guns": 8, "hull": 30, "crew": 60, "speed": 400,
 		"cap": 1, "coastal": 0, "oars": 0, "yard": 1, "storm": 8,

@@ -2901,15 +2901,23 @@ func _so_run() -> void:
 		for k in 4:
 			await process_frame
 		var sb := _button("standoff_")
+		var pb2 := _button("support_")
 		var ab := _button("auto_")
 		var fb := _button("fight_")
-		_check(sb != null and ab != null and fb != null, "landing choice (%dx%d): the card offers Stand off, Auto-resolve and Fight" % [vp.x, vp.y])
+		_check(sb != null and pb2 != null and ab != null and fb != null,
+			"landing choice (%dx%d): the card offers Stand off, Support the shore, Auto-resolve and Fight" % [vp.x, vp.y])
 		var card = cs.dialog_box.find_child("battle_screen", true, false)
-		if sb != null and fb != null and card != null:
+		if sb != null and fb != null and pb2 != null and card != null:
 			var cr: Rect2 = (card as Control).get_global_rect()
-			_check(cr.encloses(sb.get_global_rect()) and cr.encloses(fb.get_global_rect()),
-				"landing choice (%dx%d): the three buttons lie inside the card" % [vp.x, vp.y])
-		_check(_texts(cs.dialog_box).contains("Stand off: your ships stay in port"), "landing choice (%dx%d): the card says what each choice does" % [vp.x, vp.y])
+			_check(cr.encloses(sb.get_global_rect()) and cr.encloses(fb.get_global_rect()) and cr.encloses(pb2.get_global_rect()),
+				"landing choice (%dx%d): the four buttons lie inside the card" % [vp.x, vp.y])
+			var x_ok := true
+			for bt in [sb, pb2, ab, fb]:
+				var br: Rect2 = (bt as Control).get_global_rect()
+				x_ok = x_ok and br.position.x >= -0.5 and br.end.x <= vp.x + 0.5
+			_check(x_ok and cr.end.x <= vp.x + 0.5, "landing choice (%dx%d): the card and its buttons fit the screen's width (the dialog scrolls down; card %s)" % [vp.x, vp.y, str(cr)])
+		_check(_texts(cs.dialog_box).contains("Stand off: your ships stay in port") and _texts(cs.dialog_box).contains("Support the shore:"),
+			"landing choice (%dx%d): the card says what each choice does" % [vp.x, vp.y])
 		if shot_dir != "" and vp.x == 393 and sb != null:
 			var sp := sb.get_parent()
 			while sp != null and not sp is ScrollContainer:

@@ -262,6 +262,7 @@ const DEFAULTS := {
 	"pistols": 0,   # roles step 2: a brace of this many pistols a man, fired point-blank in his first melee rounds (AB_PISTOL)
 	"grenades": 0,  # roles step 2: the grenade ability's data hook for a row whose missile is not the grenade (the torch raiders' fire pots)
 	"batter": 0,    # native siege (2026-10-29): 1 = the batter ability in its melee form (AB_BATTER: the men strike a gate or a palisade stretch, m_obj a blow)
+	"ship": 0,      # (2026-11-05) a hull lying on the water in a land battle (SHIP_ROWS; BattleSim "ships"): fixed, never boarded
 }
 ## Character kinds (the "char_kind" field; docs/DESIGN.md "Heroes and agents").
 const CK_FOOT := 1      # Champion: foot units' to-hit and steadiness
@@ -2327,6 +2328,59 @@ const WEST_TIERS2: Array[Dictionary] = [
 ]
 
 
+## (2026-11-05, docs/design/battle_sim.md "A fleet at the shore (as built)") A fleet supporting the shore: its hulls
+## lie on the water of a port town's battle (BattleSim "ships", placed by the sim) and its crews may land by boat.
+## Appended after every other row so no earlier index moves; never recruited (line "ship", in no roster or picker;
+## price 0). "ship_guns": a hull's gun deck as fixed engines (the landed naval guns' numbers: a 400 shot, 450 m, 48 s;
+## one engine a gun pair per 8 of the hull's guns, four of the crew at each); "ship_boat": a hull without guns enough
+## for one (the canoes, a pinnace), its hands aboard; "ship_marines": a European crew's landing party (the marines,
+## paddling ashore in the ship's boats: amphibious); a native crew lands as canoe raiders (their own row).
+const SHIP_ROWS: Array[Dictionary] = [
+	{
+		"key": "ship_guns", "role": "guns_field", "line": "ship", "pack": "west", "name": "Ship's Broadside", "short": "Ship",
+		"icon": 29, "sprite": 6, "sprite_set": 25, "engine_set": 36,
+		"what": "A warship lying off the shore",
+		"desc": "A warship anchored off the town with springs on her cables, her broadside run out at the shore: demi-cannon and culverins on the gun deck, four seamen to each. Her roundshot reaches as far as a landed gun's and splinters what it strikes. She cannot move, nobody can board her from the beach, and she fights until enemy guns silence her battery or her gunners are shot down. Her Land order sends a quarter of her crew ashore in the boats.",
+		"good_vs": "Anything standing in the open within reach of the shore: columns on the beach, batteries, the quay.",
+		"weak_vs": "Guns ashore that answer her, men hidden in the streets behind the houses.",
+		"cls": CLS_ART,
+		"fixed": 1, "ship": 1,
+		"attack": 14, "defence": 14, "armour": 3, "shield": 0, "mshield": 0, "damage": 22,
+		"reach": 1024, "mass": 70, "walk": 30, "run": 200, "hp": 75, "cooldown": 12, "morale": 1000,
+		"file_sp": 7 * 1024, "rank_sp": 1229, "turn": 0,
+		"crew": 4, "crew_min": 2,
+		"m_gun": 1, "m_kind": 1,
+		"m_range": 450 * 1024, "m_min": 30 * 1024,
+		"m_damage": 400, "m_ap": 100,
+		"m_ammo": 20, "m_reload": 480,
+		"m_spread": 12, "m_spread0": 500,
+		"m_speed": 30720, "m_arc": 0, "m_apex": 2,
+		"m_pierce": 9, "m_plough": 55 * 1024, "m_fear": 85, "m_obj": 550,
+		"arc": 512, "traverse": 2, "deploy": 1, "e_hp": 1200, "cost": 0, "size": 4,
+		"m_hgain": 80,
+	},
+	{
+		"key": "ship_boat", "role": "line", "line": "ship", "pack": "west", "name": "Ship's Hands", "short": "Hull",
+		"icon": 32, "sprite": 4, "sprite_set": 31,
+		"what": "A vessel lying off the shore",
+		"desc": "A canoe or a small vessel lying off the shore with a few hands aboard, too lightly armed to fire on the land. She cannot move and nobody can board her from the beach; her Land order sends a quarter of her crew ashore.",
+		"good_vs": "Putting men ashore where they are needed.",
+		"weak_vs": "Anything that shoots at her hands.",
+		"cls": CLS_INF,
+		"fixed": 1, "ship": 1,
+		"attack": 10, "defence": 10, "armour": 0, "shield": 0, "mshield": 0, "damage": 20,
+		"reach": 1024, "mass": 65, "walk": 30, "run": 200, "hp": 80, "cooldown": 12, "morale": 1000,
+		"file_sp": 2048, "rank_sp": 2048, "turn": 0,
+		"cost": 0, "size": 4, "files0": 4,
+	},
+	{
+		"copy": "marines", "key": "ship_marines", "line": "ship", "name": "Landing Party", "short": "Landing",
+		"what": "Marines and seamen landed from the boats",
+		"desc": "A quarter of a ship's company sent ashore in the boats: her marines and the best of her seamen, with muskets, cutlasses and boarding pikes. They paddle to the beach or the quay at a crawl and fight as marines once ashore; the men lost are lost to the ship.",
+		"amphib": 1,
+	},
+]
+
 static func wagon_stat(w: int, field: String) -> int:
 	if w < 0 or w >= WAGONS.size():
 		return 0
@@ -2347,9 +2401,14 @@ static var _by_key := {}
 static var TOWER_BOLT: int = BASE.size() + TIERS.size()
 static var TOWER_STONE: int = BASE.size() + TIERS.size() + 1
 ## The Rome rows' count: every row before the West pack's (WEST, WEST_TIERS, FORT_ROWS, WEST_LATE).
-static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size() - WEST_LATE.size() - WEST_TIERS2.size()
+static var ROME_N: int = TYPES.size() - WEST.size() - WEST_TIERS.size() - FORT_ROWS.size() - WEST_LATE.size() - WEST_TIERS2.size() \
+	- SHIP_ROWS.size()
 ## The West fort's gun (slice 2c): the last row but WEST_LATE.
-static var FORT_GUN: int = TYPES.size() - WEST_TIERS2.size() - WEST_LATE.size() - FORT_ROWS.size()
+static var FORT_GUN: int = TYPES.size() - SHIP_ROWS.size() - WEST_TIERS2.size() - WEST_LATE.size() - FORT_ROWS.size()
+## (2026-11-05) A fleet at the shore: the hull rows (SHIP_ROWS, the last rows).
+static var SHIP_GUNS: int = TYPES.size() - SHIP_ROWS.size()
+static var SHIP_BOAT: int = TYPES.size() - SHIP_ROWS.size() + 1
+static var SHIP_MARINES: int = TYPES.size() - SHIP_ROWS.size() + 2
 
 
 static func _build_types() -> Array[Dictionary]:
@@ -2484,6 +2543,20 @@ static func _build_types() -> Array[Dictionary]:
 			b += 1
 		var br: Dictionary = out[b]
 		out.append(_derived(br, b, str(br["line"]), int(br["size"]), t))
+	for sr in SHIP_ROWS:
+		var row: Dictionary = {}
+		if sr.has("copy"):
+			var c := 0
+			while str(out[c]["key"]) != str(sr["copy"]):
+				c += 1
+			row = out[c].duplicate()
+		for k in sr:
+			if k != "copy":
+				row[k] = sr[k]
+		row["base"] = out.size()
+		row["tier"] = 1
+		row["price"] = 0
+		out.append(row)
 	# Roles step 2: skirmishers stand in loose order (at least the javelinmen's
 	# 1.8 x 2.0 m; the line keeps its close files): native bowmen and the
 	# slingers open up, the rest had it already.

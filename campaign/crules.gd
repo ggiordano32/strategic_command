@@ -210,7 +210,7 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _set_stance(st, f, int(o.get("a", -1)), int(o.get("s", 0)))
 		"cancel_move":
 			return _cancel_move(st, f, int(o.get("army", -1)))
-		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle", "fraid", "fblockade", "fdock", "fundock":
+		"ship", "embark", "land", "fmove", "fmerge", "fcancel", "scuttle", "fraid", "fblockade", "fdock", "fundock", "fshore":
 			return CFleet.apply_order(st, f, o)  # fleets (a pack with ships)
 		"sack_policy":
 			return CSea.set_policy(st, f, int(o.get("v", 0)))  # pirates (N2)
@@ -2121,7 +2121,8 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	if b.has("sea"):
 		# (N3a) A sea battle: the fleets (campaign/cfleet.gd apply_sea).
 		var sfacs := battle_factions(st, b)
-		var stood := str(outcome.get("mode", "")) == CFleet.STAND_OFF and CFleet.can_stand_off(st, b)  # (2026-11-05) no battle
+		var smode := str(outcome.get("mode", ""))
+		var stood := (smode == CFleet.STAND_OFF or smode == CFleet.SUPPORT) and CFleet.can_stand_off(st, b)  # (2026-11-05) no battle
 		st["battles"].erase(b)
 		CFleet.apply_sea(st, b, outcome)
 		if not stood:
@@ -2134,6 +2135,7 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		return
 	var r := int(b["r"])
 	var kind := str(b.get("kind", ""))
+	CFleet.apply_shore(st, b, outcome)  # (2026-11-05) the ships that supported the shore: crews lost, hulls battered
 	CChars.track(st)  # (the characters stand where their armies do, before any is lost)
 	# A sally or relief (field battle of a siege): the owner's side is "def".
 	var field := kind == "sally" or kind == "relief"

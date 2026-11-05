@@ -12,6 +12,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const CData := preload("res://campaign/cdata.gd")
 const FM := preload("res://sim/fixed_math.gd")
+const SeaTypes := preload("res://sim/sea_types.gd")
 
 const FACE_UP := 768    # -y
 const FACE_DOWN := 256  # +y
@@ -1993,4 +1994,64 @@ static func quay_raid(ai_sides: Array = [0, 1]) -> Dictionary:
 			sc["units"][k]["facing"] = FACE_RIGHT
 			sc["units"][k]["files"] = 10
 			q += 1
+	return sc
+
+
+# ------------------------------------------------- a fleet at the shore ---
+# docs/design/battle_sim.md "A fleet at the shore (as built, 2026-11-05)".
+
+## A gun pair (one ship's-gun engine) per this many of a hull's guns, rounded (a frigate's 30 -> 4, a sloop's 8 -> 1,
+## a canoe's 0-2 -> none).
+const SHIP_GUNS_PER := 8
+## The landing party: this % of the ship's crew (a quarter).
+const SHIP_PARTY_PCT := 25
+## A hull with no guns enough for one keeps this many hands aboard.
+const SHIP_HANDS := 4
+
+
+## A scenario "ships" entry (BattleSim._ship_units) for a hull of campaign ship key `key` on sim side `side`: `guns`
+## the row's guns, `crew` the men aboard (the row's crew x the ship's crew %), hull_pct her hull %, canoe 1 for a
+## native vessel (her party lands as canoe raiders; else as a landing party of marines). The gun deck counts the guns
+## left (guns x hull %); the size is the sea sim's row's (sim/sea_types.gd), a frigate's when the key is unknown.
+static func ship_entry(side: int, key: String, guns: int, crew: int, hull_pct: int, canoe: int) -> Dictionary:
+	var st := SeaTypes.index_of(key)
+	var ln := SeaTypes.stat(st, "len") if st >= 0 else 30
+	var bm := SeaTypes.stat(st, "beam") if st >= 0 else 8
+	var g := (guns * clampi(hull_pct, 0, 100) / 100 + SHIP_GUNS_PER / 2) / SHIP_GUNS_PER
+	var men := maxi(crew, 0) * SHIP_PARTY_PCT / 100
+	return {"side": side, "key": key, "guns": g, "hands": mini(SHIP_HANDS, maxi(crew - men, 1)), "men": men,
+		"ptype": UT.index_of("canoe_raiders") if canoe != 0 else UT.SHIP_MARINES, "len": ln, "beam": bm}
+
+
+## The fleets of the shore probes (tests/shore_probe.gd, tests/shore_test.gd): ship key, guns, crew, canoe.
+const SHORE_NAVY := [["frigate", 30, 200, 0], ["sloop", 8, 60, 0], ["sloop", 8, 60, 0]]
+const SHORE_NATIVE := [["piragua", 1, 60, 1], ["war_canoe", 2, 40, 1], ["war_canoe", 2, 40, 1]]
+
+
+## A port town's battle with a fleet at the shore: west_port's map (a West port at walls 1, an open town beside its
+## harbour fort and quay; or `walls`), the West attackers (WEST_ATT: ten companies, about 750 men) landed and
+## marching on it against the garrison WEST_DEF; def_fleet / att_fleet 0 none, 1 SHORE_NAVY, 2 SHORE_NATIVE for
+## the defenders / the attackers. Both sides AI unless ai_sides says otherwise.
+static func shore_battle(def_fleet: int, att_fleet: int = 0, ai_sides: Array = [0, 1], walls: int = 1) -> Dictionary:
+	var att: Array = []
+	for e in WEST_ATT:
+		att.append([UT.index_of(str(e[0])), int(e[1])])
+	var dfn: Array = []
+	for e in WEST_DEF:
+		dfn.append([UT.index_of(str(e[0])), int(e[1])])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 15 * 7 + 3, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_ARID] + 20,
+		"ground": MapGen.PAL_ARID}
+	var city := {"seed": 15, "level": 2, "walls": walls, "bld": [1, 2, 4], "plan": MapGen.CUL_PUNIC, "coast": 1,
+		"founder": MapGen.CUL_PUNIC, "west": 1}
+	var r := settlement(city, terr, att, dfn, 1, ai_sides)
+	var sc: Dictionary = r["scenario"]
+	var ships: Array = []
+	for k in 2:
+		var kind := att_fleet if k == 0 else def_fleet
+		if kind <= 0:
+			continue
+		for e in (SHORE_NAVY if kind == 1 else SHORE_NATIVE):
+			ships.append(ship_entry(k, str(e[0]), int(e[1]), int(e[2]), 100, int(e[3])))
+	if not ships.is_empty():
+		sc["ships"] = ships
 	return sc

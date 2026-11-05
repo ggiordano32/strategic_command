@@ -3068,7 +3068,7 @@ func show_battle_result(events_before: int, outcome: Dictionary) -> void:
 			box.add_child(Kit.label(t2, Kit.FONT, Color.WHITE, true))
 		if int(outcome.get("forfeit", 0)) != 0:
 			box.add_child(Kit.label("You left the battle: your army withdrew (a defeat).", Kit.FONT_SMALL, Kit.COL_DIM, true))
-		var head := "The landing" if str(outcome.get("mode", "")) == "standoff" else "Battle result"  # (2026-11-05) a stand-off: no battle
+		var head := "The landing" if str(outcome.get("mode", "")) in ["standoff", "support"] else "Battle result"  # (2026-11-05) a stand-off, the shore supported: no battle
 		s.show_dialog(head, box, [["Continue", func(): s._next_step()]], 560)
 		return
 	s.show_dialog("Battle result", BattleScreen.result(s, snap, outcome, st, texts), [["Continue", func(): s._next_step()]], 900, true)
@@ -3316,7 +3316,11 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			var hw := str(e.get("how", ""))
 			if hw == "pending":
 				return Kit.COL_GOLD
-			return Kit.COL_GOOD if mine == (hw == "won" or hw == "withdrew" or hw == "stood_off") else Kit.COL_BAD
+			return Kit.COL_GOOD if mine == (hw == "won" or hw == "withdrew" or hw == "stood_off" or hw == "supported" or hw == "support") else Kit.COL_BAD
+		"shore_set", "shore_support":
+			return Kit.COL_GOOD if int(e["f"]) == f else Kit.COL_GOLD
+		"shore_inland":
+			return Kit.COL_GOLD
 		"flota", "flota_arrived", "marque", "marque_end", "blockade_end", "galleon_taken", "galleon_lost", "flota_held", "captain_rise", "captain_fame":
 			return Kit.COL_GOLD
 		"storm", "storm_hit", "storm_end":
@@ -3593,6 +3597,8 @@ func event_text(e: Dictionary, f: int) -> String:
 			return landed_text(e, f)
 		"landing_contested":
 			return landing_contested_text(e, f)
+		"shore_set", "shore_support", "shore_inland":
+			return shore_text(e, f)
 		"fleet_to_sea":
 			var whose := "Your fleet" if int(e["f"]) == f else "A %s fleet" % CData.FACTIONS[int(e["f"])]["adj"]
 			var aboard := " with %d unit%s aboard" % [int(e["units"]), "" if int(e["units"]) == 1 else "s"] if int(e.get("units", 0)) > 0 else ""
@@ -3678,12 +3684,37 @@ func landing_contested_text(e: Dictionary, _f: int) -> String:
 			return "%s's ships in port at %s stayed behind the mole: %s landed unopposed." % [dfn, rn, who]
 		"stood_off":
 			return "%s's ships at %s stood off and let the landing go: %s put the troops ashore unopposed." % [dfn, rn, who]
+		"supported", "support":
+			return "%s's ships at %s let the landing go to support the shore: %s put the troops ashore, and the ships will fight in the battle for the town." % [dfn, rn, who]
 		"pending":
 			return "%s tried to land at %s; %s's ships came out to meet them: the landing waits on the sea battle." % [who, rn, dfn]
 		"won":
 			return "%s beat %s's ships off %s and put the troops ashore." % [who, dfn, rn]
 		"lost":
 			return "%s's ships beat off %s's landing at %s." % [dfn, who, rn]
+	return ""
+
+
+## (2026-11-05) Support the shore: a fleet set to support the battle for a port town (shore_set), its part in that
+## battle (shore_support), or a battle there fought away from the water (shore_inland). Shown to the fleet's own
+## faction; a supporting fleet's battle is told to everyone.
+func shore_text(e: Dictionary, f: int) -> String:
+	var rn := str(CData.REGIONS[int(e["r"])]["city"]) if int(e.get("r", -1)) >= 0 else "the coast"
+	var mine := int(e["f"]) == f
+	var whose := "Your fleet" if mine else "%s's fleet" % CData.faction_name(int(e["f"]))
+	match str(e["k"]):
+		"shore_set":
+			return "%s lies off %s to support the shore in the battle for it (this turn and next)." % [whose, rn] if mine else ""
+		"shore_inland":
+			return "%s off %s could not join the battle there: it was fought away from the water." % [whose, rn] if mine else ""
+		"shore_support":
+			if int(e.get("none", 0)) != 0:
+				return "%s off %s could not join the battle: the town's map has no water for the ships." % [whose, rn]
+			var line := "%s at %s supported the shore: %d men landed, %d lost, the guns fired %d time%s" % [whose, rn,
+				int(e["landed"]), int(e["lost"]), int(e["fired"]), "" if int(e["fired"]) == 1 else "s"]
+			if int(e.get("silenced", 0)) > 0:
+				line += "; %d ship%s silenced" % [int(e["silenced"]), "" if int(e["silenced"]) == 1 else "s"]
+			return line + "."
 	return ""
 
 

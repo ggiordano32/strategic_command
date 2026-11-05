@@ -428,6 +428,12 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 	if live is Dictionary and oc.live_ok() and not oc.pending_upload(bid) and (mine or guest):
 		return _live_card(card, v, h, bid, live, others, mine)
 	var owner: bool = others.is_empty() or cmd == oc.f
+	# (2026-11-05) The defender's choices at a landing (Stand off, Support the shore: the sea card's own row,
+	# SeaScreen) are the owner's; anyone else sees the card without them.
+	var lch: Node = card.find_child("landing_choices", true, false)
+	if lch != null and not (owner and SeaScreen.stand_off_for(st, b, oc.f)):
+		lch.get_parent().remove_child(lch)
+		lch.queue_free()
 	# The ally wants in: asked to join, or (on a battle that is not theirs)
 	# chose to leave it to this player and wait.
 	var wanting: Array = asks.duplicate()
@@ -478,8 +484,6 @@ func _battle_card(st: Dictionary, b: Dictionary) -> Control:
 			if not wanting.is_empty():
 				tb.add_theme_color_override("font_color", Kit.COL_GOLD)
 				h.add_child(tb)
-		if SeaScreen.stand_off_for(st, b, oc.f):
-			h.add_child(SeaScreen.stand_off_button(s, bid))  # (2026-11-05) decline the contested landing
 		var ab := Kit.button("Auto-resolve", func(): s.auto_resolve(bid), 130)
 		ab.name = "auto_%d" % bid
 		h.add_child(ab)

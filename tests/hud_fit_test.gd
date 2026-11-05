@@ -705,6 +705,7 @@ func _run() -> void:
 			b.hud._set_more_open(false)
 		await _ammo_mark_check()
 		await _groups_check(by_role, sz[2])
+		await _ship_check(sz[2])
 	await _states(by_role)
 	await _resize_check(by_role)
 	await _siege()
@@ -712,6 +713,49 @@ func _run() -> void:
 	UiScale._touch_override = -1
 	print("RESULT: ", "PASS" if failures == 0 else "FAIL (%d)" % failures)
 	quit(0 if failures == 0 else 1)
+
+
+## (2026-11-05) A fleet at the shore: the player's ships (the defenders' frigate and two sloops off the quay) each have
+## a card of their own (not grouped as wall engines are) naming the ship, her guns and her party; with the frigate
+## selected the bar shows Fire and the Land chip (on the bar or under More, inside the viewport), lit with her party's
+## men; after the Land, the chip is dimmed and her party's card appears.
+func _ship_check(phone: bool) -> void:
+	await _new_battle(Scenarios.shore_battle(1, 0, [0]), 1)
+	var sim = b.sim
+	var hulls: Array[int] = []
+	for s2 in sim.sh_side.size():
+		if sim.sh_side[s2] == 1:
+			hulls.append(sim.sh_unit[s2])
+	var cards_ok: bool = hulls.size() == 3
+	for u in hulls:
+		cards_ok = cards_ok and b.hud._cards.has(u) and (b.hud._cards[u] as Button).visible
+	_check(cards_ok, "%s ships: a card of her own for each of the 3 ships" % _size_name)
+	b.hud.update_cards(sim)
+	var f0 = b.hud._faces[hulls[0]]
+	_check(str(f0.summary).contains("guns firing") and str(f0.summary).contains("Landing party aboard: 50"),
+		"%s ships: the frigate's card names her guns and her party (%s)" % [_size_name, str(f0.summary)])
+	var one: Array[int] = [hulls[0]]
+	await _pick(one)
+	var h = b.hud
+	var lb: AbilityChip = h.land_button
+	var vp: Vector2 = root.get_visible_rect().size
+	var placed: bool = lb.get_parent() == h.chips_box or lb.get_parent() == h.chips_up or lb.get_parent() == h.more_box
+	var shown: bool = lb.get_parent() == h.more_box or (lb.is_visible_in_tree() and _rect_in(lb, vp))
+	_check(lb.visible and not lb.disabled and placed and shown and h.actions_box.visible and str(lb.state_word).contains("50"),
+		"%s ships: the frigate selected, the Land chip (%s) is on the bar or under More and lit, the actions shown" % [_size_name, str(lb.state_word)])
+	await _fit("a ship", false)
+	b._land()
+	sim.step()
+	b._selection_changed()
+	b.hud.update_cards(sim)
+	await _frames(2)
+	var p: int = sim.sh_party[sim.u_ship[hulls[0]]]
+	_check(lb.disabled and b.hud._cards.has(p) and (b.hud._cards[p] as Button).visible,
+		"%s ships: after the Land the chip is dimmed and the landing party's card appears" % _size_name)
+	if _shots != "" and phone:
+		await _pick(one)
+		await _frames(4)
+		root.get_texture().get_image().save_png("%s/hud_ship_%s.png" % [_shots, _size_name])
 
 
 ## A unit's special arrow: its card carries the kind's glyph (and a tip saying what it does) inside the card, a plain unit's

@@ -27,6 +27,7 @@ signal ammo_pressed
 signal forage_pressed
 signal drop_pressed
 signal kill_pressed
+signal land_pressed   # (2026-11-05) a ship's Land chip: her landing party goes ashore
 signal release_pressed
 signal char_pressed(act: String)  # a character's act button: "sabotage", "attempt", "parley"
 signal withdraw_pressed
@@ -105,7 +106,7 @@ const CLUSTER_OF := {"bounds": "Move", "deploy": "Move", "waypoints": "Move", "r
 	"batter": "Shoot", "caracole": "Shoot", "fire": "Shoot", "skirmish": "Shoot", "ammo": "Shoot", "refill": "Shoot", "forage": "Shoot",
 	"countermarch": "Shoot",
 	"stance": "Fight", "occupy": "Fight", "grenades": "Fight", "pistols": "Fight",
-	"drop": "Kit", "gift": "Kit", "char_sabotage": "Kit", "char_attempt": "Kit", "char_parley": "Kit"}
+	"drop": "Kit", "land": "Kit", "gift": "Kit", "char_sabotage": "Kit", "char_attempt": "Kit", "char_parley": "Kit"}
 const CHIP2_H := 36.0     # a chip's height while the bar is double stacked (the double stack, docs/design/ui.md)
 const UP_FIRST := ["Groups", "Move", "Kit", "Fight", "Shoot"]   # the order the clusters move to the upper row
 const CHIP_LONG_SEC := 0.45   # a held chip explains itself
@@ -201,6 +202,7 @@ var refill_button: AbilityChip
 var ammo_button: AbilityChip
 var forage_button: AbilityChip
 var drop_button: AbilityChip
+var land_button: AbilityChip   # (2026-11-05) a ship's Land order (BattleSim.ORDER_LAND)
 ## "Kill elephant": shown while a beast unit of the player's runs amok.
 var kill_button: Button
 ## "Release": handlers with dogs in the kennel selected; then a tap on an enemy.
@@ -550,6 +552,10 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	drop_button = _chip("drop", "Drop", "drop", "Drop", "Put down the ladders, ram, wagon or engines where the unit stands (X). Any foot unit takes them up again.", "")
 	drop_button.pressed.connect(func(): drop_pressed.emit())
 	drop_button.visible = false
+	land_button = _chip("land", "Land", "move", "Land", "The ship sends a quarter of her crew ashore in the boats: they paddle to the beach or the quay and fight as a unit of their own (L). Once only.", "")
+	land_button.name = "land"
+	land_button.pressed.connect(func(): land_pressed.emit())
+	land_button.visible = false
 	release_button = _chip("release", "Release", "release", "Release", "Let the war dogs loose, then tap an enemy unit within 80 m (U).", "0 dogs", true)
 	release_button.name = "release"
 	release_button.low = true
@@ -586,7 +592,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	group_plus.pressed.connect(func(): group_new_pressed.emit())
 	_chip_order = [ab_chips[UT.AB_BATTER], ab_chips[UT.AB_CARACOLE], fire_button, ab_chips[UT.AB_ROLL], skirm_button, stance_button, occupy_button,
 		ab_chips[UT.AB_GRENADE], ab_chips[UT.AB_PISTOL], bounds_button, deploy_button, ammo_button, refill_button, forage_button,
-		drop_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
+		drop_button, land_button, release_button, char_buttons["sabotage"], char_buttons["attempt"], char_buttons["parley"], gift_button, waypoints_button]
 	for gn in range(1, GROUP_MAX + 1):
 		_chip_order.append(group_chips[gn])
 	_chip_order.append(group_plus)
@@ -703,7 +709,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	for u in sim.n_units:
 		if sim.u_side[u] != player_side:
 			continue
-		if UT.stat(sim.u_type[u], "fixed") != 0:
+		if UT.stat(sim.u_type[u], "fixed") != 0 and UT.stat(sim.u_type[u], "ship") == 0:
 			var tk: int = sim.u_type[u]
 			if tleader.has(tk):
 				(_tgroups[tleader[tk]] as Array).append(u)
@@ -2542,6 +2548,14 @@ func set_drop_button(drop: bool) -> void:
 	drop_button.visible = drop
 
 
+## (2026-11-05) The Land chip: shown while a ship of the player's is selected; `state` its word ("50 men", or why
+## not: "ashore"), lit only when one may land now.
+func set_land_button(vis: bool, ok: bool, state: String) -> void:
+	land_button.visible = vis
+	land_button.disabled = not ok
+	land_button.set_state(state)
+
+
 func update_cards(sim) -> void:
 	var tick: int = sim.tick
 	_update_arriving(sim)
@@ -2563,8 +2577,8 @@ func update_cards(sim) -> void:
 			var out: bool = sim.u_state[pk] == BattleSim.U_READY
 			f.ammo_text = "out" if out else "%d" % sim.u_kept[pk]
 			summary += " dogs %s" % ("out (%d)" % sim.u_alive[pk] if out else str(sim.u_kept[pk]))
-		if sim.rsv_on != 0 and sim.u_hand[u] < 0:
-			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_RESERVE  # (a reinforcement: once it arrives)
+		if (sim.rsv_on != 0 or sim.shp_on != 0) and sim.u_hand[u] < 0:
+			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_RESERVE  # (a reinforcement, a ship's landing party: once it arrives)
 		if sim.u_hand[u] >= 0:
 			(_cards[u] as Button).visible = sim.u_state[u] != BattleSim.U_KENNEL  # (the pack: only while loose)
 			if sim.u_ret[u] != 0:
@@ -2602,6 +2616,11 @@ func update_cards(sim) -> void:
 			summary += " " + carry
 			if word == "":
 				word = carry
+		if sim.shp_on != 0 and sim.is_ship(u):
+			# (2026-11-05) A ship lying off the shore: her name, her guns and her landing party.
+			f.name_text = ship_name(sim, u)
+			summary = ship_card_text(sim, u).replace("\n", " | ")
+			word = ship_word(sim, u) if word == "" or art else word
 		var car := Traits.caracole_text(sim, u)
 		if car != "":
 			word = car   # (the caracole's phase: the owner took the 30 s pistol reload for a bug)
@@ -2684,6 +2703,47 @@ func _card_state_strip(u: int, f: CardFace) -> void:
 
 
 ## The units of the wall-engine card held by u ([u] alone for any other).
+## (2026-11-05) Ship hull u's name on her card ("Frigate", the campaign row's name; "Ship" without one).
+static func ship_name(sim, u: int) -> String:
+	var key: String = sim.sh_key[sim.u_ship[u]]
+	var nm := str(CData.ship_row(key).get("name", "")) if CData.ships_on() else ""
+	return nm if nm != "" else "Ship"
+
+
+## (2026-11-05) Ship hull u's card text: her guns (working of all), her gunners or hands, her landing party.
+static func ship_card_text(sim, u: int) -> String:
+	var s: int = sim.u_ship[u]
+	var ne: int = sim.u_neng[u]
+	var lines: Array = []
+	if ne > 0:
+		var ok := 0
+		for k in ne:
+			if sim.e_state[sim.u_eng0[u] + k] == BattleSim.E_OK:
+				ok += 1
+		lines.append("%s: %d of %d guns firing, %d gunners, %d shots fired" % [ship_name(sim, u), ok, ne, sim.u_alive[u], sim.sh_shots[s]])
+	else:
+		lines.append("%s: no guns to fire on the land, %d hands aboard" % [ship_name(sim, u), sim.u_alive[u]])
+	var p: int = sim.sh_party[s]
+	if p < 0:
+		lines.append("No boats' crew to land")
+	elif sim.sh_land[s] < 0:
+		lines.append("Landing party aboard: %d men (Land sends them ashore)" % sim.u_count0[p])
+	else:
+		lines.append("Landing party ashore: %d of %d" % [sim.u_alive[p], sim.u_count0[p]])
+	return "\n".join(lines)
+
+
+## (2026-11-05) Ship hull u's card word: her party aboard ("50 aboard"), ashore, or silenced.
+static func ship_word(sim, u: int) -> String:
+	var s: int = sim.u_ship[u]
+	if sim.u_neng[u] > 0 and sim.u_state[u] == BattleSim.U_READY and not sim._ship_guns_ok(u):
+		return "Silenced"
+	var p: int = sim.sh_party[s]
+	if p >= 0 and sim.sh_land[s] < 0:
+		return "%d aboard" % sim.u_count0[p]
+	return "Ashore" if p >= 0 else ""
+
+
 func tower_group(u: int) -> Array:
 	return _tgroups.get(u, [u])
 

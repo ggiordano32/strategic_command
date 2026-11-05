@@ -993,7 +993,10 @@ func _build_fleet(id: int) -> void:
 			status = "Docking at %s" % CData.REGIONS[dko]["city"] if int(vy[0]) == CFleet.cell(fl) else "Sailing to dock at %s" % CData.REGIONS[dko]["city"]
 	if casting:
 		status = "Casting off"
-	var planned := status == "Voyage planned" or dko >= 0 or casting
+	var shr := CFleet.supporting(ps, fl) if mine else -1
+	if shr >= 0:
+		status = "Supporting the shore at %s" % CData.REGIONS[shr]["city"]
+	var planned := status == "Voyage planned" or dko >= 0 or casting or shr >= 0
 	var station := _station(fl)
 	if station != "" and not planned:
 		status = station
@@ -1019,6 +1022,14 @@ func _build_fleet(id: int) -> void:
 			var rls := CLanes.lane_state(ps, rl, {})
 			acts.append(_action("raid", "Raid", "Raid the %s lane (it pays %d a turn): sail onto it and hold it; at the turn's end the lane pays %d%% less and you take %d%% of the cut. Tap a lane on the map to choose another." % [
 				CLanes.lane_name(rl), int(rls["pa"]) + int(rls["pb"]), CData.LANE_RAID_PCT, CData.LANE_RAID_TAKE], func(): s.set_station(id, rl, -1), "", "raid"))
+		# (2026-11-05) Support the shore: lie off the port town for the battle there (this turn and next).
+		if shr >= 0:
+			acts.append(_action("cancel", "Leave", "Stop supporting the shore at %s: the fleet keeps out of the battle there" % CData.REGIONS[shr]["city"],
+				func(): s.toggle_shore(id), "", "shore"))
+		elif CFleet.shore_check(ps, s.f, id) == "" and CFleet.shore_region(fl) >= 0:
+			var sr := CFleet.shore_region(fl)
+			acts.append(_action("siege", "Shore", "Support the shore at %s: the fleet stays where it lies, and in the battle for the town this turn or next its ships lie on the water, their guns firing on the land and a quarter of each crew ready to land in the boats" % CData.REGIONS[sr]["city"],
+				func(): s.toggle_shore(id), "", "shore"))
 		var bp: int = s.best_blockade(fl)
 		if bp >= 0 and (fl["carry"] as Array).is_empty():
 			acts.append(_action("siege", "Blockade", "Blockade %s: lie off its harbour, stronger than its own fleets there, and its sea trade and lanes pay nothing; a siege by land starves it sooner. Tap an enemy harbour to choose another." % CData.REGIONS[bp]["city"],

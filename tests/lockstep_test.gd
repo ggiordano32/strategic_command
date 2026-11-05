@@ -63,6 +63,11 @@ extends SceneTree
 ##    ORDER_PARLEY with their routing light infantry); every frame equal,
 ##    the acts done on both peers, copies restored from A's sim mid-act run
 ##    on equal.
+## 16. A fleet at the shore (2026-11-05; "--only=shore"; docs/design/battle_sim.md "A fleet at the shore (as
+##    built)"): a port town's battle with ships on both sides, two peers sharing the defenders (their frigate and
+##    sloops at the quay), the attackers under the AI: player 0 orders the Land of the ship it commands (ORDER_LAND,
+##    a lockstep input), player 1 orders the Land of a ship it does not command (refused alike); every frame equal, the parties sent ashore on the same tick on both peers, a third peer restored from
+##    A's snapshot while a party paddles follows every later frame, and copies restored mid-paddle run on equal.
 ## 13. Three peers (battles with several humans, N-player campaigns): two
 ##    humans on side 0 (players 0 and 1) and one on side 1 (player 2), a
 ##    fourth human of side 0 (player 3) absent, whose units the keeper
@@ -174,6 +179,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=shore"):
+		_test_lockstep_shore()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	_test_snapshots()
 	_test_profiles()
 	_test_lockstep()
@@ -189,6 +199,7 @@ func _init() -> void:
 	_test_lockstep_street()
 	_test_lockstep_occupy()
 	_test_lockstep_wp()
+	_test_lockstep_shore()
 	_test_lockstep_chars()
 	_test_lockstep_reinf()
 	_test_lockstep_end()
@@ -2836,3 +2847,107 @@ func _test_lockstep_wp() -> void:
 	elif n_ab > 0 and n_ac > 0:
 		print("PASS waypoints lockstep: %d frames A/B and %d A/C equal (C joined at frame %d with waypoints queued); %d waypoints popped on each, A's final attack on unit %d given on all three; rejected A %d B %d" % [
 			n_ab, n_ac, c_join, sa.stat_wp_pop, ut, a.ls.rejected, b.ls.rejected])
+
+
+# ------------------------------------------------- a fleet at the shore ---
+
+func _test_lockstep_shore() -> void:
+	var scen: Dictionary = Scenarios.shore_battle(1, 1, [0])
+	var probe := BattleSim.new()
+	probe.setup(scen, 4242)
+	if probe.shp_on == 0:
+		_fail("shore lockstep: no ships on the map")
+		return
+	# Side 1 (the defenders) alternate between players 0 and 1; the attackers are the AI's. The ships (units the
+	# sim adds) go to the player of their side's first scenario unit (player 0).
+	var home: Array = []
+	var k := 0
+	for u in (scen["units"] as Array).size():
+		if int(scen["units"][u]["side"]) == 1:
+			home.append(k % 2)
+			k += 1
+		else:
+			home.append(-1)
+	var relay := Relay.new()
+	var a := _new_peer(scen, home, 0, "A", [0, 1])
+	var b := _new_peer(scen, home, 1, "B", [0, 1])
+	a.latency = 1
+	b.latency = 3
+	b.d = 4
+	var peers: Array[Peer] = [a, b]
+	var mine: Array = []   # side 1's hulls
+	for s in probe.sh_side.size():
+		if probe.sh_side[s] == 1:
+			mine.append(probe.sh_unit[s])
+	var total := 700 if quick else 1300
+	var now := 0
+	var c: Peer = null
+	var c_join := -1
+	var sent_a := false
+	var sent_b := false
+	var snap_ok := false
+	while now < total * 3 and mini(a.ls.frame, b.ls.frame) < total:
+		now += 1
+		for p in peers:
+			var sim = p.ls.sim
+			if p.me == 0 and not sent_a and sim.tick > 40:
+				p.issue({"type": BattleSim.ORDER_LAND, "unit": mine[0]})   # (its own frigate)
+				sent_a = true
+			if p.me == 1 and not sent_b and sim.tick > 60:
+				p.issue({"type": BattleSim.ORDER_LAND, "unit": mine[1]})   # (a sloop player 0 commands: refused alike)
+				sent_b = true
+			p.flush(relay, now)
+			p.deliver(relay, now)
+			p.run(p.rng.randi() % 3, true)
+		if c != null:
+			c.flush(relay, now)
+			c.deliver(relay, now)
+			c.run(4, true)
+		else:
+			var sa0 = a.ls.sim
+			var s0: int = sa0.u_ship[mine[0]]
+			var pu: int = sa0.sh_party[s0]
+			if sa0.sh_land[s0] >= 0 and pu >= 0 and sa0.u_wet[pu] > 0 and sa0.tick > sa0.sh_land[s0] + 5:
+				c_join = now
+				c = _new_peer(scen, home, 1, "C", [0, 1])
+				c.online = true
+				c.latency = 2
+				if not c.ls.restore(a.ls.snapshot()):
+					_fail("shore lockstep: C could not restore A's snapshot")
+					return
+				c.hashes[c.ls.frame] = c.ls.state_hash()
+				c.cursor = 0
+				while c.cursor < relay.items.size() and int(relay.items[c.cursor]["s"]) <= c.ls.last_s:
+					c.cursor += 1
+				c.sent_k = 1 << 30
+				# Copies restored mid-paddle run on equal.
+				var kb: PackedByteArray = sa0.snapshot()
+				var k1 := BattleSim.new()
+				k1.setup(scen, 4242)
+				var k2 := BattleSim.new()
+				k2.setup(scen, 4242)
+				snap_ok = k1.restore(kb) and k2.restore(kb) and k1.state_hash() == sa0.state_hash()
+				for t in 200:
+					k1.step()
+					k2.step()
+					if k1.state_hash() != k2.state_hash():
+						snap_ok = false
+						break
+	var n_ab := _compare(a, b, 0, "shore A/B")
+	var n_ac := _compare(a, c, c_join, "shore A/C") if c != null else 0
+	var sa = a.ls.sim
+	var sb = b.ls.sim
+	var lands_a: Array = []
+	var lands_b: Array = []
+	for s in sa.sh_side.size():
+		lands_a.append(sa.sh_land[s])
+		lands_b.append(sb.sh_land[s])
+	var s_a: int = sa.u_ship[mine[0]]
+	var s_b: int = sa.u_ship[mine[1]]
+	if n_ab < total / 2 or n_ac < 50 or not snap_ok or str(lands_a) != str(lands_b) or sa.sh_land[s_a] < 0 \
+			or sa.sh_land[s_b] >= 0 and sa.sh_land[s_b] < 60:
+		_fail("shore lockstep: A/B %d, A/C %d frames, snapshot copies %s; lands A %s B %s" % [n_ab, n_ac, str(snap_ok),
+			str(lands_a), str(lands_b)])
+	else:
+		print("PASS shore lockstep: %d frames A/B and %d A/C equal (C joined at frame %d, a party on the water); the Land ticks %s on both (the frigate's by its player; the sloop's from the other player refused); copies restored mid-paddle equal" % [
+			n_ab, n_ac, c_join, str(lands_a)])

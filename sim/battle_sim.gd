@@ -86,7 +86,8 @@ const ORDER_OCCUPY := 25        # unit, building (a West town's house, tavern, s
 const ORDER_PURSUE := 26        # side (a human side, after the decision: the pursuit runs on to END_PURSUIT_MAX)
 const ORDER_END := 27           # side (a human side, after the decision: the battle ends at once)
 const ORDER_ABILITY := 28       # unit, ability (UT.AB_*), state (UT.AB_AUTO / AB_HOLD / AB_NOW), target (Use now; roles step 2)
-const ORDER_LAST := 28
+const ORDER_LAND := 29          # unit (a ship's hull): its landing party goes ashore by water (2026-11-05)
+const ORDER_LAST := 29
 
 # Battle phase (scenario "deploy_time" > 0 starts in PHASE_DEPLOY, see the
 # "deployment phase" section at the end of this file).
@@ -1202,6 +1203,32 @@ var aw_to := PackedInt32Array()
 var aw_w := PackedInt32Array()
 var _adist: Dictionary = {}       # distance tables on it by goal node (a pure cache, for nav_epoch _adist_ep)
 var _adist_ep: int = -1
+# A fleet at the shore (2026-11-05; docs/design/battle_sim.md "A fleet at the
+# shore (as built, 2026-11-05)"): the scenario's "ships" lie on the map's
+# water as fixed hull units (UT.SHIP_GUNS: the gun deck's engines; UT.SHIP_BOAT:
+# a hull with no guns to speak of), each with its landing party held aboard
+# (a unit kept off the field, U_RESERVE, until ORDER_LAND sends it ashore by
+# water). Static: shp_on, the ships' places and sizes; state: sh_land,
+# sh_shots, sh_idle, u_ship (hashed while shp_on).
+var shp_on: int = 0               # some ship lies on the map's water (static)
+var shp_none: int = 0             # the scenario brought ships but the map has no water for them (static; result "ships_none")
+var sh_side := PackedInt32Array() # per ship: its side (static)
+var sh_unit := PackedInt32Array() # per ship: its hull unit (static)
+var sh_party := PackedInt32Array()  # per ship: its landing party's unit, -1 none (static)
+var sh_x := PackedInt32Array()    # per ship: its anchor (static)
+var sh_y := PackedInt32Array()
+var sh_head := PackedInt32Array() # per ship: the heading of its keel (FM angle; static)
+var sh_len := PackedInt32Array()  # per ship: its length and beam in m (static; the view)
+var sh_beam := PackedInt32Array()
+var sh_key: Array[String] = []    # per ship: the campaign's ship key (static; the view's hull and the card)
+var sh_ctl := PackedInt32Array()  # per ship: the controller the scenario gave (static; Lockstep: -2 none given)
+var sh_src := PackedInt32Array()  # per ship: her index in the scenario's "ships" (static; the result)
+var sh_lx := PackedInt32Array()   # per ship: where its party lands (static)
+var sh_ly := PackedInt32Array()
+var sh_land := PackedInt32Array() # per ship: the tick its party was sent ashore (-1 not yet)
+var sh_shots := PackedInt32Array()  # per ship: shots its guns fired
+var sh_idle := PackedInt32Array() # per ship: the tick its guns last had something to shoot at (the AI's memory)
+var u_ship := PackedInt32Array()  # per unit: the ship whose hull or landing party it is (-1 none)
 var city_on: int = 0
 var city_def: int = -1            # defending side
 var city_walls: int = 0
@@ -1602,6 +1629,7 @@ var stat_dog_hunt: int = 0            # packs that went for the nearest enemy on
 var vis_on: int = 0                   # some sight blockers on the map, scenario "los" not 0 (static)
 var cov_on: int = 0                   # ... and a unit with the cover trait (static)
 var t_cover := PackedInt32Array()
+var t_ship := PackedInt32Array()   # (2026-11-05) a hull on the water (the row's ship)
 var t_amph := PackedInt32Array()   # amphibious (the row's amphib: paddles the water, BattleSim amph_on)
 var t_pis := PackedInt32Array()       # roles step 2: pistols a man carries (row "pistols")
 var t_abil := PackedInt32Array()      # ... the abilities (UT.abilities: a bit per UT.AB_*)
@@ -1798,6 +1826,7 @@ var stat_attacks: int = 0
 var stat_searches: int = 0
 var stat_grid_soldiers: int = 0
 var stat_shots: int = 0
+var stat_ship_land: int = 0           # (2026-11-05) landing parties sent ashore from the ships
 var stat_missile_hits: int = 0
 var stat_impacts: int = 0
 var stat_reflects: int = 0
@@ -2235,6 +2264,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	for ud in scenario.get("units", []):
 		if UT.stat(int(ud["type"]), "amphib") != 0:
 			amph_on = 1  # (cleared again by _setup_amph without water on the map)
+	if not (scenario.get("ships", []) as Array).is_empty():
+		amph_on = 1  # (2026-11-05: ships lie on the water, their parties paddle ashore)
 	_setup_terrain(terr0, p_seed)
 	_setup_occ()
 	_setup_destr()
@@ -2259,6 +2290,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	ch_pris = PackedInt32Array([0, 0])
 	var towers := _siege_towers(scenario)
 	towers.append_array(_fort_guns(scenario))
+	towers.append_array(_ship_units(scenario))  # (2026-11-05: the hulls and their landing parties)
 	if not towers.is_empty():
 		# The city's tower engines come after the scenario's own units.
 		units = units.duplicate()
@@ -2310,6 +2342,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	kty_n = UT.ROME_N
 	for ud in units:
 		if int(ud["type"]) >= UT.ROME_N:
+			kty_n = maxi(kty_n, UT.SHIP_GUNS)  # (2026-11-05: the ship rows only with a ship: West battles hash as before)
+		if int(ud["type"]) >= UT.SHIP_GUNS:
 			kty_n = UT.TYPES.size()
 	gun_on = 0
 	for ud in units:
@@ -2527,7 +2561,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			sg_on = 1
 			u_trad[u] = int(ud.get("tower_r", 4)) * M
 			u_skirm[u] = 0
-			if city_on != 0 and ws_x0.size() > 0:
+			if city_on != 0 and ws_x0.size() > 0 and t_ship[ty] == 0:
 				var bs := 0
 				var bo := 1 << 40
 				for sg in ws_x0.size():
@@ -2610,6 +2644,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 			if units[u].has("pack_of"):
 				_kennel_setup(u, int(units[u]["pack_of"]))
 	_reserve_setup(units)
+	_ship_setup(units)
 	fire_on = 0
 	mb_on = 0
 	for u in n_units:
@@ -2966,7 +3001,7 @@ func _load_types() -> void:
 		t_amok_calm, t_kill_delay, t_gate_w, t_gate_pct, t_cmd_r, t_cmd_mor, t_cmd_rally, t_cmd_loss, t_cmd_loss_r,
 		t_pack_n, t_pack_type, t_pack_r, t_return_r, t_return_t, t_nobreak, t_scare_am, t_as_cav, t_chase, t_m_spen,
 		t_char, t_char_kind, t_ch_r, t_fall_r, t_fall_loss, t_fall_gain, t_duel, t_unarmed, t_hidden,
-		t_m_gun, t_m_volley, t_m_obj, t_m_spread2, t_cover, t_amph]
+		t_m_gun, t_m_volley, t_m_obj, t_m_spread2, t_cover, t_amph, t_ship]
 	var keys := ["cls", "attack", "defence", "armour", "shield", "mshield",
 		"damage", "reach", "ranks_reach", "mass", "walk", "run", "hp", "cooldown",
 		"morale", "file_sp", "rank_sp", "turn", "brace", "vs_cav", "charge",
@@ -2980,7 +3015,7 @@ func _load_types() -> void:
 		"amok_calm", "kill_delay", "gate_walls", "gate_pct", "cmd_r", "cmd_mor", "cmd_rally", "cmd_loss", "cmd_loss_r",
 		"pack_n", "pack_type", "pack_r", "return_r", "return_t", "nobreak", "scare_am", "as_cav", "chase", "m_spen",
 		"char", "char_kind", "ch_r", "fall_r", "fall_loss", "fall_gain", "duel", "unarmed", "hidden",
-		"m_gun", "m_volley_r", "m_obj", "m_spread2", "cover", "amphib"]
+		"m_gun", "m_volley_r", "m_obj", "m_spread2", "cover", "amphib", "ship"]
 	for k in arrays.size():
 		var arr: PackedInt32Array = arrays[k]
 		arr.resize(nt)
@@ -4604,8 +4639,8 @@ func _mask_of(u: int) -> int:
 func _ground_mask(u: int) -> int:
 	var c := u_cls[u]
 	if city_ditch != 0 and (c == UT.CLS_INF or c == UT.CLS_PIKE or c == UT.CLS_MISSILE) and not carries_ram(u):
-		return MapGen.NAV_GROUND | MapGen.NAV_DITCH | (NAV_WATER if amph_on != 0 and t_amph[u_otype[u]] != 0 else 0)
-	return MapGen.NAV_GROUND | (NAV_WATER if amph_on != 0 and t_amph[u_otype[u]] != 0 else 0)
+		return MapGen.NAV_GROUND | MapGen.NAV_DITCH | (NAV_WATER if amph_on != 0 and (t_amph[u_otype[u]] != 0 or t_ship[u_otype[u]] != 0) else 0)
+	return MapGen.NAV_GROUND | (NAV_WATER if amph_on != 0 and (t_amph[u_otype[u]] != 0 or t_ship[u_otype[u]] != 0) else 0)
 
 
 ## Street graph node usable now (a closed gate's node is not).
@@ -8294,6 +8329,12 @@ func _apply_orders(max_player: int = 1 << 30) -> void:
 			if phase == PHASE_DEPLOY:
 				_works_order(o)
 			continue
+		if int(o["type"]) == ORDER_LAND:
+			# (A ship's landing party: the sim sends it ashore; the hull's orders do not change.)
+			var lu := int(o.get("unit", -1))
+			if phase != PHASE_DEPLOY and land_refusal(self, lu) == "":
+				_ship_land(lu)
+			continue
 		if int(o["type"]) == ORDER_KILL:
 			# (A routing unit: not through the unit order rules.)
 			var ku := int(o.get("unit", -1))
@@ -8506,7 +8547,8 @@ static func order_units(sim, o: Dictionary) -> Array[int]:
 	var out: Array[int] = []
 	if int(o["type"]) == ORDER_GATE or int(o["type"]) == ORDER_KILL or int(o["type"]) == ORDER_RELEASE \
 			or int(o["type"]) == ORDER_WORKS or (int(o["type"]) >= ORDER_SABOTAGE and int(o["type"]) <= ORDER_PARLEY) \
-			or int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END or int(o["type"]) == ORDER_ABILITY:
+			or int(o["type"]) == ORDER_PURSUE or int(o["type"]) == ORDER_END or int(o["type"]) == ORDER_ABILITY \
+			or int(o["type"]) == ORDER_LAND:
 		return out  # not a unit order (applied by the sim to the gate; the drivers of an amok beast; a pack)
 	if int(o["type"]) == ORDER_WITHDRAW_ALL:
 		var side := int(o.get("side", -1))
@@ -8624,6 +8666,11 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 		# foot only, on the ground; any other order of these ends it.
 		d["bound"] = 1 if typ == ORDER_MOVE and int(o.get("bound", 0)) != 0 and stance_ok(ty) \
 			and (sim.u_wall[u] if u < sim.u_wall.size() else 0) == 0 else 0
+	# A ship's hull on the water (2026-11-05): nobody reaches her from the land; only shooters with something to
+	# shoot may be ordered at her.
+	if typ == ORDER_ATTACK and sim.shp_on != 0 and sim.is_ship(int(o.get("target", -1))) \
+			and (UT.stat(ty, "m_range") <= 0 or sim.u_ammo[u] <= 0):
+		return
 	# Siege: a tower's engine only shoots (at a unit, at will) or holds; a
 	# unit climbing ladders goes on climbing (or withdraws back down them).
 	if UT.stat(ty, "fixed") != 0 and typ != ORDER_ATTACK and typ != ORDER_HALT and typ != ORDER_FIRE \
@@ -14815,8 +14862,9 @@ func _update_artillery() -> void:
 			continue  # (a reinforcement's battery: not on the field yet)
 		var e0 := u_eng0[u]
 		var ty := u_type[u]
-		if t_fixed[ty] != 0 and u_state[u] == U_READY and u_alive[u] > 0 and e_state[e0] != E_OK:
-			_tower_fall(u)
+		if t_fixed[ty] != 0 and u_state[u] == U_READY and u_alive[u] > 0 and e_state[e0] != E_OK \
+				and (t_ship[ty] == 0 or not _ship_guns_ok(u)):
+			_tower_fall(u)  # (a ship: when every gun is silenced)
 		if u_state[u] != U_READY or u_alive[u] <= 0:
 			# Broken or gone: the engines are left where they stand.
 			for k in ne:
@@ -15372,6 +15420,8 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_free = pr_next[p]
 	pr_count += 1
 	_eng_spend(e, u, k)
+	if shp_on != 0 and u_ship[u] >= 0:
+		sh_shots[u_ship[u]] += 1
 	if vis_on != 0:
 		_shot_seen(u)
 	if t_m_kind[ty] == 1:
@@ -16776,7 +16826,7 @@ func _reserve_setup(units: Array) -> void:
 	stat_arr_late = 0
 	for u in n_units:
 		if int((units[u] as Dictionary).get("reserve", 0)) != 0 and u_hand[u] < 0 and u_char[u] == 0 \
-				and t_fixed[u_type[u]] == 0:
+				and t_fixed[u_type[u]] == 0 and not (units[u] as Dictionary).has("ship"):
 			_to_reserve(u)
 			rsv_on = 1
 	for u in n_units:
@@ -16827,7 +16877,7 @@ func reserves_left(s: int = -1) -> int:
 		return 0
 	var c := 0
 	for u in n_units:
-		if u_state[u] == U_RESERVE and (s < 0 or u_side[u] == s):
+		if u_state[u] == U_RESERVE and (s < 0 or u_side[u] == s) and not held_party(u):
 			c += 1
 	return c
 
@@ -16841,7 +16891,7 @@ func _update_reserves() -> void:
 			continue
 		var nxt := -1
 		for u in n_units:
-			if u_side[u] == s and u_state[u] == U_RESERVE:
+			if u_side[u] == s and u_state[u] == U_RESERVE and not held_party(u):
 				nxt = u
 				break
 		if nxt < 0:
@@ -17618,6 +17668,10 @@ func result() -> Dictionary:
 				men += u_alive[u]
 		out["fort"] = {"held": 1 if fort_held > 0 else 0, "men": men, "gate": g_state[cit_gate] if cit_gate >= 0 else 0,
 			"taken": 1 if fort_taken > 0 else 0}
+	if shp_on != 0:
+		out["ships"] = ship_result()  # (2026-11-05: a fleet at the shore)
+	elif shp_none != 0:
+		out["ships_none"] = 1  # (the scenario's ships found no water on the map)
 	return out
 
 
@@ -19428,6 +19482,10 @@ func state_hash() -> int:
 	if riv_on != 0:
 		# River crossings (battles without one hash as before).
 		ctx.update(u_frd.to_byte_array())
+	if shp_on != 0:
+		# A fleet at the shore (battles without ships hash as before).
+		for arr in [sh_land, sh_shots, sh_idle, u_ship]:
+			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if amph_on != 0:
 		# Amphibious units on a map with water (battles without them hash as before;
 		# the gates' unbarring, which they can do, with or without siege gear).
@@ -20994,6 +21052,10 @@ func _tower_hit(p: int, dmg: int) -> bool:
 	if t < 0 or t >= n_units or t_fixed[u_type[t]] == 0 or u_neng[t] == 0 or u_alive[t] <= 0:
 		return false
 	var e := u_eng0[t]
+	if t_ship[u_type[t]] != 0:
+		e = _ship_gun_hit(t, pr_x[p], pr_y[p])  # (a ship: the gun nearest the shot's fall, if it strikes the hull)
+		if e < 0:
+			return false
 	if e_state[e] != E_OK:
 		return false
 	var dx := pr_x[p] - u_ax[t]
@@ -22844,3 +22906,343 @@ func _plan_path_amph(u: int, gx: int, gy: int, gm: int) -> void:
 		pth_y[base + k] = r[k * 2 + 1]
 	u_pn[u] = n2
 	_trail_push(u, u_ax[u], u_ay[u])
+
+
+# ------------------------------------------------- a fleet at the shore ---
+# docs/design/battle_sim.md "A fleet at the shore (as built, 2026-11-05)".
+# The scenario's "ships" ([{side, key, guns, hands, men, ptype, len, beam,
+# ctl?}]: guns the engines of its gun deck (a gun pair per 8 of the hull's
+# guns), hands the men aboard a hull without guns, men its landing party
+# (a quarter of the crew), ptype the party's row) lie on the map's water:
+# each a fixed hull unit (UT.SHIP_GUNS with `guns` engines and four men at
+# each, or UT.SHIP_BOAT with its hands) on water off the shore, the side's
+# ships nearest its own point (the defenders' the quay, the sea gate or the
+# plaza; the attackers' the end of the shore away from the town's fort or
+# quay), its keel along the shore, never closer than SHIP_SHORE_M to the land
+# beside its side nor farther out than SHIP_FAR_M, SHIP_GAP_M between hulls.
+# The hull never moves (UT fixed: the order rule and both AIs leave it), its
+# men stand on the water where nobody reaches them in melee, its guns shoot
+# under the artillery rules (fire at will, the attack order), a shot falling
+# on its hull strikes the gun nearest (TOWER_BOLT_DMG / TOWER_STONE_DMG as a
+# tower's) and the hull is lost from the fight (its gun crews with it) when
+# every gun is wrecked. Its landing party waits aboard (U_RESERVE, out of
+# the side's reserves and strength) until ORDER_LAND: it enters beside the
+# hull on the water, formed, and paddles at the run to its landing (the
+# quay or the sea gate's inside for the defenders, the nearest open ground
+# for the attackers), amphibious; from there it is a unit like any other.
+# No water on the map (a field battle): no ships (shp_none, result "ships_none").
+
+const SHIP_SHORE_M := 4    # a hull's side at least this far off the land (m)
+const SHIP_FAR_M := 70     # ... its keel at most this far out
+const SHIP_GAP_M := 8      # between two hulls, end to end
+const SHIP_MAX := 12       # ships a battle (the rest stay out of it)
+const SHIP_PARTY_OUT := 6  # a landing party enters this far beyond the hull's side toward the land (m)
+
+
+## The ships' hulls and landing parties as scenario unit dictionaries (setup,
+## after the map: the water, the quay and the plaza are known), with the
+## ships' static arrays.
+func _ship_units(sc: Dictionary) -> Array:
+	var out: Array = []
+	shp_on = 0
+	shp_none = 0
+	for arr in [sh_side, sh_unit, sh_party, sh_x, sh_y, sh_head, sh_len, sh_beam, sh_ctl, sh_src, sh_lx, sh_ly, sh_land,
+			sh_shots, sh_idle]:
+		(arr as PackedInt32Array).resize(0)
+	sh_key = []
+	var list: Array = sc.get("ships", [])
+	if list.is_empty():
+		return out
+	if amph_on == 0 or obs_on == 0 or a_body.is_empty():
+		shp_none = 1
+		return out
+	# The water's distance from the land (2 m cells, 4 neighbours) and the land cell it is nearest.
+	var nc := ob_w * ob_h
+	var wd := PackedInt32Array()
+	wd.resize(nc)
+	wd.fill(-1)
+	var wl := PackedInt32Array()
+	wl.resize(nc)
+	wl.fill(-1)
+	var q := PackedInt32Array()
+	q.resize(nc)
+	var tail := 0
+	for c in nc:
+		if obs[c] != MapGen.C_WATER and _by_water(c):
+			wd[c] = 0
+			wl[c] = c
+			q[tail] = c
+			tail += 1
+	var head := 0
+	while head < tail:
+		var c := q[head]
+		head += 1
+		var i := c % ob_w
+		for k in 4:
+			var n2 := c + 1 if k == 0 else (c - 1 if k == 1 else (c + ob_w if k == 2 else c - ob_w))
+			if (k == 0 and i + 1 >= ob_w) or (k == 1 and i == 0) or n2 < 0 or n2 >= nc:
+				continue
+			if obs[n2] == MapGen.C_WATER and wd[n2] < 0:
+				wd[n2] = wd[c] + 1
+				wl[n2] = wl[c]
+				q[tail] = n2
+				tail += 1
+	# Each side's point: the defenders' landing (the quay, the sea gate, the plaza), the attackers' the far end of
+	# the shore from the town's fort (else from that landing).
+	var dpt := Vector2i(plaza[0], plaza[1])
+	if quay.size() >= 2:
+		dpt = Vector2i(quay[0], quay[1])
+	elif harb.size() >= 6:
+		dpt = Vector2i(harb[0], harb[1])
+	var fx := dpt.x
+	var fo := _quay_fort()
+	if fo.z > 0:
+		fx = fo.x
+	var apt := Vector2i(0 if fx * 2 > field_w else field_w, dpt.y)
+	var placed: Array = []  # [x, y, len m]
+	for k in mini(list.size(), SHIP_MAX):
+		var e: Dictionary = list[k]
+		var side := clampi(int(e.get("side", 0)), 0, 1)
+		var ln := clampi(int(e.get("len", 30)), 8, 70)
+		var bm := clampi(int(e.get("beam", 8)), 2, 20)
+		var tp := dpt if side == city_def or city_def < 0 and side == 1 else apt
+		var best := -1
+		var bd := 0
+		var bh := 0
+		for c in nc:
+			if wd[c] <= 0 or obs[c] != MapGen.C_WATER:
+				continue
+			var dm := wd[c] * 2
+			if dm < bm / 2 + SHIP_SHORE_M or dm > SHIP_FAR_M:
+				continue
+			var x := ((c % ob_w) << 11) + 1024
+			var y := ((c / ob_w) << 11) + 1024
+			var lc := wl[c]
+			var lx := ((lc % ob_w) << 11) + 1024
+			var ly := ((lc / ob_w) << 11) + 1024
+			var face := FM.atan2_a(ly - y, lx - x)
+			# The hull's reach along and across the keel (the keel across the face): inside the map.
+			var cs := absi(FM.cos_a(face))
+			var sn := absi(FM.sin_a(face))
+			var ex := (sn * ln / 2 + cs * bm / 2) * M / FM.TRIG_ONE + 2 * M
+			var ey := (cs * ln / 2 + sn * bm / 2) * M / FM.TRIG_ONE + 2 * M
+			if x < ex or y < ey or x > field_w - ex or y > field_h - ey:
+				continue
+			var clear := true
+			for pl in placed:
+				if FM.approx_len(x - int(pl[0]), y - int(pl[1])) < ((ln + int(pl[2])) / 2 + SHIP_GAP_M) * M:
+					clear = false
+					break
+			if not clear:
+				continue
+			var d := FM.approx_len(x - tp.x, y - tp.y)
+			if best < 0 or d < bd:
+				best = c
+				bd = d
+				bh = face
+		if best < 0:
+			continue
+		var s := sh_side.size()
+		var ax := ((best % ob_w) << 11) + 1024
+		var ay := ((best / ob_w) << 11) + 1024
+		placed.append([ax, ay, ln])
+		sh_side.append(side)
+		sh_unit.append(-1)
+		sh_party.append(-1)
+		sh_x.append(ax)
+		sh_y.append(ay)
+		sh_head.append((bh + FM.ANGLE_QUARTER) & FM.ANGLE_MASK)
+		sh_len.append(ln)
+		sh_beam.append(bm)
+		sh_key.append(str(e.get("key", "")))
+		sh_ctl.append(int(e.get("ctl", -2)))
+		sh_src.append(k)
+		sh_land.append(-1)
+		sh_shots.append(0)
+		sh_idle.append(0)
+		# Where the party lands.
+		var land := _ship_landing(side, ax, ay, wl[best])
+		sh_lx.append(land.x)
+		sh_ly.append(land.y)
+		var guns := clampi(int(e.get("guns", 0)), 0, 12)
+		var hull := {"side": side, "x_m": ax / M, "y_m": ay / M, "facing": bh, "tower_r": ln / 2, "ship": s}
+		if guns > 0:
+			hull["type"] = UT.SHIP_GUNS
+			hull["count"] = guns * UT.stat(UT.SHIP_GUNS, "crew")
+			hull["files"] = guns
+		else:
+			hull["type"] = UT.SHIP_BOAT
+			hull["count"] = clampi(int(e.get("hands", 4)), 1, 12)
+			hull["files"] = int(hull["count"])
+		out.append(hull)
+		var men := int(e.get("men", 0))
+		var pty := int(e.get("ptype", -1))
+		if men > 0 and pty >= 0 and pty < UT.count():
+			var po := (bm / 2 + SHIP_PARTY_OUT) * M
+			var px := ax + FM.cos_a(bh) * po / FM.TRIG_ONE
+			var py := ay + FM.sin_a(bh) * po / FM.TRIG_ONE
+			if obs_kind(px, py) != MapGen.C_WATER:
+				px = ax
+				py = ay
+			var pu := Scenarios.unit(side, pty, men, px / M, py / M, bh)
+			pu["ship"] = s
+			pu["party"] = 1
+			out.append(pu)
+	shp_on = 1 if not sh_side.is_empty() else 0
+	return out
+
+
+## Where ship s's landing party (side `side`, the hull at (ax, ay), the land cell nearest it lc) lands: the
+## defenders' on the quay, else the sea gate's inside, else the open ground nearest the hull; the attackers' on the
+## open ground nearest the hull, a little inland. Static.
+func _ship_landing(side: int, ax: int, ay: int, lc: int) -> Vector2i:
+	if side == city_def:
+		if quay.size() >= 2:
+			return Vector2i(quay[0], quay[1])
+		if harb.size() >= 6:
+			return Vector2i(harb[2], harb[3])
+	var bx := ((lc % ob_w) << 11) + 1024
+	var by := ((lc / ob_w) << 11) + 1024
+	var dl := maxi(FM.approx_len(bx - ax, by - ay), 1)
+	# The open ground nearest: rings of 2 m cells round the land cell, then 8 m on inland.
+	var best := Vector2i(bx, by)
+	var found := false
+	for rad in range(0, 24):
+		var bd := 0
+		for j in range(-rad, rad + 1):
+			for i in range(-rad, rad + 1):
+				if maxi(absi(i), absi(j)) != rad:
+					continue
+				var x := bx + i * 2 * M
+				var y := by + j * 2 * M
+				if x <= 0 or y <= 0 or x >= field_w or y >= field_h or (nav_at(x, y) & MapGen.NAV_GROUND) == 0:
+					continue
+				var d := FM.approx_len(x - ax, y - ay)
+				if not found or d < bd:
+					best = Vector2i(x, y)
+					bd = d
+					found = true
+		if found:
+			break
+	var ix := best.x + (bx - ax) * 8 * M / dl
+	var iy := best.y + (by - ay) * 8 * M / dl
+	if ix > 0 and iy > 0 and ix < field_w and iy < field_h and (nav_at(ix, iy) & MapGen.NAV_GROUND) != 0:
+		return Vector2i(ix, iy)
+	return best
+
+
+## Setup, after the units: which unit is which ship's hull or party; the parties go aboard (off the field).
+func _ship_setup(units: Array) -> void:
+	u_ship = PackedInt32Array()
+	u_ship.resize(n_units)
+	u_ship.fill(-1)
+	if shp_on == 0:
+		return
+	for u in n_units:
+		var ud: Dictionary = units[u]
+		if not ud.has("ship"):
+			continue
+		var s := int(ud["ship"])
+		u_ship[u] = s
+		if int(ud.get("party", 0)) != 0:
+			sh_party[s] = u
+			_to_reserve(u)
+		else:
+			sh_unit[s] = u
+
+
+## Unit u is a ship's landing party still aboard.
+func held_party(u: int) -> bool:
+	return shp_on != 0 and u < u_ship.size() and u_ship[u] >= 0 and sh_party[u_ship[u]] == u and sh_land[u_ship[u]] < 0
+
+
+## Unit u is a ship's hull (its guns or its hands).
+func is_ship(u: int) -> bool:
+	return shp_on != 0 and u >= 0 and u < u_ship.size() and u_ship[u] >= 0 and sh_unit[u_ship[u]] == u
+
+
+## Ship hull u has a gun left that is not wrecked.
+func _ship_guns_ok(u: int) -> bool:
+	for k in u_neng[u]:
+		if e_state[u_eng0[u] + k] == E_OK:
+			return true
+	return false
+
+
+## A shot at ship hull t falling at (x, y): the gun it strikes (the working one nearest, ties by index) if it falls
+## on the hull (within its half length), else -1.
+func _ship_gun_hit(t: int, x: int, y: int) -> int:
+	var r := u_trad[t] + M
+	if (x - u_ax[t]) * (x - u_ax[t]) + (y - u_ay[t]) * (y - u_ay[t]) > r * r:
+		return -1
+	var best := -1
+	var bd := 0
+	for k in u_neng[t]:
+		var e := u_eng0[t] + k
+		if e_state[e] != E_OK:
+			continue
+		var d := FM.approx_len(e_x[e] - x, e_y[e] - y)
+		if best < 0 or d < bd:
+			best = e
+			bd = d
+	return best
+
+
+## Why ship hull u cannot send its landing party ashore now ("" it can). Shared with the view (the Land chip).
+static func land_refusal(sim, u: int) -> String:
+	if sim.shp_on == 0 or u < 0 or u >= sim.n_units or u >= sim.u_ship.size() or sim.u_ship[u] < 0:
+		return "Not a ship"
+	var s: int = sim.u_ship[u]
+	if sim.sh_unit[s] != u:
+		return "Not a ship"
+	if sim.sh_party[s] < 0:
+		return "No boats' crew to land"
+	if sim.sh_land[s] >= 0:
+		return "Her landing party is ashore"
+	if sim.u_state[u] != U_READY:
+		return "She is out of the fight"
+	if sim.phase == PHASE_DEPLOY:
+		return "Once the battle begins"
+	return ""
+
+
+## ORDER_LAND: ship hull u's landing party enters beside the hull, formed, and paddles at the run to its landing.
+## (Not a reinforcement: the side's reserves' timing and count are left as they were.)
+func _ship_land(u: int) -> void:
+	var s := u_ship[u]
+	var p := sh_party[s]
+	sh_land[s] = tick
+	var rl := rsv_last[u_side[p]]
+	var ar := stat_arrived
+	_arrive(p)
+	rsv_last[u_side[p]] = rl
+	stat_arrived = ar
+	stat_ship_land += 1
+	var face := FM.atan2_a(sh_ly[s] - u_ay[p], sh_lx[s] - u_ax[p])
+	_apply_unit(p, {"tick": tick, "type": ORDER_MOVE, "unit": p, "x": sh_lx[s], "y": sh_ly[s], "facing": face,
+		"width": maxi(u_files[p], 4) * t_fsp[u_type[p]], "run": 1, "player": 0, "seq": 0})
+
+
+## result()'s "ships": each ship's fate for the campaign (campaign/cbattle.gd outcome_from_result).
+func ship_result() -> Array:
+	var out: Array = []
+	for s in sh_side.size():
+		var u := sh_unit[s]
+		var r := {"src": sh_src[s], "side": sh_side[s], "key": sh_key[s], "guns": u_neng[u] if u >= 0 else 0,
+			"men0": u_count0[u] if u >= 0 else 0, "killed": u_killed[u] if u >= 0 else 0,
+			"kills": u_kills[u] if u >= 0 else 0, "shots": sh_shots[s], "landed": 0, "party_killed": 0,
+			"party_kills": 0, "hits": 0, "silenced": 0}
+		if u >= 0 and u_neng[u] > 0:
+			var hit := 0
+			for k in u_neng[u]:
+				var e := u_eng0[u] + k
+				hit += t_e_hp[u_type[u]] - maxi(e_hp[e], 0)
+			r["hits"] = hit * 100 / maxi(t_e_hp[u_type[u]] * u_neng[u], 1)  # % of the gun deck's hit points
+			r["silenced"] = 0 if _ship_guns_ok(u) and u_state[u] == U_READY and u_alive[u] > 0 else 1
+		var p := sh_party[s]
+		if p >= 0 and sh_land[s] >= 0:
+			r["landed"] = u_count0[p]
+			r["party_killed"] = u_killed[p]
+			r["party_kills"] = u_kills[p]
+		out.append(r)
+	return out

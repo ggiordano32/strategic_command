@@ -1942,8 +1942,85 @@ design and cost are battle_sim.md "A fleet at the shore (design and cost, 2026-1
   hash moves. AI-only games never meet a pending battle, so `campaign_sim`, the pins, ROME_20 and the AI goldens are
   unchanged.
 
-Open: support the shore (designed, not built); the attacker's transports supporting the shore; the stand-off for a
-human attacker (the attacker cannot decline the sea battle; he may withdraw only by forfeiting it).
+Open: support the shore (designed, not built; built the same day: "Support the shore (as built, 2026-11-05)" below);
+the attacker's transports supporting the shore (built there too); the stand-off for a human attacker (the attacker
+cannot decline the sea battle; he may withdraw only by forfeiting it).
+
+### Support the shore (as built, 2026-11-05)
+
+The owner: "let's do the full build of the shore and landing." The third choice at a contested landing and the
+attacker's transports alike: a fleet off a port town takes part in the land battle for it, its hulls on the water of
+the town's battle map (their guns firing as shore batteries, a quarter of each crew ready to land by boat: battle_sim.md
+"A fleet at the shore (as built, 2026-11-05)"). West pack only (`west_ships.gd` `SHORE_SUPPORT` 1; Rome's ships script
+has none, so Rome plays and hashes as before).
+
+- **The choice** (`campaign/cfleet.gd`, fleet key `"sh"` [region, the turn]): kept the turn it is made and the next
+  (dropped at the end of that next turn, `end_of_turn`; kept on while a siege of the town goes on and the fleet lies off
+  it (`_shore_siege`), so it reaches the assault that ends the siege; dropped when the fleet moves (`place` to another
+  cell) and when the battle it took part in is applied). Made: (1) by a human defender at a contested landing, the
+  outcome mode `CFleet.SUPPORT` ("support") on the pending sea battle (the card's Support the shore button beside Stand
+  off, Auto-resolve and Fight; online claimed as an auto-resolve and uploaded as the stand-off): the landing goes ahead,
+  the fleets lie in their port again with `sh` from the landing's turn (`_stand_off(..., support)`, event
+  `landing_contested` how `supported`); (2) by an AI defender whose docked fleets stay behind the mole (below the
+  sortie's odds) when `SHORE_DEF` (how `support`); (3) by an AI attacker's transport that has landed troops on an
+  enemy's port (`CFleet.land`, `SHORE_ATT`); (4) by any player's fleet with the order `fshore {fleet, on}` (the fleet
+  card's Shore / Leave action): its own fleet, not in a pending battle, not the flota or a story fleet, within
+  `SHORE_CELLS` (4) of a port town (`CData.is_port`: the towns whose battle map has the sea) that is its own, a
+  friend's or an enemy's at war (`shore_check`). Event `shore_set`.
+- **The battle** (`mark_shore`, in `resolve_turn` with the new battles' reinforcements): a settlement battle of region r
+  records `"shore"` [[fleet, ship index, ship key, campaign side]]: the ships of the fleets supporting r, within
+  `SHORE_CELLS` of its town, friendly to its attackers (side 0) or its defenders (side 1), in fleet id and ship order, at
+  most `SHORE_MAX` (6) a side. A battle away from the water (a sally, a relief, an interception, a town that is no
+  port) takes none and tells the fleet (`shore_inland`), which keeps its choice. `CBattle.build` adds the ships to the
+  scenario (`_shore_ships`: `Scenarios.ship_entry` with the ship's guns x hull %, the crew aboard x 25 %, the native
+  vessels' parties as canoe raiders; `ctl` by the units' controller rule, `f` for the view) and `built["shore"]`
+  maps the sim's ships back; the pre-battle card says "At sea: ..." (`BattleScreen.shore_line`).
+- **The auto-resolve** (`CBattle.side_strengths`, so the formula, `battle_odds` and the shown odds alike): a side's
+  supporting ships add `CFleet.shore_strength` (a gun pair `SHORE_GUN_STR` 200, the landed naval guns' price a gun;
+  the landing party its men x its row's cost a man: marines 7, canoe raiders 4), capped at `SHORE_CAP_PCT` 10 % of the
+  side's own strength (a frigate's 4 guns and 50 marines are 1,150, a sloop's 305: the cap binds for any fleet against
+  an army of any size). The formula's outcome lands every party and takes its side's killed share from it (no RNG
+  drawn: the same draws as before), no shots, no guns silenced. The 10 % cap is the design's, kept against the probe: battle_sim.md "A fleet at the shore (as built)" measured a
+defenders' navy at 7 -> 5 of 8 attacker wins and an attackers' navy at 7 -> 8 of 8, while 10 % of a side's strength
+moves the formula's chance (`WIN_EXP` 7) from 87.5 % to about 78 % and 93 %: smaller than the probe's swings, but
+within its intervals at 8 seeds (about +-30 points), so the cap stands until a larger probe says otherwise.
+- **The losses** (`CFleet.apply_shore`, called first by `CRules.apply_outcome` for a land battle): outcome `"shore"`
+  [[fleet, ship index, ship key, crew lost (her gunners and her party's killed), the gun deck's hits %, shots, men
+  landed, kills, silenced, side]] (`CBattle._shore_outcome` from the sim's result, or the formula's rows): each ship
+  loses the crew lost as % of her row's crew and `SHORE_HULL_PCT` (40) % of hull per 100 % of her gun deck's hits,
+  neither below `SHORE_FLOOR` (5): a hull is never sunk from the shore. Every fleet that was in the battle stops
+  supporting and is told (`shore_support`).
+- **The report.** `shore_support`: "Your fleet at Bluefields supported the shore: 50 men landed, 18 lost, the guns fired 9
+  times; 1 ship silenced." (`none` 1: "could not join the battle: the town's map has no water for the ships"); `shore_set`
+  (own faction): "Your fleet lies off X to support the shore in the battle for it (this turn and next)."; `shore_inland`;
+  `landing_contested` how `supported` / `support`: "Miskito's ships at Bluefields Lagoon let the landing go to support
+  the shore: Tierra Firme put the troops ashore, and the ships will fight in the battle for the town."
+- **The AI** (docs/AI.md 63): `SHORE_DEF` and `SHORE_ATT` (cai_profile.gd, ids `SK_SUPPORT + 57` / `+ 58`): Easy 0,
+  Average and Skilled 1; a fleet supporting the shore holds its place (`CAIFleet.act`: before every other job but a
+  hurricane's run).
+- **State.** New optional keys (the fleet's `sh`, the battle's `shore`, events), read with defaults: no
+  `CState.VERSION` bump; the rules hash moves.
+
+**Measured** (campaign_sim, West, 72 seeds (indices 0-71) x 60 turns, all AI Average; before = HEAD 431d224):
+
+| West, 72 x 60 | f6 before | f6 after | f10 before | f10 after |
+|---|---|---|---|---|
+| Landings (`landed`) | 1,593 | 1,631 | 1,487 | 1,434 |
+| Contested landings | 146 | 158 | 148 | 143 |
+| ... the docked fleet stayed in port / supported the shore / came out and lost | 144 / 0 / 2 | 0 / 155 / 3 | 148 / 0 / 0 | 0 / 142 / 1 |
+| Supports chosen (`shore_set`: defenders' and transports') | 0 | 522 | 0 | 402 |
+| Battles a supporting fleet took part in (`shore_support`) | 0 | 256 | 0 | 161 |
+| ... men landed / lost (the formula's) | - | 28,158 / 6,386 | - | 17,267 / 3,998 |
+| Supports that met a battle away from the water (`shore_inland`) | 0 | 113 | 0 | 131 |
+| Battles | 3,970 | 4,006 | 3,210 | 3,264 |
+| Eliminated: Brethren / Itza / Miskito | 12 / 4 / 6 | 12 / 4 / 8 | 16 / 5 / 4 | 22 / 9 / 2 |
+| Eliminated: England / France / Dutch | 1 / 1 / 1 | 2 / 3 / 2 | 1 / 2 / 1 | 1 / 1 / 1 |
+
+New Spain and Tierra Firme were never eliminated. No faction moved beyond the two 95 % intervals combined (the largest:
+the Brethren at f10, 16 -> 22 of 72, 22 -> 31 %, the combined half-width about 14 points; the Itza at f10 5 -> 9). An
+AI-only campaign meets no human choice; the AI's defender almost never comes out at a landing (note 57's odds), so
+nearly every contested landing is now a support. Rome: the pack has no `SHORE_SUPPORT`; its campaign_sim f6 / f8 /
+f10 pins are seed for seed identical, and so are its 72 x 60 runs at f6 and f10 (all 144 final hashes equal).
 ### The Itza after the sea rules (as built, 2026-11-05)
 
 The owner, on the Itza dying about twice as often after the 2026-11-02 sea rules (the contested landing and the

@@ -60,6 +60,7 @@ const FM := preload("res://sim/fixed_math.gd")
 const CSeaBattle := preload("res://campaign/cseabattle.gd")
 const CTown := preload("res://campaign/ctown.gd")
 const AP := preload("res://sim/ai_profile.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -996,6 +997,7 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		var o0: Array = res["order"][k]
 		_unit_extras(sunits[k], entries[int(o0[0])][int(o0[1])])
 	_settlement_reserves(res, reserves, entries, lists, scale_pct)
+	var shore := _shore_ships(st, b, sim_side, res["scenario"])
 	# The city's tower engines carry the owner's special kind for them (heavy
 	# bolts), as a unit of the owner recruited there would.
 	var tak := UT.ammo_index(CRules.ammo_for(st, CState.owner(st, r), r, "tower_bolt"))
@@ -1022,9 +1024,38 @@ static func _build_settlement(st: Dictionary, b: Dictionary, human_f: int, scale
 		map.append(row)
 		ufac.append(int(e["f"]))
 	var controller := controllers(st, b, map, ufac)
-	return {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
+	var out := {"scenario": res["scenario"], "seed": battle_seed(st, r, 2), "map": map, "sim_side": sim_side,
 		"garrison": gar, "unit_faction": ufac, "controller": controller, "battle": int(b["id"]), "region": r,
 		"owner": int(st["regions"][r]["owner"])}
+	if not shore.is_empty():
+		out["shore"] = shore
+	return out
+
+
+## (2026-11-05, support the shore) Battle b's supporting ships (CFleet.shore_list) as the scenario's "ships" (each
+## with its controller, as an army unit's: controllers()) on their sides; returns the map back to them [[fleet,
+## ship index, ship key, campaign side]] in the same order (outcome_from_result), [] none.
+static func _shore_ships(st: Dictionary, b: Dictionary, sim_side: Array, scn: Dictionary) -> Array:
+	if not b.has("shore"):
+		return []
+	var ships: Array = []
+	var smap: Array = []
+	var cm: Array = []
+	var cf: Array = []
+	for x in CFleet.shore_list(st, b):
+		var cs := int(x["cs"])
+		ships.append(CFleet.shore_entry(x, int(sim_side[cs])))
+		smap.append([int(x["fl"]["id"]), int(x["k"]), str(x["ship"]["t"]), cs])
+		cm.append({"side": cs})
+		cf.append(int(x["fl"]["f"]))
+	if ships.is_empty():
+		return []
+	var ctl := controllers(st, b, cm, cf)
+	for i in ships.size():
+		ships[i]["ctl"] = int(ctl[i])
+		ships[i]["f"] = int(cf[i])  # (view only: the hull's colours)
+	scn["ships"] = ships
+	return smap
 
 
 ## Reinforcements of a settlement battle (docs/DESIGN.md "Reinforcements"):
@@ -1404,7 +1435,27 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 		out["prisoners"] = pris
 	if int(res.get("breaches", 0)) > 0:
 		out["breaches"] = int(res["breaches"])  # (wall stretches down at the end: the region's "breach")
+	if built.has("shore"):
+		_shore_outcome(built, res, out)
 	return out
+
+
+## (2026-11-05) The supporting ships' fates (BattleSim result "ships", each with its scenario index "src") as the
+## outcome's "shore" [[fleet, ship index, ship key, crew lost, gun deck hit %, shots, men landed, kills, silenced,
+## side]] (CFleet.apply_shore); "shore_none" when the map had no water for them.
+static func _shore_outcome(built: Dictionary, res: Dictionary, out: Dictionary) -> void:
+	var smap: Array = built["shore"]
+	var rows: Array = []
+	for r in res.get("ships", []):
+		var i := int(r.get("src", -1))
+		if i < 0 or i >= smap.size():
+			continue
+		var m: Array = smap[i]
+		rows.append([int(m[0]), int(m[1]), str(m[2]), int(r["killed"]) + int(r["party_killed"]), int(r["hits"]),
+			int(r["shots"]), int(r["landed"]), int(r["kills"]) + int(r["party_kills"]), int(r["silenced"]), int(m[3])])
+	out["shore"] = rows
+	if int(res.get("ships_none", 0)) != 0:
+		out["shore_none"] = 1
 
 
 ## Strength of each side of battle b for the formula and the AI:
@@ -1415,7 +1466,13 @@ static func side_strengths(st: Dictionary, b: Dictionary) -> Array:
 		return [CSeaBattle.CFleet._side_power(st, sd[0], false), CSeaBattle.CFleet._side_power(st, sd[1], true)]
 	var arm := CRules.battle_armies(st, b)
 	var gs := -1 if str(b.get("kind", "")) == "field" else 1  # version 5 field battles: no garrison
-	return strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs, kit_of(st, b))
+	var s := strengths(st, arm[0], arm[1], int(b["r"]), int(b.get("settlement", 1)) != 0, gs, kit_of(st, b))
+	if b.has("shore"):
+		# (2026-11-05) Ships supporting the shore: their guns and landing parties, at most SHORE_CAP_PCT % of the side.
+		var t := CFleet.shore_strength(st, b)
+		for k in 2:
+			s[k] += mini(int(t[k]), int(s[k]) * CFleet.SHORE_CAP_PCT / 100)
+	return s
 
 
 ## The attackers' kit for battle b (a WALLS_PCT column): 0 none (an assault
@@ -1911,6 +1968,17 @@ static func formula(st: Dictionary, b: Dictionary) -> Dictionary:
 	var out := {"winner": winner, "mode": "formula", "units": units, "garrison_pct": gpct}
 	if block == "fort" and winner == 0:
 		out["fort_holds"] = 1  # (the town taken, its fort holding: the siege goes on, as the sim's fort_holds)
+	if b.has("shore"):
+		# (2026-11-05) The supporting ships: every landing party ashore, losing its side's share killed; no guns
+		# silenced, no shots counted (the formula fights no battle).
+		var rows: Array = []
+		for x in CFleet.shore_list(st, b):
+			var e := CFleet.shore_entry(x, 0)
+			var cs := int(x["cs"])
+			var men := int(e["men"])
+			rows.append([int(x["fl"]["id"]), int(x["k"]), str(x["ship"]["t"]), men * (win_kill if cs == winner else lose_kill) / 100,
+				0, 0, men, 0, 0, cs])
+		out["shore"] = rows
 	return out
 
 

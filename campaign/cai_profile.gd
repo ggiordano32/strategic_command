@@ -227,7 +227,12 @@ const AMB_TREATY := SK_SUPPORT + 57      # propose a trade agreement (never an a
 const AMB_TARGET_PCT := SK_SUPPORT + 58  # an attack target on the list: its value + this % for the first region, scaled down by position (the last + pct / n); the free armies march to the frontier facing the next region (0 off)
 const AMB_WAR_PCT := SK_SUPPORT + 59     # an opportunistic war on the holder of the next region on the list (the first not ours, not independent, not kin): its chance x this % and tried first (the odds, pacing and cover as any war; 100 as anyone, 0 off)
 const AMB_SPEND_PCT := SK_SUPPORT + 60   # the ambition's buildings (a War lodge 2 at the military centre; a Canoe yard 2 at a port when the next region lies on another landmass) may spend the treasury down to (100 - this) % of the reserve (0 off)
-const N_KNOBS := SK_SUPPORT + 61
+## (2026-11-05, docs/AI.md 63) Support the shore: a docked fleet that stays behind the mole at a landing (below the
+## sortie's odds) supports the land battle for the region with its guns and crews (1), or keeps out of it (0); a
+## transport that landed troops on an enemy's port stays off the beach for the battle (1) or sails (0).
+const SHORE_DEF := SK_SUPPORT + 61
+const SHORE_ATT := SK_SUPPORT + 62
+const N_KNOBS := SK_SUPPORT + 63
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -421,6 +426,8 @@ const KNOBS: Array = [
 	[AMB_TARGET_PCT, 0, 100, 100],
 	[AMB_WAR_PCT, 0, 150, 150],
 	[AMB_SPEND_PCT, 0, 50, 50],
+	[SHORE_DEF, 0, 1, 1],
+	[SHORE_ATT, 0, 1, 1],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

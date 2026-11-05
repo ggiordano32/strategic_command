@@ -62,6 +62,12 @@ extends RefCounted
 ## 11. (2026-11-02, docs/AI.md 57) a landing in a region whose port holds our
 ##     docked fleets is met by them at the sortie's odds (fights_landing,
 ##     called by the rules: CFleet._contest); else they stay in port.
+## 12. (2026-11-05, docs/AI.md 63) support the shore: below the sortie's odds
+##     the docked fleets support the land battle for the region instead
+##     (SHORE_DEF), and a transport that landed troops on an enemy's port stays
+##     off the beach for the battle (SHORE_ATT; supports_shore, called by the
+##     rules: CFleet._contest, CFleet.land); a fleet supporting the shore holds
+##     its place (but runs from a hurricane).
 ## Distances for choices are straight-line estimates (octile cells at the
 ## fleet's mean pace); only the chosen voyage is searched (CFleet.plan).
 
@@ -155,6 +161,10 @@ static func act(st: Dictionary, f: int, moves: Array, fmoves: Array, cx_in: Dict
 			var to := _shelter(st, f, fl)
 			if to >= 0:
 				fmoves.append([int(fl["id"]), to, f, 0, -1])
+	# (2026-11-05) A fleet supporting the shore holds its place for the land battle.
+	for fl in mine:
+		if not used.has(int(fl["id"])) and CFleet.supporting(st, fl) >= 0:
+			used[int(fl["id"])] = 1
 	# The flota first (N2): every empty fleet that can catch a treasure fleet.
 	for fl in mine:
 		if not (fl["carry"] as Array).is_empty():
@@ -733,6 +743,12 @@ static func _sorties(st: Dictionary, f: int, mine: Array, used: Dictionary, fmov
 ## when their power there (pd: with the port's guns) is at least
 ## SORTIE_ODDS_PCT % of the landing side's (pa), the sortie's odds; else
 ## they stay behind the mole and the troops land. Never at 0 (Easy).
+## (2026-11-05, docs/AI.md 63) Faction g's fleets support the shore: the defender's docked fleets that stay behind
+## the mole (attacker false: SHORE_DEF), the attacker's transports after a landing (true: SHORE_ATT).
+static func supports_shore(st: Dictionary, g: int, attacker: bool) -> bool:
+	return CP.of(st, g)[CP.SHORE_ATT if attacker else CP.SHORE_DEF] != 0
+
+
 static func fights_landing(st: Dictionary, g: int, pd: int, pa: int) -> bool:
 	var pct := CP.of(st, g)[CP.SORTIE_ODDS_PCT]
 	return pct > 0 and pd * 100 >= pa * pct

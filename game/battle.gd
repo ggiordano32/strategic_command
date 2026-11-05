@@ -29,6 +29,7 @@ const BattleDof := preload("res://game/battle_dof.gd")
 const TreeLayer := preload("res://game/tree_layer.gd")
 const CityLayer := preload("res://game/city_layer.gd")
 const WorksLayer := preload("res://game/works_layer.gd")
+const ShipLayer := preload("res://game/ship_layer.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -164,6 +165,7 @@ var camera: Camera2D
 var terrain: TerrainLayer
 var city: CityLayer
 var works: WorksLayer
+var ships: ShipLayer   # (2026-11-05) the ships lying off the shore (under the men)
 ## Deployment: the field works palette's armed mode ("" none, "stakes",
 ## "caltrops", "rotate", "remove") and a stakes line being dragged.
 var works_mode := ""
@@ -356,6 +358,24 @@ func _ready() -> void:
 	works.setup(sim, PX_PER_M)
 	BoardView.lift_node(works)
 
+	# Ships lying off the shore (a fleet supporting it): under the men, so their gun crews stand on the decks.
+	ships = ShipLayer.new()
+	add_child(ships)
+	ships.setup(sim, PX_PER_M, scn.get("ships", []))
+	BoardView.lift_node(ships)
+	if sim.shp_on != 0 and not unit_faction.is_empty():
+		# The ships' hulls and parties (units the sim adds): their fleet's faction (the scenario's "f"), else -1.
+		var uf2: Array = unit_faction.duplicate()
+		while uf2.size() < sim.n_units:
+			uf2.append(-1)
+		var shs: Array = scn.get("ships", [])
+		for u in sim.n_units:
+			if sim.u_ship[u] >= 0:
+				var src: int = sim.sh_src[sim.u_ship[u]]
+				if src >= 0 and src < shs.size() and int((shs[src] as Dictionary).get("f", -1)) >= 0:
+					uf2[u] = int(shs[src]["f"])
+		unit_faction = uf2
+
 	# Movement trays under the men (tabletop pass 1).
 	trays = TrayLayer.new()
 	trays.player_side = player_side
@@ -480,6 +500,7 @@ func _ready() -> void:
 	hud.ammo_pressed.connect(_toggle_ammo)
 	hud.forage_pressed.connect(_toggle_forage)
 	hud.drop_pressed.connect(_drop)
+	hud.land_pressed.connect(_land)
 	hud.kill_pressed.connect(_kill_beasts)
 	hud.release_pressed.connect(_toggle_release)
 	hud.char_pressed.connect(func(act: String): _toggle_char(int(CHAR_TYPES[act])))
@@ -1241,6 +1262,8 @@ func _view_tick() -> void:
 	trees.update_occupancy()
 	city.refresh()
 	works.refresh()
+	if ships != null:
+		ships.refresh()
 
 
 func _do_tick() -> void:
@@ -1751,7 +1774,7 @@ const ORDER_NAMES := {BattleSim.ORDER_MOVE: "move", BattleSim.ORDER_ATTACK: "att
 	BattleSim.ORDER_READY: "ready", BattleSim.ORDER_AMMO: "ammo", BattleSim.ORDER_FORAGE: "forage",
 	BattleSim.ORDER_KILL: "kill", BattleSim.ORDER_RELEASE: "release", BattleSim.ORDER_WORKS: "works",
 	BattleSim.ORDER_SABOTAGE: "sabotage", BattleSim.ORDER_ATTEMPT: "attempt", BattleSim.ORDER_PARLEY: "parley",
-	BattleSim.ORDER_OCCUPY: "occupy", BattleSim.ORDER_ABILITY: "ability"}
+	BattleSim.ORDER_OCCUPY: "occupy", BattleSim.ORDER_ABILITY: "ability", BattleSim.ORDER_LAND: "land"}
 
 
 ## Select only unit u (-1: clear the selection).
@@ -1872,8 +1895,8 @@ func _refresh_actions() -> void:
 	_refresh_char_bar()
 	var only_fixed := not selection.is_empty()
 	for u in selection:
-		if UT.stat(sim.u_type[u], "fixed") == 0:
-			only_fixed = false
+		if UT.stat(sim.u_type[u], "fixed") == 0 or UT.stat(sim.u_type[u], "ship") != 0:
+			only_fixed = false  # (a ship takes orders: fire, attack, Land)
 	hud.engine_only = only_fixed
 	hud.set_abilities(_ability_info())
 	if not selection.is_empty() and sim.phase == BattleSim.PHASE_BATTLE and interactive:
@@ -2984,12 +3007,56 @@ func _refresh_wall_buttons() -> void:
 			elif sim.u_wall[u] == 0 and sim.u_stair[u] != 1 and BattleSim.man_wall_target(sim, u).z >= 0:
 				near_wall = true
 	hud.set_drop_button(drop)
+	_refresh_land_button()
 	var note := ""
 	if selected >= 0 and sim.u_state[selected] == BattleSim.U_READY:
 		note = Hud.carry_note_text(sim, selected)
 		if note == "" and near_wall:
 			note = "Tap a wall to man it" if UiScale.is_touch() else "Click a wall to man it"
 	hud.set_carry_note(note)
+
+
+## (2026-11-05) The Land chip: shown while a ship of ours is selected; lit while one of them may send her landing
+## party ashore (BattleSim.land_refusal), its word the men aboard, else why not.
+func _refresh_land_button() -> void:
+	var vis := false
+	var ok := false
+	var word := ""
+	if sim.shp_on != 0:
+		for u in selection:
+			if not sim.is_ship(u) or not _mine(u):
+				continue
+			vis = true
+			var why: String = BattleSim.land_refusal(sim, u)
+			if why == "":
+				ok = true
+				word = "%d men" % sim.u_count0[sim.sh_party[sim.u_ship[u]]]
+			elif word == "":
+				word = "ashore" if sim.sh_party[sim.u_ship[u]] >= 0 and sim.sh_land[sim.u_ship[u]] >= 0 else "none"
+	hud.set_land_button(vis, ok and interactive, word)
+
+
+## (2026-11-05) "Land": each selected ship of ours sends her landing party ashore (ORDER_LAND, a lockstep input).
+func _land() -> void:
+	if not interactive or sim.shp_on == 0:
+		return
+	var sent := -1
+	for u in selection:
+		if sim.is_ship(u) and _mine(u) and BattleSim.land_refusal(sim, u) == "" and not _land_pending(u):
+			_queue({"type": BattleSim.ORDER_LAND, "unit": u})
+			sent = u
+	_count("land")
+	if sent >= 0:
+		overlay.flash("The boats put off for the shore", Vector2(sim.u_cx[sent], sim.u_cy[sent]) / M * PX_PER_M)
+		hud.set_land_button(true, false, "rowing")
+
+
+## An ORDER_LAND for ship u is queued and not applied yet.
+func _land_pending(u: int) -> bool:
+	for o in sim.pending_orders:
+		if int(o["type"]) == BattleSim.ORDER_LAND and int(o.get("unit", -1)) == u:
+			return true
+	return false
 
 
 ## "Drop": each selected unit carrying siege equipment puts it down where
@@ -4222,6 +4289,8 @@ func _on_key(e: InputEventKey) -> void:
 			_come_down()
 		"drop":
 			_drop()
+		"land":
+			_land()
 		"release":
 			_toggle_release()
 		"sabotage", "attempt", "parley":

@@ -85,6 +85,13 @@ var fails := 0
 
 
 func _init() -> void:
+	if OS.get_cmdline_user_args().has("--only=shore"):
+		# (2026-11-05) Support the shore and the contested landings alone.
+		_port_landing()
+		_shore_support()
+		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
+		quit(0 if fails == 0 else 1)
+		return
 	_data()
 	_round_trip()
 	_determinism()
@@ -175,6 +182,7 @@ func _init() -> void:
 	_ai_sea_garrison()
 	_docking()
 	_port_landing()
+	_shore_support()
 	_launches()
 	_native_vessels()
 	_ai_kin()
@@ -5675,10 +5683,10 @@ func _amphibious() -> void:
 	var ty2 := UT.index_of("canoe_raiders2")  # (the Canoe Captains, the raiders' tier-2 row, keep the trait)
 	var only := true
 	for t in UT.TYPES.size():
-		if (UT.stat(t, "amphib") != 0) != (t == ty or t == ty2):
+		if (UT.stat(t, "amphib") != 0) != (t == ty or t == ty2 or t == UT.SHIP_MARINES):
 			only = false
 	_check(UT.stat(ty, "amphib") == 1 and only and UT.stat(UT.index_of("general"), "amphib") == 0,
-		"amphibious: only the canoe raiders' rows (raiders and captains) have the trait (the general's is 0)")
+		"amphibious: only the canoe raiders' rows (raiders and captains) have the trait, and the battle-only ships' landing party (the general's is 0)")
 	var st := CState.new_campaign("amph", 5150, [eng], {}, [], "west")
 	st["fleets"] = []
 	st["regions"][cu]["owner"] = eng
@@ -6485,15 +6493,16 @@ func _port_landing() -> void:
 	var stw: Dictionary = sw[0]
 	CFleet.execute_moves(stw, [[int(sw[2]["id"]), beach, tf, 0, -1]])
 	var cew := _pl_event(stw, "landing_contested")
-	_check(str(cew.get("how", "")) == "withdrew" and _pl_event(stw, "sea_battle").is_empty() and not _pl_event(stw, "landed").is_empty()
-		and CFleet.docked(CFleet.fleet(stw, int(sw[1]["id"]))) == bf,
-		"port landing: an AI's weak docked fleet stays behind the mole (the sortie odds): the troops land, the fleet stays docked")
+	_check(str(cew.get("how", "")) == "support" and _pl_event(stw, "sea_battle").is_empty() and not _pl_event(stw, "landed").is_empty()
+		and CFleet.docked(CFleet.fleet(stw, int(sw[1]["id"]))) == bf and CFleet.supporting(stw, CFleet.fleet(stw, int(sw[1]["id"]))) == bf,
+		"port landing: an AI's weak docked fleet stays behind the mole (the sortie odds) and supports the shore (2026-11-05, SHORE_DEF): the troops land, the fleet stays docked")
 	# (the same strong fleet at Easy: the sortie odds are 0, it never comes out)
 	var se: Array = _pl_setup([], ["frigate", "frigate", "frigate", "frigate", "frigate"])
 	(se[0]["factions"][mk] as Dictionary)["ai_skill"] = CP.EASY
 	CFleet.execute_moves(se[0], [[int(se[2]["id"]), beach, tf, 0, -1]])
-	_check(CP.of(se[0], mk)[CP.SORTIE_ODDS_PCT] == 0 and str(_pl_event(se[0], "landing_contested").get("how", "")) == "withdrew",
-		"port landing: with the sortie odds at 0 (Easy) the docked fleet never comes out")
+	_check(CP.of(se[0], mk)[CP.SORTIE_ODDS_PCT] == 0 and str(_pl_event(se[0], "landing_contested").get("how", "")) == "withdrew"
+		and not CFleet.fleet(se[0], int(se[1]["id"])).has("sh"),
+		"port landing: with the sortie odds at 0 (Easy) the docked fleet never comes out (nor supports the shore: SHORE_DEF 0)")
 	# 3. No fleet in the port: the landing is not contested; the landed fleet is seen by the region's owner.
 	var sn: Array = _pl_setup([mk], ["sloop"])
 	var stn: Dictionary = sn[0]
@@ -8590,3 +8599,162 @@ func _war_cover() -> void:
 	_check(not CState.at_war(w3, mace, epir), "stretched (a region lost): peace asked at once with the war won least")
 	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
 	CP.set_knob(CP.SKILLED, CP.WAR_CHANCE, wc0)
+
+
+# --------------------------------------------------- support the shore ---
+
+## (2026-11-05) Support the shore (docs/design/campaign_rules.md "Support the shore (as built, 2026-11-05)"): the
+## defender's third choice at a contested landing, the carry-over to the land battle for the region, the battle's
+## ships, the formula's capped term, the losses applied, the report; the AI's choices; the fshore order; the key's
+## life and JSON.
+func _shore_support() -> void:
+	CData.use_pack("west")
+	var mk := _f("miskito")
+	var tf := _f("tierra_firme")
+	var bf := _r("bluefields")
+	var beach := CFleet.beach(bf)
+	var pan := Panels.new(null)
+	# 1. The human defender's choice: Support the shore.
+	var su: Array = _pl_setup([mk], ["frigate", "frigate", "sloop", "sloop"])
+	var st: Dictionary = su[0]
+	var mid := int(su[1]["id"])
+	var tid := int(su[2]["id"])
+	var army_id := int(su[2]["carry"][0]["id"])
+	CFleet.execute_moves(st, [[tid, beach, tf, 0, -1]])
+	var b: Dictionary = st["battles"][0] if not (st["battles"] as Array).is_empty() else {}
+	var line := SeaScreen.landing_line(st, b, true) if not b.is_empty() else ""
+	_check(not b.is_empty() and line.contains("Support the shore") and CFleet.shore_on(),
+		"shore: the contested landing's card offers Support the shore beside Stand off and Fight (%s)" % line)
+	var so := CTurn.apply_battle(st, int(b["id"]), {"mode": CFleet.SUPPORT})
+	var la := CState.army(so, army_id)
+	var mfl := CFleet.fleet(so, mid)
+	_check(not la.is_empty() and CGrid.region(CState.cell(la)) == bf and _pl_event(so, "sea_battle").is_empty()
+		and not _pl_event_how(so, "supported").is_empty() and CFleet.docked(mfl) == bf
+		and (mfl.get("sh", []) as Array) == [bf, int(b["turn"])] and not _pl_event(so, "shore_set").is_empty(),
+		"shore: supported: no sea battle, the troops land, the fleet lies in port again keeping sh %s" % str(mfl.get("sh", [])))
+	var t_sup := str(pan.event_text(_pl_event_how(so, "supported"), mk))
+	_check(t_sup.contains("support the shore"), "shore: the landing's report line (%s)" % t_sup)
+	# 2. The carry-over: the land battle for the region next turn takes the fleet's ships, on the defenders' side.
+	var s2 := CState.copy(so)
+	s2["turn"] = int(b["turn"]) + 1  # (the next turn's resolution: its battles come before its end)
+	_check(CFleet.supporting(s2, CFleet.fleet(s2, mid)) == bf, "shore: the choice lasts into the next turn")
+	var lb := CRules.start_battle(s2, bf, CState.army(s2, army_id))
+	CFleet.mark_shore(s2, lb)
+	lb.erase("new")
+	var rows: Array = lb.get("shore", [])
+	var nd := 0
+	var na := 0
+	for rw in rows:
+		if int(rw[0]) == mid and int(rw[3]) == 1:
+			nd += 1
+		elif int(rw[0]) == tid and int(rw[3]) == 0:
+			na += 1
+	_check(rows.size() == 7 and nd == 4 and na == 3 and str(rows[0][2]) == "frigate",
+		"shore: the assault on Bluefields takes the supporting fleet's 4 ships on the defenders' side and the AI transport's 3 on the attackers' (%s)" % str(rows))
+	var sd0 := CBattle.side_strengths(s2, lb)
+	var bare := (lb as Dictionary).duplicate(true)
+	bare.erase("shore")
+	var sd1 := CBattle.side_strengths(s2, bare)
+	var term: Array = CFleet.shore_strength(s2, lb)
+	_check(int(sd0[0]) == int(sd1[0]) + mini(int(term[0]), int(sd1[0]) * CFleet.SHORE_CAP_PCT / 100)
+		and int(sd0[1]) == int(sd1[1]) + mini(int(term[1]), int(sd1[1]) * CFleet.SHORE_CAP_PCT / 100)
+		and int(sd0[1]) > int(sd1[1]) and int(sd0[1]) <= int(sd1[1]) * (100 + CFleet.SHORE_CAP_PCT) / 100,
+		"shore: the auto-resolve counts the ships, capped at %d %% of the side (defence %d -> %d, term %d)" % [CFleet.SHORE_CAP_PCT, int(sd1[1]), int(sd0[1]), int(term[1])])
+	var built := CBattle.build(s2, lb, mk)
+	var ships: Array = (built["scenario"] as Dictionary).get("ships", [])
+	_check(ships.size() == 7 and int(ships[0]["guns"]) == 4 and int(ships[2]["guns"]) == 1 and int(ships[0]["men"]) == 50
+		and int(ships[0]["ctl"]) == mk and int(ships[0]["f"]) == mk and int(ships[0]["side"]) == int(built["sim_side"][1])
+		and (built.get("shore", []) as Array).size() == 7 and int(ships[4]["ctl"]) == -1,
+		"shore: the battle's scenario carries the ships (frigate 4 guns and 50 to land, sloop 1 gun), the Miskito's commanded by their player, the AI's by nobody")
+	# 3. The sim's result back onto the ships: crews lost, the hull battered, the report.
+	var res := {"ships": [{"src": 0, "killed": 4, "party_killed": 10, "hits": 50, "shots": 7, "landed": 50, "kills": 3,
+		"party_kills": 2, "silenced": 0}, {"src": 2, "killed": 4, "party_killed": 0, "hits": 100, "shots": 2, "landed": 0,
+		"kills": 0, "party_kills": 0, "silenced": 1}]}
+	var out := {}
+	CBattle._shore_outcome(built, res, out)
+	_check((out.get("shore", []) as Array).size() == 2 and int(out["shore"][0][3]) == 14 and int(out["shore"][1][8]) == 1,
+		"shore: the outcome maps the sim's ships back (%s)" % str(out.get("shore", [])))
+	var s3 := CState.copy(s2)
+	var lb3 := CState.battle(s3, int(lb["id"]))
+	CFleet.apply_shore(s3, lb3, out)
+	var f3 := CFleet.fleet(s3, mid)
+	var ev := _pl_event(s3, "shore_support")
+	_check(int(f3["ships"][0]["c"]) == 93 and int(f3["ships"][0]["h"]) == 80 and int(f3["ships"][2]["h"]) == 60
+		and int(f3["ships"][2]["c"]) == 93 and not f3.has("sh") and int(ev.get("landed", 0)) == 50 and int(ev.get("lost", 0)) == 18
+		and int(ev.get("fired", 0)) == 9 and int(ev.get("silenced", 0)) == 1,
+		"shore: the crews lost and the hulls battered are taken off the ships, the fleet stops supporting (ships %s, event %s)" % [str(f3["ships"]), str(ev)])
+	var t_rep := str(pan.event_text(ev, mk))
+	_check(t_rep.begins_with("Your fleet at Bluefields supported the shore: 50 men landed, 18 lost, the guns fired 9 times"),
+		"shore: the report (%s)" % t_rep)
+	# 4. The formula: every party ashore, losing its side's share.
+	var s4 := CState.copy(s2)
+	var lb4 := CState.battle(s4, int(lb["id"]))
+	var fo := CBattle.formula(s4, lb4)
+	_check((fo.get("shore", []) as Array).size() == 7 and int(fo["shore"][0][6]) == 50 and int(fo["shore"][0][3]) > 0,
+		"shore: the formula lands the parties and takes its losses from them (%s)" % str(fo["shore"][0]))
+	var s4b := CTurn.apply_battle(s4, int(lb4["id"]), fo)
+	_check(not CFleet.fleet(s4b, mid).has("sh") and not _pl_event(s4b, "shore_support").is_empty(),
+		"shore: apply_battle with the formula's outcome applies the ships' part")
+	# 5. The whole way through the battle sim (a short run, both sides AI): the outcome applies.
+	var sim := BattleSim.new()
+	var scn: Dictionary = (built["scenario"] as Dictionary).duplicate(true)
+	scn["ai_sides"] = [0, 1]
+	scn.erase("deploy_time")
+	sim.setup(scn, int(built["seed"]))
+	for t in 600:
+		sim.step()
+	var oc := CBattle.outcome_from_result(built, sim.result(), "auto")
+	_check(sim.shp_on == 1 and (oc.get("shore", []) as Array).size() == 7 and sim.sh_side.size() == 7,
+		"shore: the sim puts the 7 ships on Bluefields' water and the outcome lists them (%d)" % sim.sh_side.size())
+	var s5 := CTurn.apply_battle(s2, int(lb["id"]), oc)
+	_check(not _pl_event(s5, "shore_support").is_empty() and not CFleet.fleet(s5, mid).has("sh"), "shore: ... and applies")
+	# 6. A battle away from the water (a field battle) takes no ships: the fleet is told and keeps its choice.
+	var s6 := CState.copy(s2)
+	var fb := CRules.start_field_battle(s6, bf, [CState.army(s6, army_id)], [s6["armies"][0]])
+	CFleet.mark_shore(s6, fb)
+	_check(not fb.has("shore") and not _pl_event(s6, "shore_inland").is_empty() and CFleet.supporting(s6, CFleet.fleet(s6, mid)) == bf,
+		"shore: a field battle takes no ships (shore_inland), the choice is kept")
+	# 7. Its life: gone after the turn after, or when the fleet sails; JSON round-trip.
+	var s7 := CState.copy(s2)
+	CFleet.end_of_turn(s7)  # (the end of the next turn)
+	var s7b := CState.copy(s2)
+	CFleet.place(CFleet.fleet(s7b, mid), CFleet.dock(_r("portobelo")))
+	_check(not CFleet.fleet(s7, mid).has("sh") and not CFleet.fleet(s7b, mid).has("sh"), "shore: the choice lapses after the next turn, or when she sails")
+	var s7c := CState.copy(s2)
+	s7c["sieges"] = [{"r": bf, "f": tf}]
+	CFleet.end_of_turn(s7c)
+	_check((CFleet.fleet(s7c, mid).get("sh", []) as Array) == [bf, int(s2["turn"])],
+		"shore: while the town is besieged the choice is kept for the assault (sh %s)" % str(CFleet.fleet(s7c, mid).get("sh", [])))
+	var js := CState.from_json(CState.to_json(s2))
+	_check(CState.hash_text(js) == CState.hash_text(s2), "shore: sh and the battle's shore round-trip JSON and the hash")
+	# 8. The AI: an attacker's transport stays off the beach for the battle (SHORE_ATT); not at Easy.
+	var sn: Array = _pl_setup([], ["sloop"])
+	var stn: Dictionary = sn[0]
+	stn["fleets"].erase(sn[1])
+	CFleet.execute_moves(stn, [[int(sn[2]["id"]), beach, tf, 0, -1]])
+	var trf := CFleet.fleet(stn, int(sn[2]["id"]))
+	_check(not _pl_event(stn, "landed").is_empty() and CFleet.supporting(stn, trf) == bf, "shore: an AI transport that landed troops on an enemy port supports the shore (sh %s)" % str(trf.get("sh", [])))
+	var se: Array = _pl_setup([], ["sloop"])
+	(se[0]["factions"][tf] as Dictionary)["ai_skill"] = CP.EASY
+	se[0]["fleets"].erase(se[1])
+	CFleet.execute_moves(se[0], [[int(se[2]["id"]), beach, tf, 0, -1]])
+	_check(not CFleet.fleet(se[0], int(se[2]["id"])).has("sh"), "shore: ... not at Easy (SHORE_ATT 0)")
+	var acts: Array = []
+	var fm: Array = []
+	CAIFleet.act(stn, tf, acts, fm)
+	var sails := false
+	for m in fm:
+		if int(m[0]) == int(trf["id"]):
+			sails = true
+	_check(not sails, "shore: the AI keeps a supporting fleet where it lies")
+	# 9. The fshore order (a player's): off a port town at war or its own; called off with on 0; far off refused.
+	var sh2: Array = _pl_setup([tf], ["sloop"])
+	var sth: Dictionary = sh2[0]
+	var tfl: Dictionary = sh2[2]
+	_check(CFleet.shore_check(sth, tf, int(tfl["id"])) == "" and CFleet.shore_region(tfl) == _r("portobelo"),
+		"shore: a fleet in her own port may support its shore (%s)" % CFleet.shore_check(sth, tf, int(tfl["id"])))
+	_check(CRules.apply_order(sth, tf, {"t": "fshore", "fleet": int(tfl["id"]), "on": 1}) == "" and CFleet.supporting(sth, tfl) == _r("portobelo"),
+		"shore: the fshore order sets it")
+	_check(CRules.apply_order(sth, tf, {"t": "fshore", "fleet": int(tfl["id"]), "on": 0}) == "" and not tfl.has("sh"),
+		"shore: ... and calls it off")
+	_check(CRules.apply_order(sth, mk, {"t": "fshore", "fleet": int(tfl["id"]), "on": 1}) != "", "shore: another's fleet is refused")

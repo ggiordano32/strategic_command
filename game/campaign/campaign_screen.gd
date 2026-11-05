@@ -3103,6 +3103,42 @@ func stand_off(bid: int) -> void:
 	_apply_battle(bid, {"mode": CFleet.STAND_OFF})
 
 
+## (2026-11-05) The defender supports the shore at a contested landing (sea_screen.gd's Support the shore): the
+## pending sea battle is applied with the outcome mode CFleet.SUPPORT (no sea battle; the troops land; the ships
+## stay by the town for the land battle that follows).
+func support_shore(bid: int) -> void:
+	var b := CState.battle(st, bid)
+	if b.is_empty() or _resolver != null or not CFleet.can_stand_off(st, b):
+		return
+	if online != null and not await onl.claim(bid, "auto"):
+		return
+	b = CState.battle(st, bid)
+	if b.is_empty() or not CFleet.can_stand_off(st, b):
+		return
+	_battle_snap = {}
+	_battle_id = bid
+	_t("campaign_battle", {"mode": "support", "turn": int(st["turn"]), "region": int(b.get("r", -1)), "sea": 1})
+	_apply_battle(bid, {"mode": CFleet.SUPPORT})
+
+
+## (2026-11-05) Support the shore with fleet id where it lies (the fshore order), or take that back: an fshore of the
+## plan is dropped; a fleet supporting already is told to stop ({"on": 0}).
+func toggle_shore(id: int) -> void:
+	var keep: Array = []
+	var had := false
+	for o in orders:
+		if str(o.get("t", "")) == "fshore" and int(o.get("fleet", -1)) == id:
+			had = true
+			continue
+		keep.append(o)
+	if had:
+		set_orders(keep)
+		return
+	var on := 0 if CFleet.supporting(st, CFleet.fleet(st, id)) >= 0 else 1
+	if add_order({"t": "fshore", "fleet": id, "on": on}) == "":
+		_t("campaign_input", {"what": "fleet_shore"})
+
+
 func _process(delta: float) -> void:
 	var t0 := ZProf.begin()
 	_tick(delta)

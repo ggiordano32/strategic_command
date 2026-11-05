@@ -54,7 +54,15 @@ extends RefCounted
 ## CAIFleet.fights_landing); they land only if the landing side wins (at once,
 ## or after the pending battle: the battle's "land" [fleet, cell], apply_sea).
 ## A fleet docked in a port that falls puts to sea (take_docked) unless no
-## open water is left to it. A fleet that lands troops is seen by the landed
+## open water is left to it.
+## (2026-11-05) Support the shore (docs/design/campaign_rules.md "Support the
+## shore (as built, 2026-11-05)"): a fleet off a port town keeps a choice to
+## take part in the land battle for it this turn and next ("sh" [region, the
+## turn]: the defender's third choice at a contested landing, the AI's below
+## the sortie odds, an attacker's transports after their landing, any fleet by
+## the fshore order); the battle records its ships ("shore", mark_shore), the
+## battle sim puts them on the water (their guns, their landing parties), and
+## apply_shore takes the crews lost and the hulls battered. A fleet that lands troops is seen by the landed
 ## region's owner (its "lw" [turn, faction, cell], campaign/csight.gd) the
 ## turn it lands and the next.
 
@@ -62,6 +70,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
 
 const INF := 1 << 30
 ## A fleet's zone (cells, the circle of CGrid.within): an enemy fleet at war
@@ -70,6 +79,23 @@ const FLEET_ZONE := 2
 ## (2026-11-05) The outcome mode of a contested landing's pending sea battle
 ## the defender declined (can_stand_off, apply_sea).
 const STAND_OFF := "standoff"
+## (2026-11-05) The outcome mode of a contested landing's pending sea battle
+## the defender answered by supporting the shore (apply_sea: as a stand-off, and
+## the fleets back in port keep "sh" for the land battle that follows).
+const SUPPORT := "support"
+## Support the shore: a fleet within this many cells of a port town's site
+## supports the battle for it; at most SHORE_MAX ships a side take part; the
+## auto-resolve counts a side's supporting ships at SHORE_GUN_STR a gun pair
+## (the landed naval guns' price a gun) and their landing parties at their
+## row's value a man, at most SHORE_CAP_PCT % of the side's own strength; a gun
+## deck battered to silence costs the hull SHORE_HULL_PCT % (in proportion to
+## the hits taken); hull and crew never below SHORE_FLOOR % from it.
+const SHORE_CELLS := 4
+const SHORE_MAX := 6
+const SHORE_GUN_STR := 200
+const SHORE_CAP_PCT := 10
+const SHORE_HULL_PCT := 40
+const SHORE_FLOOR := 5
 ## A harbour (the coast cell ships are built and boarded at) is at most this
 ## far (Chebyshev) from the settlement (2026-10-23: 2, was 4, which made inland
 ## towns ports); a pack's ships script may set its own HARBOUR_MAX and a
@@ -445,6 +471,8 @@ static func cell(fl: Dictionary) -> int:
 
 
 static func place(fl: Dictionary, c: int) -> void:
+	if fl.has("sh") and c != cell(fl):
+		fl.erase("sh")  # (2026-11-05) sailing off: no longer supporting the shore
 	fl["x"] = CGrid.cx(c)
 	fl["y"] = CGrid.cy(c)
 
@@ -736,6 +764,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			uf.erase("in")
 			uf.erase("dk")
 			return ""
+		"fshore":
+			return _fshore(st, f, o)
 	return "unknown order"
 
 
@@ -979,6 +1009,9 @@ static func land(st: Dictionary, fl: Dictionary, c: int, id: int = -1) -> void:
 	var cap: Dictionary = _capt().of_fleet(st, int(fl["id"]))
 	if lo >= 0 and lo != int(fl["f"]) and not CState.friendly(st, lo, int(fl["f"])):
 		fl["lw"] = [int(st["turn"]), lo, cell(fl)]
+		if shore_on() and not CState.is_human(st, int(fl["f"])) and CState.at_war(st, int(fl["f"]), lo) \
+				and shore_region(fl) == lr and _ai_fleet().supports_shore(st, int(fl["f"]), true):
+			set_shore(st, fl, lr, int(st["turn"]))  # (2026-11-05: the transports stay off the beach for the battle)
 	for a in fl["carry"]:
 		if id >= 0 and int(a["id"]) != id:
 			keep.append(a)
@@ -1045,6 +1078,10 @@ static func _contest(st: Dictionary, fl: Dictionary, dfn: Array, lc: int, id: in
 		"x": CGrid.cx(c), "y": CGrid.cy(c)}
 	if not _with_human(st, dfn) and not _ai_fleet().fights_landing(st, g, _side_power(st, dfn, true), _side_power(st, att, false)):
 		ev["how"] = "withdrew"
+		if shore_on() and CGrid.region(lc) >= 0 and _ai_fleet().supports_shore(st, g, false):
+			for e in dfn:
+				set_shore(st, e, CGrid.region(lc), int(st["turn"]))  # (2026-11-05: behind the mole, its guns and crews for the shore)
+			ev["how"] = "support"
 		_rules().event(st, ev)
 		return true
 	var docks: Array = []  # (2026-11-05) [fleet id, the port it lay in], for a stand-off (apply_sea)
@@ -1942,8 +1979,8 @@ static func apply_sea(st: Dictionary, b: Dictionary, outcome: Dictionary) -> voi
 			_land_after(st, b, true)  # (2026-11-02) nobody is left to stop the landing
 		return
 	var mode := str(outcome.get("mode", "formula"))
-	if mode == STAND_OFF and can_stand_off(st, b):
-		_stand_off(st, b, dfn)
+	if (mode == STAND_OFF or mode == SUPPORT) and can_stand_off(st, b):
+		_stand_off(st, b, dfn, mode == SUPPORT)
 		return
 	if mode != "fought" and mode != "forfeit":
 		resolve(st, att, dfn, c)
@@ -1973,14 +2010,17 @@ static func can_stand_off(st: Dictionary, b: Dictionary) -> bool:
 ## guard met on the way in stays where it is); the troops land as after a
 ## won battle (_land_after, how "stood_off"); nobody is hurt, no sea battle
 ## is counted.
-static func _stand_off(st: Dictionary, b: Dictionary, dfn: Array) -> void:
+static func _stand_off(st: Dictionary, b: Dictionary, dfn: Array, support: bool = false) -> void:
+	var lr := CGrid.region(int((b["land"] as Array)[1]))
 	for row in b.get("dock", []):
 		var e := fleet(st, int(row[0]))
 		var r := int(row[1])
 		if e.is_empty() or r < 0 or not dfn.has(e) or not can_dock(st, int(e["f"]), r):
 			continue
 		e["in"] = r
-	_land_after(st, b, true, "stood_off")
+		if support and lr >= 0:
+			set_shore(st, e, lr, int(b.get("turn", st["turn"])))  # (2026-11-05: the land battle for the region that follows)
+	_land_after(st, b, true, "supported" if support else "stood_off")
 
 
 static func _apply_fought(st: Dictionary, att: Array, dfn: Array, c: int, outcome: Dictionary) -> void:
@@ -2226,6 +2266,13 @@ static func end_of_turn(st: Dictionary) -> void:
 		fl["moved"] = 0
 		if fl.has("lw") and (int(st["turn"]) >= int(fl["lw"][0]) + 2 or cell(fl) != int(fl["lw"][2])):
 			fl.erase("lw")  # (2026-11-02) seen after its landing this turn and the next only, where it landed them
+		if fl.has("sh") and int(st["turn"]) >= int(fl["sh"][1]) + 1:
+			# (2026-11-05) The support of the shore lasts the turn it was chosen and the next; while a siege of the town goes
+			# on (the landed army sat down before it) and she lies off it, it is renewed for the assault that ends it.
+			if _shore_siege(st, fl):
+				fl["sh"] = [int(fl["sh"][0]), int(st["turn"])]
+			else:
+				fl.erase("sh")
 		keep.append(fl)
 	st["fleets"] = keep
 
@@ -2342,3 +2389,212 @@ static func last_steps(st: Dictionary) -> Array:
 		if str(e.get("k", "")) == "fmoves" and int(e["turn"]) == int(st["turn"]) - 1:
 			out.append_array(e["steps"])
 	return out
+
+
+# ------------------------------------------------- support the shore ---
+# (2026-11-05) docs/design/campaign_rules.md "Support the shore (as built,
+# 2026-11-05)"; the battle: docs/design/battle_sim.md "A fleet at the shore".
+
+## The active pack's fleets may support the shore (its ships script's SHORE_SUPPORT; the West's).
+static func shore_on() -> bool:
+	return int(CData.ship_const("SHORE_SUPPORT", 0)) != 0
+
+
+## The port region whose town lies within SHORE_CELLS of fleet fl (the nearest; ties the lowest), -1 none.
+static func shore_region(fl: Dictionary) -> int:
+	var c := cell(fl)
+	var best := -1
+	var bd := INF
+	for r in CData.region_count():
+		if not CData.is_port(r):
+			continue
+		var sc := CGrid.site(r)
+		if sc < 0:
+			continue
+		var d := CGrid.cheb(c, sc)
+		if d <= SHORE_CELLS and d < bd:
+			best = r
+			bd = d
+	return best
+
+
+## Fleet fl supports the shore of region r from turn `turn` (this turn and the next): it stays where it lies.
+static func set_shore(st: Dictionary, fl: Dictionary, r: int, turn: int) -> void:
+	if fl.is_empty() or r < 0:
+		return
+	_drop_voyage(fl)
+	fl.erase("route")
+	fl.erase("rgoal")
+	fl["sh"] = [r, turn]
+	_rules().event(st, {"k": "shore_set", "f": int(fl["f"]), "fleet": int(fl["id"]), "r": r})
+
+
+## (2026-11-05) Fleet fl supporting the shore lies off a town under a siege in which its faction takes a side (the
+## besiegers' or the town's): its support is kept for the assault (end_of_turn).
+static func _shore_siege(st: Dictionary, fl: Dictionary) -> bool:
+	var r := int(fl["sh"][0])
+	var sg := CState.siege_at(st, r)
+	if sg.is_empty() or CGrid.site(r) < 0 or CGrid.cheb(cell(fl), CGrid.site(r)) > SHORE_CELLS:
+		return false
+	var f := int(fl["f"])
+	return CState.friendly(st, f, int(sg["f"])) or CState.friendly(st, f, CState.owner(st, r))
+
+
+## The region fleet fl supports the shore of now (its "sh" this turn or the turn after it was chosen), -1 none.
+static func supporting(st: Dictionary, fl: Dictionary) -> int:
+	if not fl.has("sh") or int(st["turn"]) > int(fl["sh"][1]) + 1:
+		return -1
+	return int(fl["sh"][0])
+
+
+## "" if faction f's fleet fid may support the shore where it lies (the order fshore; the view's button): a fleet
+## of its own with ships, not in a pending battle, not the flota nor a story fleet, off a port town (shore_region)
+## that is its own or a friend's (the defence) or an enemy's at war (the attack).
+static func shore_check(st: Dictionary, f: int, fid: int) -> String:
+	if not shore_on():
+		return "no support from the sea here"
+	var fl := fleet(st, fid)
+	if fl.is_empty() or int(fl["f"]) != f or (fl["ships"] as Array).is_empty():
+		return "no such fleet"
+	if fl.has("busy"):
+		return "in a sea battle"
+	if fl.has("flota") or fl.has("sto"):
+		return "it sails by other orders"
+	var r := shore_region(fl)
+	if r < 0:
+		return "no port town within reach of her guns"
+	var o := CState.owner(st, r)
+	if o >= 0 and not CState.friendly(st, f, o) and not CState.at_war(st, f, o):
+		return "not at war with the town's owner"
+	return ""
+
+
+## Order fshore {fleet, on (1, or 0 to call it off)}.
+static func _fshore(st: Dictionary, f: int, o: Dictionary) -> String:
+	var fl := fleet(st, int(o.get("fleet", -1)))
+	if int(o.get("on", 1)) == 0:
+		if fl.is_empty() or int(fl["f"]) != f:
+			return "no such fleet"
+		fl.erase("sh")
+		return ""
+	var why := shore_check(st, f, int(o.get("fleet", -1)))
+	if why != "":
+		return why
+	set_shore(st, fl, shore_region(fl), int(st["turn"]))
+	return ""
+
+
+## A new land battle b (CTurn.resolve_turn, with its reinforcements): the ships of the fleets supporting the shore
+## of its region, within SHORE_CELLS of the town and friendly to one of its sides, as its "shore" [[fleet, ship
+## index, ship key, campaign side]] (fleets by id, ships in order, SHORE_MAX a side). A battle away from the water
+## (a sally, a relief, an interception: not a settlement battle, or a town that is no port) takes none: the fleet
+## is told ("shore_inland") and keeps its choice for the next.
+static func mark_shore(st: Dictionary, b: Dictionary) -> void:
+	if not shore_on() or not on(st) or b.has("sea") or b.has("shore"):
+		return
+	var r := int(b["r"])
+	var site := CGrid.site(r)
+	var rows: Array = []
+	var n := [0, 0]
+	for fl in fleets(st):
+		if supporting(st, fl) != r or fl.has("busy") or (fl["ships"] as Array).is_empty():
+			continue
+		if site < 0 or CGrid.cheb(cell(fl), site) > SHORE_CELLS:
+			continue
+		var f := int(fl["f"])
+		var cs := 0 if CState.friendly(st, f, int(b["att_f"])) else (1 if CState.friendly(st, f, int(b["def_f"])) else -1)
+		if cs < 0:
+			continue
+		if int(b.get("settlement", 1)) == 0 or not CData.is_port(r):
+			_rules().event(st, {"k": "shore_inland", "f": f, "fleet": int(fl["id"]), "r": r})
+			continue
+		var ships: Array = fl["ships"]
+		for k in ships.size():
+			if n[cs] >= SHORE_MAX:
+				break
+			rows.append([int(fl["id"]), k, str(ships[k]["t"]), cs])
+			n[cs] += 1
+	if not rows.is_empty():
+		b["shore"] = rows
+
+
+## Battle b's supporting ships as they stand: [{fl, ship, row (the ship row), cs, k}], those still there.
+static func shore_list(st: Dictionary, b: Dictionary) -> Array:
+	var out: Array = []
+	for row in b.get("shore", []):
+		var fl := fleet(st, int(row[0]))
+		var k := int(row[1])
+		if fl.is_empty() or k < 0 or k >= (fl["ships"] as Array).size():
+			continue
+		var sh: Dictionary = fl["ships"][k]
+		if str(sh["t"]) != str(row[2]):
+			continue
+		out.append({"fl": fl, "ship": sh, "row": CData.ship_row(str(row[2])), "cs": int(row[3]), "k": k})
+	return out
+
+
+## Ship x's entry for the battle sim's "ships" (Scenarios.ship_entry) on sim side `side`.
+static func shore_entry(x: Dictionary, side: int) -> Dictionary:
+	var row: Dictionary = x["row"]
+	var sh: Dictionary = x["ship"]
+	return Scenarios.ship_entry(side, str(sh["t"]), int(row.get("guns", 0)), int(row.get("crew", 0)) * int(sh["c"]) / 100,
+		int(sh["h"]), int(row.get("canoe", 0)))
+
+
+## The auto-resolve's term for battle b's supporting ships, [attackers, defenders] before the cap (CBattle
+## side_strengths caps it at SHORE_CAP_PCT % of each side's own strength): a gun pair SHORE_GUN_STR, the landing
+## party its men x its row's value a man.
+static func shore_strength(st: Dictionary, b: Dictionary) -> Array:
+	var s := [0, 0]
+	for x in shore_list(st, b):
+		var e := shore_entry(x, 0)
+		s[int(x["cs"])] += int(e["guns"]) * SHORE_GUN_STR + int(e["men"]) * UT.stat(int(e["ptype"]), "cost")
+	return s
+
+
+## Apply battle b's outcome to its supporting ships (CRules.apply_outcome): outcome "shore" [[fleet, ship index,
+## ship key, crew lost, gun deck hit %, shots, men landed, kills, silenced, side]]: each ship loses the crew lost
+## (as % of her row's crew) and SHORE_HULL_PCT % of hull per 100 % of her gun deck's hits, neither below
+## SHORE_FLOOR; every fleet that was in it stops supporting and is told ("shore_support": men landed, lost, shots,
+## kills, silenced guns; "none" 1 when the battle's map had no water for them).
+static func apply_shore(st: Dictionary, b: Dictionary, outcome: Dictionary) -> void:
+	if not b.has("shore"):
+		return
+	var per := {}  # fleet id -> [landed, lost, shots, kills, silenced, ships]
+	var order: Array = []
+	for row in b["shore"]:
+		if not per.has(int(row[0])):
+			per[int(row[0])] = [0, 0, 0, 0, 0, 0]
+			order.append(int(row[0]))
+	for o in outcome.get("shore", []):
+		var fl := fleet(st, int(o[0]))
+		var k := int(o[1])
+		if fl.is_empty() or k < 0 or k >= (fl["ships"] as Array).size() or not per.has(int(o[0])):
+			continue
+		var sh: Dictionary = fl["ships"][k]
+		if str(sh["t"]) != str(o[2]):
+			continue
+		var crew := maxi(int(CData.ship_row(str(o[2])).get("crew", 1)), 1)
+		var lost := int(o[3])
+		sh["c"] = clampi(int(sh["c"]) - (lost * 100 + crew - 1) / crew, SHORE_FLOOR, 100) if lost > 0 else int(sh["c"])
+		if int(o[4]) > 0:
+			sh["h"] = clampi(int(sh["h"]) - int(o[4]) * SHORE_HULL_PCT / 100, SHORE_FLOOR, 100)
+		var a: Array = per[int(o[0])]
+		a[0] += int(o[6])
+		a[1] += lost
+		a[2] += int(o[5])
+		a[3] += int(o[7])
+		a[4] += int(o[8])
+		a[5] += 1
+	var r := int(b["r"])
+	for id in order:
+		var fl := fleet(st, int(id))
+		if fl.is_empty():
+			continue
+		fl.erase("sh")
+		var a: Array = per[int(id)]
+		var ev := {"k": "shore_support", "f": int(fl["f"]), "fleet": int(id), "r": r, "landed": int(a[0]),
+			"lost": int(a[1]), "fired": int(a[2]), "kills": int(a[3]), "silenced": int(a[4]), "ships": int(a[5])}
+		if int(outcome.get("shore_none", 0)) != 0:
+			ev["none"] = 1
+		_rules().event(st, ev)

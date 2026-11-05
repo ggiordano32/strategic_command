@@ -346,6 +346,11 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=shore" in OS.get_cmdline_user_args():
+		_check_shore()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=fort" in OS.get_cmdline_user_args():
 		_check_fort()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
@@ -454,6 +459,7 @@ func _init() -> void:
 	_check_west()
 	_check_plays()
 	_check_fort()
+	_check_shore()
 	_check_occupy()
 	_check_destr()
 	_check_destr_ai()
@@ -9758,3 +9764,60 @@ func _snap_copy(sim, sc: Dictionary, p_seed: int) -> BattleSim:
 		_fail("native siege: restore refused or hashes differently")
 		return null
 	return a
+
+
+## A fleet at the shore (2026-11-05; docs/design/battle_sim.md "A fleet at the shore (as built)"; "--only=shore", also
+## in the full run): the port town battle with both sides' ships (Scenarios.shore_battle(1, 1)), AI against AI: two
+## runs hash alike tick by tick; a copy restored from a snapshot taken while a landing party paddles runs on alike; a
+## Land order by hand on a defending hull (the AI made Easy: it never lands) repeats; the ships' guns fired.
+func _check_shore() -> void:
+	var sc := Scenarios.shore_battle(1, 1)
+	var a := BattleSim.new()
+	a.setup(sc, 4242)
+	var b := BattleSim.new()
+	b.setup(sc, 4242)
+	var snap := PackedByteArray()
+	var same := true
+	for t in 1500:
+		a.step()
+		b.step()
+		if t % 50 == 0 and a.state_hash() != b.state_hash():
+			same = false
+			break
+		if snap.is_empty() and a.sh_land[0] >= 0 and a.u_wet[a.sh_party[0]] > 0:
+			snap = a.snapshot()
+	var shots := 0
+	for s in a.sh_side.size():
+		shots += a.sh_shots[s]
+	if not same or snap.is_empty() or shots == 0:
+		_fail("shore: two runs alike %s, a party afloat snapshotted %s, shots %d" % [str(same), str(not snap.is_empty()), shots])
+		return
+	var c := BattleSim.new()
+	c.setup(sc, 4242)
+	c.restore(snap)
+	var d := BattleSim.new()
+	d.setup(sc, 4242)
+	d.restore(snap)
+	for t in 400:
+		c.step()
+		d.step()
+	if c.state_hash() != d.state_hash():
+		_fail("shore: copies restored mid-paddle diverged")
+		return
+	var e := Scenarios.shore_battle(1, 0)
+	e["ai_skill"] = [0, 0]
+	var h := [0, 0]
+	for k in 2:
+		var x := BattleSim.new()
+		x.setup(e, 77)
+		x.queue_order({"tick": 30, "type": BattleSim.ORDER_LAND, "unit": x.sh_unit[0], "player": 0, "seq": 1})
+		for t in 600:
+			x.step()
+		if x.sh_land[0] != 30:
+			_fail("shore: the Land order by hand applied at tick %d (want 30)" % x.sh_land[0])
+			return
+		h[k] = x.state_hash()
+	if h[0] != h[1]:
+		_fail("shore: a Land order by hand does not repeat")
+		return
+	print("PASS shore: ships on both sides, AI against AI, repeat tick by tick (%d shots); restored mid-paddle runs on alike; a Land order by hand repeats" % shots)

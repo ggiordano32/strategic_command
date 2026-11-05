@@ -112,6 +112,7 @@ const UT := preload("res://sim/unit_types.gd")
 const BattleAI := preload("res://sim/battle_ai.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const AP := preload("res://sim/ai_profile.gd")
+const ShipAI := preload("res://sim/ship_ai.gd")
 
 const M := 1024
 
@@ -291,6 +292,19 @@ static func think(sim) -> void:
 		if sim.u_hand[u] >= 0:
 			continue  # a war dog pack (the settlement AI never releases one: docs/AI.md 21)
 		var kn := kn0 if side == 0 else kn1
+		if sim.shp_on != 0 and sim.u_ship[u] >= 0:
+			if ShipAI.think(sim, u, kn):
+				continue  # (a ship's hull, or her landing party on its way in: docs/AI.md 62)
+			if side == sim.city_def and sim.u_ai[u] == 0:
+				_classify_defender(sim, u)  # (a party landed after the army's first think: it holds where it landed)
+			elif side != sim.city_def and sim.ai_phase[side] != P_WITHDRAW:
+				# (an attacking party ashore storms from where it landed: for the plaza by the nearest way, not round
+				# to the army's street mouths)
+				if sim.u_ai[u] != A_STORM:
+					BattleAI._set_mode(sim, u, A_STORM)
+					sim.u_ai_x[u] = 1
+				_storm(sim, u)
+				continue
 		if BattleAI.is_char(sim, u):
 			# A hero or agent (docs/AI.md 27): the attackers' keep with their
 			# field; the defenders' stand where they were placed.
@@ -2210,6 +2224,8 @@ static func _nearest_attacker(sim, u: int, x: int, y: int, r: int, inside: bool)
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.hidden_from(o, sim.u_side[u]):
 			continue
+		if sim.shp_on != 0 and sim.is_ship(o):
+			continue  # (a hull on the water: nobody walks at her)
 		var d := BattleAI._d(sim.u_cx[o] - x, sim.u_cy[o] - y)
 		if d > best_d:
 			continue
@@ -2604,7 +2620,7 @@ static func _nearest_outside(sim, u: int, r: int) -> int:
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
 			continue
-		if (sim.veg_bits(sim.u_cx[o], sim.u_cy[o]) & MapGen.V_URBAN) != 0:
+		if (sim.veg_bits(sim.u_cx[o], sim.u_cy[o]) & MapGen.V_URBAN) != 0 or (sim.shp_on != 0 and sim.is_ship(o)):
 			continue
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
 		if d < best_d:
@@ -2663,6 +2679,8 @@ static func _storm(sim, u: int) -> void:
 			continue  # behind the citadel's shut gate
 		if fort_skip and sim.in_fort(o):
 			continue  # (a West fort left be: the town is the prize)
+		if sim.shp_on != 0 and sim.is_ship(o):
+			continue  # (a hull on the water: nobody walks at her)
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
 		if sim.occ_on != 0 and sim.u_occ[o] > 0 and sim.u_cls[u] != UT.CLS_MISSILE:
 			d = maxi(d - OCC_STORM_PULL, 0)  # (slice 2c: a held house is cleared first, at its door)
@@ -5009,7 +5027,7 @@ static func _harb_stage(sim) -> Vector2i:
 ## True while the rule has it.
 static func _harbour_att(sim, u: int, phase: int, kn: PackedInt32Array) -> bool:
 	if kn[AP.R_HARBOUR] == 0 or not sim.amphib(u) or (sim.harb.size() < 6 and sim.quay.size() < 4) \
-			or sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0:
+			or sim.u_side[u] == sim.city_def or sim.u_wall[u] > 0 or sim.u_ship[u] >= 0:
 		return false
 	var lp := _harb_in(sim)
 	var ra: int = sim.reach_at(sim.u_ax[u], sim.u_ay[u])
@@ -5133,7 +5151,7 @@ static func _harbour_def(sim, side: int) -> void:
 	if not hold:
 		return
 	for u in sim.n_units:
-		if sim.u_side[u] != side or sim.u_state[u] != U_READY or not sim.amphib(u) or sim.u_ai[u] == A_HSORTIE \
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or not sim.amphib(u) or sim.u_ai[u] == A_HSORTIE or sim.u_ship[u] >= 0 \
 				or sim.u_stair[u] != 0 or (sim.u_wall[u] == 0 and sim.reach_at(sim.u_ax[u], sim.u_ay[u]) != rl):
 			continue  # (in the town or on its walls: a wall company comes down by a stair first)
 		var t := _hsortie_target(sim, u)

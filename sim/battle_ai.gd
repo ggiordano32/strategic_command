@@ -122,6 +122,7 @@ const UT := preload("res://sim/unit_types.gd")
 const AP := preload("res://sim/ai_profile.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Plays := preload("res://sim/plays.gd")
+const ShipAI := preload("res://sim/ship_ai.gd")
 ## River crossings: the attacker's line forms this far beyond the crossing's
 ## mouth on the far bank (and skirmishes this far back from its own).
 const RIV_FORM := 30 * 1024
@@ -246,6 +247,8 @@ static func think(sim) -> void:
 			continue
 		if sim.u_hand[u] >= 0:
 			continue  # a war dog pack: the sim's return rule recalls it (docs/AI.md 21)
+		if sim.shp_on != 0 and sim.u_ship[u] >= 0 and ShipAI.think(sim, u, AP.of(sim, side)):
+			continue  # (a ship's hull, or her landing party on its way in: docs/AI.md 62)
 		if is_char(sim, u):
 			char_think(sim, u, kn0 if side == 0 else kn1, true)  # a hero or agent (docs/AI.md 27)
 			continue
@@ -432,7 +435,7 @@ static func _strength(sim, side: int) -> int:
 			if sim.u_cls[u] == UT.CLS_ART and sim.u_ammo[u] <= 0 and sim.u_reserve[u] <= 0:
 				cost = 2  # crews with nothing left to shoot
 			s += sim.u_alive[u] * cost
-		elif sim.u_side[u] == side and sim.u_state[u] == U_RESERVE and sim.reserve_open(side):
+		elif sim.u_side[u] == side and sim.u_state[u] == U_RESERVE and sim.reserve_open(side) and not sim.held_party(u):
 			s += sim.u_count0[u] * UT.stat(sim.u_type[u], "cost")  # (reinforcements on their way)
 	return s
 
@@ -3430,6 +3433,8 @@ static func _nearest_enemy(sim, u: int, ready_only: bool) -> int:
 		var s: int = sim.u_state[o]
 		if s >= U_DESTROYED or (ready_only and s != U_READY):
 			continue
+		if sim.shp_on != 0 and sim.is_ship(o):
+			continue  # (a hull on the water: nobody walks at her)
 		var d := _dist2(sim, u, o)
 		if best < 0 or d < best_d:
 			best = o
@@ -3443,6 +3448,8 @@ static func _nearest_not(sim, u: int, skip: int) -> int:
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
 		if o == skip or sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.hidden_from(o, side):
+			continue
+		if sim.shp_on != 0 and sim.is_ship(o):
 			continue
 		if sim.u_formed[o] != 0 and _frontal(sim, o, u):
 			continue
@@ -3459,6 +3466,8 @@ static func _nearest(sim, u: int, cls: int, within: int) -> int:
 	var side: int = sim.u_side[u]
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_cls[o] != cls or sim.hidden_from(o, side):
+			continue
+		if sim.shp_on != 0 and sim.is_ship(o):
 			continue
 		var d := _dist2(sim, u, o)
 		if d < best_d:

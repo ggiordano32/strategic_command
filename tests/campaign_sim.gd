@@ -242,6 +242,9 @@ func _run(sd: int, verbose: bool) -> String:
 		var fl_ev := {"ship_built": 0, "sea_battle": 0, "landed": 0, "embarked": 0, "army_sunk": 0, "fmove_failed": 0, "canoes_sunk": 0,
 			"landing_contested": 0, "fleet_to_sea": 0, "fleet_taken": 0}
 		var amph := [0, 0, 0]  # army-turns amphibious, afloat at the end of a turn, captures by an army that was afloat the turn before
+		# (2026-11-05, support the shore) the seed's landings contested by how, the supports chosen, the battles supported
+		# (fleets, men landed, lost, shots), the battles fought away from the water
+		var shore := {"contested": {}, "set": 0, "support": 0, "landed": 0, "lost": 0, "fired": 0, "inland": 0, "none": 0}
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
 		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
 			"alliances_left": 0, "kept_faith": 0, "town_gain": 0, "battle_gain": 0}
@@ -307,6 +310,21 @@ func _run(sd: int, verbose: bool) -> String:
 					sea_bat_all += 1
 				if int(e["turn"]) == t and fl_ev.has(str(e["k"])):
 					fl_ev[str(e["k"])] = int(fl_ev[str(e["k"])]) + 1
+				if int(e["turn"]) == t:
+					match str(e["k"]):
+						"landing_contested":
+							var hw := str(e.get("how", ""))
+							shore["contested"][hw] = int(shore["contested"].get(hw, 0)) + 1
+						"shore_set":
+							shore["set"] += 1
+						"shore_inland":
+							shore["inland"] += 1
+						"shore_support":
+							shore["support"] += 1
+							shore["landed"] += int(e.get("landed", 0))
+							shore["lost"] += int(e.get("lost", 0))
+							shore["fired"] += int(e.get("fired", 0))
+							shore["none"] += int(e.get("none", 0))
 				if int(e["turn"]) == t and str(e["k"]) == "captured" and CData.ships_on():
 					for a in CState.armies_of(st, int(e["f"])):
 						if was_afloat.has(int(a["id"])) and int(a["r"]) == int(e["r"]):
@@ -373,6 +391,7 @@ func _run(sd: int, verbose: bool) -> String:
 		# (2026-11-05, the formula knows the fort and the walls) the seed's sieges: captures by storm / starved, the
 		# fort holding, the natives' assaults and captures
 		dipm["sg"] = sg.duplicate()
+		dipm["shore"] = shore
 		if not verbose:
 			return CState.hash_text(st)
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [

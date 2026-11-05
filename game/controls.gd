@@ -110,6 +110,8 @@ static var BINDINGS: Array = [
 		"keys": [KEY_M]},
 	{"id": "drop", "s": "battle", "label": "Equipment: put down the ladders, the ram, a wagon or engines (take up: tap the piece)",
 		"touch": "Drop button", "mouse": "Drop button", "keys": [KEY_X]},
+	{"id": "land", "s": "battle", "label": "A ship off the shore: her landing party goes ashore in the boats",
+		"touch": "Land button", "mouse": "Land button", "keys": [KEY_L]},
 	{"id": "release", "s": "battle", "label": "War dogs: release the pack, then tap an enemy unit within 80 m",
 		"touch": "Release button, then tap the enemy", "mouse": "Release button, then click the enemy", "keys": [KEY_U]},
 	{"id": "sabotage", "s": "battle", "label": "Assassin: sabotage, then tap an enemy battery (wrecks its engines) or a shut gate (unbars it)",

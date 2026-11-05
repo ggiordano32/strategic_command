@@ -4575,3 +4575,54 @@ The parts:
 - **Rounds:** the alliance with `AMB_WAR_PCT` 300, 150 and 100, then trade at 150 (kept).
 
 Test: `campaign_test` `_ai_ambition`.
+## 62. The ships off the shore in the land battle (2026-11-05)
+
+The rule is docs/design/battle_sim.md "A fleet at the shore (as built, 2026-11-05)" (the owner: "let's do the full
+build of the shore and landing"). Code: `sim/ship_ai.gd` (`ShipAI.think`), handed every ready unit of an AI side that
+is a ship's hull or her landing party by `BattleAI.think` and `SiegeAI.think` before their own rules; it queues only
+the orders a player can give (fire at will, an attack, ORDER_LAND) and its memory is the hashed `sh_idle`.
+
+- **The guns.** Fire at will on; with `SH_FOCUS` an enemy ship in reach first, then an enemy battery (nearest first,
+  with a line of fire: the tower engines' `_tower` scan), else at will.
+- **The defenders' landing party** goes ashore (ORDER_LAND) with `SH_LAND_DEF` once the town is stormed (an attacker
+  not afloat in its streets or on its walls) or her guns have had nothing to shoot at for `SH_IDLE_T` (a hull with no
+  guns: at once). Landed after the army's first think, `SiegeAI` classifies it as any defender (it holds where it
+  landed, the quay: `A_RESERVE`).
+- **The attackers' landing party** goes ashore once its side storms (`SiegeAI` `SP_ASSAULT`; the field: `P_ENGAGE`)
+  while the side's strength (men x cost, the hulls and the parties aboard left out) is under `SH_LAND_ATT_PCT` % of the
+  enemy's. Ashore, `SiegeAI` sends it storming for the plaza from where it landed (`A_STORM` with `u_ai_x` 1: by the
+  nearest way, not round to the army's street mouths); the harbour's canoe rules (`_harbour_att`, the sortie) leave the
+  parties alone.
+- **Nobody walks at a hull.** The field AI's nearest-enemy picks (`_nearest_enemy`, `_nearest_not`, `_nearest`) and the
+  siege AI's (`_nearest_attacker`, `_nearest_outside`, `_storm`) skip hulls; the order rule refuses an attack order at
+  one from a unit with nothing to shoot.
+
+| Knob (`sim/ai_profile.gd`, ids 340-343; `N_KNOBS` 344) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SH_LAND_DEF` | 0 (never) | 1 | 1 |
+| `SH_IDLE_T` (ticks) | 600 | 600 | 450 |
+| `SH_LAND_ATT_PCT` | 0 (never) | 300 | 400 |
+| `SH_FOCUS` | 0 | 1 | 1 |
+
+Easy keeps its crews aboard and fires at will (a deliberate mistake). Measured: battle_sim.md "A fleet at the shore (as
+built, 2026-11-05)"; tests/shore_test.gd (Average lands, Easy never does).
+
+## 63. The campaign AI supports the shore (2026-11-05)
+
+The rule is docs/design/campaign_rules.md "Support the shore (as built, 2026-11-05)". Two choices, both through
+`CAIFleet.supports_shore(st, g, attacker)`, called by the rules:
+
+- **The defender** (`CFleet._contest`): a docked fleet that stays behind the mole at a landing (below note 57's sortie
+  odds) supports the land battle for the region with `SHORE_DEF` (event how `support`), else it only stays in port.
+- **The attacker** (`CFleet.land`): a transport that has landed troops on an enemy's port town (within `SHORE_CELLS` of
+  it) stays off the beach for the battle with `SHORE_ATT`.
+- **Holding.** A fleet supporting the shore holds its place (`CAIFleet.act`: marked used before the flota, transport,
+  landing, sortie, attack, blockade and home jobs; only a hurricane's run comes first), for this turn and the next, and
+  on while the town it lies off is besieged (the assault).
+
+| Knob (`campaign/cai_profile.gd`) | Easy | Average | Skilled |
+|---|---|---|---|
+| `SHORE_DEF` (`SK_SUPPORT + 61`) | 0 | 1 | 1 |
+| `SHORE_ATT` (`SK_SUPPORT + 62`) | 0 | 1 | 1 |
+
+Measured: campaign_rules.md "Support the shore (as built, 2026-11-05)".

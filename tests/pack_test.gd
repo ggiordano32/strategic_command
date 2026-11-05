@@ -462,7 +462,7 @@ func _batch1() -> void:
 	_check(ok_all, "batch 1: each unit is in its factions' rosters and nobody else's")
 	_check(ok_low, "batch 1: each needs exactly its buildings (a level short is refused, the levels alone are enough)")
 	var order := ["grenadiers", "dragoons", "coureurs", "boarding_grenadiers", "canoe_raiders", "holcan", "mortar"]
-	var idx_ok := UT.index_of("heavy_gun") == UT.FORT_GUN + 1 and UT.TYPES.size() == UT.FORT_GUN + 2 + order.size() + 7 + 4 + 1 + UT.WEST_TIERS2.size() \
+	var idx_ok := UT.index_of("heavy_gun") == UT.FORT_GUN + 1 and UT.TYPES.size() == UT.FORT_GUN + 2 + order.size() + 7 + 4 + 1 + UT.WEST_TIERS2.size() + UT.SHIP_ROWS.size() \
 		and UT.index_of("fort_gun") == UT.FORT_GUN
 	for i in order.size():
 		idx_ok = idx_ok and UT.index_of(order[i]) == UT.FORT_GUN + 2 + i and UT.pack_of(UT.index_of(order[i])) == "west"
@@ -498,9 +498,9 @@ func _batch1() -> void:
 		"batch 1: the coureurs' woods pace (and the maroons', batch 2) is 15 points better than any other row, two rounds fewer than buccaneers")
 	var amph_ok := true
 	for t in UT.TYPES.size():
-		if (UT.stat(t, "amphib") != 0) != (UT.key_of(t) == "canoe_raiders" or UT.key_of(t) == "canoe_raiders2"):
+		if (UT.stat(t, "amphib") != 0) != (UT.key_of(t) == "canoe_raiders" or UT.key_of(t) == "canoe_raiders2" or t == UT.SHIP_MARINES):
 			amph_ok = false
-	_check(amph_ok, "batch 1: only the canoe raiders paddle (and their tier-2 captains)")
+	_check(amph_ok, "batch 1: only the canoe raiders paddle (and their tier-2 captains; and a ship's landing party, battle-only)")
 	# The custom picker lists the new lines and every new row is in it.
 	var CS := preload("res://game/custom/custom_setup.gd")
 	var lines := CS.picker_lines("west")
@@ -581,7 +581,7 @@ func _batch2() -> void:
 	_check(ok_low, "batch 2: each needs exactly its buildings (a level short is refused, the levels alone are enough)")
 	var order := ["mounted_arquebusiers", "marines", "naval_gun", "colonial_militia", "maroons", "atlatl", "w_slingers"]
 	var first := UT.index_of("mortar") + 1
-	var idx_ok := UT.TYPES.size() == first + order.size() + 4 + 1 + UT.WEST_TIERS2.size()  # (+ the four characters of batch 3, the torch raiders, the tribes' tier-2 rows)
+	var idx_ok := UT.TYPES.size() == first + order.size() + 4 + 1 + UT.WEST_TIERS2.size() + UT.SHIP_ROWS.size()  # (+ the four characters of batch 3, the torch raiders, the tribes' tier-2 rows, the ships' rows)
 	for i in order.size():
 		idx_ok = idx_ok and UT.index_of(order[i]) == first + i and UT.pack_of(UT.index_of(order[i])) == "west"
 		idx_ok = idx_ok and UT.stat(UT.index_of(order[i]), "sprite_set") == (25 if order[i] == "naval_gun" else 34 + i)
@@ -649,7 +649,7 @@ func _batch3() -> void:
 	CData.use_pack("west")
 	var keys := ["sea_captain", "privateer", "missionary", "shaman"]
 	var first := UT.index_of("w_slingers") + 1
-	var row_ok := UT.TYPES.size() == first + 4 + 1 + UT.WEST_TIERS2.size()  # (+ the torch raiders, native siege, the tribes' tier-2 rows)
+	var row_ok := UT.TYPES.size() == first + 4 + 1 + UT.WEST_TIERS2.size() + UT.SHIP_ROWS.size()  # (+ the torch raiders, native siege, the tribes' tier-2 rows, the ships' rows)
 	for i in 4:
 		var t := UT.index_of(keys[i])
 		row_ok = row_ok and t == first + i and UT.pack_of(t) == "west" and UT.stat(t, "char") == 1 and UT.role(t) == "command" \
@@ -1380,7 +1380,7 @@ func _galleons() -> void:
 func _native_siege() -> void:
 	CData.use_pack("west")
 	var t := UT.index_of("torch_raiders")
-	_check(t == UT.index_of("shaman") + 1 and t == UT.TYPES.size() - 1 - UT.WEST_TIERS2.size() and UT.pack_of(t) == "west" and UT.stat(t, "sprite_set") == 45
+	_check(t == UT.index_of("shaman") + 1 and t == UT.TYPES.size() - 1 - UT.WEST_TIERS2.size() - UT.SHIP_ROWS.size() and UT.pack_of(t) == "west" and UT.stat(t, "sprite_set") == 45
 		and UT.line_of(t) == "siege" and UT.size_of(t) == 60 and UT.stat(t, "armour") == 0 and UT.stat(t, "m_ammo") == 2
 		and UT.stat(t, "m_obj") == 120 and UT.stat(t, "m_ak") == UT.ammo_index("fire_pots")
 		and UT.stat(t, "attack") < UT.stat(UT.index_of("native_warriors"), "attack") and UT.stat(t, "walk") == UT.stat(UT.index_of("native_warriors"), "walk"),

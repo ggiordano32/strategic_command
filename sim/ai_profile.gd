@@ -408,7 +408,12 @@ const SALVO_TARGET := 336      # ... its targets: 0 any foot (as built); 1 no pi
 const SALVO_BACK_R := 337      # ... the tick after the volley the lines step back at the walk to this distance (box to box) of the target, then fire on Auto; 0 they stand (as built)
 const SALVO_PIKE_CHARGE := 338  # 1: the melee foot charge the volleyed unit with the horse (as built; Skilled); 0 only the horse, the foot stay behind the lines as their screen
 const SALVO_RUN_R := 339       # ... the lines close the last this many metres (box to box) at the run; 0 at the walk
-const N_KNOBS := 340
+# A fleet at the shore (docs/AI.md 62, 2026-11-05): ids 340-343.
+const SH_LAND_DEF := 340       # 1: a defending ship sends her landing party ashore once the town is stormed (an attacker in its streets or on its walls) or her guns have had nothing to shoot at for SH_IDLE_T; 0 never (Easy)
+const SH_IDLE_T := 341         # ... ticks
+const SH_LAND_ATT_PCT := 342   # an attacking ship sends her party ashore once her side storms (the assault; the field: the engagement) while its strength is under this % of the enemy's; 0 never (Easy)
+const SH_FOCUS := 343          # 1: a ship's guns take enemy ships first, then batteries, in reach (else fire at will); 0 fire at will
+const N_KNOBS := 344
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330]]
@@ -712,6 +717,11 @@ const KNOBS: Array = [
 	[AMBUSH_FIGHT_T, 200, 200, 200],
 	[AMBUSH_FLANK, 0, 0, 1],
 	# The Swedish salvo (docs/AI.md 44.6): Easy never holds its fire for it (a deliberate mistake).
+	# A fleet at the shore (docs/AI.md 62): Easy keeps its crews aboard and fires at will (a deliberate mistake).
+	[SH_LAND_DEF, 0, 1, 1],
+	[SH_IDLE_T, 600, 600, 450],
+	[SH_LAND_ATT_PCT, 0, 300, 400],
+	[SH_FOCUS, 0, 1, 1],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],

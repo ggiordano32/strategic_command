@@ -302,6 +302,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 	for b in st["battles"]:
 		if int(b.get("new", 0)) != 0:
 			CRules.add_reinforcements(st, b)
+			CFleet.mark_shore(st, b)  # (2026-11-05) the fleets supporting the shore of its region
 			b.erase("new")
 	var ai_only: Array = []
 	for b in st["battles"]:

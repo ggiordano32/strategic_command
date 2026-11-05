@@ -127,7 +127,15 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	h.alignment = BoxContainer.ALIGNMENT_END
 	var bid := int(b["id"])
 	if standoff:
-		h.add_child(stand_off_button(s, bid))
+		# (2026-11-05) The defender's choices on a row of their own above Auto-resolve and Fight (four buttons do not fit a
+		# phone's width on one row).
+		var ch := Kit.hbox(8)
+		ch.name = "landing_choices"
+		ch.alignment = BoxContainer.ALIGNMENT_END
+		ch.add_child(stand_off_button(s, bid))
+		if CFleet.shore_on():
+			ch.add_child(support_button(s, bid))
+		info.add_child(ch)
 	var ab := Kit.icon_button("Auto-resolve", "end_turn", func(): s.auto_resolve(bid), 130)
 	ab.name = "auto_%d" % bid
 	h.add_child(ab)
@@ -161,9 +169,19 @@ static func landing_line(st: Dictionary, b: Dictionary, standoff: bool) -> Strin
 	var line := "%s is landing %d unit%s at %s." % [who, n, "" if n == 1 else "s", rn]
 	if standoff:
 		line += " Fight at sea (Fight or Auto-resolve): the troops land only if their ships win. Stand off: your ships stay in port, nobody is hurt, and the troops land unopposed."
+		if CFleet.shore_on():
+			line += " Support the shore: the troops land, and your ships lie off the town for the battle ashore that follows, their guns firing on the land and a quarter of each crew ready to land in the boats."
 	else:
 		line += " The ships in port came out: the troops land only if their ships win."
 	return line
+
+
+## (2026-11-05) Support the shore: the third choice (CFleet.SUPPORT).
+static func support_button(s, bid: int) -> Button:
+	var sb := Kit.button("Support the shore", func(): s.support_shore(bid), 150)
+	sb.name = "support_%d" % bid
+	Kit.tip(sb, "Support the shore", "Let the landing go and fight it ashore: your ships stay by the town, and in the battle for it (this turn or next) they lie on the water, their guns firing as shore batteries and a quarter of each crew ready to land in the boats.")
+	return sb
 
 
 static func stand_off_button(s, bid: int) -> Button:

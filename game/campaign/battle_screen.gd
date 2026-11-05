@@ -36,6 +36,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const SeaScreen := preload("res://game/campaign/sea_screen.gd")
+const CSeaShore := preload("res://campaign/cfleet.gd")  # (support the shore: the ships in the battle)
 
 const WIDE := 640.0       # logical px: sides side by side from this dialog width
 const COL_HEALTH := Color(0.45, 0.8, 0.4)
@@ -105,7 +106,31 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 		"facs": facs, "lead": [int(b["att_f"]), int(b["def_f"])], "sides": sides, "me": me,
 		"walls": CState.walls(st, r), "equip": CBattle.siege_equipment(st, b), "title": title(st, b),
 		"works": CBattle.works_of(st, b) if int(b.get("settlement", 1)) == 0 else {},
-		"towers": _tower_counts(st, b)}
+		"towers": _tower_counts(st, b), "shore": shore_line(st, b)}
+
+
+## (2026-11-05, support the shore) The ships supporting battle b, by side ("" none): "At sea: the Miskito's frigate,
+## frigate, sloop and sloop support the defenders (6 guns; 130 men to land in the boats)."
+static func shore_line(st: Dictionary, b: Dictionary) -> String:
+	var per := [[], []]
+	var guns := [0, 0]
+	var men := [0, 0]
+	var facs := [-1, -1]
+	for x in CSeaShore.shore_list(st, b):
+		var cs := int(x["cs"])
+		(per[cs] as Array).append(str((x["row"] as Dictionary).get("name", x["ship"]["t"])).to_lower())
+		var e: Dictionary = CSeaShore.shore_entry(x, 0)
+		guns[cs] += int(e["guns"])
+		men[cs] += int(e["men"])
+		facs[cs] = int(x["fl"]["f"])
+	var out: Array = []
+	for cs in 2:
+		if (per[cs] as Array).is_empty():
+			continue
+		out.append("At sea: %s %s support%s the %s (%d gun%s firing on the land; %d men to land in the boats)." % [
+			CData.FACTIONS[int(facs[cs])]["adj"], ", ".join(per[cs]), "s" if (per[cs] as Array).size() == 1 else "",
+			"attackers" if cs == 0 else "defenders", guns[cs], "" if guns[cs] == 1 else "s", men[cs]])
+	return " ".join(out)
 
 
 ## The wall engines the sim will add to a walled settlement's defenders
@@ -326,6 +351,10 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 		mlab.name = "mantlets"
 		Kit.label_icon(mlab, "mantlet")
 		info.add_child(mlab)
+	if str(snap.get("shore", "")) != "":
+		var shl := Kit.label(str(snap["shore"]), Kit.FONT_SMALL, Color.WHITE, true)
+		shl.name = "shore_ships"
+		info.add_child(shl)
 	var wl := works_line(snap)
 	if wl != "":
 		var wlab := Kit.label(wl, Kit.FONT_SMALL, Color.WHITE, true)

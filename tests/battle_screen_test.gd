@@ -21,6 +21,9 @@ extends SceneTree
 ## top-right button "End battle" and the pursuit runs past the old 60 s
 ## end; that button ends it and the screen returns; End battle in the modal
 ## ends it on the next tick and returns.
+## A fleet at the shore (2026-11-05): a port town battle with the player's ships off the quay opens with the ship
+## layer under the men (drawn by the board's lift in the oblique view), a hull for each of the three ships in her
+## faction's colours, each ship's crew on her deck.
 ## Then the whole run again in the oblique battle view (tabletop pass 3, BoardView.force = "oblique"; the checks
 ## marked "[oblique]"): the same assertions, plus the battles open in that view with the upright figures' shaders.
 
@@ -403,6 +406,7 @@ func _process(_d: float) -> bool:
 			_end_close()
 			_facing_cases()
 			_casualty_cases()
+			_ship_cases()
 			if not _oblique:
 				# Again, in the oblique battle view.
 				_oblique = true
@@ -648,3 +652,36 @@ func _facing_cases() -> void:
 	_check(rr["moved_max"] > 3.0 and rr["max_off"] < 0.5,
 		"a short re-form: men moved up to %.1f m and are drawn at the unit's facing throughout (largest difference %.1f units)" % [rr["moved_max"], rr["max_off"]])
 	(rr["lay"] as Node).queue_free()
+
+
+## (2026-11-05) A fleet at the shore in the battle view (docs/design/art_pipeline.md "(2026-11-05) The ship on the board").
+func _ship_cases() -> void:
+	var was := CData.pack
+	CData.use_pack("west")
+	var sb := Battle.new()
+	var sc := Scenarios.shore_battle(1, 0, [0])
+	var tf := CData.faction_index("tierra_firme")
+	for e in sc["ships"]:
+		e["f"] = tf
+	sb.custom_scenario = sc
+	sb.player_side = 1
+	sb.seed_value = 8100
+	root.add_child(sb)
+	var tag := ""  # (_check marks the oblique run itself)
+	var lay = sb.ships
+	_check(lay != null and lay.visible and sb.sim.shp_on == 1 and lay.colors.size() == 3 and lay.colors[0] == CData.faction_color(tf),
+		tag + "ships: the ship layer holds the three hulls in their faction's colours")
+	_check(lay != null and lay.get_index() < sb.soldiers.get_index(), tag + "ships: the hulls are drawn under the men")
+	_check(lay != null and (lay.material != null) == _oblique, tag + "ships: placed by the board's lift in the oblique view only")
+	var on_deck := true
+	for s2 in sb.sim.sh_side.size():
+		var u: int = sb.sim.sh_unit[s2]
+		var base: int = sb.sim.u_slot_base[u]
+		for k in sb.sim.u_alive[u]:
+			var i: int = sb.sim.slot_soldier[base + k]
+			var d := Vector2(sb.sim.pos_x[i] - sb.sim.sh_x[s2], sb.sim.pos_y[i] - sb.sim.sh_y[s2]).length() / 1024.0
+			if d > float(sb.sim.sh_len[s2]) * 0.55:
+				on_deck = false
+	_check(on_deck, tag + "ships: each ship's crew stands on her deck (within her length)")
+	sb.queue_free()
+	CData.use_pack(was)

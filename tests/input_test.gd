@@ -375,6 +375,12 @@ func _initialize() -> void:
 		_step_dog_tap_enemy,
 		_step_dog_check_order,
 		_step_dog_check_out,
+		# A fleet at the shore (2026-11-05): a tap on a ship's card selects her, a tap on Land sends her party ashore.
+		_step_ship_start,
+		_step_ship_select,
+		_step_ship_check_chip,
+		_step_ship_land,
+		_step_ship_check_order,
 		# Field works in the deployment: the palette, a stakes line dragged,
 		# turned by a second tap, taken back, a caltrop field, ready.
 		_step_fw_start,
@@ -3543,6 +3549,55 @@ func _step_dog_check_out() -> void:
 		"the pack is out after the step: 32 dogs at the archers (state %d)" % sim.u_state[pk])
 	_check((battle.hud._cards[pk] as Button).visible, "the pack's card shows once it is loose")
 	_check(not battle.hud.release_button.visible, "Release hides while the pack is out")
+
+
+# A fleet at the shore (2026-11-05; docs/design/battle_sim.md "A fleet at the shore (as built)"): the defenders'
+# frigate off the quay; a tap on her card selects her and shows the Land chip with her party's men; a tap on it
+# queues ORDER_LAND; after the step her party is on the water with a card of its own and the chip is dimmed.
+var _ship_u := -1
+
+
+func _step_ship_start() -> void:
+	if is_instance_valid(battle):
+		battle.queue_free()
+	battle = Battle.new()
+	battle.custom_scenario = Scenarios.shore_battle(1, 0, [0])
+	battle.player_side = 1
+	battle.seed_value = 7
+	root.add_child(battle)
+
+
+func _step_ship_select() -> void:
+	if not battle.paused:
+		battle._toggle_pause()
+	var sim := battle.sim
+	_ship_u = sim.sh_unit[0] if sim.shp_on != 0 else -1
+	if _ship_u >= 0:
+		_tap_control(battle.hud._cards[_ship_u])
+
+
+func _step_ship_check_chip() -> void:
+	_check(_ship_u >= 0 and battle.selection.size() == 1 and battle.selection[0] == _ship_u,
+		"a tap on the frigate's card selects her (%s)" % str(battle.selection))
+	var lb = battle.hud.land_button
+	_check(lb.visible and not lb.disabled and lb.text.contains("50"), "the Land chip shows, lit, with her 50 men (%s)" % lb.text)
+
+
+func _step_ship_land() -> void:
+	_tap_control(battle.hud.land_button)
+
+
+func _step_ship_check_order() -> void:
+	var lo := _eq_orders(BattleSim.ORDER_LAND)
+	_check(lo.size() == 1 and int(lo[0]["unit"]) == _ship_u, "a tap on Land queues her ORDER_LAND (%s)" % str(lo))
+	var sim := battle.sim
+	sim.step()
+	battle.hud.update_cards(sim)
+	battle._refresh_actions()
+	var p: int = sim.sh_party[sim.u_ship[_ship_u]]
+	_check(sim.u_state[p] == BattleSim.U_READY and sim.u_wet[p] > 0 and (battle.hud._cards[p] as Button).visible,
+		"after the step her party is on the water with a card of its own")
+	_check(battle.hud.land_button.disabled, "the Land chip is dimmed once her party is ashore (%s)" % battle.hud.land_button.text)
 
 
 # ---------------------------------------------------------- field works ---

@@ -3272,7 +3272,7 @@ the scenarios `west_harbour_assault` and `tayasal` (`sim/scenarios.gd` `harbour_
 Open: a landing into a
 breach or onto the mole is not modelled; routers afloat follow no flow field over water (they head for their edge).
 
-### A fleet at the shore (design and cost, 2026-11-05; not built)
+### A fleet at the shore (design and cost, 2026-11-05; built the same day: "A fleet at the shore (as built, 2026-11-05)" below)
 
 The third choice at a contested landing (campaign_rules.md "The defender's choice at a landing: fight at sea, stand
 off, support the shore"): the fleet's ships lie off the coast in the land battle for the region, their guns firing as
@@ -3328,3 +3328,82 @@ sloops, and a native piragua and two war canoes, against an AI landing of 8-12 u
 alternative: no ships on the map, the support as campaign-only effects (the guns as a bombardment of the besiegers
 before the battle, like the siege's attrition, and the crews as a garrison unit for the battle, raised from the
 crews and paid back after it): a day, no sim change, but nothing to see or command in the battle.
+
+### A fleet at the shore (as built, 2026-11-05)
+
+The owner: "let's do the full build of the shore and landing." Built as the design above, the sim part here (the campaign
+part: campaign_rules.md "Support the shore (as built, 2026-11-05)"; the AI: docs/AI.md 62 and 62; the ship on the board:
+art_pipeline.md "(2026-11-05) The ship on the board"). The amphibious machinery carried it: a hull is a fixed unit on
+water cells (the tower engines' `fixed` rule, standing on water by the amphibious units' ground mask), and its landing
+party is an amphibious unit held off the field like a reinforcement until its order.
+
+- **Rows** (`sim/unit_types.gd` `SHIP_ROWS`, appended after every other row: no index moves; `UT.SHIP_GUNS`,
+  `SHIP_BOAT`, `SHIP_MARINES`; new row field `ship`). `ship_guns` ("Ship's Broadside"): fixed artillery, the landed naval
+  guns' numbers (shot 400, AP 100, range 450 m, minimum 30 m, reload 48 s, `m_obj` 550), four men a gun (two to work
+  it), 20 shots a gun, `e_hp` 1200, cost 0. `ship_boat` ("Ship's Hands"): a fixed hull with no guns (her hands, 4).
+  `ship_marines` ("Landing Party"): the marines' row, amphibious. A native crew lands as canoe raiders (their row).
+- **The scenario's "ships"** (`Scenarios.ship_entry`: side, campaign ship key, the gun pairs `(guns x hull % + 4) / 8`
+  (frigate 30 -> 4, sloop 8 -> 1, war canoe 2 / piragua 1 -> 0), `men` the landing party (25 % of the crew aboard:
+  frigate 50, sloop 15, piragua 15, war canoe 10), `ptype` its row, `hands` 4, `len` / `beam` from the sea sim's row,
+  optional `ctl` (the controller) and `f` (the view's colours)). `BattleSim._ship_units` (setup, after the map) puts
+  each on the water: cells 4 m beyond the hull's half beam from the land and at most 70 m out (`SHIP_SHORE_M`,
+  `SHIP_FAR_M`), the hull inside the map, 8 m clear of the other hulls end to end, nearest its side's point: the
+  defenders' landing (the West open town's quay, else the sea gate's outside, else the plaza), the attackers' the end of
+  the shore away from the harbour fort (else from the quay); the keel along the shore, the battery facing the land; at
+  most 12 ships (`SHIP_MAX`). A map without water (`amph_on` off, a field battle) takes none: `shp_none`, result
+  `ships_none`. The party is set up 6 m beyond the hull's side toward the land, aboard (`_to_reserve`).
+- **The hull** never moves (the order rule lets a fixed unit only attack, halt, fire, ammunition; both AIs leave it),
+  its men stand on the water (`_ground_mask` adds `NAV_WATER` for a `ship` row), out of every melee (`_reach_ok` wants
+  ground under both men); the order rule refuses an attack order at a hull from a unit with nothing to shoot, and the
+  field and siege AIs' nearest-enemy and storm picks skip hulls. Its guns fire under the artillery rules (fire at will,
+  the attack order, the line of fire with the hull's half length skipped at both ends, `u_trad`). A shot aimed at a hull
+  landing on it (within its half length) strikes the working gun nearest its fall (`_ship_gun_hit`, the tower's
+  `TOWER_BOLT_DMG` / `TOWER_STONE_DMG` x the shot's `m_obj`: three naval-gun or six fort-gun hits silence a gun); every
+  gun wrecked, the hull is out of the fight with her gun crews (`_tower_fall`). Her gunners can be shot.
+- **ORDER_LAND** (29, `ORDER_LAST`; unit: the hull; a lockstep input as any unit order: only its commander's is
+  applied, `Lockstep._sim_order`): `land_refusal` (shared with the Land chip: not a ship, no party, ashore already, out
+  of the fight, the deployment) or `_ship_land`: the party arrives formed beside the hull (the reinforcement's `_arrive`,
+  the side's reserve clock left alone) and is given a move at the run to its landing (`sh_lx` / `sh_ly`: the defenders'
+  quay or sea-gate inside, the attackers' the open ground nearest the hull 8 m inland); paddling at `AMPHIB_PCT` it
+  lands and is a unit like any other. A party aboard is no reserve (`held_party`: out of `reserves_left`, the arrival
+  rule and the AI's strength).
+- **State and hash.** Static: `shp_on`, `sh_side`, `sh_unit`, `sh_party`, `sh_x` / `sh_y` / `sh_head`, `sh_len` /
+  `sh_beam`, `sh_key`, `sh_ctl`, `sh_src`, `sh_lx` / `sh_ly`; state (hashed while `shp_on`, captured by snapshot):
+  `sh_land`, `sh_shots`, `sh_idle` (the AI's memory), `u_ship`. A battle without ships hashes as before (the units'
+  kill table keeps its width unless a ship row fights: `kty_n`). `result()` "ships": per ship her scenario index
+  (`src`), side, key, guns, gunners and their losses, kills, shots, the gun deck's hits (% of its hit points), silenced,
+  the men landed, killed and their kills.
+- **Lockstep** (`sim/lockstep.gd`): a hull's and its party's commander is the ship's `ctl` (CBattle: the human of her
+  fleet's faction, else the lowest human of her side friendly to it, else -1), or the player of her side's first
+  scenario unit when none is given. lockstep_test "--only=shore": two peers sharing the defenders, the Land of the
+  frigate by its player, a sloop's from the other player refused alike, 1300 frames equal, a third peer restored mid-paddle
+  equal; determinism_test "--only=shore"; tests/shore_test.gd.
+
+**Measured** (tests/shore_probe.gd: `Scenarios.shore_battle`, west_port's map at walls 1, the West attackers' ten
+companies (about 750 men) landed and marching on the garrison WEST_DEF (nine companies, about 560), both sides Average,
+seeds 8100-8107, the 15-minute limit; the fleets: navy a frigate and two sloops, native a piragua and two war canoes):
+
+| Fleets (defenders / attackers) | Attacker wins | Defenders' guns: shots, kills | Attackers' guns: shots, kills | Defenders' parties: landed, lost, their kills | Attackers' parties: landed, lost, their kills | Guns silenced (def / att ships) |
+|---|---|---|---|---|---|---|
+| none / none | 7 of 8 | - | - | - | - | - |
+| navy / none | 5 of 8 | 1, 5 | - | 640, 190, 329 | - | 0 |
+| native / none | 6 of 8 | (no guns) | - | 280, 125, 11 | - | - |
+| none / navy | 8 of 8 | - | 65, 108 | - | 640, 463, 161 | 2 of 24 (att) |
+| navy / navy | 6 of 8 | 178, 0 | 194, 22 | 640, 327, 431 | 640, 478, 82 | 20 / 18 of 24 |
+
+(8 battles a row; 640 men landed = 80 a battle: the frigate's 50 and the sloops' 15 each; the natives' 35 a battle.) The
+defenders' guns lie by the quay behind the houses and find almost nothing to shoot (1 shot in 8 battles) until enemy
+ships come: then they duel them (178 shots, the hulls' hits, no men). Their parties go ashore once the town is stormed
+(the lancers reach the streets in the first 15 s) and hold the quay: 329 kills for 190 lost, and the attackers' wins
+7 -> 5 of 8. The attackers' ships, at the far end of the shore, shoot the waterfront and the defenders' parties afloat
+(108 kills) and their parties storm along it (161 kills, 463 lost): 7 -> 8 of 8. Both fleets: the ships silence each
+other (20 and 18 of 24 gun decks) and the attackers' guns take the defenders' parties on the water. Intervals at 8
+seeds are about +-30 points: the probe shows the parts work, it does not rank them. The harbour assault
+(`harbour_test`), the west_walls and rome_walls plans and every battle without "ships" play and hash as before (no
+ship row, `kty_n` kept; the plans carry no ships).
+
+Open: the defenders' ships lie by the quay behind the town, so their guns see little but the waterfront and the
+water (the attackers' ships and parties); the parties' landing is a move order (a player may redirect it once afloat);
+a hull is never boarded and never sunk in the land battle (silenced at worst); Rome's fleets do not support the shore
+(the pack's ships script has no `SHORE_SUPPORT`; Rome's galleys have no guns and no marines row); the Land chip lands
+all of one ship's party at once (no partial landings).
