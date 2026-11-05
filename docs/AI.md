@@ -3402,6 +3402,13 @@ ambush from cover with a feigned retreat into it: built, 44.5. The Swedish
 salvo, three ranks firing as one, then the charge: built, 44.6, and measured
 worse than no play on both pairs; open there.)
 
+Note 2026-11-05: the plays are battle-AI behaviours (`sim/plays.gd`), not scenario keys: nothing "planned as a custom setup" was missing. The three
+measure fields that exist, `play_field` (the tercio), `salvo_field` and `ambush_field`, were reachable only from `tests/asym_probe.gd`; they are now
+listed in `Scenarios.IDS` with titles ("Plays: ...") in the Tests and benchmarks menu, and `tests/custom_battle_test.gd _check_play_scenarios` loads each,
+runs 60 s of AI against AI and checks that units move and both sides survive. The pirate boarding rush at sea and the caracole as a play are still not
+built: they need sim code (a sea AI order for the boarding run in `sim/sea_sim.gd`'s AI, or a land play on the countermarch's `AB_ROLL`), hashed state
+and a measure, so they are left as written above.
+
 ### 44.4 The learned chooser (not yet)
 
 Once plays exist, a tiny model has a sensible job: which play, when, from a

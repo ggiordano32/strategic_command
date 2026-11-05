@@ -71,7 +71,7 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
 	"bench_4000_polis", "bench_4000_castrum", "west_village", "west_town", "west_city", "west_inland",
 	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "west_fort_storm",
-	"west_harbour_assault", "tayasal", "tutorial_native"]
+	"west_harbour_assault", "tayasal", "tutorial_native", "play_field", "salvo_field", "ambush_field"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
 ## the menu picks one). The benchmarks stay flat so their timings compare
@@ -192,6 +192,12 @@ static func title(id: String) -> String:
 			return "West: the harbour assault, raiders at the quay"
 		"tayasal":
 			return "The lake of Tayasal, 1697"
+		"play_field":
+			return "Plays: the tercio against the countermarch"
+		"salvo_field":
+			return "Plays: the Swedish salvo against Spain's tercio"
+		"ambush_field":
+			return "Plays: the native ambush in the woods"
 	return id
 
 

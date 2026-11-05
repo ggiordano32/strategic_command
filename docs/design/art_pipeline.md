@@ -1450,7 +1450,7 @@ counts, fps and render_box (the pose and table shape unchanged), built within th
   view: all stand upright and face the 8 directions. The earlier claim that scorpions and the tower engines lack oblique sets was wrong: engine sets 13 bolt,
   14 stone and 15 scorpion are in `assets/sprites_ob` and draw through the same engine path as any battery (a tower engine is an ordinary engine of a `fixed`
   CLS_ART row; the soldier layer has no special case). Not staged on a walls-3 town (the engines drawn on flat ground; the path is the same). No mapping gap,
-  nothing fixed. What drew wrong was only the look: the Rome cav rows are the generic shock_cavalry (not changed here).
+  nothing fixed. What drew wrong was only the look: ~~the Rome cav rows are the generic shock_cavalry (not changed here)~~ (superseded 2026-11-05: the 2026-11-02 "The Roman equites" below gave Rome's tier-2 and tier-3 cavalry their own set 49; only the tier-1 `cav` row and the legate's bodyguard still draw the generic shock_cavalry).
 - Aids: `tests/rome_audit_shot.gd` (the contact sheet of those rows, `--top` for the top view), `tests/rome_battle_shot.gd` (principes against hoplites, 40 a
   side; `--view=top`); both load the atlases from the files (the imported copies are stale until the next import).
 
@@ -1482,6 +1482,18 @@ a copy of the `shock_cavalry` entry (same rig, horse body, rider seat, render bo
   4096x5784, shade 7,043,598 -> 7,252,952 B, mask 2,901,566 -> 2,975,295 B, manifest 1,081,760 -> 1,102,922 B.
 - Aids: `tests/rome_audit_shot.gd` lists equites and equites_extra beside cav, cav2 and cav3; `tests/rome_battle_shot.gd --cav` shoots two squadrons charging
   hoplites, one along the board (from the side), one away from the camera (from behind).
+
+### The Roman cavalry on a town (audited 2026-11-05, view only, nothing to fix)
+
+The equites of 2026-11-02 were shot in the field only. `tests/rome_town_cav_shot.gd` (windowed; `--plan=` 0-3, `--walls=`, `--view=top|oblique`,
+`--goals=` the ticks of the shots) plays a settlement battle (both sides AI) with `equites`, `equites_extra` and the shock `cav` on both sides, sends every
+squadron at the nearest enemy foot (the siege AI otherwise keeps the horse back: the defenders' horse stood in the streets all battle) and shoots the
+squadron nearest the town, per row and side. Read: Castrum walls 0 (a grid street, the defenders' three squadrons in column along it, the attackers
+riding up the field to the gate), Punic walls 2 (the defenders' horse inside the wall at the gate and the arcade, both views), oblique and top. Seen: every
+squadron stands on the street or ground with its contact shadow under the horse, no horse or lance cuts into a house (a 4-wide column fits the street, the
+roofs sort over the rear rank only where the street turns), no lift on a street, the attack pose and the hasta read from the back and the side, the
+equites' grey mail and parma read against the red cloth in both views (top view: round parma and hasta from above). The only oddity is the crowding of a
+40-man squadron in a street (the packing of the sim's column, not the view). No view change. Shots: scratchpad `left/s1/` (not committed).
 
 ### The timber stockade (as built, 2026-11-01)
 

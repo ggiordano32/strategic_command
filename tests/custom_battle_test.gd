@@ -198,9 +198,36 @@ func _init() -> void:
 		_fail("solo: Player 2's side is not the AI's")
 	_check_sea()
 	_check_occupy()
+	_check_play_scenarios()
 	await _check_names()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## The three play scenarios in the Tests and benchmarks menu (docs/AI.md 44.1, 44.5, 44.6; 2026-11-05): each has a
+## title, is listed in Scenarios.IDS, and loads and runs 60 s (600 ticks) of both AI sides with units moving and
+## both sides still on the field, without a script error.
+func _check_play_scenarios() -> void:
+	for id in ["play_field", "salvo_field", "ambush_field"]:
+		if not Scenarios.IDS.has(id) or Scenarios.title(id) == id:
+			_fail("%s: not listed in the menu with a title" % id)
+			continue
+		var sim := BattleSim.new()
+		sim.setup(Scenarios.make(id), 7)
+		var x0: Array = []
+		for u in sim.n_units:
+			x0.append(sim.u_cy[u])
+		for _t in 600:
+			sim.step()
+		var moved := 0
+		var alive := [0, 0]
+		for u in sim.n_units:
+			if sim.u_cy[u] != x0[u]:
+				moved += 1
+			if sim.u_alive[u] > 0:
+				alive[sim.u_side[u]] += 1
+		if moved < sim.n_units / 2 or alive[0] == 0 or alive[1] == 0:
+			_fail("%s: after 60 s %d of %d units moved, alive %s" % [id, moved, sim.n_units, str(alive)])
 
 
 ## Per-side unit names (west.gd UNIT_NAMES): a Miskito side's list and the battle HUD's cards name its units
