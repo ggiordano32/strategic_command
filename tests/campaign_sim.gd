@@ -199,7 +199,8 @@ func _init() -> void:
 
 func _run(sd: int, verbose: bool) -> String:
 	sg = {"started": 0, "assault": 0, "sally": 0, "relief": 0, "lifted": 0, "surrendered": 0, "longest": 0,
-		"field_won": 0, "assault_won": 0, "field": 0, "intercepted": 0, "raided": 0, "mustering": 0}
+		"field_won": 0, "assault_won": 0, "field": 0, "intercepted": 0, "raided": 0, "mustering": 0,
+		"captured": 0, "fort_holds": 0, "town_battles": 0, "town_won": 0, "nat_assault": 0, "nat_assault_won": 0, "nat_taken": 0, "nat_taken_storm": 0}
 	var largest := [0, 0, 0]
 	var first_win := -1
 	CP.reset_counters()
@@ -369,6 +370,9 @@ func _run(sd: int, verbose: bool) -> String:
 		# (2026-11-02, a landing is contested; a fleet puts to sea when its port falls) the sea tallies of the seed
 		for fk in ["sea_battle", "landed", "landing_contested", "fleet_to_sea", "fleet_taken"]:
 			dipm[fk] = int(fl_ev[fk])
+		# (2026-11-05, the formula knows the fort and the walls) the seed's sieges: captures by storm / starved, the
+		# fort holding, the natives' assaults and captures
+		dipm["sg"] = sg.duplicate()
 		if not verbose:
 			return CState.hash_text(st)
 		print("eliminated: %s | treasury range %d..%d | battles %d | turn time mean %.1f ms max %.1f ms | hash %s" % [
@@ -562,14 +566,33 @@ func _count_sieges(st: Dictionary, t: int) -> void:
 			"siege_lifted":
 				sg["lifted"] += 1
 			"captured":
+				sg["captured"] += 1
 				if str(e.get("how", "")) == "surrendered":
 					sg["surrendered"] += 1
+				if CData.POLE_FACTIONS.has(str(CData.FACTIONS[int(e["f"])]["key"])):
+					sg["nat_taken"] += 1
+					if str(e.get("how", "")) != "surrendered":
+						sg["nat_taken_storm"] += 1
 			"battle":
 				var kind := str(e.get("kind", ""))
 				if kind == "assault":
 					sg["assault"] += 1
 					if int(e["winner"]) == 0:
 						sg["assault_won"] += 1
+				if kind == "assault" or kind == "":
+					sg["town_battles"] += 1
+					if int(e["winner"]) == 0:
+						sg["town_won"] += 1
+					if int(e.get("fort_holds", 0)) != 0:
+						sg["fort_holds"] += 1
+					var natv := false
+					for fa in e.get("att", []):
+						if int(fa) >= 0 and CData.POLE_FACTIONS.has(str(CData.FACTIONS[int(fa)]["key"])):
+							natv = true
+					if natv:
+						sg["nat_assault"] += 1
+						if int(e["winner"]) == 0:
+							sg["nat_assault_won"] += 1
 				elif kind == "sally" or kind == "relief":
 					sg[kind] += 1
 					if int(e["winner"]) == 1:

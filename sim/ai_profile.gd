@@ -373,10 +373,16 @@ const R_TORCH_GATE := 292      # 1: a melee batter unit (the torch raiders) atta
 const R_HARBOUR := 293         # 1: attacking amphibious units go in by water through the sea gate onto the quay and storm from inside (unbarring a gate); a defender holds the quay against them afloat; defending amphibious units sortie once by water onto the attackers' flank while the walls hold; 0 none of it (Easy)
 # Archers walk in to lob over the wall (docs/AI.md 56, 2026-11-02).
 const S_LOB_PCT := 294         # covering archers (lobbers) in the approach, the walls before their post holding no one in their range: they stand this % of their lobbed range (range_vs) from the nearest enemy on the ground behind the wall (SiegeAI._lob_stand); 0 they keep the post
+# Poles and a ram storm the fort (docs/AI.md 60, 2026-11-05): the West harbour fort (SiegeAI._fort_need, fort_press).
+const S_FORT_POLES_PCT := 295  # attackers with ladders or scaling poles (and no better way in) storm the fort at this % of the defenders' men x cost (FORT_STORM_ODDS 250 as built)
+const S_FORT_RAM_PCT := 296    # ... with a ram (or a batterer / fire, S_FORT_BATTER) at this %
+const S_FORT_GUN_PCT := 297    # ... with guns of their own at this %
+const S_FORT_PRESS := 298      # 1: the storm of the fort goes on when the town round it falls (the battle ends when the fort falls, the storm gives up or time runs out), and a side that chose the town weighs the storm again against the fort's garrison; 0 the town taken ends the battle with the fort holding
+const S_FORT_BATTER := 299     # 1: a gate batterer (the torch raiders), or fire missiles against a walls-1 fort's timber gate, count as a ram for S_FORT_RAM_PCT; 0 only a ram
 # The play library (docs/AI.md 44, 2026-10-27): scripted historical plays
 # (sim/plays.gd) a side runs by its scenario's ai_plays bits. Ids 300-309
 # the framework and the tercio, 310-319 the countermarch, 320-329 the ambush,
-# 330-339 the Swedish salvo; 295-299, 304-310, 312-319, 326-329 unused
+# 330-339 the Swedish salvo; 304-310, 312-319, 326-329 unused
 # (KNOB_GAPS: 0, no row).
 const PLAYS_ON := 300          # 1: the side runs the plays its ai_plays bits allow (Plays.army_think); 0 none (Easy)
 const TERCIO := 301            # 1: the tercio (docs/AI.md 44.1): pike blocks with musket sleeves at their corners, the sleeves behind the block under horse; 0 never
@@ -405,7 +411,7 @@ const SALVO_RUN_R := 339       # ... the lines close the last this many metres (
 const N_KNOBS := 340
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[295, 300], [304, 311], [312, 320], [326, 330]]
+const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -686,6 +692,12 @@ const KNOBS: Array = [
 	[R_HARBOUR, 0, 1, 1],
 	# Archers walk in to lob over the wall (docs/AI.md 56): Easy keeps its archers at the post (a deliberate mistake).
 	[S_LOB_PCT, 0, 85, 85],
+	# Poles and a ram storm the fort (docs/AI.md 60): Easy keeps the slice 2c rule (250 % whatever the kit, the town ends it).
+	[S_FORT_POLES_PCT, 250, 180, 180],
+	[S_FORT_RAM_PCT, 250, 150, 150],
+	[S_FORT_GUN_PCT, 250, 120, 120],
+	[S_FORT_PRESS, 0, 1, 1],
+	[S_FORT_BATTER, 0, 1, 1],
 	[PLAYS_ON, 0, 1, 1],
 	[TERCIO, 0, 1, 1],
 	[TERCIO_FILES, 8, 14, 14],

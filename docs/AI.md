@@ -2186,6 +2186,8 @@ could give (ORDER_OCCUPY, ORDER_GATE, attack and move orders).
   planted set climb it too (`_follow`), and the men over the wall or through
   the gate (`_fort_party`: in the fort, or foot of the two units nearest its
   open gate) take its parade and hold it till it falls (FORT_CAP_TICKS).
+  (2026-11-05: the edge by kit, poles and a ram as well as guns, and the storm
+  going on past the town's fall: note 58.)
 - **Buildings held (street AI).** A West musket line's street post becomes
   the building nearest it (door step within `SP_OCC_R` 24 m, `SP_OCC_MIN` 10
   firing places or more): it is sent in (ORDER_OCCUPY) and its reserve rule
@@ -4491,3 +4493,28 @@ Itza / Miskito eliminations): HEAD f6 18 / 19, f10 31 / 8; `KIN_WAR_PCT` 0 (neve
 f6 4 / 5, f10 12 / 6. Kin wars at 200: Miskito on the Itza 31 -> 3 (f6) and 38 -> 3 (f10), the Itza on the Miskito
 85 -> 11 and 5 -> 0. No European faction or the Brethren moved beyond the two intervals combined. Test:
 `campaign_test` `_ai_kin`.
+## 60. Poles and a ram storm the fort; the campaign AI reads the walls (2026-11-05)
+
+The owner: "I like poles and ram, that fits our actual use case and will match what the player would be doing." The
+rules: docs/design/siege_and_towns.md "Poles and a ram storm the fort (as built, 2026-11-05)" (the battle) and
+docs/design/campaign_rules.md "The formula knows the fort and the walls, and the natives' weights refit (as built,
+2026-11-05)" (the campaign).
+
+- **The edge by kit** (`SiegeAI._fort_need`, used by `_fort_choice` at the first think and by `fort_press`): guns of
+  the side's own `S_FORT_GUN_PCT` (297), a ram `S_FORT_RAM_PCT` (296; with `S_FORT_BATTER` (299) a gate batterer or
+  fire missiles against a walls-1 fort's timber gate count as a ram), ladders or scaling poles `S_FORT_POLES_PCT`
+  (295): % of the defenders' men x cost, the lowest of the kits the side has; no kit, no storm. The fort's
+  `FORT_STORM_PCT` 35 % share still storms with any kit.
+- **Pressing on** (`S_FORT_PRESS`, 298; `SiegeAI.fort_press`, called once by `BattleSim._update_capture` when the
+  plaza falls): an AI side that storms the fort keeps the battle going past the town (the sim decides it when the
+  fort is cleared, the storm gives up or time runs out, the attackers' either way); one that chose the town weighs
+  the storm again against the fort's garrison alone at its kit's edge. A human side never presses.
+- **Knobs.** Easy 250 / 250 / 250, press 0, batter 0 (the slice 2c rule exactly, a deliberate mistake: its storms
+  still end at the plaza); Average and Skilled 180 / 150 / 120, press 1, batter 1. The ids 295-299 were a knob gap.
+- **The campaign AI** (`campaign/cai.gd`): the storm odds read the walls' hard rule (`CBattle.walls_shut`: stone ring,
+  no breach, no ladders, poles, ram, tower, guns, batterer, grenades or fire): `_odds_on` on arrival (kit 0) and
+  `_storm_win` with the siege's kit give 0 % when there is no way in, so the AI sits down before such walls instead of
+  storming on arrival, and one army alone may begin the siege (`_attack6`: `can_siege` also when the walls are shut;
+  the siege brings ladders after a turn). The fort town's rule is not read by the AI's odds (a won battle there still
+  beats the garrison and keeps the siege).
+- **Measured**: the fort storm table in siege_and_towns.md; the campaign in campaign_rules.md.

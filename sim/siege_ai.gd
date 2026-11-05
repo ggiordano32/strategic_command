@@ -199,13 +199,15 @@ const LOB_LANE := 15 * M      # a stand in front of the attacked gate (out to S_
 const LOB_MAX_PCT := 95       # ... and, moved off it, stays within this % of the lobbed range of its target (else the post)
 const LOB_EQ_R := 20 * M      # no stand within this of the side's planted ladders / poles or its siege towers
 const LOB_ODDS := 2           # no stand in the reach of enemy wall shooters (range_vs + DF_PAD) with men x this above the side's lobbers' men
-## The West harbour fort (slice 2c; docs/AI.md 29): the attackers storm the
-## fort as well as taking the town round it only with a ram, ladders or guns
-## of their own, and only when the fort holds FORT_STORM_PCT % or more of the
-## defenders' strength or they are FORT_STORM_ODDS % as strong as all the
-## defenders; else they take the town and leave the fort be (the town taken
-## wins the battle). The defenders shut the fort's gate once an attacker is
-## within FORT_SHUT_R of it.
+## The West harbour fort (slice 2c; docs/AI.md 29, 58): the attackers storm the
+## fort as well as taking the town round it only with a way in of their own
+## (guns, a ram, ladders or poles), and only when the fort holds FORT_STORM_PCT %
+## or more of the defenders' strength or they are as strong as all the defenders
+## by their kit's edge (_fort_need: AP.S_FORT_GUN_PCT / S_FORT_RAM_PCT /
+## S_FORT_POLES_PCT; FORT_STORM_ODDS for every kit as built in slice 2c, Easy's);
+## else they take the town and leave the fort be (the town taken wins the
+## battle; a storm goes on past it under AP.S_FORT_PRESS). The defenders shut
+## the fort's gate once an attacker is within FORT_SHUT_R of it.
 const FORT_STORM_PCT := 35
 const FORT_STORM_ODDS := 250
 const FORT_SHUT_R := 45 * M
@@ -1341,23 +1343,14 @@ static func _fort_party(sim, u: int) -> bool:
 
 ## The attackers' choice at a West harbour fort (slice 2c; once, at their
 ## first think): storm the fort as well as the town (ai_fort 2) when they
-## have a ram, ladders or guns of their own and the fort holds
-## FORT_STORM_PCT % of the defenders' strength or more, or they are
-## FORT_STORM_ODDS % as strong as all the defenders; else take the town
-## round it (1). The town taken wins the battle either way.
+## have a way in of their own and the fort holds FORT_STORM_PCT % of the
+## defenders' strength or more, or they are as strong as all the defenders by
+## the edge their kit needs (_fort_need); else take the town round it (1). The
+## town taken wins the battle either way (a storm under AP.S_FORT_PRESS goes on
+## past it: fort_press).
 static func _fort_choice(sim, side: int) -> void:
-	var kit := false
-	for q in sim.n_eq:
-		if sim.q_side[q] == side and sim.q_state[q] != Q_WRECKED \
-				and (sim.q_kind[q] == EQ_RAM or _ladderish(sim.q_kind[q])):
-			kit = true
-	var own := 0
-	for u in sim.n_units:
-		if sim.u_side[u] != side or sim.u_state[u] != U_READY or BattleAI.is_char(sim, u):
-			continue
-		own += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
-		if sim.u_cls[u] == UT.CLS_ART and UT.stat(sim.u_type[u], "m_gun") != 0 and not sim.is_tower(u):
-			kit = true  # (guns of its own: the gate can be battered)
+	var need := _fort_need(sim, side)
+	var own := _fort_own(sim, side)
 	var dfn := 0
 	var fort := 0
 	for u in sim.n_units:
@@ -1367,8 +1360,97 @@ static func _fort_choice(sim, side: int) -> void:
 		dfn += st
 		if sim.in_fort(u):
 			fort += st
-	var storm := kit and (fort * 100 >= dfn * FORT_STORM_PCT or own * 100 >= dfn * FORT_STORM_ODDS)
+	var storm := need > 0 and (fort * 100 >= dfn * FORT_STORM_PCT or own * 100 >= dfn * need)
 	sim.ai_fort[side] = 2 if storm else 1
+
+
+## Poles and a ram storm the fort (docs/AI.md 60, 2026-11-05): the strength edge
+## (% of the defenders' men x cost) at which side storms the fort, by the best
+## way in it has: guns of its own (not a tower's) AP.S_FORT_GUN_PCT, a ram
+## (or, with AP.S_FORT_BATTER, a gate batterer, or fire missiles against a
+## walls-1 fort's timber gate) AP.S_FORT_RAM_PCT, ladders or scaling poles alone
+## AP.S_FORT_POLES_PCT; 0 none (no way in: the town only). Easy 250 for every
+## kit, no batterer: the rule as built in slice 2c.
+static func _fort_need(sim, side: int) -> int:
+	var kn := AP.of(sim, side)
+	var climb := false
+	var ram := false
+	var guns := false
+	for q in sim.n_eq:
+		if sim.q_side[q] == side and sim.q_state[q] != Q_WRECKED:
+			if sim.q_kind[q] == EQ_RAM:
+				ram = true
+			elif _ladderish(sim.q_kind[q]):
+				climb = true
+	for u in sim.n_units:
+		if sim.u_side[u] != side or sim.u_state[u] != U_READY or BattleAI.is_char(sim, u):
+			continue
+		var ty: int = sim.u_type[u]
+		if sim.u_cls[u] == UT.CLS_ART and UT.stat(ty, "m_gun") != 0 and not sim.is_tower(u):
+			guns = true  # (guns of its own: the gate can be battered)
+		elif kn[AP.S_FORT_BATTER] != 0:
+			if sim.t_mbat[ty] > 0:
+				ram = true
+			elif sim.city_walls == 1 and _fire_shooter(sim, u):
+				ram = true
+	var need := 0
+	if guns:
+		need = kn[AP.S_FORT_GUN_PCT]
+	if ram and (need == 0 or kn[AP.S_FORT_RAM_PCT] < need):
+		need = kn[AP.S_FORT_RAM_PCT]
+	if climb and (need == 0 or kn[AP.S_FORT_POLES_PCT] < need):
+		need = kn[AP.S_FORT_POLES_PCT]
+	return need
+
+
+## Unit u shoots fire (its standard kind or the special kind it carries), with missiles left.
+static func _fire_shooter(sim, u: int) -> bool:
+	if sim.u_ammo[u] <= 0:
+		return false
+	var k: int = sim.t_m_ak[sim.u_type[u]]
+	if k >= 0 and sim.t_k_fire[k] > 0:
+		return true
+	var sk: int = sim.spec_kind(u)
+	return sk >= 0 and sim.t_k_fire[sk] > 0
+
+
+## Side's strength for the fort choice: its ready men x the rows' "cost", characters left out.
+static func _fort_own(sim, side: int) -> int:
+	var own := 0
+	for u in sim.n_units:
+		if sim.u_side[u] == side and sim.u_state[u] == U_READY and not BattleAI.is_char(sim, u):
+			own += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
+	return own
+
+
+## The town round the fort has just fallen to side (BattleSim._update_capture;
+## docs/AI.md 60): true when its AI storms the fort on (the battle then goes on
+## till the fort falls, the storm gives up or time runs out), false when the
+## town taken ends the battle with the fort holding (as built in slice 2c; a
+## human side, and Easy: AP.S_FORT_PRESS 0). A side that chose the town only
+## (ai_fort 1) weighs the storm again against the fort's garrison alone, at its
+## kit's edge (_fort_need; the FORT_STORM_PCT share no longer means anything).
+static func fort_press(sim, side: int) -> bool:
+	if sim.ai_sides[side] == 0:
+		return false
+	if AP.of(sim, side)[AP.S_FORT_PRESS] == 0:
+		return false
+	if sim.ai_fort[side] == 2:
+		return true
+	if sim.ai_fort[side] != 1:
+		return false
+	var need := _fort_need(sim, side)
+	if need <= 0:
+		return false
+	var fort := 0
+	for u in sim.n_units:
+		if sim.u_side[u] != side and sim.u_state[u] == U_READY and not sim.is_tower(u) and not BattleAI.is_char(sim, u) \
+				and sim.in_fort(u):
+			fort += sim.u_alive[u] * UT.stat(sim.u_type[u], "cost")
+	if fort <= 0 or _fort_own(sim, side) * 100 < fort * need:
+		return false
+	sim.ai_fort[side] = 2
+	return true
 
 
 ## In the citadel: attack attackers that get in, else hold the post

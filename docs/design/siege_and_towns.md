@@ -3085,3 +3085,74 @@ anyway (not kept to the zone), so only a human defender met it.
   inside the stakes and the fort's inside in the zone; the attackers' front clamped out of the band; every defender
   rectangle 30 m short of the band; the plaza not in the attackers' zone; Rome polis walls 2 keeps one inside zone).
   Shots: `tests/siege_zone_shot.gd` (`--mode=zone|gun`, `--view`, `--walls`).
+
+### Poles and a ram storm the fort (as built, 2026-11-05)
+
+The owner, on the natives' storm of a Spanish fort town (walls 1-2: an open town round a walled harbour fort): "I
+like poles and ram, that fits our actual use case and will match what the player would be doing." Before, the battle
+AI chose at its first think to storm the fort (`ai_fort` 2) with a ram, ladders, poles or guns at `FORT_STORM_ODDS`
+250 % of the defenders' men x cost (or with the fort holding `FORT_STORM_PCT` 35 % of them), else to take the town
+(1); and either way the plaza taken ended the battle (`_update_capture`: winner the attackers, `fort_held`), so a
+storm that had not got into the fort by then never did. Traced (Cumana walls 1, Miskito with poles, ai_fort 2): the
+two pole parties were still carrying their poles across the town (about 200 m at the poles' carrying pace) when the
+town fell at 4.7 min; the 2026-11-02 probe's "0 of 32" was this, not the poles failing on the fort's walls (every land
+stretch of Cumana's fort has a ladder foot on the attackers' ground: `ladder_ok`, `_ladder_spot` find them).
+
+- **The edge by kit** (`SiegeAI._fort_need`, docs/AI.md 60). The side's best way in sets the edge it storms at:
+  guns of its own (not a tower's) `S_FORT_GUN_PCT`, a ram `S_FORT_RAM_PCT` (with `S_FORT_BATTER` also a gate
+  batterer, the torch raiders, or fire missiles against a walls-1 fort's timber gate), ladders or scaling poles
+  alone `S_FORT_POLES_PCT`; the lowest edge of the kits it has. Average and Skilled 120 / 150 / 180 %; Easy 250 for
+  every kit, no batterer (the slice 2c rule exactly). The 35 % rule stays (`_fort_choice`).
+- **The storm goes on past the town** (`S_FORT_PRESS`, Easy 0). When the plaza falls to a side whose AI storms the
+  fort (`SiegeAI.fort_press`, called by `_update_capture` once), the town's defenders rout as before and `fort_held`
+  is set, but the battle is not decided: it goes on until the fort is cleared (its parade held, `_fort_capture`, or
+  no defender left: `fort_held` back to 0, a capture), the attackers give it up (all withdrawn or gone: the
+  attackers' win with the fort holding, as before) or time runs out (the same). A side that chose the town only
+  (ai_fort 1) weighs the storm again at that moment against the fort's garrison alone at its kit's edge, and storms
+  when it has it. A human side never presses (its battle ends at the plaza as before). No new state: `fort_held`,
+  `fort_t`, `fort_taken` and `ai_fort` are hashed and snapshotted already; a draw cannot follow a taken town.
+- **How the fort falls.** Mostly by its garrison breaking: the town lost (`_town_lost`: the attackers in the
+  streets 3 to 1 against every defender) drains the fort's men's morale till they rout, 1-3 minutes after the town;
+  the parade is held (`fort_taken`) in some battles (Portobelo and Cartagena with a ram 8 / 8 and 3 / 8), and the
+  pole parties reach the walls about when the garrison breaks. Guns batter the gate as before.
+- **Measured** (`tests/fort_probe.gd`, the battle built and run as the auto-resolve does, battle seeds 1000 + 77 n, 8
+  seeds a cell, the town's own garrison at 100 %; "poles" on arrival with a War lodge 2, "ram" after a siege of two
+  turns: poles, three ladder sets, a ram and mantlets; before a clean copy of HEAD; won / town taken):
+
+| attacker | kit | town | walls 1 before | walls 1 after | walls 2 before | walls 2 after | fort choice after (town / storm) |
+|---|---|---|---|---|---|---|---|
+| Miskito | poles | Cartagena | 8 / 2 | 8 / 8 | 8 / 0 | 8 / 8 | 2/6, 0/8 |
+| Miskito | poles | Cumana | 8 / 2 | 8 / 8 | 8 / 1 | 8 / 8 | 0/8, 1/7 |
+| Miskito | poles | Portobelo | 8 / 0 | 8 / 8 | 4 / 0 | 4 / 4 | 0/8, 4/4 |
+| Miskito | poles + ladders + ram | Cartagena | 8 / 1 | 8 / 8 | 8 / 0 | 8 / 8 | 0/8, 0/8 |
+| Miskito | poles + ladders + ram | Cumana | 8 / 2 | 8 / 8 | 8 / 1 | 8 / 7 | 0/8, 0/8 |
+| Miskito | poles + ladders + ram | Portobelo | 7 / 1 | 8 / 8 | 4 / 0 | 4 / 4 | 0/8, 4/4 |
+| Itza | poles | Cartagena | 8 / 0 | 8 / 8 | 8 / 4 | 8 / 8 | 0/8, 4/4 |
+| Itza | poles | Cumana | 8 / 1 | 8 / 8 | 8 / 1 | 8 / 8 | 0/8, 1/7 |
+| Itza | poles | Portobelo | 8 / 1 | 8 / 8 | 0 / 0 | 0 / 0 | 1/7, 8/0 |
+| Itza | poles + ladders + ram | Cartagena | 8 / 0 | 8 / 8 | 7 / 3 | 7 / 7 | 0/8, 4/4 |
+| Itza | poles + ladders + ram | Cumana | 8 / 3 | 8 / 8 | 8 / 1 | 6 / 3 | 0/8, 0/8 |
+| Itza | poles + ladders + ram | Portobelo | 8 / 0 | 8 / 8 | 0 / 0 | 0 / 0 | 0/8, 8/0 |
+| English foot | none | Cartagena | 8 / 0 | 8 / 0 | 8 / 0 | 8 / 0 | 8/0, 8/0 |
+| English foot | none | Cumana | 8 / 0 | 8 / 0 | 8 / 0 | 8 / 0 | 8/0, 8/0 |
+| English foot | none | Portobelo | 8 / 0 | 8 / 0 | 8 / 0 | 8 / 0 | 8/0, 8/0 |
+| English foot | ladders + ram | Cartagena | 8 / 0 | 8 / 8 | 8 / 0 | 8 / 8 | 0/8, 0/8 |
+| English foot | ladders + ram | Cumana | 8 / 1 | 8 / 8 | 8 / 0 | 8 / 8 | 0/8, 0/8 |
+| English foot | ladders + ram | Portobelo | 8 / 0 | 8 / 8 | 8 / 0 | 4 / 4 | 0/8, 0/8 |
+| English, 2 guns | guns (on arrival) | Cartagena | 8 / 0 | 8 / 8 | 8 / 3 | 8 / 8 | 0/8, 0/8 |
+| English, 2 guns | guns (on arrival) | Cumana | 8 / 6 | 8 / 8 | 8 / 0 | 8 / 8 | 0/8, 0/8 |
+| English, 2 guns | guns (on arrival) | Portobelo | 8 / 0 | 8 / 8 | 7 / 0 | 5 / 5 | 0/8, 0/8 |
+
+  Pooled: the natives (192 battles): won 166 -> 165, town taken 24 -> 161 of 192; the English (144): won 143 -> 137, town taken 10 -> 89 of 144. "Choice" is the attackers' ai_fort at the end (1 the town only, 2 the fort stormed); a lost battle keeps the first choice (Portobelo walls 2: the Itza never took the town, so never the fort). Where the attackers won the town they now took the fort in 161 of 165 native wins (Itza at Cumana walls 2 with the ram: 3 of 6, the storm gave up). Without a way in (the English foot on arrival) nothing changes. Battles about 0.3-2 min longer where the storm goes on (Cumana walls 2 10.5 -> 12.7 min).
+
+  `west_walls` (8 seeds, 384 battles: the West set with a light gun, ladders and a ram) and `rome_walls`:
+  attacker wins walls 0 / 1 / 2 52 / 34 / 27 % (overall 38) before and after, every cell identical (a won battle was
+  already won at the plaza; the storm only changes what the win takes), the median minutes longer in some walls 1-2
+  cells (Veracruz walls 1 8.7 -> 15.0, Havana 7.6 -> 9.6). `rome_walls`: no Rome town has a fort (`fort_on` 0), so
+  nothing the change touches runs there; checked seed for seed (Zeugitana walls 2, two seeds: identical results).
+- **Tests.** determinism_test `--only=fort` (the storm and west_city), `--only=layout`, `--only=deploy`; campaign_test
+  (the knobs per level, the campaign's reading of the rule: docs/design/campaign_rules.md "The formula knows the fort
+  and the walls, and the natives' weights refit").
+- **Known.** The poles rarely touch the fort's walls (the garrison breaks first); a human attacker's battle still ends
+  at the plaza (no "storm the fort" order to say he means to go on); the fort's 35 % share is still unseen by the
+  campaign.

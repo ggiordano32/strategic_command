@@ -19,6 +19,7 @@ const CRules := preload("res://campaign/crules.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
 
 var only := ""
 var n := 40
@@ -198,6 +199,61 @@ const FIT_FOUGHT := [
 	["west", "field", 70, 2.1, 1.149], ["west", "field", 100, 33.3, 0.991], ["west", "field", 140, 81.2, 0.841]]
 
 
+## The natives against walls (2026-11-05): [faction key, walls, attacker win %, attackers' / defenders' men killed],
+## tools/balance native_walls_itza / native_walls_miskito (16 seeds a town, the six walled native towns), with the
+## fort storm of 2026-11-05 in place (it does not touch these ring towns).
+const FIT_NATIVE := [
+	["itza", 1, 36.5, 1.164], ["itza", 2, 5.2, 1.295], ["miskito", 1, 9.4, 1.942], ["miskito", 2, 8.3, 1.911]]
+const FIT_NATIVE_TOWNS := ["tayasal", "cabo_gracias", "natchez", "choctaw", "valladolid", "darien"]
+## tests/town_balance.gd NATIVE_ATT (the natives at about the West set's price).
+const FIT_NATIVE_ATT := {
+	"itza": [["holcan", 60], ["native_warriors", 100], ["native_bowmen", 80], ["native_warriors", 100], ["atlatl", 60],
+		["native_warriors", 100], ["native_bowmen", 80], ["holcan", 60], ["native_warriors", 100], ["native_bowmen", 80],
+		["w_slingers", 70], ["native_warriors", 100], ["native_bowmen", 80], ["atlatl", 60], ["w_slingers", 70]],
+	"miskito": [["torch_raiders", 60], ["native_warriors", 100], ["native_bowmen", 80], ["native_warriors", 100],
+		["musketeers", 100], ["native_bowmen", 80], ["torch_raiders", 60], ["native_warriors", 100], ["canoe_raiders", 60],
+		["native_bowmen", 80], ["maroons", 60], ["native_warriors", 100], ["native_bowmen", 80]],
+}
+
+
+## A state for a native cell: native faction fk (a War lodge 2: scaling poles) storming region r at walls `walls`
+## on arrival, held by the West set (Scenarios.WEST_ATT) of another faction, no garrison.
+func _fit_native_state(fk: String, r: int, walls: int) -> Dictionary:
+	var st := CState.new_campaign("b", 77, [], {}, [], "west")
+	st["armies"] = []
+	st["sieges"] = []
+	var fa := CData.faction_index(fk)
+	var fd := 0 if fa != 0 else 1
+	st["regions"][r]["owner"] = fd
+	st["regions"][r]["gar"] = 0
+	CState.set_dip(st, fa, fd, CState.WAR)
+	var got := false
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == CData.WALLS:
+			sl[1] = walls
+			got = true
+	if not got:
+		st["regions"][r]["slots"].append([CData.WALLS, walls])
+	var cap: int = int(CState.regions_of(st, fa)[0])
+	var g2 := false
+	for sl in st["regions"][cap]["slots"]:
+		if int(sl[0]) == CData.BARRACKS:
+			sl[1] = 2
+			g2 = true
+	if not g2:
+		st["regions"][cap]["slots"].append([CData.BARRACKS, 2])
+	var lists := [FIT_NATIVE_ATT[fk], Scenarios.WEST_ATT]
+	for side in 2:
+		var units: Array = []
+		for e in lists[side]:
+			units.append({"t": str(e[0]), "n": int(e[1])})
+		(st["armies"] as Array).append({"id": side + 1, "f": fa if side == 0 else fd, "r": r, "units": units, "from": -1,
+			"moved": 1, "busy": 1})
+	st["battles"] = [{"id": 1, "r": r, "turn": int(st["turn"]), "att": [1], "def": [2], "att_f": fa, "def_f": fd,
+		"reinf": [], "settlement": 1, "kind": "assault"}]
+	return st
+
+
 ## A state for a formula cell: equal armies (the ratio in % for the attackers) in region r.
 func _fit_state(pack: String, r: int, ratio: int, walls: int, field: bool, turns: int) -> Dictionary:
 	var mix: Array = FIT_ROME_MIX if pack == "rome" else FIT_WEST_MIX
@@ -232,6 +288,11 @@ func _fit_state(pack: String, r: int, ratio: int, walls: int, field: bool, turns
 
 ## [attacker win %, attackers' / defenders' men killed] over n formula samples of one state.
 func _fit_cell(sts: Array, samples: int) -> Array:
+	return _fit_cell_f(sts, samples, 0)
+
+
+## _fit_cell with the attackers faction fa.
+func _fit_cell_f(sts: Array, samples: int, fa: int) -> Array:
 	var wins := 0
 	var tot := 0
 	var ka := 0
@@ -243,7 +304,7 @@ func _fit_cell(sts: Array, samples: int) -> Array:
 			if int(o["winner"]) == 0:
 				wins += 1
 			for u in o["units"]:
-				if int(CState.army(st, int(u["army"]))["f"]) == 0:
+				if int(CState.army(st, int(u["army"]))["f"]) == fa:
 					ka += int(u["killed"])
 				else:
 					kd += int(u["killed"])
@@ -275,4 +336,18 @@ func _fit() -> void:
 		print("%s %s %s: fought %.1f %% / %.3f, formula %.1f %% / %.3f, gap %+.1f points / %+.0f %% %s" % [
 			pack, kind, "walls %d" % cell if kind == "siege" else "ratio %.1f" % (cell / 100.0), float(row[3]), float(row[4]),
 			float(got[0]), float(got[1]), dw, dl * 100.0, "ok" if ok else "OUT"])
+	CData.use_pack("west")
+	for row in FIT_NATIVE:
+		var fk: String = row[0]
+		var w: int = row[1]
+		var sts: Array = []
+		for tk in FIT_NATIVE_TOWNS:
+			sts.append(_fit_native_state(fk, CData.region_index(tk), w))
+		var got := _fit_cell_f(sts, 200, CData.faction_index(fk))
+		var dw: float = float(got[0]) - float(row[2])
+		var dl: float = float(got[1]) / maxf(float(row[3]), 0.001) - 1.0
+		var ok := absf(dw) <= 8.0
+		bad += 0 if ok else 1
+		print("west %s walls %d: fought %.1f %% / %.3f, formula %.1f %% / %.3f, gap %+.1f points / %+.0f %% %s" % [
+			fk, w, float(row[2]), float(row[3]), float(got[0]), float(got[1]), dw, dl * 100.0, "ok" if ok else "OUT"])
 	print("fit: %s" % ("PASS" if bad == 0 else "%d cells out" % bad))

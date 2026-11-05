@@ -6866,7 +6866,8 @@ func _update_capture() -> void:
 	else:
 		cap_t = 0
 	if cap_t >= CAPTURE_TICKS:
-		stat_capture += 1
+		if fort_held == 0:
+			stat_capture += 1
 		var f_men := 0
 		for u in n_units:
 			if u_side[u] == city_def and u_state[u] == U_READY:
@@ -6878,13 +6879,17 @@ func _update_capture() -> void:
 					continue
 				_start_rout(u)
 				u_routs[u] = MAX_ROUTS + 1  # the city has fallen: no rally
-		if f_men > 0 and winner < 0:
+		if f_men > 0 and winner < 0 and fort_held == 0:
 			# The town is taken: the battle is the attackers'; the fort still
 			# holding is the result's "fort" (docs/DESIGN.md "Forts and
-			# fighting from buildings").
+			# fighting from buildings"). An AI storming the fort goes on with it
+			# (SiegeAI.fort_press, docs/AI.md 58): the battle is decided when the
+			# fort falls (fort_held back to 0), the storm gives up or time runs
+			# out (_check_winner), the attackers' all the same.
 			fort_held = f_men
-			winner = 1 - city_def
-			decided_tick = tick
+			if not SiegeAI.fort_press(self, 1 - city_def):
+				winner = 1 - city_def
+				decided_tick = tick
 
 
 ## The West harbour fort falls (slice 2c; once a second): an attacking unit
@@ -6909,6 +6914,7 @@ func _fort_capture() -> void:
 	if fort_t < FORT_CAP_TICKS:
 		return
 	fort_taken = tick + 1
+	fort_held = 0  # (the town fell first and the storm went on: the fort holds no more; docs/AI.md 58)
 	for u in n_units:
 		if u_side[u] == city_def and u_state[u] == U_READY and in_fort(u):
 			_start_rout(u)
@@ -17458,7 +17464,15 @@ func _check_winner() -> void:
 		for s in 2:
 			if reserve_open(s):
 				ready[s] += reserves_left(s)
-	if ready[0] == 0 and ready[1] > 0:
+	if fort_held > 0 and city_on != 0:
+		# The town round the West fort is taken and the attackers storm the fort
+		# on (_update_capture, docs/AI.md 58): theirs when the fort is cleared,
+		# when they give it up (withdrawn, gone) or when time runs out.
+		if ready[city_def] == 0:
+			fort_held = 0  # (no one left to hold it: the fort is the attackers' too)
+		if ready[0] == 0 or ready[1] == 0 or tick >= time_limit:
+			winner = 1 - city_def
+	elif ready[0] == 0 and ready[1] > 0:
 		winner = 1
 	elif ready[1] == 0 and ready[0] > 0:
 		winner = 0

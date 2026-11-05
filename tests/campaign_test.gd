@@ -63,6 +63,7 @@ const CBattle := preload("res://campaign/cbattle.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
+const AP := preload("res://sim/ai_profile.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CAI := preload("res://campaign/cai.gd")
@@ -4139,7 +4140,9 @@ func _ai_skilled() -> void:
 	# (2026-10-27, wars the AI can cover (docs/AI.md 43): were eb11d4a4 / 404660584 and, Easy, 7453315e / 2698612760.)
 	# (2026-11-02, a landing is contested, a fleet puts to sea when its port falls: the same RNG draws, the state
 	# carries the landings' new event keys and marks; were bac3b6c4 / 520790384 and, Easy, 82ddfac4 / 1051292326.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "62200135" and int(g["rng"]) == 520790384,
+	# (2026-11-05, the formula knows the fort and the walls (docs/AI.md 58: no storm on arrival against stone walls
+	# with no way in, a siege instead); were 62200135 / 520790384 and, Easy, 8e7bb4b5 / 1051292326.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "57eedaff" and int(g["rng"]) == 3275932353,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4150,7 +4153,7 @@ func _ai_skilled() -> void:
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
 	# (Moved 2026-11-01 with the attack fixes: the targets' cells kept out of a march and the zone lock
 	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "8e7bb4b5" and int(ge["rng"]) == 1051292326,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "d3f33b3b" and int(ge["rng"]) == 656603057,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -4655,25 +4658,32 @@ func _shown_odds() -> void:
 	_set_level(st, cu, CData.WALLS, 0)
 	_check(str(CBattle.shown_odds(st, b)["block"]) == "", "an open town: nothing blocks")
 	_set_level(st, cu, CData.WALLS, 2)
+	# (2026-11-05) Poles and a ram storm the fort: ladders (a siege turn) or poles (a War lodge 2) are a way in, at
+	# S_FORT_POLES_PCT (180 % at Average: a player's side fights as Average) of the defenders' men x cost.
 	st["sieges"] = [{"r": cu, "f": mi, "turn": int(st["turn"]) - 1, "supply": 3, "from": [], "held": 0}]
-	_check(str(CBattle.shown_odds(st, b)["block"]) == "fort" and str(CBattle.shown_odds(st, b)["no_way"]).contains("without guns"),
-		"after a siege turn (ladders) but no guns: the fort still holds (measured)")
+	var fs := CBattle.fort_storm(st, b)
+	_check(str(fs["kit"]) == "climb" and int(fs["need"]) == AP.row(AP.AVERAGE, AP.BALANCED)[AP.S_FORT_POLES_PCT]
+		and int(fs["need"]) == 180, "fort storm: ladders after a siege turn: the poles' edge 180 %% (kit %s, need %d)" % [str(fs["kit"]), int(fs["need"])])
+	_check((int(fs["have"]) >= 180) == (str(CBattle.shown_odds(st, b)["block"]) == ""),
+		"... the fort is stormed exactly when they have 180 %% (have %d %%)" % int(fs["have"]))
 	st["sieges"] = []
 	_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, 2)
-	_check(str(CBattle.shown_odds(st, b)["block"]) == "fort", "with a War lodge 2 (poles) but no guns: the fort still holds")
+	_check(str(CBattle.fort_storm(st, b)["kit"]) == "climb", "with a War lodge 2 (poles) on arrival: a way in (climb)")
 	_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, 1)
+	_fort_edges(st, cu, mi, tf, en)
 	var e := {"id": 9002, "f": en, "r": cu, "units": [{"t": "musketeers", "n": 120}, {"t": "light_gun", "n": UT.size_of(UT.index_of("light_gun"))}],
 		"from": -1, "moved": 1, "busy": 0}
 	(st["armies"] as Array).append(e)
 	var be := CBattle.preview_battle(st, [e], [], cu)
+	var fe := CBattle.fort_storm(st, be)
 	var oe := CBattle.shown_odds(st, be)
-	_check(str(oe["block"]) == "fort" and str(oe["no_way"]).begins_with("The fort will likely hold"),
-		"guns but under 250 % of the defenders: the fort likely holds: " + str(oe["no_way"]))
-	for i in 6:
-		(e["units"] as Array).insert(0, {"t": "musketeers", "n": 120})
-	_check(str(CBattle.shown_odds(st, be)["block"]) == "", "guns and 250 % of the defenders: the fort can be stormed")
+	_check(str(fe["kit"]) == "guns" and int(fe["need"]) == 120 and (str(oe["block"]) == "fort") == (int(fe["have"]) < 120)
+		and (str(oe["block"]) == "" or str(oe["no_way"]).begins_with("The fort will likely hold")),
+		"guns: the fort is stormed at 120 %% (have %d %%): %s" % [int(fe["have"]), str(oe["no_way"])])
 	(e["units"] as Array).pop_back()
-	_check(str(CBattle.shown_odds(st, be)["block"]) == "fort", "Europeans without guns: the fort holds")
+	_check(str(CBattle.fort_storm(st, be)["kit"]) == "" and str(CBattle.shown_odds(st, be)["block"]) == "fort"
+		and str(CBattle.shown_odds(st, be)["no_way"]).contains("Bring poles, a ram or guns"),
+		"Europeans with no kit on arrival: the fort holds: " + str(CBattle.shown_odds(st, be)["no_way"]))
 	# Stone ring walls (a native town): no way in at all.
 	var ty := CData.region_index("tayasal")
 	st["regions"][ty]["owner"] = iz
@@ -4683,6 +4693,19 @@ func _shown_odds() -> void:
 	var ot := CBattle.shown_odds(st, bt)
 	_check(not CBattle.fort_town(st, ty) and str(ot["block"]) == "walls" and str(ot["no_way"]).begins_with("No way through the walls")
 		and int(ot["shown"]) == CBattle.SHOWN_MIN and int(ot["band"]) == 0, "Tayasal's stone walls with no kit: no way in, shown 1 %")
+	var stw := st.duplicate(true)
+	bt["id"] = 1
+	stw["battles"] = [bt]
+	var ww := 0
+	var kmax := 0
+	for i in 200:
+		var ow := CBattle.formula(stw, bt)
+		if int(ow["winner"]) == 0:
+			ww += 1
+		for u in ow["units"]:
+			if int(u["army"]) == int(e["id"]):
+				kmax = maxi(kmax, int(u["killed"]) * 100 / maxi(int(u["killed"]) + int(u["routed"]) + int(u["remaining"]), 1))
+	_check(ww == 0 and kmax <= CBattle.NO_WAY_KILL_ATT, "the formula: no way through Tayasal's stone walls: 0 of 200 won, a repulse (attackers' killed up to %d %%)" % kmax)
 	_set_level(st, ty, CData.WALLS, 1)
 	_check(str(CBattle.shown_odds(st, bt)["block"]) == "", "a palisade (walls 1): the gate can be hacked")
 	_set_level(st, ty, CData.WALLS, 2)
@@ -4695,6 +4718,98 @@ func _shown_odds() -> void:
 	var fo := CBattle.with_shown(CBattle.odds(st, [a], [e], cu, false, -1))
 	_check(int(fo["shown"]) == clampi((int(fo["win_pm"]) + 5) / 10, 1, 99) and str(fo["no_way"]) == "", "field odds: shown capped 1-99")
 	CData.use_pack("rome")
+
+
+## Poles and a ram storm the fort (2026-11-05): the fort storm's edge per kit (CBattle.fort_storm, the battle AI's
+## knobs), the formula refusing a fort town without the kit and taking it with, and shown_odds agreeing.
+func _fort_edges(st0: Dictionary, cu: int, mi: int, _tf: int, en: int) -> void:
+	var st := st0.duplicate(true)
+	st["armies"] = []
+	st["battles"] = []
+	st["sieges"] = []
+	_set_level(st, cu, CData.WALLS, 2)
+	st["regions"][cu]["gar"] = 100
+	var gar := CBattle._cost_men(CRules.garrison(st, cu))
+	var kn := AP.row(AP.AVERAGE, AP.BALANCED)
+	var ke := AP.row(AP.EASY, AP.BALANCED)
+	_check(kn[AP.S_FORT_POLES_PCT] == 180 and kn[AP.S_FORT_RAM_PCT] == 150 and kn[AP.S_FORT_GUN_PCT] == 120
+		and kn[AP.S_FORT_PRESS] == 1 and ke[AP.S_FORT_POLES_PCT] == 250 and ke[AP.S_FORT_GUN_PCT] == 250 and ke[AP.S_FORT_PRESS] == 0,
+		"fort storm knobs: Average 180 / 150 / 120 %, press on; Easy 250, no press")
+	# A Miskito army of warriors sized to `pct` % of the garrison's men x cost, kit by the siege's turns and poles: the
+	# fort is stormed at the kit's edge over the fort's garrison (FORT_SHARE_PCT of the defenders).
+	var warriors := UT.index_of("native_warriors")
+	var cost := UT.stat(warriors, "cost")
+	for case in [["climb", 0, 2, 180], ["ram", 2, 1, 150]]:
+		var turns: int = case[1]
+		_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, int(case[2]))
+		st["sieges"] = [] if turns == 0 else [{"r": cu, "f": mi, "turn": int(st["turn"]) - turns, "supply": 3, "from": [], "held": 0}]
+		var edge: int = int(case[3]) * CBattle.FORT_SHARE_PCT / 100
+		for pct: int in [edge - 8, edge + 8]:
+			var men: int = gar * pct / 100 / cost + 1
+			var units: Array = []
+			while men > 0:
+				var k := mini(men, 160)
+				units.append({"t": "native_warriors", "n": k})
+				men -= k
+			var a := {"id": 9101, "f": mi, "r": cu, "units": units, "from": -1, "moved": 1, "busy": 0}
+			st["armies"] = [a]
+			var b := CBattle.preview_battle(st, [a], [], cu)
+			var fs := CBattle.fort_storm(st, b)
+			var od := CBattle.shown_odds(st, b)
+			var want_ok: bool = pct >= edge
+			_check(str(fs["kit"]) == str(case[0]) and int(fs["need"]) == int(case[3]) and (int(fs["ok"]) != 0) == want_ok
+				and (str(od["block"]) == "") == want_ok and (want_ok or int(od["take"]) == CBattle.SHOWN_MIN),
+				"fort storm %s at %d %% of the garrison (need %d %% of the fort's, have %d %%): %s" % [str(case[0]), pct,
+					int(fs["need"]), int(fs["have"]), "stormed" if want_ok else str(od["no_way"])])
+	# The formula agrees (a strong army that always wins the battle): without a way in the fort holds (fort_holds),
+	# with poles the town is taken.
+	var big: Array = []
+	for i in 6:
+		big.append({"t": "native_warriors", "n": 160})
+	var ab := {"id": 9104, "f": mi, "r": cu, "units": big, "from": -1, "moved": 1, "busy": 0}
+	st["armies"] = [ab]
+	st["sieges"] = []
+	st["regions"][cu]["gar"] = 20
+	for lodge in [1, 2]:
+		_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, lodge)
+		var bb := CBattle.preview_battle(st, [ab], [], cu)
+		bb["id"] = 1
+		var st2 := st.duplicate(true)
+		st2["battles"] = [bb]
+		var wins := 0
+		var holds := 0
+		for i in 60:
+			var o := CBattle.formula(st2, bb)
+			if int(o["winner"]) == 0:
+				wins += 1
+				if int(o.get("fort_holds", 0)) != 0:
+					holds += 1
+		var blk := str(CBattle.shown_odds(st, bb)["block"])
+		_check(wins >= 55 and (holds == wins if lodge == 1 else holds == 0) and blk == ("fort" if lodge == 1 else ""),
+			"the formula, %s: %d of 60 won, the fort held in %d (shown block \"%s\")" % ["no way in" if lodge == 1 else "poles",
+				wins, holds, blk])
+	_set_level(st, int(CState.regions_of(st, mi)[0]), CData.BARRACKS, 1)
+	st["sieges"] = []
+	# An Easy AI attacker (no press): poles and a ram do not take the fort; guns at 250 % do.
+	st["factions"][en]["ai_battle_skill"] = AP.EASY
+	var e := {"id": 9103, "f": en, "r": cu, "units": [], "from": -1, "moved": 1, "busy": 0}
+	var mus := UT.index_of("musketeers")
+	var men2 := gar * 260 / 100 / UT.stat(mus, "cost") + 1
+	while men2 > 0:
+		var k2 := mini(men2, 120)
+		(e["units"] as Array).append({"t": "musketeers", "n": k2})
+		men2 -= k2
+	st["armies"] = [e]
+	st["battles"] = []
+	st["regions"][cu]["gar"] = 100
+	st["sieges"] = [{"r": cu, "f": en, "turn": int(st["turn"]) - 2, "supply": 3, "from": [], "held": 0}]
+	var be := CBattle.preview_battle(st, [e], [], cu)
+	be["att_f"] = en
+	_check(int(CBattle.fort_storm(st, be)["need"]) == 0 and str(CBattle.capture_block(st, be).get("k", "")) == "fort",
+		"Easy: ladders and a ram, no guns: the fort holds (the town ends the battle first)")
+	(e["units"] as Array).append({"t": "light_gun", "n": UT.size_of(UT.index_of("light_gun"))})
+	_check(int(CBattle.fort_storm(st, be)["need"]) == 250 and int(CBattle.fort_storm(st, be)["ok"]) == 1,
+		"Easy: guns at 260 %% of the defenders: stormed at the slice 2c edge (have %d)" % int(CBattle.fort_storm(st, be)["have"]))
 
 
 ## Region r's building of chain c set to level lv (added if missing).

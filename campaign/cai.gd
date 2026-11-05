@@ -2227,7 +2227,7 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 		if CSea.has_marque(st, f, g) or CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
 			continue
 		if kn[CP.KIN_WAR_PCT] != 100 and CData.kin(f, g):
-			continue  # (docs/AI.md 58) nor by mistake on our kin
+			continue  # (docs/AI.md 59) nor by mistake on our kin
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
 			if turn < kn[CP.FIRST_WAR_ON_PLAYERS] or turn - last < kn[CP.PLAYER_WAR_GAP]:
@@ -2619,6 +2619,9 @@ static func _thr_foe(st: Dictionary, kn: PackedInt32Array, k: int) -> int:
 ## after a full siege), the defence raised by `extra` (the estimate's
 ## armies next to it).
 static func _odds_on(st: Dictionary, t: int, att: Array, defs: Array, kit: int, extra: int) -> int:
+	if kit == 0 and not att.is_empty() \
+			and CBattle.walls_shut(st, t, {"poles": CBattle.poles_of(st, int(att[0]["f"]), t)}, att):
+		return 0  # (docs/AI.md 60: no way through stone walls on arrival, the defenders win on time)
 	var s := CBattle.strengths(st, att, defs, t, true, -2, kit)
 	return int(CBattle.odds_of(int(s[0]), int(s[1]) + extra)["win"])
 
@@ -2643,6 +2646,9 @@ static func _log_attack(st: Dictionary, f: int, kind: String, t: int, go: Array,
 ## with the equipment the siege has built (CBattle.kit_of).
 static func _storm_win(st: Dictionary, att: Array, r: int) -> int:
 	var kit := CBattle.kit_of(st, {"kind": "assault", "r": r})
+	if not att.is_empty() and CBattle.walls_shut(st, r,
+			CBattle.siege_equipment(st, {"kind": "assault", "r": r, "att_f": int(att[0]["f"])}), att):
+		return 0  # (docs/AI.md 60: no way through the walls yet: the siege's ladders come after a turn)
 	var s := CBattle.strengths(st, att, CRules.besieged_armies(st, r), r, true, -2, kit)
 	return int(CBattle.odds_of(int(s[0]), int(s[1]))["win"])
 
@@ -2879,7 +2885,10 @@ static func _attack6(st: Dictionary, f: int, tg: Dictionary, _etas: Dictionary, 
 	var w_now := _odds_on(st, t, now, defs, 0, extra) if not now.is_empty() else 0
 	# A siege (more armies on the way, at SIEGE_WIN against the full kit) is
 	# preferred to a storm on arrival short of COMMIT_WIN.
-	var can_siege := not now.is_empty() and (not soon.is_empty() or now.size() > 1) \
+	# (docs/AI.md 60: stone walls with no way through on arrival: one army may sit down before them too, the siege
+	# brings ladders next turn.)
+	var shut := not now.is_empty() and CBattle.walls_shut(st, t, {"poles": CBattle.poles_of(st, f, t)}, now)
+	var can_siege := not now.is_empty() and (not soon.is_empty() or now.size() > 1 or shut) \
 			and _odds_on(st, t, now, defs, 2 if lay == CData.MODE_SIEGE else 0, extra) >= _thr(st, kn, CP.SIEGE_WIN)
 	if w_now >= need and (w_now >= commit or not can_siege or lay == CData.MODE_ASSAULT):
 		var sent := 0

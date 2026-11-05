@@ -1061,6 +1061,96 @@ walled native towns, the West set defending) had the Itza at 58 / 4 % at walls 1
 the formula's walls row (fitted to European kit-1 sieges at 39.8 / 33.6 %) predicts about a third; a refit would run
 `tools/balance/measure.py tools/balance/plans/native_walls_itza.json` / `native_walls_miskito.json` and the open-field
 `tests/asym_probe.gd`, then `tests/campaign_battles.gd --only=fit` with a native row (not done here; no weights changed).
+(2026-11-05: both rules and the refit are built, the natives' storm of the fort with poles or a ram too: "The formula
+knows the fort and the walls, and the natives' weights refit (as built, 2026-11-05)" below.)
+
+### The formula knows the fort and the walls, and the natives' weights refit (as built, 2026-11-05)
+
+The owner: "I like poles and ram, that fits our actual use case and will match what the player would be doing" (the
+battle side: docs/design/siege_and_towns.md "Poles and a ram storm the fort (as built, 2026-11-05)"; the AI: docs/AI.md
+58). The open of "The shown odds are the auto-resolve's own": the formula used for AI-against-AI battles knew neither
+hard rule, so AI natives took Spanish walled towns on arrival and Rome armies stormed walls 2 on arrival, which the
+player's auto-resolve (the battle sim) never could.
+
+- **The fort town** (`CBattle.fort_storm`, read by `capture_block`, `shown_odds` and `formula`). A West town of the
+  European plan at walls 1-2 changes hands only when its attackers would storm the fort: a way in (guns of their own;
+  a ram, or a gate batterer or fire missiles against a walls-1 fort's timber gate; ladders or scaling poles) and the
+  edge that kit needs, the battle AI's own knobs (`AP.row` of the attackers' lead faction's battle skill and style; a
+  player's side Average / Balanced as the auto-resolve fights it): 120 / 150 / 180 % of the fort's garrison, counted
+  as `FORT_SHARE_PCT` 35 % of the defenders' men x cost (garrison and armies), since the battle AI weighs the storm
+  again against the fort's garrison alone when the town falls and goes on with it. Easy attackers (no press) storm
+  only with guns at 250 % of all the defenders (the 2026-11-02 rule). Otherwise a won battle ends with the fort
+  holding (`fort_holds` in the formula's outcome, as the sim's): the town does not change hands, the garrison is
+  kept at 10 % and the siege goes on (`CRules.apply_outcome`).
+- **Stone walls with no way in** (`CBattle.walls_shut`: walls 2+, not a fort town, no breach, no ladders, poles, ram
+  or tower, no unit that opens a gate on its own): the formula's assault is a repulse whatever the strengths (the
+  defenders win; `NO_WAY_KILL_ATT` 12 % of the attackers and `NO_WAY_KILL_DEF` 2 % of the defenders killed, none
+  routed; the RNG draws as before). The campaign AI reads it (docs/AI.md 60): no storm on arrival, a siege instead.
+- **The texts** (`capture_block`): "The fort will hold: with no poles, ladders, ram or guns the attackers take the town
+  round it and leave the fort be, so even their victory does not take Cumana (the siege goes on). Bring poles, a ram or
+  guns (ladders come after a turn of siege, a ram after two; scaling poles with a War lodge 2), or starve it out.";
+  short of the edge "The fort will likely hold: with a ram the attackers storm it only at 150 % of the fort's
+  garrison's strength (they have 120 %) ..."; the walls' sentence names poles. The 99 % cap stays.
+- **The natives' weights** (`NATIVE_WALLS_PCT`, `native_walls_pct`): an assault by the Itza or the Miskito on a ring
+  of walls (not a fort town) counts the defenders' strength this % more by wall level, on top of `WALLS_PCT_WEST`;
+  refit with `tests/campaign_battles.gd --only=fit`, whose native rows are the fought `native_walls_itza` /
+  `native_walls_miskito` (the six walled native towns, walls 1-2, 16 seeds, poles, the West set at about equal
+  price; the fort storm does not touch these ring towns):
+
+| cell (attacker win %, fought / formula) | fought | formula before | formula after |
+|---|---|---|---|
+| Itza walls 1 | 36.5 (loss ratio 1.16) | 36.0 (-0.5) | 36.0 (-0.5) |
+| Itza walls 2 | 5.2 (1.30) | 32.2 (+27.0) | 5.0 (-0.2) |
+| Miskito walls 1 | 9.4 (1.94) | 35.2 (+25.8) | 11.0 (+1.6) |
+| Miskito walls 2 | 8.3 (1.91) | 31.0 (+22.7) | 8.5 (+0.2) |
+
+  `NATIVE_WALLS_PCT` Itza 100 / 100 / 136 / 136, Miskito 100 / 127 / 126 / 126 (walls 0-3; walls 3 not measured,
+  the walls 2 value). The fought rows moved since 2026-10-31 (Itza walls 1 58 -> 36.5 %, the Miskito 18 / 5 -> 9.4 /
+  8.3 %: the builds since, the guns on their towers among them). The 13 European siege and field cells are unchanged
+  (within 5 points, the fit PASS); the natives' loss ratio stays informational (the formula's 1.86-2.99 against the
+  fought 1.16-1.94: its loss model is shared, not refit). In the open field nothing was refit: `tests/asym_probe.gd
+  --scen=asym_field` (24 seeds, equal cost) natives 15 / Spanish 9, against the formula's field defender's edge
+  (`FIELD_DEF_PCT` 110: 64.5 % for whoever stands) with no native term; left for a field pass.
+
+- **Measured** (campaign_sim, 72 seeds x 60 turns a pack and format, seeds 1000 + 77 n; HEAD, which the Part A
+  build matches seed for seed (the campaign never fights the sim), against this build):
+
+| | Rome f6 | Rome f10 | West f6 | West f10 |
+|---|---|---|---|---|
+| eliminations | 162 -> 163 | 146 -> 145 | 40 -> 33 | 44 -> 37 |
+| battles a seed | 45.9 -> 44.8 | 38.5 -> 38.3 | 57.7 -> 57.2 | 44.7 -> 45.1 |
+| sieges started | 227 -> 246 | 194 -> 207 | 314 -> 312 | 268 -> 292 |
+| assaults after a siege (won) | 205 (155) -> 223 (168) | 176 (135) -> 186 (148) | 280 (194) -> 277 (195) | 247 (179) -> 263 (193) |
+| settlement battles (won) | 2885 (2695) -> 2820 (2627) | 2438 (2285) -> 2437 (2284) | 3747 (3272) -> 3733 (3260) | 2968 (2567) -> 2976 (2563) |
+| towns taken by storm / starved | 2695 / 0 -> 2627 / 0 | 2285 / 2 -> 2284 / 1 | 3251 / 4 -> 3223 / 5 | 2562 / 0 -> 2552 / 0 |
+| won with the fort holding | - | - | 0 -> 2 | 0 -> 3 |
+| native assaults (won) / towns the natives took | - | - | 1033 (933) / 933 -> 1026 (933) / 933 | 588 (512) / 504 -> 577 (502) / 497 |
+| Itza / Miskito alive at 60 (of 72) | - | - | 62 / 65 -> 65 / 65 | 54 / 67 -> 59 / 69 |
+
+  Eliminations by faction, before -> after: Rome f6 Epirus 57 -> 59, Syracuse 29 -> 31, Macedon 28 -> 27, Gauls 19 ->
+  18, Rome 12 -> 12, Carthage 10 -> 8, Iberians 5 -> 5, Greeks 2 -> 3; f10 Epirus 44 -> 45, Macedon 31 -> 31, Syracuse
+  19 -> 21, Gauls 19 -> 18, Iberians 15 -> 13, Rome 7 -> 6, Carthage 5 -> 6, Greeks 6 -> 5; West f6 Brethren 14 -> 14,
+  Itza 10 -> 7, Miskito 7 -> 7, Dutch 5 -> 3, England 3 -> 1, France 1 -> 1; f10 Brethren 18 -> 16, Itza 18 -> 13,
+  Miskito 5 -> 3, England 1 -> 2, France 1 -> 2, Dutch 1 -> 1. Every European faction within the seeds' noise, no
+  tuning round. The AI meets the new rules seldom: a fort holding after a won battle 2-3 times in 72 West campaigns
+  (the AI's European armies carry guns at the edge, and a native army that has won the battle has nearly always the
+  edge over the fort's share), more sieges begun (Rome +8 %, West f10 +9 %: the AI sits down before shut stone walls
+  instead of storming); the West's fall in eliminations (40 -> 33, 44 -> 37) is mostly the Itza (10 -> 7, 18 -> 13),
+  within its interval on either format, pooled at the edge of noise (28 -> 20 of 144); not tuned.
+
+- **Pins.** Every campaign_sim row moved in some seeds (format 6 Rome 2, 5, 6, West 2, 3, 6; format 10 Rome 1, 5, West 1,
+  5; format 8 Rome 2, 5, 6, West 2, 3, 6) and the AI goldens (57eedaff, rng 3275932353; Easy d3f33b3b, rng 656603057:
+  the Rome AI no longer storms shut stone walls on arrival); ROME_20 and the "pack" hash unchanged; `pins.json`
+  updated; the rules hash moves; no VERSION bump (no state key added: the formula's outcome carries `fort_holds` as the
+  sim's did).
+- **Tests.** campaign_test `_shown_odds` / `_fort_edges` (the knobs per level; climb and ram 8 points either side of
+  the edge over the fort's share: stormed or not, shown take 1 % when not; the formula with a strong army: without a
+  way in every win keeps the fort, with poles none does; Easy: ladders and a ram hold, guns at 260 % storm; the
+  formula's repulse at Tayasal's stone walls: 0 of 200 won).
+- **Known.** The fort's share is a constant (35 %), not the battle map's fort-first garrison; the formula's capture with poles or a
+  ram is certain once the battle is won (measured 161 of 165 native wins), so the thresholds bite only for small
+  armies; the natives' loss ratio and their field strength are not refit; the AI's odds do not read the fort rule (it
+  storms a fort town it cannot take with guns or kit missing and wins the battle, the siege going on).
 
 ### Amphibious armies (2026-10-23)
 
