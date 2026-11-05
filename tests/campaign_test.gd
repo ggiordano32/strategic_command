@@ -176,6 +176,7 @@ func _init() -> void:
 	_port_landing()
 	_launches()
 	_native_vessels()
+	_ai_kin()
 	_board_march()
 	_sortie()
 	_sight()
@@ -6851,6 +6852,74 @@ func _set_yard(st: Dictionary, r: int, lvl: int) -> void:
 ## (Native vessels, 2026-11-01) The natives' piragua, great canoe and fire canoe from the Canoe yard 2 and 3,
 ## the Miskito's brigantine at the Canoe yard 3 while they trade with or are allied to England, the batches,
 ## the formula's power, the AI's purchases and its yard raise; the natives' yard and lodge names.
+## (2026-11-05, docs/AI.md 58) The West's tribes, one AI kin group: a war on kin needs KIN_WAR_PCT % of the
+## usual ratio (Average 200), 100 as anyone else, 0 never.
+func _ai_kin() -> void:
+	CData.use_pack("west")
+	var iz := _f("itza")
+	var mi := _f("miskito")
+	var en := _f("england")
+	_check(CData.kin(iz, mi) and CData.kin(mi, iz) and not CData.kin(iz, en) and not CData.kin(mi, mi) and not CData.kin(iz, -1),
+		"kin: the Itza and the Miskito are one kin group, England is not, nor a faction with itself or the independents")
+	var st := CState.new_campaign("ai_kin", 77, [], {}, [], "west")
+	st["regions"][_r("trujillo")]["owner"] = mi  # (a border with Tayasal)
+	CState.set_dip(st, mi, iz, CState.PEACE)
+	st["turn"] = 46
+	var n := CState.nf()
+	for g in n:
+		if g != iz:
+			st["regard"][mi * n + g] = CDip.NO_WAR_REGARD  # (only the Itza are a candidate)
+	var kn := CP.of(st, mi)
+	var wc0: int = kn[CP.WAR_CHANCE]
+	var cov0: int = kn[CP.WAR_COVER_PCT]
+	var one0: int = kn[CP.WAR_ONE_AT_A_TIME]
+	var kin0: int = kn[CP.KIN_WAR_PCT]
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)  # (every eligible war is declared)
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, 0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, 0)
+	kn = CP.of(st, mi)
+	var need: int = kn[CP.WAR_RATIO]
+	var guard := 0
+	while CAI.faction_strength(st, mi) * 100 < CAI.bloc_strength(st, mi, iz) * need and guard < 12:
+		for a in CState.armies_of(st, iz):
+			for u in a["units"]:
+				u["n"] = maxi(1, int(u["n"]) * 3 / 4)
+		guard += 1
+	var m := CAI.faction_strength(st, mi)
+	var b := CAI.bloc_strength(st, mi, iz)
+	_check(kin0 == 200 and CAI._neighbours(st, mi, iz) and wars_none(st, iz) and m * 100 >= b * need and m * 100 < b * need * kin0 / 100,
+		"kin setup: the Miskito (%d) beat the Itza (%d) by the usual ratio, not by twice it" % [m, b])
+	var d1 := CState.copy(st)
+	CAI.diplomacy(d1, mi)
+	_check(not CState.at_war(d1, mi, iz), "kin: no war on the Itza at the usual ratio (KIN_WAR_PCT 200)")
+	CP.set_knob(CP.AVERAGE, CP.KIN_WAR_PCT, 100)
+	var d2 := CState.copy(st)
+	CAI.diplomacy(d2, mi)
+	_check(CState.at_war(d2, mi, iz), "kin: at KIN_WAR_PCT 100 the war is declared as on anyone else")
+	CP.set_knob(CP.AVERAGE, CP.KIN_WAR_PCT, kin0)
+	var s2 := CState.copy(st)
+	for a in CState.armies_of(s2, iz):
+		for u in a["units"]:
+			u["n"] = 1
+	_check(CAI.faction_strength(s2, mi) * 100 >= CAI.bloc_strength(s2, mi, iz) * need * kin0 / 100, "kin setup: the Itza cut to a man a unit")
+	var d3 := CState.copy(s2)
+	CAI.diplomacy(d3, mi)
+	_check(CState.at_war(d3, mi, iz), "kin: twice the ratio met, the war is declared")
+	CP.set_knob(CP.AVERAGE, CP.KIN_WAR_PCT, 0)
+	var d4 := CState.copy(s2)
+	CAI.diplomacy(d4, mi)
+	_check(not CState.at_war(d4, mi, iz), "kin: KIN_WAR_PCT 0 never")
+	CP.set_knob(CP.AVERAGE, CP.KIN_WAR_PCT, kin0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, cov0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, one0)
+	_check(CP.of(st, mi)[CP.KIN_WAR_PCT] == 200 and CP.of(st, mi)[CP.WAR_CHANCE] == wc0, "kin: the knobs restored")
+
+
+static func wars_none(st: Dictionary, f: int) -> bool:
+	return CAI.wars(st, f).is_empty()
+
+
 func _native_vessels() -> void:
 	CData.use_pack("west")
 	var iz := _f("itza")

@@ -215,7 +215,12 @@ const WAR_PARTNER_PCT := SK_SUPPORT + 52   # war on a trade partner (a treaty br
 const WAR_PARTNER_SOLO := SK_SUPPORT + 53  # ... and never while another war is on (1)
 const WAR_ONE_AT_A_TIME := SK_SUPPORT + 54 # a second war only while every current war is winning: a region gained and none lost to that enemy in the last 5 turns, or the enemy under PEACE_ACCEPT_PCT % of our strength (1)
 const STRETCH_PEACE_PCT := SK_SUPPORT + 55 # stretched (two wars, or a region lost in the last 5 turns): the war we win least asks peace below this % of the enemy's strength after PEACE_MIN_TURNS (in place of PEACE_ASK_PCT / _TURNS; 0 off)
-const N_KNOBS := SK_SUPPORT + 56
+# (2026-11-05, docs/AI.md 59) The pack's kin (CData.AI_KIN: the West's Itza and Miskito): an opportunistic
+# war on a faction of the AI's own kin group needs this % of the usual ratio (WAR_RATIO / _BUSY); 100 as
+# anyone else (Easy: its random-ish wars and the unwise-war mistake as before), 0 never. Above 100 the
+# unwise-war mistake skips kin too. A call to arms is answered as before. Rome has no kin.
+const KIN_WAR_PCT := SK_SUPPORT + 56
+const N_KNOBS := SK_SUPPORT + 57
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -402,6 +407,8 @@ const KNOBS: Array = [
 	[WAR_PARTNER_SOLO, 0, 0, 1],
 	[WAR_ONE_AT_A_TIME, 0, 1, 1],
 	[STRETCH_PEACE_PCT, 0, 100, 100],
+	# The pack's kin seldom fight each other (docs/AI.md 59, 2026-11-05).
+	[KIN_WAR_PCT, 100, 200, 200],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

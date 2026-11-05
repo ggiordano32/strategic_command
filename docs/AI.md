@@ -4466,3 +4466,28 @@ pins and goldens do not move. The third choice, support the shore, is designed a
 at the shore (design and cost, 2026-11-05; not built)"); when it is, the AI's knobs it would add: the defender's
 support when its fleet is below the sortie's odds but has guns or crews to give, the defender's crews landing when the
 walls are stormed or the guns have no targets, and the attacker's transports landing their crews by the assault's odds.
+## 59. The West's tribes seldom fight each other (2026-11-05)
+
+The diagnosis and the measure are in docs/design/campaign_rules.md "The Itza after the sea rules (as built,
+2026-11-05)": after the 2026-11-02 sea rules the two tribal AIs were each other's chief killers (the Miskito took the
+Itza's last town in 26 of their 49 deaths over 288 campaigns, the Itza the Miskito's in 14 of 27), though the Itza and
+the Miskito never met in 1650 (Spanish Yucatan, Honduras and Nicaragua lie between). Code: `CAI.diplomacy` (the
+opportunistic war) and `CAI._unwise_war` (Easy's mistake); data `west.gd` `AI_KIN` ([["itza", "miskito"]]),
+`CData.AI_KIN`, `CData.kin(f, g)`. No new state.
+
+- **The rule.** An opportunistic war on a faction of the AI's own kin group (`CData.kin`) needs `KIN_WAR_PCT` % of the
+  ratio it would need against anyone else (`WAR_RATIO`, or `WAR_RATIO_BUSY` when the target is already at war, after
+  the trade partner's `WAR_PARTNER_PCT`); 0 never; 100 as anyone else. Above 100 the unwise-war mistake never picks
+  kin. A call to arms against kin is answered as before (none was seen in the measure), and a player may make war on
+  either tribe as on anyone. Rome has no `AI_KIN`, so nothing changes there (its pins, `ROME_20` and the goldens did
+  not move).
+
+| Knob (`cai_profile.gd`, id `SK_SUPPORT + 56` = 131) | Easy | Average | Skilled |
+|---|---|---|---|
+| `KIN_WAR_PCT` | 100 (as before) | 200 | 200 |
+
+Measured (`campaign_sim`-equal probe, West, 144 seeds (seed indices 0-71 and 100-171) x 60 turns, all Average; the
+Itza / Miskito eliminations): HEAD f6 18 / 19, f10 31 / 8; `KIN_WAR_PCT` 0 (never) f6 3 / 3, f10 12 / 5; 200 (as built)
+f6 4 / 5, f10 12 / 6. Kin wars at 200: Miskito on the Itza 31 -> 3 (f6) and 38 -> 3 (f10), the Itza on the Miskito
+85 -> 11 and 5 -> 0. No European faction or the Brethren moved beyond the two intervals combined. Test:
+`campaign_test` `_ai_kin`.

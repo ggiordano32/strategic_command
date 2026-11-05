@@ -323,6 +323,11 @@ const CHAIN_CAP_FACTIONS: Array = ["itza", "miskito"]
 ## faction holds a building of POLE_NEEDS [chain, level] somewhere: the War lodge 2).
 const POLE_FACTIONS: Array = ["itza", "miskito"]
 const POLE_NEEDS: Array = [BARRACKS, 2]
+## The AI's kin (2026-11-05; docs/design/campaign_rules.md "The Itza after the sea rules (as built, 2026-11-05)",
+## docs/AI.md 58): an AI faction never declares war on another of its group. The Itza and the Miskito never met
+## in 1650 (Spanish Yucatan, Honduras and Nicaragua lie between); in the campaign sim the two tribal AIs were each
+## other's chief killers. A player of either may still make war on the other.
+const AI_KIN: Array = [["itza", "miskito"]]
 const CHAIN_NAMES_F := {
 	"itza": {"farm": ["Milpa", "Milpa", "farm"]},
 	"miskito": {"farm": ["Gardens", "Gardens", "farm"]},

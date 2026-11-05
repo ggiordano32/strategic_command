@@ -47,6 +47,8 @@ extends RefCounted
 ## open to the target (war_covered), a better ratio against a trade partner,
 ## a second war only while every war is winning (_winning), and stretched
 ## the war won least (_least_winning) asks peace sooner.
+## The pack's kin (CData.AI_KIN, the West's tribes; docs/AI.md 59): a war on kin
+## needs KIN_WAR_PCT % of the usual ratio.
 ## Easy (docs/AI.md 9; knobs of campaign/cai_profile.gd, the overworld of
 ## version 6 mainly): cheapest building first, piecemeal recruiting leaning
 ## to the line it already has, the nearest targets first at lower odds,
@@ -1984,6 +1986,9 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			continue  # (N2) privateers and their patron keep the peace
 		if CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
 			continue  # (format 10) never on a faction we regard well
+		var kin := kn[CP.KIN_WAR_PCT] != 100 and CData.kin(f, g)  # (docs/AI.md 59) our kin (the West's tribes)
+		if kin and kn[CP.KIN_WAR_PCT] <= 0:
+			continue
 		var theirs := bloc_strength(st, f, g)  # (format 10) with the allies a defensive call would bring
 		# Weaker neighbours, or ones already fighting someone else.
 		var busy := not wars(st, g).is_empty()
@@ -1993,6 +1998,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			if kn[CP.WAR_PARTNER_SOLO] != 0 and not my_wars.is_empty():
 				continue
 			need = need * kn[CP.WAR_PARTNER_PCT] / 100
+		if kin:
+			need = need * kn[CP.KIN_WAR_PCT] / 100
 		if mine * 100 < theirs * need:
 			continue
 		var chance := kn[CP.WAR_CHANCE] * aggr / 100
@@ -2219,6 +2226,8 @@ static func _unwise_war(st: Dictionary, f: int, kn: PackedInt32Array, mine: int)
 			continue
 		if CSea.has_marque(st, f, g) or CDip.regard(st, f, g) >= CDip.NO_WAR_REGARD:
 			continue
+		if kn[CP.KIN_WAR_PCT] != 100 and CData.kin(f, g):
+			continue  # (docs/AI.md 58) nor by mistake on our kin
 		if CState.is_human(st, g):
 			var last := int(st["stats"].get("last_war_on_players", -100))
 			if turn < kn[CP.FIRST_WAR_ON_PLAYERS] or turn - last < kn[CP.PLAYER_WAR_GAP]:

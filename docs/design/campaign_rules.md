@@ -1854,3 +1854,64 @@ design and cost are battle_sim.md "A fleet at the shore (design and cost, 2026-1
 
 Open: support the shore (designed, not built); the attacker's transports supporting the shore; the stand-off for a
 human attacker (the attacker cannot decline the sea battle; he may withdraw only by forfeiting it).
+### The Itza after the sea rules (as built, 2026-11-05)
+
+The owner, on the Itza dying about twice as often after the 2026-11-02 sea rules (the contested landing and the
+native vessels' places): "Yeah the natives are extremely under gunned in the water. And crossing takes time to set up
+and execute properly." So the tribes cannot contest the sea, and their survival has to come from elsewhere.
+
+**Measured first** (a native probe equal to `campaign_sim`, the session scratchpad `itza/native_probe.gd`: 144 seeds,
+seed indices 0-71 and 100-171, x 60 turns, all AI Average, West formats 6 and 10; "before" is this tree with
+18aeb7c's and 729622b's campaign changes reverted, which reproduces both commits' "before" counts exactly):
+
+| Eliminated of 144 | before f6 | HEAD f6 | before f10 | HEAD f10 |
+|---|---|---|---|---|
+| Itza | 9 | 18 | 26 | 31 |
+| Miskito | 24 | 19 | 15 | 8 |
+| England / France / Dutch | 12 / 1 / 17 | 5 / 3 / 9 | 1 / 5 / 1 | 2 / 4 / 2 |
+| Brethren | 33 | 25 | 38 | 33 |
+
+- **Who ends the Itza.** The Miskito, the other tribal AI: they took the Itza's last town in 10 of 18 deaths at
+  format 6 (1 of 9 before) and 16 of 31 at format 10 (14 of 26 before); New Spain 5 / 9, England 3 / 5. At format 10
+  a Miskito war preceded 24 of the 31 deaths (declared by the Miskito: 38 such wars in 144 campaigns; no call to arms);
+  at format 6 the Itza start the fight (85 wars on the Miskito) and lose it. The Itza sit on four villages with 35-40
+  units and about 2,000 gold for 30 turns (a village recruits one unit a turn), then one war takes Valladolid,
+  Tabasco and Orizaba and Tayasal overland in 8-10 turns. Tayasal fell to the Miskito in 14 (f6) / 22 (f10) campaigns,
+  by land.
+- **What the sea rules changed.** The Itza no longer seize the Spanish galleons in the ports they take (prizes 2.21 ->
+  0 ships a campaign at f6; their fleet at turn 60 6.0 -> 3.0 ships), and the Spanish fleets that put to sea from a
+  fallen port carry their troops back: 163 (f6) / 109 (f10) of the Itza's towns lost were taken by troops landed from
+  the sea, mostly Valladolid to New Spain. And the Miskito, needing fewer hulls with the canoes' new places (10.4 ->
+  7.7 hulls a campaign at f6, 9.3 -> 5.3 at f10), put the money into troops (35.9 -> 37.8 units at turn 60, f6) and win
+  the tribes' war more often (Itza towns lost to the Miskito 98 -> 152 at f6, 82 -> 106 at f10).
+- **The cause in a sentence.** Without the prize galleons and against a Miskito that spends less on canoes, the Itza
+  lose the war between the two tribal AIs (a war the Itza and the Miskito, 500 km apart with Spanish lands between,
+  never fought), and the Spanish landings finish the rest.
+
+**Change** (docs/AI.md 59, behaviour only, no bonus, no new state): the West's tribes are one AI kin group (`west.gd`
+`AI_KIN`); an opportunistic war on kin needs `KIN_WAR_PCT` (Average and Skilled 200, Easy 100 as before) % of the
+usual war ratio, so a tribe fights the other only when it is twice as strong as it would need to be against anyone
+else. A player of either tribe may still make war on the other. Two rounds: never (`KIN_WAR_PCT` 0), then 200 (kept:
+a tribe overwhelming the other may still take it, and Easy keeps its old wars).
+
+| Eliminated of 144 | HEAD f6 | never f6 | as built f6 | HEAD f10 | never f10 | as built f10 |
+|---|---|---|---|---|---|---|
+| Itza | 18 | 3 | 4 | 31 | 12 | 12 |
+| Miskito | 19 | 3 | 5 | 8 | 5 | 6 |
+| England / France / Dutch | 5 / 3 / 9 | 10 / 3 / 11 | 9 / 3 / 7 | 2 / 4 / 2 | 2 / 4 / 2 | 2 / 4 / 2 |
+| Brethren | 25 | 22 | 18 | 33 | 37 | 38 |
+
+As built: Itza 4 + 12 of 288 (2 and 6 of 72 a format; the earlier spread 4-9 of 72), Miskito 5 + 6 (2.5 and 3 of 72);
+New Spain and Tierra Firme 0 throughout; no European faction nor the Brethren beyond the two 95 % intervals combined.
+Kin wars: the Miskito on the Itza 31 -> 3 (f6) and 38 -> 3 (f10), the Itza on the Miskito 85 -> 11 and 5 -> 0. The
+Itza's towns at turns 20 / 40 / 60: f6 5.0 / 5.9 / 6.2 -> 5.2 / 6.7 / 7.6, f10 4.2 / 4.2 / 3.9 -> 4.3 / 4.5 / 4.4; units
+at turn 60 f6 51 -> 65, f10 39 -> 45; their treasury still piles up (2,250 -> 3,200 gold at turn 60, f6). The Itza's
+remaining deaths are New Spain's and England's (8 and 4 of 16 last towns), many by landings at Valladolid.
+
+**Pins.** The AI's war choices are in the state hash: West format 6 seeds 1, 2, 4, 5, 6, format 8 the same five and
+format 10 seeds 1, 3, 5 moved; Rome, `ROME_20` and the AI goldens unchanged. Test: `campaign_test` `_ai_kin`.
+
+**Open.** The tribes are now below their earlier spread at format 6 (the Itza 2, the Miskito 2.5 of 72), safer than
+before the sea rules there; the Itza still hoard about 2,000-3,000 gold (village recruiting); they build few canoes
+(1.1 war canoes and 1.8 piraguas a campaign) and land almost never (0.1 a campaign), so New Spain's landings at
+Valladolid go unanswered; the AI's tribal landings and a home garrison counting the new places were not changed.

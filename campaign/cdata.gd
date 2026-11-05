@@ -121,6 +121,9 @@ static var CHAIN_CAP_FACTIONS: Array = []
 ## Native siege (west.gd POLE_FACTIONS / POLE_NEEDS; none: Rome): the factions whose assaults bring scaling
 ## poles while they hold a building of POLE_NEEDS [chain, level] (CBattle.siege_equipment).
 static var POLE_FACTIONS: Array = []
+## (2026-11-05, docs/AI.md 58) The AI kin groups (west.gd AI_KIN; none: Rome): arrays of faction keys whose
+## AI never declares war on another faction of the same group (CAI.diplomacy, knob KIN_PEACE).
+static var AI_KIN: Array = []
 static var POLE_NEEDS: Array = []
 static var _levels_cache: Dictionary = {}  # faction index -> chain_levels(f), built on first use per pack
 static var _unlock_cache: Dictionary = {}  # "f:chain:level" -> chain_unlocks
@@ -437,6 +440,7 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	CHAIN_NAMES_F = c.get("CHAIN_NAMES_F", {})
 	CHAIN_CAP_FACTIONS = c.get("CHAIN_CAP_FACTIONS", [])
 	POLE_FACTIONS = c.get("POLE_FACTIONS", [])
+	AI_KIN = c.get("AI_KIN", [])
 	POLE_NEEDS = c.get("POLE_NEEDS", [])
 	_levels_cache = {}
 	_unlock_cache = {}
@@ -774,6 +778,18 @@ static func chain_levels(f: int) -> Array:
 		cap[c] = mini(int(cap[c]), int(CHAINS[c]["levels"]))
 	_levels_cache[f] = cap
 	return cap
+
+
+## (2026-11-05, docs/AI.md 58) Factions f and g are of one AI kin group (AI_KIN; never for an independent).
+static func kin(f: int, g: int) -> bool:
+	if f < 0 or g < 0 or f == g:
+		return false
+	var fk := str(FACTIONS[f]["key"])
+	var gk := str(FACTIONS[g]["key"])
+	for grp in AI_KIN:
+		if (grp as Array).has(fk) and (grp as Array).has(gk):
+			return true
+	return false
 
 
 ## The highest level of chain c faction f can use.
