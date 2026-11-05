@@ -49,6 +49,14 @@ extends RefCounted
 ## the war won least (_least_winning) asks peace sooner.
 ## The pack's kin (CData.AI_KIN, the West's tribes; docs/AI.md 59): a war on kin
 ## needs KIN_WAR_PCT % of the usual ratio.
+## The pack's ambitions (CData.AI_AMBITION, the West's tribes; docs/AI.md 61;
+## the AMB_* knobs, 0 at Easy): the trade treaty with the kin (proposed every turn,
+## accepted below the trust floor: AMB_TREATY), the war on the holder of the
+## next region of the list tried first at AMB_WAR_PCT % of the chance
+## (ambition_foe), attack targets on the list worth AMB_TARGET_PCT % more
+## (the first most), the free armies' frontier march facing the next region,
+## and a War lodge 2 / Canoe yard 2 from the reserve (AMB_SPEND_PCT,
+## _amb_build). The holds (threat, landings) stay first.
 ## Easy (docs/AI.md 9; knobs of campaign/cai_profile.gd, the overworld of
 ## version 6 mainly): cheapest building first, piecemeal recruiting leaning
 ## to the line it already has, the nearest targets first at lower odds,
@@ -105,6 +113,8 @@ static var no_beasts := false
 ## --no-buildup): no military build-up, wagons or raising a line at another
 ## centre (docs/AI.md 23), as if BU_RANGE, BU_WORKSHOP and WAGON_MIN were 0.
 static var no_buildup := false
+## Test switch (the ambition probe, docs/AI.md 61): the free armies' frontier march ignores the ambition.
+static var no_amb_march := false
 ## Test switch (tests/campaign_sim.gd --no-water): amphibious armies plan with
 ## the land fields only, as before docs/AI.md 34.
 static var no_water := false
@@ -278,6 +288,16 @@ static func _build(st: Dictionary, f: int) -> void:
 	# The military build-up first (docs/AI.md 23): its next building at its
 	# centre, from its own budget; waiting for money (BU_SAVE) nothing else
 	# is built; and a new building there keeps the centre's last free slot.
+	if kn[CP.AMB_SPEND_PCT] > 0:
+		# (docs/AI.md 61) The ambition's buildings first, from the treasury down to (100 - AMB_SPEND_PCT) % of
+		# the reserve.
+		var ab := _amb_build(st, f, regions)
+		if not ab.is_empty():
+			var ai := CRules.build_info(st, f, ab[0], ab[1])
+			var low := _reserve(st, f) * (100 - kn[CP.AMB_SPEND_PCT]) / 100
+			if not ai.has("why") and int(st["factions"][f]["treasury"]) - int(ai["cost"]) >= low \
+					and CRules.apply_order(st, f, {"t": "build", "r": ab[0], "chain": ab[1]}) == "":
+				spent += int(ai["cost"])
 	var bu := [] if no_buildup else _buildup(st, f, regions, mix, kn)
 	var keep := -1  # region whose last free slot is kept for the build-up
 	if not bu.is_empty():
@@ -393,6 +413,81 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 		if (g as Array).size() > 2:
 			return [site, c, 1]  # (a line goal: built when affordable, no saving for it)
 		return [site, c]
+	return []
+
+
+## (docs/AI.md 61) The pack's ambitions. The first region of f's ambition list f does not hold (-1: none, or
+## no list).
+static func ambition_next(st: Dictionary, f: int) -> int:
+	for r in CData.ambition_regions(f):
+		if CState.owner(st, r) != f:
+			return r
+	return -1
+
+
+## The first region of the list not friendly to f (an attack target: independents too; -1 none).
+static func _amb_target(st: Dictionary, f: int) -> int:
+	for r in CData.ambition_regions(f):
+		if not CState.friendly(st, f, CState.owner(st, r)):
+			return r
+	return -1
+
+
+## The faction holding the first region of f's list that f does not hold and whose holder is a live faction
+## (not independent), not of f's kin and not friendly: the war the ambition wants (-1 none).
+static func ambition_foe(st: Dictionary, f: int) -> int:
+	for r in CData.ambition_regions(f):
+		var o := CState.owner(st, r)
+		if o == f or o < 0 or CData.kin(f, o) or CState.friendly(st, f, o) or not CState.alive(st, o):
+			continue
+		return o
+	return -1
+
+
+## The % added to the value of attack target t for f: AMB_TARGET_PCT for the first region of the list, scaled
+## by position (pct x (n - i) / n; 0 off the list).
+static func ambition_pct(f: int, t: int, kn: PackedInt32Array) -> int:
+	if kn[CP.AMB_TARGET_PCT] <= 0:
+		return 0
+	var lst := CData.ambition_regions(f)
+	var i := lst.find(t)
+	if i < 0:
+		return 0
+	return kn[CP.AMB_TARGET_PCT] * (lst.size() - i) / lst.size()
+
+
+## Region t's value to f with the ambition's share (ambition_pct).
+static func _amb_value(st: Dictionary, f: int, t: int, kn: PackedInt32Array) -> int:
+	var v := region_value(st, t, f)
+	return v * (100 + ambition_pct(f, t, kn)) / 100
+
+
+## The ambition's next building ([region, chain]; [] none) while the list has a region f does not hold: a War
+## lodge 2 (the poles of the native assault, the tier-2 rows) at the first centre of `regions` with a Barracks,
+## once it is a town (a village's chains stop at level 1);
+## then, when the next region lies on a landmass where f holds nothing, a Shipyard (Canoe yard) 2 at the first
+## port of `regions`. Levels f cannot use are skipped.
+static func _amb_build(st: Dictionary, f: int, regions: Array[int]) -> Array:
+	var nx := ambition_next(st, f)
+	if nx < 0:
+		return []
+	if CData.chain_cap(f, CData.BARRACKS) >= 2:
+		for r in regions:
+			if _centre(st, r) and CState.building(st, r, CData.BARRACKS) > 0:
+				if CState.building(st, r, CData.BARRACKS) < 2 and int(st["regions"][r]["level"]) >= CData.TOWN:
+					return [r, CData.BARRACKS]
+				break
+	if CData.SHIPYARD >= CData.CHAINS.size() or CData.chain_cap(f, CData.SHIPYARD) < 2:
+		return []
+	var land := int(CData.REGIONS[nx]["land"])
+	for r in regions:
+		if int(CData.REGIONS[r]["land"]) == land:
+			return []
+	for r in regions:
+		if CFleet.harbour(r) >= 0:
+			if CState.building(st, r, CData.SHIPYARD) < 2:
+				return [r, CData.SHIPYARD]
+			break
 	return []
 
 
@@ -1774,6 +1869,8 @@ static func why(st: Dictionary, from: int, to: int, what: String, vs: int = -1) 
 	var theirs := faction_strength(st, from)
 	var kn := CP.of(st, to)
 	var sc := CDip.score(st, to, from)
+	# (docs/AI.md 61) The ambition's treaty: the kin's trade agreement is taken below the floor, whatever the strengths.
+	var kin_t := kn[CP.AMB_TREATY] > 0 and CData.kin(from, to) and CData.ambition_treaty(to) == "kin"
 	match what:
 		"peace":
 			if CSea.pirate(to) and st.has("fleets") and not _losing_war(st, to):
@@ -1788,12 +1885,13 @@ static func why(st: Dictionary, from: int, to: int, what: String, vs: int = -1) 
 				return ""
 			return "they expect to win (the war is %d of %d turns old)" % [since, kn[CP.PEACE_ACCEPT_LONG]]
 		"trade":
-			if CDip.on(st) and sc < CDip.FLOOR_TRADE:
-				return "they do not trust you (%d, %d needed)" % [sc, CDip.FLOOR_TRADE]
+			var tsc := sc + (kn[CP.AMB_TREATY] if kin_t else 0)
+			if CDip.on(st) and tsc < CDip.FLOOR_TRADE:
+				return "they do not trust you (%d, %d needed)" % [tsc, CDip.FLOOR_TRADE]
 			var since2 := CState.dip_since(st, from, to)
 			if since2 < kn[CP.TRADE_ACCEPT_TURNS]:
 				return "at peace only %d of %d turns" % [since2, kn[CP.TRADE_ACCEPT_TURNS]]
-			if mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]:
+			if kin_t or mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]:
 				return ""
 			return "they see themselves as the stronger"
 		"cancel_trade":
@@ -1956,6 +2054,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 		if CState.dip_since(st, f, g) >= kn[CP.TRADE_ASK_TURNS] and _neighbours(st, f, g) \
 				and CState.rand(st, 100) < kn[CP.TRADE_ASK_CHANCE]:
 			_propose(st, f, g, "trade")
+	if kn[CP.AMB_TREATY] > 0 and CData.ambition_treaty(f) == "kin":
+		_kin_treaty(st, f)
 	if CDip.on(st) and kn[CP.ALLY_PROPOSE] > 0:
 		_seek_ally(st, f, kn)
 	if st.has("fleets"):
@@ -1975,7 +2075,15 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			if not _winning(st, f, g, kn, mine):
 				return
 	var aggr := _aggr(st)
+	# (docs/AI.md 61) The ambition's war (the holder of the next region of the list) is tried first.
+	var afoe := ambition_foe(st, f) if kn[CP.AMB_WAR_PCT] > 0 else -1
+	var order: Array[int] = []
+	if afoe >= 0:
+		order.append(afoe)
 	for g in CState.nf():
+		if g != afoe:
+			order.append(g)
+	for g in order:
 		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) == CState.WAR:
 			continue
 		if tutorial_shield(st, g):
@@ -2010,6 +2118,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			chance = kn[CP.WAR_CHANCE_PLAYERS] * aggr / 100
 		if CState.dip(st, f, g) == CState.TRADE:
 			chance /= kn[CP.TRADE_WAR_DIV]
+		if g == afoe:
+			chance = chance * kn[CP.AMB_WAR_PCT] / 100  # (docs/AI.md 61) the ambition's war
 		if CDip.regard(st, f, g) <= CDip.HATE_REGARD:
 			chance *= 2  # (format 10) twice on a faction we regard badly
 		if CSea.pirate(g) and st.has("fleets"):
@@ -2277,6 +2387,20 @@ static func _seek_ally(st: Dictionary, f: int, kn: PackedInt32Array) -> void:
 		_propose(st, f, best, "alliance")
 
 
+## (docs/AI.md 61) The ambition's treaty: AI f proposes a trade agreement to each live faction of its kin
+## (CData.kin) at peace with it, never an alliance (an alliance takes the kin out of its other allies' side:
+## measured, it opened England's Belize to the Itza); to another AI every turn (it answers by why(), the
+## strength test waived and the trust floor lowered by its own AMB_TREATY), to a player on turns 1, 11, 21, ...
+static func _kin_treaty(st: Dictionary, f: int) -> void:
+	for g in CState.nf():
+		if not CData.kin(f, g) or not CState.alive(st, g) or CState.friendly(st, f, g) or CState.at_war(st, f, g):
+			continue
+		if CState.is_human(st, g) and int(st["turn"]) % 10 != 1:
+			continue
+		if CState.dip(st, f, g) == CState.PEACE:
+			_propose(st, f, g, "trade")
+
+
 static func _neighbours(st: Dictionary, f: int, g: int) -> bool:
 	for r in CState.regions_of(st, f):
 		for e in CData.adjacent(r):
@@ -2466,7 +2590,7 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 			# Skilled (4.10): the owner's field armies that can be at the
 			# settlement next turn count too (strike where they are not).
 			d += _reach_def(st, f, cx, t) * kn[CP.SK_REACH_DEF_PCT] / 100
-		var val := region_value(st, t, f)
+		var val := _amb_value(st, f, t, kn)  # (docs/AI.md 61: + the ambition's share; region_value off the list)
 		if o >= 0 and CState.is_human(st, o):
 			val = val * kn[CP.HUMAN_VALUE_PCT] / 100
 		var score := val * 1000 / d
@@ -2491,8 +2615,8 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 			if int(etas[id]["t"][t]) != 0 or not CState.siege_at(st, t).is_empty() or not CState.battle_at(st, t).is_empty():
 				continue
 			var od := CBattle.odds(st, [a], _defenders6(st, t), t, true)
-			if int(od["win"]) >= _thr(st, kn, CP.IDLE_WIN) and region_value(st, t, f) > best_v:
-				best_v = region_value(st, t, f)
+			if int(od["win"]) >= _thr(st, kn, CP.IDLE_WIN) and _amb_value(st, f, t, kn) > best_v:
+				best_v = _amb_value(st, f, t, kn)
 				best = t
 				best_win = int(od["win"])
 		if best >= 0:
@@ -2509,8 +2633,16 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 	_screen6(st, f, free, etas, used, out, cx, want)
 	if kn[CP.SK_RALLY] > 0:
 		_rally(st, f, free, used, out, cx)
-	# The rest march towards the frontier.
+	# The rest march towards the frontier (docs/AI.md 61: with an ambition, to the frontier facing its next
+	# region when one such is in reach).
 	var dist := _frontier_dist(st, f)
+	var facing: Array[int] = []
+	var atg := _amb_target(st, f) if kn[CP.AMB_TARGET_PCT] > 0 and not no_amb_march else -1
+	if atg >= 0:
+		for e in CData.adjacent(atg):
+			var n := int(e[0])
+			if dist[n] == 0 and CState.friendly(st, f, CState.owner(st, n)) and not facing.has(n):
+				facing.append(n)
 	for a in free:
 		var id := int(a["id"])
 		if used.has(id) or CRules.siege_role(st, a) != 0:
@@ -2520,7 +2652,15 @@ static func _move_grid(st: Dictionary, f: int, out: Array, cx_in: Dictionary = {
 			continue
 		var et: Array = etas[id]["t"]
 		var best := -1
+		for n in facing:
+			if int(et[n]) >= CRules.INF or not CState.siege_at(st, n).is_empty() or n == r:
+				continue
+			if best < 0 or int(et[n]) < int(et[best]) or (int(et[n]) == int(et[best]) and n < best):
+				best = n
+		var faced := best >= 0
 		for n in nreg:
+			if faced:
+				break
 			if dist[n] != 0 or int(et[n]) >= CRules.INF or not CState.siege_at(st, n).is_empty() \
 					or not CState.friendly(st, f, CState.owner(st, n)) or n == r:
 				continue

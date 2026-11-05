@@ -124,6 +124,13 @@ static var POLE_FACTIONS: Array = []
 ## (2026-11-05, docs/AI.md 58) The AI kin groups (west.gd AI_KIN; none: Rome): arrays of faction keys whose
 ## AI never declares war on another faction of the same group (CAI.diplomacy, knob KIN_PEACE).
 static var AI_KIN: Array = []
+## (2026-11-05, docs/AI.md 61) The AI factions' ambitions (west.gd AI_AMBITION; none: Rome): arrays
+## [faction key, treaty, [region keys in order]]: treaty "kin" seeks a treaty with the faction's AI_KIN group
+## ("" none); the regions are the expansion the faction's AI wants, the first most (CAI: war choice, target
+## scoring, the frontier march, the spend on the ambition's buildings). Read through ambition_regions /
+## ambition_treaty (index order).
+static var AI_AMBITION: Array = []
+static var _amb_cache: Dictionary = {}  # faction index -> Array[int] (the ambition's region indices), per pack
 static var POLE_NEEDS: Array = []
 static var _levels_cache: Dictionary = {}  # faction index -> chain_levels(f), built on first use per pack
 static var _unlock_cache: Dictionary = {}  # "f:chain:level" -> chain_unlocks
@@ -441,6 +448,8 @@ static func use_pack_script(key: String, p: GDScript) -> void:
 	CHAIN_CAP_FACTIONS = c.get("CHAIN_CAP_FACTIONS", [])
 	POLE_FACTIONS = c.get("POLE_FACTIONS", [])
 	AI_KIN = c.get("AI_KIN", [])
+	AI_AMBITION = c.get("AI_AMBITION", [])
+	_amb_cache = {}
 	POLE_NEEDS = c.get("POLE_NEEDS", [])
 	_levels_cache = {}
 	_unlock_cache = {}
@@ -790,6 +799,39 @@ static func kin(f: int, g: int) -> bool:
 		if (grp as Array).has(fk) and (grp as Array).has(gk):
 			return true
 	return false
+
+
+## (2026-11-05, docs/AI.md 61) The regions of faction f's ambition (AI_AMBITION), region indices in the
+## list's order ([] none; unknown keys skipped).
+static func ambition_regions(f: int) -> Array[int]:
+	var out: Array[int] = []
+	if f < 0 or f >= FACTIONS.size() or AI_AMBITION.is_empty():
+		return out
+	if _amb_cache.has(f):
+		out.assign(_amb_cache[f])
+		return out
+	var fk := str(FACTIONS[f]["key"])
+	for row in AI_AMBITION:
+		if str(row[0]) != fk:
+			continue
+		for k in row[2]:
+			var r := region_index(str(k))
+			if r >= 0 and not out.has(r):
+				out.append(r)
+		break
+	_amb_cache[f] = out.duplicate()
+	return out
+
+
+## (2026-11-05, docs/AI.md 61) The treaty faction f's ambition seeks: "kin" (with its AI_KIN group) or "".
+static func ambition_treaty(f: int) -> String:
+	if f < 0 or f >= FACTIONS.size():
+		return ""
+	var fk := str(FACTIONS[f]["key"])
+	for row in AI_AMBITION:
+		if str(row[0]) == fk:
+			return str(row[1])
+	return ""
 
 
 ## The highest level of chain c faction f can use.

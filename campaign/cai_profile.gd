@@ -220,7 +220,14 @@ const STRETCH_PEACE_PCT := SK_SUPPORT + 55 # stretched (two wars, or a region lo
 # anyone else (Easy: its random-ish wars and the unwise-war mistake as before), 0 never. Above 100 the
 # unwise-war mistake skips kin too. A call to arms is answered as before. Rome has no kin.
 const KIN_WAR_PCT := SK_SUPPORT + 56
-const N_KNOBS := SK_SUPPORT + 57
+# (2026-11-05, docs/AI.md 61) The pack's ambitions (CData.AI_AMBITION: the West's tribes; none in Rome, so
+# nothing there reads these): the treaty with the kin, the expansion along an ordered list of regions, and the
+# money for its buildings. 0 off (Easy: as before).
+const AMB_TREATY := SK_SUPPORT + 57      # propose a trade agreement (never an alliance) to the kin every turn, and accept the kin's trade at this much below the trust floor and without the strength test (0 off)
+const AMB_TARGET_PCT := SK_SUPPORT + 58  # an attack target on the list: its value + this % for the first region, scaled down by position (the last + pct / n); the free armies march to the frontier facing the next region (0 off)
+const AMB_WAR_PCT := SK_SUPPORT + 59     # an opportunistic war on the holder of the next region on the list (the first not ours, not independent, not kin): its chance x this % and tried first (the odds, pacing and cover as any war; 100 as anyone, 0 off)
+const AMB_SPEND_PCT := SK_SUPPORT + 60   # the ambition's buildings (a War lodge 2 at the military centre; a Canoe yard 2 at a port when the next region lies on another landmass) may spend the treasury down to (100 - this) % of the reserve (0 off)
+const N_KNOBS := SK_SUPPORT + 61
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -409,6 +416,11 @@ const KNOBS: Array = [
 	[STRETCH_PEACE_PCT, 0, 100, 100],
 	# The pack's kin seldom fight each other (docs/AI.md 59, 2026-11-05).
 	[KIN_WAR_PCT, 100, 200, 200],
+	# The pack's ambitions (docs/AI.md 61, 2026-11-05): Easy as before.
+	[AMB_TREATY, 0, 25, 25],
+	[AMB_TARGET_PCT, 0, 100, 100],
+	[AMB_WAR_PCT, 0, 150, 150],
+	[AMB_SPEND_PCT, 0, 50, 50],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

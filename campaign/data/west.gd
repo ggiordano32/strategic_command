@@ -328,6 +328,17 @@ const POLE_NEEDS: Array = [BARRACKS, 2]
 ## in 1650 (Spanish Yucatan, Honduras and Nicaragua lie between); in the campaign sim the two tribal AIs were each
 ## other's chief killers. A player of either may still make war on the other.
 const AI_KIN: Array = [["itza", "miskito"]]
+## The AI's ambitions (2026-11-05; docs/design/campaign_rules.md "The tribes' ambitions (as built, 2026-11-05)",
+## docs/AI.md 61; the owner: "can we give the tendency for the tribes to strike a treaty and desire to move north
+## along the coast? While the Miskito want to move south to push out the Terra Firma?"): [faction key, treaty,
+## regions in order, the first wanted most]. Each list follows the land routes outward from the tribe's start: the
+## Itza from Tayasal north up the Yucatan's east coast and round it (Belize, Valladolid, Merida, Campeche, then
+## Tabasco at the Gulf's foot); the Miskito from the Mosquito Coast south (Bluefields, Talamanca, Granada inland off
+## Bluefields, Veraguas, then Tierra Firme's Portobelo, the Darien and, by sea from Portobelo, Cartagena).
+const AI_AMBITION: Array = [
+	["itza", "kin", ["belize", "valladolid", "merida", "campeche", "tabasco"]],
+	["miskito", "kin", ["bluefields", "talamanca", "granada", "veraguas", "portobelo", "darien", "cartagena"]],
+]
 const CHAIN_NAMES_F := {
 	"itza": {"farm": ["Milpa", "Milpa", "farm"]},
 	"miskito": {"farm": ["Gardens", "Gardens", "farm"]},

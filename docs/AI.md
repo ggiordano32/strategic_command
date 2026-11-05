@@ -4518,3 +4518,53 @@ docs/design/campaign_rules.md "The formula knows the fort and the walls, and the
   the siege brings ladders after a turn). The fort town's rule is not read by the AI's odds (a won battle there still
   beats the garrison and keeps the siege).
 - **Measured**: the fort storm table in siege_and_towns.md; the campaign in campaign_rules.md.
+
+## 61. The tribes' ambitions (2026-11-05)
+
+The rule and the measure are in docs/design/campaign_rules.md "The tribes' ambitions (as built, 2026-11-05)". The owner:
+"can we give the tendency for the tribes to strike a treaty and desire to move north along the coast? While the Miskito
+want to move south to push out the Terra Firma?"
+
+- **Code:** `CAI.diplomacy` (`_kin_treaty`, the war order), `CAI.why` (the kin's trade), `_move_grid` (target values,
+  the idle pick, the frontier march), `_build` (`_amb_build`). Helpers: `ambition_next`, `ambition_foe`,
+  `ambition_pct`, `_amb_value`, `_amb_target`. Test switch: `CAI.no_amb_march`.
+- **Data:** `west.gd` `AI_AMBITION`, `CData.AI_AMBITION`, `CData.ambition_regions(f)`, `CData.ambition_treaty(f)`.
+  No new state.
+
+The parts:
+
+- **The treaty.** An AI whose treaty is "kin" proposes a trade agreement to each kin faction it is at peace with, every
+  turn (a human kin on turns 1, 11, 21, ...). It never proposes an alliance. An alliance at format 10 took the Miskito
+  out of England's side in the war sums (`bloc_strength`) and out of the calls to arms (`_call_allies`), which opened
+  Belize to the Itza: England was eliminated in 11 of 144 campaigns against 2. The kin answers by `why()`: no strength
+  test, and the trust floor lowered by `AMB_TREATY`. The kin rule (`KIN_WAR_PCT`, note 59) is what stops the kin wars.
+- **The war.** `ambition_foe(st, f)` is the holder of the first list region that is not f's, not independent, not kin
+  and not friendly. It is tried first in the opportunistic war loop, its chance x `AMB_WAR_PCT` %. Everything else is
+  as for any war: the ratio, `WAR_CALM_TURNS`, `WAR_COVER_PCT`, one war at a time, the kin rule.
+- **The targets.** `ambition_pct` gives `AMB_TARGET_PCT` x (n - i) / n for the list's i-th region. The attack plans'
+  value and the idle armies' pick read `_amb_value`. The rest of the free armies march to the frontier region facing
+  the first list region not friendly (`_amb_target`), when one is in reach; else to the nearest frontier, as before. An
+  army already on the frontier, or held, stays.
+- **The spend.** `_amb_build`: a War lodge 2 at the first centre with a Barracks, once it is a town; then a Shipyard 2
+  at the first port when the next region lies on a landmass where f holds nothing. It is paid before the build-up when
+  the treasury stays at (100 - `AMB_SPEND_PCT`) % of the reserve or more.
+
+| Knob (`cai_profile.gd`) | id | Easy | Average | Skilled |
+|---|---|---|---|---|
+| `AMB_TREATY` | `SK_SUPPORT + 57` = 132 | 0 | 25 | 25 |
+| `AMB_TARGET_PCT` | 133 | 0 | 100 | 100 |
+| `AMB_WAR_PCT` | 134 | 0 | 150 | 150 |
+| `AMB_SPEND_PCT` | 135 | 0 | 50 | 50 |
+
+**Measured** (144 seeds x 60, West, format 6 / format 10):
+
+- **Eliminated, before -> as built:** Itza 4 / 12 -> 6 / 2, Miskito 5 / 6 -> 8 / 3, England 9 / 2 -> 10 / 1, Brethren
+  18 / 38 -> 29 / 24.
+- **The treaty:** struck in every campaign, on turn 3.
+- **The Miskito:** Veraguas captures 63 -> 161 / 28 -> 124, Portobelo 39 -> 61 / 24 -> 41.
+- **The Itza:** at format 10, Belize and Merida did not move.
+- **The Brethren's rise at format 6** follows `AMB_TARGET_PCT`: 29 as built, 21 at 0 or at 50 (at 50 the Miskito's
+  gains vanish). `AMB_SPEND_PCT` 0 gives 28 and the frontier march off gives 30. Accepted.
+- **Rounds:** the alliance with `AMB_WAR_PCT` 300, 150 and 100, then trade at 150 (kept).
+
+Test: `campaign_test` `_ai_ambition`.

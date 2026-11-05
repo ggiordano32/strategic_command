@@ -2005,3 +2005,111 @@ format 10 seeds 1, 3, 5 moved; Rome, `ROME_20` and the AI goldens unchanged. Tes
 before the sea rules there; the Itza still hoard about 2,000-3,000 gold (village recruiting); they build few canoes
 (1.1 war canoes and 1.8 piraguas a campaign) and land almost never (0.1 a campaign), so New Spain's landings at
 Valladolid go unanswered; the AI's tribal landings and a home garrison counting the new places were not changed.
+
+### The tribes' ambitions (as built, 2026-11-05)
+
+The owner: "can we give the tendency for the tribes to strike a treaty and desire to move north along the coast? While
+the Miskito want to move south to push out the Terra Firma?" This is an ambition layer for the campaign AI, driven by
+data, so any pack or faction can get one; docs/AI.md 61. It is behaviour and data only: no bonus to strength, no new
+state, no format bump. Easy runs none of it (its knobs are 0). Rome has no ambitions, so its pins, `ROME_20` and the AI
+goldens did not move.
+
+**Data** (`west.gd` `AI_AMBITION`, read through `CData.ambition_regions(f)`, which gives region indices in the list's
+order, and `CData.ambition_treaty(f)`). Each row is `[faction, treaty, regions]`, with the first region wanted most.
+Each list follows the land routes outward from the tribe's start.
+
+- **The Itza** (Tayasal lies south of the Yucatan towns), north up the coast: **Belize** (next to Tayasal and
+  Valladolid), **Valladolid** (their own at the start: while held it is skipped), **Merida** (Valladolid's neighbour),
+  **Campeche** (Merida's), then **Tabasco** at the Gulf's foot.
+- **The Miskito**, south against Tierra Firme: **Bluefields** and **Talamanca** (their own), **Granada** (inland off
+  Bluefields), **Veraguas** (next to Talamanca), **Portobelo** (Tierra Firme's), the **Darien**, then **Cartagena** (by
+  sea from Portobelo).
+
+Both rows ask for the treaty "kin".
+
+**Rules** (`campaign/cai.gd`; knobs in `cai_profile.gd`, ids 132-135):
+
+| Knob | Easy | Average | Skilled | What it does |
+|---|---|---|---|---|
+| `AMB_TREATY` | 0 | 25 | 25 | From turn 1 the AI proposes a **trade agreement**, never an alliance, to its kin every turn while at peace (a human kin is asked on turns 1, 11, 21, ...). The kin accepts without the strength test, with the trust floor lowered by 25. |
+| `AMB_TARGET_PCT` | 0 | 100 | 100 | An attack target on the list is worth +100 % for the first region, scaled down by position (the Itza's five: +100 / 80 / 60 / 40 / 20 %). The idle armies' pick uses it too. Free armies march to the frontier region that faces the first list region not friendly, when one is in reach. |
+| `AMB_WAR_PCT` | 0 | 150 | 150 | The opportunistic war on the holder of the next region (the first on the list that is not ours, not independent, not kin and not friendly) is tried first, at 150 % of the chance. The war ratio, the pacing, the cover and the kin rule apply as to any war. |
+| `AMB_SPEND_PCT` | 0 | 50 | 50 | While the list has a region not ours: a War lodge 2 at the first centre with a Barracks, once it is a town (the poles of the native assault, the tier-2 rows); then, when the next region lies on a landmass where the faction holds nothing, a Canoe yard 2 at its first port. Paid from the treasury down to half the reserve. |
+
+Why trade and not an alliance: the first build used an alliance at format 10. That took the Miskito out of their
+English ally's side: an alliance takes a faction out of the war sums (`bloc_strength`) and out of the calls to arms
+(`_call_allies`) against its other ally. So the Itza's war on Belize opened, and England was eliminated in 11 of 144
+campaigns against 2. Under a trade agreement the kin rule of AI.md 59 (`KIN_WAR_PCT`) stays what stops the kin wars.
+
+Defence keeps its place. The attack plans come after the sieges and the hunts. The holds (`_hold`: the threat and the
+landing threat) and `needed_home` still keep an army at home, and an army already on a frontier region does not move
+for the ambition. The recruit-slot rule is unchanged. The test switch `CAI.no_amb_march` turns the frontier march off
+for the probe; nothing else reads it.
+
+**The hoard, read again.** The Itza's 2,000-3,000 gold at turn 30 is the AI's reserve: one turn of upkeep
+(`RESERVE_TURNS` 1; at format 6 a treasury of 2,159 against an upkeep of 2,256 at HEAD). Recruiting stops at the upkeep
+share and building at the budget above the reserve, so the money is kept, not idle. What it never bought was the War
+lodge 2 (Itza 0.18 a campaign at format 6, Miskito 0.03): the build-up asks the natives only for a Barracks 1, for the
+shaman. The spend buys it.
+
+**Measured** with the native probe, which plays exactly as `campaign_sim` (session scratchpad `amb/native_probe.gd`):
+144 seeds (indices 0-71 and 100-171) x 60 turns, all AI Average. "Before" is HEAD e04824f. Earlier rounds used the
+alliance, with `AMB_WAR_PCT` at 300, 150 and 100.
+
+| Eliminated of 144, f6 / f10 | Before | Alliance, war 150 | As built (trade) |
+|---|---|---|---|
+| Itza | 4 / 12 | 6 / 4 | 6 / 2 |
+| Miskito | 5 / 6 | 8 / 0 | 8 / 3 |
+| England | 9 / 2 | 10 / 11 | 10 / 1 |
+| France / Dutch | 3 / 4, 7 / 2 | 2 / 0, 9 / 1 | 2 / 3, 9 / 0 |
+| Brethren | 18 / 38 | 29 / 32 | 29 / 24 |
+| New Spain, Tierra Firme | 0 | 0 | 0 |
+
+As built, before -> after (format 6 / format 10):
+
+- **Treaty and kin wars:**
+  - The kin trade is struck in 144 / 144 campaigns, on turn 3. Before, a trade came in 120 / 125 campaigns, at a mean
+    turn of 11.8 / 15.0.
+  - Kin wars declared: Itza 11 -> 8 / 0 -> 0; Miskito 3 -> 3 / 3 -> 1.
+- **The Itza:**
+  - Towns at turns 20 / 40 / 60: f6 5.2 / 6.7 / 7.6 -> 5.3 / 6.7 / 7.3; f10 4.3 / 4.5 / 4.4 -> 4.8 / 5.0 / 5.0.
+  - List captures at f6: Belize 112 -> 97, Merida 125 -> 135, Campeche 103 -> 101.
+  - List captures at f10 did not move: Belize 15 -> 13, Merida 24 -> 25.
+  - Wars on England: 83 -> 95 / 3 -> 2.
+- **The Miskito:**
+  - List towns held at turn 60: 3.19 -> 3.83 / 3.16 -> 3.77 a campaign.
+  - Captures: Veraguas 63 -> 161 / 28 -> 124; Portobelo 39 -> 61 / 24 -> 41; the Darien 48 -> 67 / 22 -> 39.
+  - Towns taken from Tierra Firme: 149 -> 185 / 88 -> 131.
+  - Wars declared on Tierra Firme: 1 -> 3 / 0 -> 0.
+- **The spend:**
+  - War lodge 2 built a campaign: Itza 0.18 -> 1.10 / 0.14 -> 1.61; Miskito 0.03 -> 1.06 / 0.23 -> 1.17.
+  - The Itza's treasury at turn 30 is still about one turn of upkeep: f6 2,248 against 2,452.
+
+**The Brethren at format 6 (18 -> 29), each lever off** (144 seeds, format 6, from the build as it stands):
+
+| Variant | Brethren | England | Dutch | Itza | Miskito | Miskito Veraguas captures | Itza Belize / Merida captures |
+|---|---|---|---|---|---|---|---|
+| As built | 29 | 10 | 9 | 6 | 8 | 161 | 97 / 135 |
+| `AMB_TARGET_PCT` 0 | 21 | 5 | 13 | 9 | 7 | 67 | 90 / 125 |
+| `AMB_SPEND_PCT` 0 | 28 | 7 | 10 | 6 | 7 | 169 | 117 / 123 |
+| Frontier march off | 30 | 12 | 11 | 4 | 9 | 176 | 110 / 133 |
+| `AMB_TARGET_PCT` 50 (f6 / f10) | 21 / 32 | 4 / 2 | 10 / 1 | 1 / 7 | 9 / 1 | 68 / 35 | 113 / 13 (Belize) |
+| Before | 18 | 9 | 7 | 4 | 5 | 63 | 112 / 125 |
+
+The lever is the target bonus itself. The spend and the frontier march do not move the Brethren. The same bonus drives
+the Miskito south: at 50 their Veraguas and Portobelo gains vanish. So it stays at 100, and the Brethren at 29 of 144 at
+format 6 is accepted: their range by commit has been 18-38.
+
+**Pins.** The AI's choices are in the state hash: West formats 6, 8 and 10 moved (all six seeds each); Rome did not.
+Tests: `campaign_test` `_ai_ambition` checks the data in order, the trade treaty at formats 10 and 6, the knob off, the
+bonus by position, the foe and the next region, the war tried first, the War lodge 2 from the reserve and the Canoe yard
+2 across water. `_ai_kin` now runs with `AMB_TREATY` 0, so it tests the war rule alone.
+
+**Open.**
+- The Itza's north does not show at format 10: England's alliance with the Miskito keeps England's side above the
+  Itza's war ratio. One way: leave kin trade partners out of a defender's side.
+- Both tribes sit under their earlier spread of 4-9 eliminations in 72 at format 10 (Itza 1, Miskito 1.5 of 72).
+- The Brethren at format 6 are higher (accepted, see above).
+- The Miskito never declare war on Tierra Firme (its strength is above their war ratio). The towns they take from it
+  come when Tierra Firme is the one at war with them.
+- The Itza still almost never land.

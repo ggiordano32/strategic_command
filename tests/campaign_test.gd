@@ -178,6 +178,7 @@ func _init() -> void:
 	_launches()
 	_native_vessels()
 	_ai_kin()
+	_ai_ambition()
 	_board_march()
 	_sortie()
 	_sight()
@@ -6989,6 +6990,8 @@ func _ai_kin() -> void:
 	var cov0: int = kn[CP.WAR_COVER_PCT]
 	var one0: int = kn[CP.WAR_ONE_AT_A_TIME]
 	var kin0: int = kn[CP.KIN_WAR_PCT]
+	var amt0: int = kn[CP.AMB_TREATY]
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, 0)  # (docs/AI.md 61: no kin treaty here, the war rule alone)
 	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)  # (every eligible war is declared)
 	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, 0)
 	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, 0)
@@ -7028,7 +7031,139 @@ func _ai_kin() -> void:
 	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
 	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, cov0)
 	CP.set_knob(CP.AVERAGE, CP.WAR_ONE_AT_A_TIME, one0)
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, amt0)
 	_check(CP.of(st, mi)[CP.KIN_WAR_PCT] == 200 and CP.of(st, mi)[CP.WAR_CHANCE] == wc0, "kin: the knobs restored")
+
+
+## (docs/AI.md 61) The tribes' ambitions: the data read in list order, the kin treaty, the target bonus by
+## position, the ambition's war tried first, the spend on its buildings.
+func _ai_ambition() -> void:
+	CData.use_pack("rome")
+	_check(CData.ambition_regions(0).is_empty() and CData.ambition_treaty(0) == "", "ambition: Rome has none")
+	CData.use_pack("west")
+	var iz := _f("itza")
+	var mi := _f("miskito")
+	var en := _f("england")
+	var ns := _f("new_spain")
+	var tf := _f("tierra_firme")
+	var want_i: Array[int] = []
+	for k in ["belize", "valladolid", "merida", "campeche", "tabasco"]:
+		want_i.append(_r(k))
+	var want_m: Array[int] = []
+	for k in ["bluefields", "talamanca", "granada", "veraguas", "portobelo", "darien", "cartagena"]:
+		want_m.append(_r(k))
+	_check(CData.ambition_regions(iz) == want_i and CData.ambition_regions(mi) == want_m,
+		"ambition: the Itza's list north up the Yucatan and the Miskito's south to Cartagena, in the data's order")
+	_check(CData.ambition_regions(iz) == want_i and CData.ambition_treaty(iz) == "kin" and CData.ambition_treaty(mi) == "kin",
+		"ambition: read again from the cache, the same; both seek the kin treaty")
+	_check(CData.ambition_regions(en).is_empty() and CData.ambition_treaty(en) == "" and CData.ambition_regions(-1).is_empty(),
+		"ambition: England and the independents have none")
+	# The treaty: a trade agreement, never an alliance (format 10 here; Easy's knob 0: none).
+	var st := CState.new_campaign("ai_amb", 91, [], {}, [], "west")
+	st["turn"] = 5
+	var kn := CP.of(st, iz)
+	_check(kn[CP.AMB_TREATY] > 0 and CState.dip(st, iz, mi) == CState.PEACE and CAI.why(st, mi, iz, "trade") == ""
+		and CAI.why(st, mi, iz, "alliance") != "", "ambition: the Itza take the Miskito's trade agreement, not an alliance")
+	var d1 := CState.copy(st)
+	CAI.diplomacy(d1, iz)
+	_check(CState.dip(d1, iz, mi) == CState.TRADE and not CDip.allied(d1, iz, mi),
+		"ambition: the Itza propose the trade agreement and the Miskito accept (format 10, no alliance)")
+	var amt0: int = kn[CP.AMB_TREATY]
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, 0)
+	var d2 := CState.copy(st)
+	CAI.diplomacy(d2, iz)
+	_check(CState.dip(d2, iz, mi) == CState.PEACE, "ambition: AMB_TREATY 0, no treaty (Easy)")
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, amt0)
+	var s6 := CState.as_format(CState.new_campaign("ai_amb6", 91, [], {}, [], "west"), 6)
+	s6["turn"] = 5
+	CAI.diplomacy(s6, mi)
+	_check(CState.dip(s6, iz, mi) == CState.TRADE, "ambition: format 6, the same trade agreement")
+	# The target bonus: the first region most, by position; nothing off the list.
+	var p: Array[int] = []
+	for r in want_i:
+		p.append(CAI.ambition_pct(iz, r, kn))
+	_check(p[0] == kn[CP.AMB_TARGET_PCT] and p[0] > p[1] and p[1] > p[2] and p[2] > p[3] and p[3] > p[4] and p[4] > 0
+		and CAI.ambition_pct(iz, _r("havana"), kn) == 0 and CAI.ambition_pct(en, _r("belize"), CP.of(st, en)) == 0,
+		"ambition: the target bonus falls along the list %s, none off it or for England" % str(p))
+	_check(CAI._amb_value(st, iz, _r("belize"), kn) > CAI.region_value(st, _r("belize"), iz)
+		and CAI._amb_value(st, iz, _r("havana"), kn) == CAI.region_value(st, _r("havana"), iz), "ambition: Belize is worth more to the Itza")
+	# The war: the holder of the next region (Belize: England; then New Spain at Merida; the Miskito: Tierra Firme).
+	_check(CAI.ambition_foe(st, iz) == en and CAI.ambition_foe(st, mi) == tf, "ambition: the Itza's war is on England, the Miskito's on Tierra Firme")
+	var s3 := CState.copy(st)
+	s3["regions"][_r("belize")]["owner"] = iz
+	_check(CAI.ambition_next(s3, iz) == _r("merida") and CAI.ambition_foe(s3, iz) == ns, "ambition: Belize taken, Merida next (New Spain)")
+	var sw := CState.copy(st)
+	sw["turn"] = 40
+	for a in sw["armies"]:
+		if int(a["f"]) != iz:
+			for u in a["units"]:
+				u["n"] = 1
+	var n := CState.nf()
+	for g in n:
+		if g != en and g != ns:
+			sw["regard"][iz * n + g] = CDip.NO_WAR_REGARD  # (only New Spain and England are candidates)
+	var wc0: int = kn[CP.WAR_CHANCE]
+	var cov0: int = kn[CP.WAR_COVER_PCT]
+	var aw0: int = kn[CP.AMB_WAR_PCT]
+	var ta0: int = kn[CP.TRADE_ASK_CHANCE]
+	CP.set_knob(CP.AVERAGE, CP.TRADE_ASK_CHANCE, 0)  # (no trade struck this turn: a fresh treaty keeps the peace)
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, 100000)
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, 0)
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, 0)
+	var w1 := CState.copy(sw)
+	CAI.diplomacy(w1, iz)
+	CP.set_knob(CP.AVERAGE, CP.AMB_WAR_PCT, 0)
+	var w2 := CState.copy(sw)
+	CAI.diplomacy(w2, iz)
+	_check(CState.at_war(w1, iz, en) and not CState.at_war(w1, iz, ns) and CState.at_war(w2, iz, ns) and not CState.at_war(w2, iz, en),
+		"ambition: the war on England (Belize) is tried first; without the ambition New Spain (the lower index) is (%s / %s)" % [str(CAI.wars(w1, iz)), str(CAI.wars(w2, iz))])
+	CP.set_knob(CP.AVERAGE, CP.AMB_WAR_PCT, aw0)
+	CP.set_knob(CP.AVERAGE, CP.TRADE_ASK_CHANCE, ta0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_CHANCE, wc0)
+	CP.set_knob(CP.AVERAGE, CP.WAR_COVER_PCT, cov0)
+	CP.set_knob(CP.AVERAGE, CP.AMB_TREATY, amt0)
+	# The spend: a War lodge 2 at Tayasal from the reserve; with AMB_SPEND_PCT 0 not.
+	var sb := CState.copy(st)
+	var tay := _r("tayasal")
+	sb["regions"][tay]["level"] = CData.TOWN  # (a village's Barracks stops at 1)
+	_amb_set_bld(sb, tay, CData.BARRACKS, 1)
+	var res := CAI._reserve(sb, iz)
+	sb["factions"][iz]["treasury"] = res * (100 - kn[CP.AMB_SPEND_PCT]) / 100 + 900
+	var rs: Array[int] = [tay]
+	_check(CAI._amb_build(sb, iz, rs) == [tay, CData.BARRACKS], "ambition: the Itza's next building is the War lodge 2 at Tayasal")
+	var b1 := CState.copy(sb)
+	CAI._build(b1, iz)
+	var q1: Array = b1["regions"][tay]["build"]
+	var sp0: int = kn[CP.AMB_SPEND_PCT]
+	CP.set_knob(CP.AVERAGE, CP.AMB_SPEND_PCT, 0)
+	var b2 := CState.copy(sb)
+	CAI._build(b2, iz)
+	var q2: Array = b2["regions"][tay]["build"]
+	CP.set_knob(CP.AVERAGE, CP.AMB_SPEND_PCT, sp0)
+	_check(q1.size() == 3 and int(q1[0]) == CData.BARRACKS and int(q1[1]) == 2 and (q2.is_empty() or int(q2[0]) != CData.BARRACKS),
+		"ambition: the War lodge 2 is paid from the reserve (%s), not at AMB_SPEND_PCT 0 (%s)" % [str(q1), str(q2)])
+	# Across water: the Miskito hold the coast to the Darien, Cartagena next: a Canoe yard 2 at their port.
+	var sm := CState.copy(st)
+	for r in want_m:
+		if r != _r("cartagena"):
+			sm["regions"][r]["owner"] = mi
+	var cg := _r("cabo_gracias")
+	_amb_set_bld(sm, cg, CData.BARRACKS, 2)
+	_amb_set_bld(sm, cg, CData.SHIPYARD, 1)
+	var ms: Array[int] = [cg]
+	_check(CAI.ambition_next(sm, mi) == _r("cartagena") and CAI._amb_build(sm, mi, ms) == [cg, CData.SHIPYARD],
+		"ambition: Cartagena across the water, the Miskito raise their Canoe yard to 2")
+	sm["regions"][_r("cartagena")]["owner"] = mi
+	_check(CAI.ambition_next(sm, mi) == -1 and CAI._amb_build(sm, mi, ms).is_empty(), "ambition: the list held, nothing more to build")
+
+
+## Set building chain c of region r to level lvl (a test helper for _ai_ambition).
+static func _amb_set_bld(st: Dictionary, r: int, c: int, lvl: int) -> void:
+	for sl in st["regions"][r]["slots"]:
+		if int(sl[0]) == c:
+			sl[1] = lvl
+			return
+	(st["regions"][r]["slots"] as Array).append([c, lvl])
 
 
 static func wars_none(st: Dictionary, f: int) -> bool:
