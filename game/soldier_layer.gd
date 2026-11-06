@@ -781,8 +781,10 @@ func upload() -> void:
 		var ty: int = sim.u_type[u]
 		if sim.t_m_gun[ty] != 0 and sim.t_cls[ty] != UT.CLS_ART:
 			shoot |= F_GUN
+			# (No F_FIRED: the atlas flash frame lit every man of the unit for 0.3 s; the muzzle flash is now the overlay's, one
+			# per shot at the man who fired: Overlay._flash_add. A gun man aims and reloads on frames 0, 2, 3.)
 			if shot_src != null and u < shot_src.shot_t.size() and tick - shot_src.shot_t[u] < FLASH_TICKS:
-				shoot |= F_FIRED | F_SHOOT
+				shoot |= F_SHOOT
 		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
 		if oblique:
 			# (A unit on a wall: its walk's height; in a held building: the building's firing level, ob_z; a unit

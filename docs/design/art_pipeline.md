@@ -199,7 +199,26 @@ the soldier materials get it with `alpha`) plus a phase fract(index x
 sim. A powder-weapon man (flag 32 gun) never plays attack frame 1, the
 muzzle flash, unless his unit fired in the last 0.3 s (flag 16 fired, from
 the overlay's shot tick; battle_sim.md "Firearms"): aiming and reloading
-cycle frames 0, 2, 3 slowly. The texture path reads the table from a uniform array (`frame_tab`),
+cycle frames 0, 2, 3 slowly.
+
+**The muzzle flash is the man's own (2026-11-06, owner: "I want to verify the muzzle flash is only taking place when a soldier
+fires").** The paragraph above lit the *unit*: flag 16 fired showed attack frame 1 on every man of a gun unit for 0.3 s after any
+shot of it (a countermarch's front rank of 25 flashed all 100 men, a brace of pistols all 60, a man behind cover with them).
+Measured (`tests/muzzle_flash_probe.gd`, both soldier paths, both views): the sim's shots that tick against the men the old flag
+lit, musket 25 of 100 against 100, pistols 21 of 60 against 60. Now the soldier layer never sets flag 16 (the bit and the shader's
+`fired` stay, always off: a gun man cycles frames 0, 2, 3); the flash is the overlay's, one per shot, started in `_tr_note` from
+the missile's own start (`Overlay._flash_add`: a half metre ahead of the man who loosed it along the ball's flight, in the
+oblique view at 1.1 m up with the tongue along the shot's screen direction), drawn by `GunSmoke.flash` after the smoke, aged by
+real time: 0.12 s a musket or arquebus (0.34 m glow scale), 0.06 s a rider's pistol (0.22 m), none for a man without powder (bows,
+slings, javelins: no gun row, no flash), a gun engine's or ship's flash stays the main puff's (0.09 s; the ring and dust puffs
+and the men's bank puffs no longer carry one). The puff bank is as before (one puff a cell a second). Same pixels on the CPU
+path (the flash is not in the soldier shader). `battle_screen_test` checks the flashes shown equal the sim's gun shots on every
+fire tick and none a second later; bows make none.
+Known: the sim records no per-man fired flag (the missile's start position stands for the man; a man leaning out of cover shoots
+from his lean spot, which is where the flash shows); the pistol brace a melee man fires at contact is a sim effect with no missile,
+so it has no flash; the old frame-1 recoil pose is gone with it.
+
+The texture path reads the table from a uniform array (`frame_tab`),
 the unit's set, palette and shooting from its flags (bits 12-15, 16-19,
 3); the CPU-fed path from constants (an if chain, as `sprite_rect`), with
 INSTANCE_CUSTOM.z = set + 16 x palette and .w = the instance's index. The

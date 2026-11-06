@@ -164,6 +164,19 @@ var _tr_tick := -1
 ## The sim tick of each unit's last gun shot by men (view only; the soldier
 ## layer reads it: the muzzle flash frame shows only for a fresh shot).
 var shot_t := PackedInt32Array()
+## The muzzle flashes of men's gun shots (view only): one per shot, at that man's muzzle (the missile's start), so only a man who
+## fired this tick flashes (2026-11-06; the unit-wide atlas flash frame is gone). Musket / arquebus: FLASH_MUSKET_S; a rider's
+## pistol (cavalry class): FLASH_PISTOL_S. Aged by real time, so a paused sim's flash dies away as well.
+const FLASH_MUSKET_S := 0.12
+const FLASH_PISTOL_S := 0.06
+var _mf_pos := PackedVector2Array()
+var _mf_dir := PackedVector2Array()
+var _mf_age := PackedFloat32Array()
+var _mf_life := PackedFloat32Array()
+var _mf_sz := PackedFloat32Array()
+var flashes_made := 0                  # (tests)
+var flashes_live: int:                 # flashes still showing (tests)
+	get: return _mf_age.size()
 var _bk_seen := -1                     # blocked shots seen so far (sim.bk_n; -1: not looked yet)
 var _ev_seen := -1                     # destruction events seen so far (sim.ev_n; -1: not looked yet)
 # Gun smoke (docs/DESIGN.md "Firearms"; view only, no sim state): each gun
@@ -231,6 +244,17 @@ func _process(delta: float) -> void:
 			_fx_rad.remove_at(i)
 		else:
 			i += 1
+	var mf := 0
+	while mf < _mf_age.size():
+		_mf_age[mf] += delta
+		if _mf_age[mf] >= _mf_life[mf]:
+			_mf_pos.remove_at(mf)
+			_mf_dir.remove_at(mf)
+			_mf_age.remove_at(mf)
+			_mf_life.remove_at(mf)
+			_mf_sz.remove_at(mf)
+		else:
+			mf += 1
 	if sim.tick != _tr_tick and sim.pr_bucket.size() > 0:
 		var t0 := Time.get_ticks_usec()
 		_track_missiles()
@@ -290,6 +314,7 @@ func _tr_note(p: int) -> void:
 				shot_t.fill(-1000)
 			if u >= 0 and u < shot_t.size():
 				shot_t[u] = maxi(shot_t[u], sim.pr_t0[p])
+			_flash_add(p, ty)
 	var kind := 0
 	var rad := 0
 	if ak >= 0 and UT.ammo_stat(ak, "fire") > 0:
@@ -363,6 +388,32 @@ func _destr_events() -> void:
 
 
 ## Gun missile p (of type ty) has just left: a big puff (an engine) or a bank puff (a man).
+## The flash of one man's shot (missile p), at his muzzle: a half metre ahead of where the ball started, along its flight.
+func _flash_add(p: int, ty: int) -> void:
+	if _mf_age.size() >= 400:
+		return
+	var s := to_px(sim.pr_sx[p], sim.pr_sy[p])
+	var d := to_px(sim.pr_x[p], sim.pr_y[p]) - s
+	d = d.normalized() if d.length_squared() > 0.0 else Vector2.UP
+	var pistol: bool = UT.stat(ty, "cls") == UT.CLS_CAV
+	_mf_pos.append(s + d * px_per_m * 0.5)
+	_mf_dir.append(d)
+	_mf_age.append(0.0)
+	_mf_life.append(FLASH_PISTOL_S if pistol else FLASH_MUSKET_S)
+	_mf_sz.append(px_per_m * (0.22 if pistol else 0.34))
+	flashes_made += 1
+
+
+func _draw_flashes() -> void:
+	var vr := _view_rect().grow(px_per_m * 4.0)
+	var up := BoardView.oblique
+	for k in _mf_age.size():
+		if vr.has_point(_mf_pos[k]):
+			GunSmoke.flash(self, _mf_pos[k], _mf_dir[k], _mf_sz[k], 1.0 - _mf_age[k] / _mf_life[k], up, px_per_m * 1.1)
+	if up:
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
 func _smoke_spawn(p: int, ty: int) -> void:
 	var s := to_px(sim.pr_sx[p], sim.pr_sy[p])
 	var d := to_px(sim.pr_x[p], sim.pr_y[p]) - s
@@ -386,7 +437,7 @@ func _smoke_at(s: Vector2, d: Vector2, big: bool) -> void:
 	if big:
 		_gs.add_big(at, d, pm * 3.6, pm * 8.0, not _sm_low, 0 if _sm_low else 6)
 	else:
-		_gs.add(at, d, pm * 2.1, pm * (3.0 if _sm_low else 4.0))
+		_gs.add(at, d, pm * 2.1, pm * (3.0 if _sm_low else 4.0), 0, false)
 	_gs.feed_haze(at, pm * 14.0, 0.25 if big else 0.04)
 
 
@@ -758,6 +809,8 @@ func _draw() -> void:
 		_draw_fx(lw)
 	if not _gs.age.is_empty() or not _gs.hz_amt.is_empty():
 		_draw_smoke()
+	if not _mf_age.is_empty():
+		_draw_flashes()
 	fx_us += Time.get_ticks_usec() - fx0
 	if show_all_orders:
 		_draw_all_orders()

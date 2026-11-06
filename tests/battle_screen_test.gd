@@ -407,6 +407,7 @@ func _process(_d: float) -> bool:
 			_facing_cases()
 			_casualty_cases()
 			_ship_cases()
+			_flash_cases()
 			if not _oblique:
 				# Again, in the oblique battle view.
 				_oblique = true
@@ -655,6 +656,58 @@ func _facing_cases() -> void:
 
 
 ## (2026-11-05) A fleet at the shore in the battle view (docs/design/art_pipeline.md "(2026-11-05) The ship on the board").
+## The muzzle flash belongs to the man who fired (docs/design/art_pipeline.md "The muzzle flash is the man's own"): a musket line
+## fires at a standing block; on a tick of fire the flashes shown equal the sim's gun shots that tick (the front rank of the
+## countermarch, not the whole unit), a second later none; archers loosing arrows make none. tests/muzzle_flash_probe.gd has the
+## table for every case and both soldier paths.
+func _flash_cases() -> void:
+	var was := CData.pack
+	CData.use_pack("west")
+	for bow in [false, true]:
+		var b := Battle.new()
+		b.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [], "units": [
+			Scenarios.unit(0, UT.index_of("archer" if bow else "musketeers"), 80 if bow else 100, 150, 200, 768),
+			Scenarios.unit(1, UT.index_of("heavy"), 100, 150, 130, 256)], "orders": [Scenarios.attack(0, 0, 1, 0)]}
+		b.seed_value = 3
+		root.add_child(b)
+		b.paused = true
+		var s: BattleSim = b.sim
+		var ov = b.overlay
+		var fired_ticks := 0
+		var matched := 0
+		var partial := 0   # fire ticks on which only some of the men fired (the countermarch's front rank)
+		var arrows := 0
+		for t in 300:
+			s.step()
+			b.soldiers.upload()
+			ov._process(0.13)   # (a tick is 0.1 s: last tick's flash has faded)
+			var shots := 0
+			for p in s.pr_t1.size():
+				if s.pr_t1[p] >= 0 and s.pr_t0[p] == s.tick - 1:
+					if s.t_m_gun[s.pr_ty[p]] != 0:
+						shots += 1
+					else:
+						arrows += 1
+			if shots > 0:
+				fired_ticks += 1
+				if shots < s.u_alive[0]:
+					partial += 1
+				if ov.flashes_live == shots:
+					matched += 1
+			elif ov.flashes_live != 0:
+				matched -= 1000
+		for i in 10:
+			ov._process(0.1)
+		if bow:
+			_check(arrows > 0 and ov.flashes_made == 0, "bows: %d arrows loosed, no muzzle flash made (%d)" % [arrows, ov.flashes_made])
+		else:
+			_check(fired_ticks >= 3 and matched == fired_ticks and partial >= 3,
+				"musket line: the flashes shown equal the sim's shots on each of %d fire ticks (%d of them a front rank of 25 of the 100, not the unit), none on the ticks between" % [fired_ticks, partial])
+			_check(ov.flashes_live == 0, "musket line: no flash a second after the last shot")
+		b.queue_free()
+	CData.use_pack(was)
+
+
 func _ship_cases() -> void:
 	var was := CData.pack
 	CData.use_pack("west")

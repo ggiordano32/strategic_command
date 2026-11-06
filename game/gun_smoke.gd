@@ -12,6 +12,7 @@ extends RefCounted
 const BoardView := preload("res://game/board_view.gd")
 
 const LIFE := 10.0
+const FLASH_S := 0.09       # a gun engine's or ship's flash, s (a man's: Overlay.FLASH_MUSKET_S / FLASH_PISTOL_S)
 const TILE := 64
 const VARIANTS := 4          # cloud tiles, then one glow tile
 const HAZE_CAP := 14
@@ -26,6 +27,7 @@ var size := PackedFloat32Array()     # radius scale in px
 var roll := PackedFloat32Array()     # distance it rolls out, px
 var life := PackedFloat32Array()
 var kind := PackedByteArray()        # 0 smoke, 1 dust kick
+var fl := PackedByteArray()          # 1: this puff carries the muzzle flash (a gun engine's or a ship's shot; a man's flash is the overlay's, per shot)
 var cap := 280
 var haze_on := true
 var hz_pos := PackedVector2Array()
@@ -144,6 +146,7 @@ func _drop(k: int) -> void:
 	roll.remove_at(k)
 	life.remove_at(k)
 	kind.remove_at(k)
+	fl.remove_at(k)
 
 
 func clear() -> void:
@@ -155,7 +158,7 @@ func clear() -> void:
 
 ## One puff at p (world px), rolling along d to `roll_px`, radius scale
 ## sz px. k 1 is a low ground-dust puff.
-func add(p: Vector2, d: Vector2, sz: float, roll_px: float, k: int = 0) -> void:
+func add(p: Vector2, d: Vector2, sz: float, roll_px: float, k: int = 0, with_flash := true) -> void:
 	while age.size() >= cap:
 		_drop(0)
 	# A little irregularity so a rank's puffs knit into one ragged bank.
@@ -167,6 +170,7 @@ func add(p: Vector2, d: Vector2, sz: float, roll_px: float, k: int = 0) -> void:
 	roll.append(roll_px)
 	life.append(LIFE if k == 0 else 3.8)
 	kind.append(k)
+	fl.append(1 if with_flash else 0)
 	puffs_made += 1
 
 
@@ -177,11 +181,11 @@ func add_big(p: Vector2, d: Vector2, sz: float, roll_px: float, dust: bool, ring
 	for i in ring:
 		var a := TAU * (float(i) + 0.3 * (puffs_made % 3)) / ring
 		var rd := Vector2(cos(a), sin(a))
-		add(p, rd, sz * 0.55, sz * 1.5)
+		add(p, rd, sz * 0.55, sz * 1.5, 0, false)
 	if dust:
 		for i in 3:
 			var rd2 := (d + Vector2(((puffs_made + i * 5) % 7 - 3) * 0.18, ((puffs_made + i * 3) % 5 - 2) * 0.15)).normalized()
-			add(p + d * sz * 0.2, rd2, sz * 0.5, sz * 1.9, 1)
+			add(p + d * sz * 0.2, rd2, sz * 0.5, sz * 1.9, 1, false)
 
 
 ## Adds to the long-firefight haze near p (cell_px apart, radius grows
@@ -246,19 +250,23 @@ func draw(ci: CanvasItem, wind: Vector2, vr: Rect2, haze_px: float, diorama: boo
 		if up:
 			ci.draw_set_transform_matrix(BoardView.up_xf(g))
 		ci.draw_texture_rect_region(tex, Rect2(p - Vector2(r, r), Vector2(r, r) * 2.0), Rect2(vi * TILE, 0, TILE, TILE), c)
-		if a < 0.09 and not dk:
-			# The muzzle flash (a frame or two): a flame tongue along the
-			# shot and a brief glow.
-			var d := dir[k]
-			var q := pos[k] - d * sz * 0.5
-			if up:
-				ci.draw_set_transform_matrix(BoardView.up_xf(q))
-				d = Vector2(d.x, d.y * BoardView.OBLIQUE_COS).normalized()   # the shot's direction on the screen
-				q += Vector2(0.0, -sz * 0.6)
-			var w := Vector2(-d.y, d.x) * sz * 0.38
-			var fl := 1.0 - a / 0.09
-			ci.draw_texture_rect_region(tex, Rect2(q - Vector2(sz, sz) * 1.5, Vector2(sz, sz) * 3.0), gl, Color(1.0, 0.7, 0.3, 0.6 * fl))
-			ci.draw_colored_polygon(PackedVector2Array([q - w, q + d * sz * 1.9, q + w]), Color(1.0, 0.55, 0.15, 0.85 * fl))
-			ci.draw_colored_polygon(PackedVector2Array([q - w * 0.5, q + d * sz * 1.3, q + w * 0.5]), Color(1.0, 0.92, 0.5, 0.95 * fl))
+		if a < FLASH_S and fl[k] != 0 and not dk:
+			# The muzzle flash (a frame or two): a flame tongue along the shot and a brief glow.
+			flash(ci, pos[k] - dir[k] * sz * 0.5, dir[k], sz, 1.0 - a / FLASH_S, up)
 	if up:
 		ci.draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+## One muzzle flash at q (world px): a flame tongue along d and a glow, scale sz px, strength fa 0 .. 1. In the oblique view (up)
+## it stands at the muzzle's height with its tongue along the shot's screen direction.
+static func flash(ci: CanvasItem, q: Vector2, d: Vector2, sz: float, fa: float, up: bool, lift := -1.0) -> void:
+	var tex := texture()
+	var gl := Rect2(TILE * VARIANTS, 0, TILE, TILE)
+	if up:
+		ci.draw_set_transform_matrix(BoardView.up_xf(q))
+		d = Vector2(d.x, d.y * BoardView.OBLIQUE_COS).normalized()
+		q += Vector2(0.0, -(sz * 0.6 if lift < 0.0 else lift))
+	var w := Vector2(-d.y, d.x) * sz * 0.38
+	ci.draw_texture_rect_region(tex, Rect2(q - Vector2(sz, sz) * 1.5, Vector2(sz, sz) * 3.0), gl, Color(1.0, 0.7, 0.3, 0.6 * fa))
+	ci.draw_colored_polygon(PackedVector2Array([q - w, q + d * sz * 1.9, q + w]), Color(1.0, 0.55, 0.15, 0.85 * fa))
+	ci.draw_colored_polygon(PackedVector2Array([q - w * 0.5, q + d * sz * 1.3, q + w * 0.5]), Color(1.0, 0.92, 0.5, 0.95 * fa))
