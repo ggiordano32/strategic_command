@@ -40,7 +40,17 @@ extends SceneTree
 ##             Itza warriors carry poles onto a walls-1 stretch and climb; then the second warriors, the bowmen
 ##             and the Holcan, each ordered onto the stretch, go up the planted poles and stand on the walkway;
 ##             the same with Spanish-era ladders and heavy infantry.
-##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native|pass]
+##   march     filtering always on (docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)";
+##             tests/march_probe.gd): two musket lines marching side by side with their flank files 0.4 m apart keep
+##             0.33 m between any two of their men and arrive as a lone line does; a column 0.3 m behind a line keeps
+##             0.33 m; four companies crowding a town's streets to its plaza come under 0.25 m fewer than 1,500
+##             man-ticks (2,966 before)
+##   route     paths clear of the enemy (docs/design/battle_sim.md "Paths clear of the enemy (as built, 2026-11-06)";
+##             tests/route_probe.gd): rodeleros ordered past a musket line's front go round out of its reach (a way
+##             round planned, no man lost, arrived); a musket company sent into a house with an enemy company on the
+##             plain way to its door goes round and gets in; an attack order on that line goes straight at it (no plan
+##             round, the anchor within 3 m of the straight line until contact)
+##   godot --headless --script res://tests/roles_sim_test.gd [-- --only=pistols|grenades|caracole|batter|drift|snapshot|ai|countermarch|native|pass|march|route]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -103,6 +113,10 @@ func _init() -> void:
 		_native()
 	if only == "" or only == "pass":
 		_pass()
+	if only == "" or only == "march":
+		_march()
+	if only == "" or only == "route":
+		_route()
 	print("RESULT: ", "PASS" if fails == 0 else "FAIL")
 	quit(0 if fails == 0 else 1)
 
@@ -853,6 +867,72 @@ func _pass() -> void:
 			mixed += sim.mix_any
 		print("pass %s: %d ticks mixing, %d man-steps" % [c2[0], mixed, sim.stat_mix_men])
 		_check(sim.stat_mix_men == 0, "pass %s: friends marching %s are left alone (%d man-steps)" % [c2[0], c2[0], sim.stat_mix_men])
+
+
+# ----------------------------------------------------------------- march ---
+
+func _march() -> void:
+	var MP = load("res://tests/march_probe.gd")
+	# A lone line on the same move (the beside case's first unit alone): its anchor's arrival.
+	var lone: Dictionary = MP.scenario("beside")
+	var pm: Array = lone["place_mm"]
+	lone["units"] = [lone["units"][0], lone["units"][2]]
+	lone["orders"] = [lone["orders"][0]]
+	var sim := BattleSim.new()
+	sim.setup(lone, 7)
+	MP._place(sim, 0, int(pm[0][1]), int(pm[0][2]))
+	var lone_t := -1
+	for t in 1500:
+		sim.step()
+		if t > 6 and sim.u_order[0] == BattleSim.O_NONE:
+			lone_t = sim.tick
+			break
+	for c in ["beside", "column", "street"]:
+		var r: Dictionary = MP.run_case(c)
+		print("march %s: closest %.2f m, %d man-ticks under 0.4 m, %d under 0.25 m, anchors in %.1f s (a lone line %.1f s), %d separation man-steps" % [
+			c, r["closest"] / float(M), r["in40"], r["in25"], r["arr"] / 10.0, lone_t / 10.0, r["sep"]])
+		if c == "street":
+			_check(r["in25"] < 1500 and r["arr"] > 0, "march street: fewer than 1,500 man-ticks under 0.25 m (%d; 2,966 before), arrived" % r["in25"])
+		else:
+			_check(r["closest"] >= M / 3 and r["in25"] == 0, "march %s: no two men of the two units within 0.33 m (%.2f m)" % [c, r["closest"] / float(M)])
+		if c == "beside":
+			_check(r["arr"] == lone_t, "march beside: the anchors arrive as a lone line's (%d / %d ticks)" % [r["arr"], lone_t])
+
+
+# ----------------------------------------------------------------- route ---
+
+func _route() -> void:
+	var RP = load("res://tests/route_probe.gd")
+	var f: Dictionary = RP.run_case("front")
+	print("route front: way %.1f m (plain %.1f m), arrived %.1f s, %d men lost, %d ways round" % [
+		f["walked"] / float(M), f["plain"] / float(M), f["arr"] / 10.0, f["lost"], f["detours"]])
+	_check(f["detours"] >= 1 and f["arr"] > 0 and f["lost"] == 0 and f["walked"] * 100 <= f["plain"] * 150,
+		"route front: round the musket line's front (a way round, arrived, %d men lost, way %d %% of the plain)" % [f["lost"], f["walked"] * 100 / maxi(f["plain"], 1)])
+	var a: Array = RP.setup_case("house")
+	var sim = a[0]
+	var mv: int = a[1]
+	var got := false
+	for t in 3000:
+		sim.step()
+		if sim.u_occ[mv] > 0:
+			got = true
+			break
+	print("route house: %d ways round, inside at %.1f s" % [sim.stat_rt_detours, sim.tick / 10.0 if got else -1.0])
+	_check(sim.stat_rt_detours >= 1 and got, "route house: round the enemy company and into the house")
+	# The attack goes straight: the same rodeleros ordered at the line facing them.
+	var t2: Array = RP.setup_case("thru")
+	var s2 = t2[0]
+	s2.pending_orders.clear()
+	s2.queue_order({"tick": 5, "type": BattleSim.ORDER_ATTACK, "unit": 0, "target": 1})
+	var x0: int = s2.u_ax[0]
+	var dev := 0
+	for t in 2000:
+		s2.step()
+		if s2.u_contact[0] != 0:
+			break
+		dev = maxi(dev, absi(s2.u_ax[0] - x0))
+	print("route attack: %d plans round, the anchor at most %.1f m off the straight line until contact" % [s2.stat_rt_plans, dev / float(M)])
+	_check(s2.stat_rt_plans == 0 and dev <= 3 * M, "route attack: straight at the line (%d plans round, %.1f m off)" % [s2.stat_rt_plans, dev / float(M)])
 
 
 # ---------------------------------------------------------- native siege ---

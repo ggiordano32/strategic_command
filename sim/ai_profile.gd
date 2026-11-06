@@ -413,6 +413,9 @@ const SH_LAND_DEF := 340       # 1: a defending ship sends her landing party ash
 const SH_IDLE_T := 341         # ... ticks
 const SH_LAND_ATT_PCT := 342   # an attacking ship sends her party ashore once her side storms (the assault; the field: the engagement) while its strength is under this % of the enemy's; 0 never (Easy)
 const SH_FOCUS := 343          # 1: a ship's guns take enemy ships first, then batteries, in reach (else fire at will); 0 fire at will
+# Paths clear of the enemy (docs/AI.md 64, 2026-11-06): ids 344-345.
+const RT_DETOUR_PCT := 344     # a unit on a move goes round the enemy's boxes and fronts by a way at most this % longer than the plain one (twice that round a box in the way); 0 the plain way (Easy)
+const RT_TOWN_PCT := 345       # ... the same in a settlement battle (the siege AI); 0 the plain way (every skill: going round moved the storms' balance)
 # Buildings block a flat shot; cover facing the enemy (docs/AI.md 65, 2026-11-06): ids 350-351.
 const LOF_PICK := 350          # 1: a flat-weapon missile unit's target choice (_mis_close, focus fire) on a map with houses or walls takes the nearest target it has a line of fire to, a target behind a house only when it has none (the sim's attack order then walks round for a line); 0 the nearest (Easy)
 const COVER_DIR := 351         # 1: cover troops' spots (_cover_spot) want cover between them and the enemy (BattleSim.cover_rating against the front); 0 any cover round the man (Easy)
@@ -725,6 +728,9 @@ const KNOBS: Array = [
 	[SH_IDLE_T, 600, 600, 450],
 	[SH_LAND_ATT_PCT, 0, 300, 400],
 	[SH_FOCUS, 0, 1, 1],
+	# Paths clear of the enemy (docs/AI.md 64): Easy walks the plain way across the enemy's front (a deliberate mistake).
+	[RT_DETOUR_PCT, 0, 50, 50],
+	[RT_TOWN_PCT, 0, 0, 0],
 	# Buildings block a flat shot (docs/AI.md 65): Easy shoots at the nearest and takes any cover (a deliberate mistake).
 	[LOF_PICK, 0, 1, 1],
 	[COVER_DIR, 0, 1, 1],

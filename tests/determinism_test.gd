@@ -82,7 +82,9 @@ extends SceneTree
 ## than round it), four units through one open gate (none freezes), and the
 ## "gate rush" (foot and riders at the run ordered to the plaza past a spear
 ## unit holding the gateway, or standing 14 m inside: never through it,
-## never behind it in the gateway, the plaza clock never starts); each
+## never behind it in the gateway, the plaza clock never starts; standing
+## 14 m inside, a way round it by the side streets instead of the contact,
+## 2026-11-06, "Paths clear of the enemy"); each
 ## identical on repeat and across snapshot / restore. The flat-map golden
 ## digests of skirmish and bench_2000 were re-recorded for it.
 ## The defenders' layout at the attacked gate (2026-10-08, part 2c;
@@ -207,9 +209,15 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## through a friendly unit (2026-11-02, docs/design/battle_sim.md "Filtering
 ## through a friendly unit (as built, 2026-11-02)": men thread a friend's
 ## files and its men step aside; skirmish, bench_2000 and test_stone_line
-## changed, were 285d5b282a11d4ec, a06150d9b42a8231 and b9d3025690cd28ba).
-const GOLDEN := {"skirmish": "df69881ef708d55b", "bench_2000": "06e22950fac353c1",
-	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "e15d23e1c258332c"}
+## changed, were 285d5b282a11d4ec, a06150d9b42a8231 and b9d3025690cd28ba),
+## and for filtering always on and paths clear of the enemy (2026-11-06,
+## docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)" and
+## "Paths clear of the enemy (as built, 2026-11-06)": men of two units keep
+## their room, moves go round the enemy; skirmish, bench_2000 and
+## test_stone_line changed, were df69881ef708d55b, 06e22950fac353c1 and
+## e15d23e1c258332c).
+const GOLDEN := {"skirmish": "8d3e3b4bf3c14d1e", "bench_2000": "78c42d10a48ff37c",
+	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "c2211eed0798f1ab"}
 
 var _ok := true
 
@@ -1162,7 +1170,13 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# tower engines, not the walk's archers, and no arrow from below meets
 			# the battlements (21 stops before); wall_cover is siege_castrum's
 			# and siege_eq_polis2's.)
-			need = ["paths", "clamp", "squeeze", "wall_shots", "breaches", "obs_lof", "layout"]
+			# (No wall_shots, no breaches since filtering always on, 2026-11-06: the
+			# course moves early, the AI walks its stone thrower up at tick 340
+			# instead of 420 and the tower bolts break its crew at 580, so no
+			# stone reaches the wall within the run (6 stones against 55);
+			# breaches and wall_shots are siege_polis', siege_punic's and
+			# siege_oppidum's.)
+			need = ["paths", "clamp", "squeeze", "obs_lof", "layout"]
 		"siege_hill@ai":
 			# (Walls 3 since the tower engines: the batteries batter the towers
 			# by the gate first, so the gate stands past the run, and the
@@ -3751,7 +3765,8 @@ func _rush_run(inside: int, cav: bool, ticks: int, snap: bool) -> Dictionary:
 	var a_end: int = -((sim.u_ax[0] - sim.g_ix[g]) * dc + (sim.u_ay[0] - sim.g_iy[g]) * ds) / FM.TRIG_ONE / M
 	return {"hashes": hashes, "contact": contact, "behind": behind, "inside": inside_n, "cap": cap, "snap_bad": snap_bad,
 		"a_end": a_end, "def_in": inside, "killed": [sim.u_killed[0], sim.u_killed[1]], "states": [sim.u_state[0], sim.u_state[1]], "routs": [sim.u_routs[0], sim.u_routs[1]],
-		"plaza_d": FM.approx_len(sim.u_ax[0] - sim.plaza[0], sim.u_ay[0] - sim.plaza[1]) / M, "dodge": sim.stat_dodge}
+		"plaza_d": FM.approx_len(sim.u_ax[0] - sim.plaza[0], sim.u_ay[0] - sim.plaza[1]) / M, "dodge": sim.stat_dodge,
+		"round": sim.stat_rt_detours}
 
 
 func _check_gate_rush() -> void:
@@ -3766,7 +3781,11 @@ func _check_gate_rush() -> void:
 		var why := "contact at tick %d, attacker ended %d m in from the gate (defender %d m in), %d m from the plaza; anchor inside the defender %d ticks, behind it %d ticks; plaza clock max %d; killed att %d / def %d; states %s, routs %s; steered %d" % [
 			a["contact"], a["a_end"], a["def_in"], a["plaza_d"], a["inside"], a["behind"], a["cap"],
 			a["killed"][0], a["killed"][1], str(a["states"]), str(a["routs"]), a["dodge"]]
-		if int(a["inside"]) > 0 or int(a["contact"]) < 0 or (int(spec[0]) < 5 and (int(a["behind"]) > 0 or int(a["cap"]) > 0)):
+		# (Defender 14 m in, side streets open: since 2026-11-06 the attacker may go round it by them, no contact;
+		# docs/design/battle_sim.md "Paths clear of the enemy".)
+		var round_ok := int(spec[0]) >= 5 and int(a["round"]) > 0
+		why += "; ways round %d" % int(a["round"])
+		if int(a["inside"]) > 0 or (int(a["contact"]) < 0 and not round_ok) or (int(spec[0]) < 5 and (int(a["behind"]) > 0 or int(a["cap"]) > 0)):
 			_fail("gate rush (%s): %s" % [spec[2], why])
 		else:
 			print("PASS gate rush (%s): %s; identical on repeat and across snapshot / restore" % [spec[2], why])
@@ -9246,7 +9265,8 @@ const AMB_MELT_SEED := 5000
 ## (a player) a musket company south of it, marching north through it from
 ## tick 400 at the walk.
 func _amb_piece() -> Dictionary:
-	return {"width_m": 400, "height_m": 400, "ai_sides": [1], "terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 200, 90, 40, 3]]},
+	# (rt_human 0: the company marches straight up into the ambush, not round the bait's front; 2026-11-06.)
+	return {"width_m": 400, "height_m": 400, "ai_sides": [1], "rt_human": 0, "terrain": {"kind": Terrain.K_FLAT, "woods": [[200, 200, 90, 40, 3]]},
 		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 100, 200, 380, Scenarios.FACE_UP),
 		Scenarios.unit(1, UT.index_of("native_warriors"), 100, 160, 90, Scenarios.FACE_DOWN),
 		Scenarios.unit(1, UT.index_of("native_warriors"), 100, 240, 90, Scenarios.FACE_DOWN),

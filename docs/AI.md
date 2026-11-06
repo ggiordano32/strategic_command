@@ -4627,6 +4627,32 @@ The rule is docs/design/campaign_rules.md "Support the shore (as built, 2026-11-
 
 Measured: campaign_rules.md "Support the shore (as built, 2026-11-05)".
 
+## 64. Units on a move go round the enemy (2026-11-06)
+
+The rule is docs/design/battle_sim.md "Paths clear of the enemy (as built, 2026-11-06)" (the owner: "pathing, the
+units should take a path that doesn't cross them in front of the enemy or through the enemy to get into a building
+or to a location"). It lives in the sim's path planning (`_rt_plan`, called by `_plan_path` on maps with a street
+graph and by `_rt_point` on the open field), so a player's unit and an AI's unit on a move order plan alike; the AI's
+part is two knobs, the detour a unit of an AI side accepts (`_rt_pct`):
+
+| Knob (`sim/ai_profile.gd`, ids 344-345; `N_KNOBS` 346) | Easy | Average | Skilled |
+|---|---|---|---|
+| `RT_DETOUR_PCT` (field battles: % longer than the plain way; twice that round an enemy's box in the way) | 0 (the plain way) | 50 | 50 |
+| `RT_TOWN_PCT` (the same in a settlement battle, the siege AI) | 0 | 0 | 0 |
+
+A player's units take `RT_DETOUR_HUMAN` 50 everywhere (scenario key `rt_human`, a test's set piece only). Easy walks
+the plain way across the enemy's front (a deliberate mistake). `RT_TOWN_PCT` is 0 at every skill by measurement: the
+siege AI's storm and plaza moves are laid out by street mouths, and letting them slip round the defenders by the side
+streets moved west_walls walls 0 from 52 to 71 % attacker wins (16 towns x 8 seeds; the separation alone 52 -> 52);
+going round in towns stays the players' (the owner's ask), and a later siege-AI pass may raise it.
+What reads the enemy term: only the plan of a unit under a move order (a point, a building's door, a wall's stair),
+when the order is given, when its path is planned again (a gate or the goal changed) and every `RT_REPLAN` 20 ticks
+when an enemy's box has come across the rest of its way. The AI's own estimates do not: `BattleAI` and `SiegeAI`
+read no path (their distances are straight lines and the arrival checks the anchor), the street graph's distance
+tables (`_dist_table`, the stragglers' `_via_goal`) and `route_to` (the view's route preview and refusals) are the
+plain graph as before, so the AI's choices do not change with the term; only the way its units walk does. Attack
+orders, pursuit, routers, withdrawals, the siege gear's carriers, units on a wall, a stair or a ladder, in contact,
+in a building or afloat (the amphibious planner) plan as before.
 ## 65. Buildings block a flat shot: the target with a line, cover facing the enemy (2026-11-06)
 
 (Numbered 65: 60-64 are taken or claimed in parallel.) The battle rule is docs/design/battle_sim.md "Buildings block a

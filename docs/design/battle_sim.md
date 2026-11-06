@@ -2534,6 +2534,129 @@ Tests: `tests/roles_sim_test.gd --only=pass` (the four passes; two lines marchin
 behind another never mix). Shots: `tests/pass_probe.gd --png=DIR` (top-view dots at the moments the mover's anchor
 crosses 207 ... 180 m, and the worst tick).
 
+(2026-11-06) Since "Filtering always on (as built, 2026-11-06)" below, the crossing filters for heroes and agents
+and near rocks too (settlement battles still interleave by the crossing's rule, measured there), and every man of a
+unit out of contact keeps his room from any other unit's men, towns included; the crossing rule above is otherwise
+unchanged.
+
+### Filtering always on (as built, 2026-11-06)
+
+The owner: "the filtering should be active all the time, not just when one of the troops are in combat or
+stationary". Two parts (`sim/battle_sim.gd`, "Filtering always on": `_sep_ok`, `_sep_r`, `_sep_build`, `_sep_rect`,
+`_mx_grid`, `_sep_push`, the second pass at the end of the fast path of `_update_soldiers`).
+
+**The crossing.** `_mix_ok` lost two exclusions: heroes and agents (`u_char`; determinism_test `chars`, the diplomat's
+parley that failed in 2026-11-02's first build, passes) and units within 4 m of a rock or a cliff (`_u_obs`); the
+man's step after a threading still goes through the nav test and the slide. The settlement exclusion stays, by
+measurement (one exception, kept minimal: the crossing's machinery, not the separation): with the crossing in towns
+the defenders falling back through one another into the acropolis were held by the 25 % step hold and the threading
+(determinism_test "shut inner gate": the acropolis shut at tick 4,081 instead of 901 and the ram was never sent; with
+the crossing out of towns shut at 901 and the ram sent at 1,507; HEAD 901 and 1,477). In towns the separation below keeps the men of two units apart. The crossing itself (`_mix_cross`, the
+threading through files, the side-step, `PASS_PCT` at the anchor, the 25 % hold) is as it was.
+
+**The separation.** Beside the crossing, every man of a unit out of contact keeps his room from every other unit's
+men, friend or enemy (`_sep_r`: `SEP_R_FOOT` 0.23 m a man on foot, two keep 0.45 m centre to centre; `SEP_R_RIDER`
+0.4 m; a beast its `body_r`). Every `SEP_THINK` 2 ticks the units that may (`_sep_ok`: ready, out of contact, not
+charging or knocked about, not on a wall, stair or ladder, not in a building, no engines, not afloat, not a ship;
+towns and characters included) are paired when their boxes come within their joint room and `SEP_BOX` 0.3 m (not
+both settled); the strip where the two boxes meet, that much round it, is the pair's region (`u_spr`), and only men
+in it are in the grid (`mx_head`, 2 m cells, shared with the crossing; rebuilt every tick while a crossing runs, else
+on even ticks). After a unit's men have made their steps (and the nav test), each man in its region looks every
+other tick (by his index) and is moved out of every other unit's man within their joint room by the whole overlap,
+at most `SEP_NUDGE` 0.085 m a tick (`_sep_push`; two men on one spot part across his unit's facing, the lower index
+to the left); a move into a blocked cell is dropped. Between his looks, a man of a standing unit who stepped back
+from a nudge to within `SEP_NUDGE` of his place goes back where he stood, and a man held where he stood is at rest,
+so a unit beside another settles. No slowdown, no hold, no knob: the anchor moves as before (the march speed is
+HEAD's to the tick). Melee keeps its own push (the contact path is untouched), routers, wall and ladder men and men
+in buildings as before. No state of its own: the pairs, the regions and the grid are scratch rebuilt from the
+positions (script variables, so in snapshots; lockstep_test passes).
+
+Measured (`tests/march_probe.gd`, HEAD -> after; closest two men of different units over the march, man-ticks under
+0.4 m / under 0.25 m, the anchors' arrival): two musket lines side by side with their flank files 0.4 m apart 0.39 m,
+2,808 / 0 -> 0.39 m, 1,342 / 0 (the places themselves 0.4 m apart: between his looks a marching man steps back to
+his place), 67.7 -> 67.7 s; the same with the flank files on one line (places overlapping by a file) 0.00 m, 2,808 /
+2,808 -> 0.00 m, 242 / 202 (the first seconds), 67.7 s; a column 0.3 m behind a line 0.29 m, 167 / 0 -> 0.34 m, 8 / 0,
+70.4 s; four companies of 60 crowding a walls-0 oppidum's streets to its plaza 0.01 m, 14,623 / 2,966 -> 0.01 m,
+11,546 / 976 (the street's walls squeeze them: a nudge into a house is dropped), 238.0 s both. The crossing probe
+(`tests/pass_probe.gd`, closest m and man-ticks within 0.5 m, HEAD -> after): line 0.47 / 78 -> 0.47 / 67, column 0.41
+/ 105 -> 0.42 / 100, lancers through foot 0.39 / 31 -> 0.39 / 4, Rome's heavy 0.40 / 113 -> 0.43 / 99, musketeers
+through pikes 0.45 / 785 -> 0.46 / 783; pass times unchanged. Cost: the separation alone on the same course (its
+pushes computed and dropped) about 5 % of a bench_2000 tick; the first build (every man every tick, the region 1.5 m
+round the boxes, the pushes inside the soldier loop) cost 11 %, the second pass and the grid on even ticks halved it.
+
+The ladder queue's spots (found with it). `_ladder_start` now puts each man's waiting spot (`_lw_x` / `_lw_y`,
+scratch, not in snapshots) where he stands: until `_ladder_step` first ran for a new climb the men below walked one
+tick toward another climb's spots (or the origin), so a restored copy went its own way (lockstep_test siege diverged
+138 ticks after its 2,915 snapshot once the battle's course moved).
+
+### Paths clear of the enemy (as built, 2026-11-06)
+
+The owner: "pathing, the units should take a path that doesn't cross them in front of the enemy or through the enemy
+to get into a building or to a location." Code: `sim/battle_sim.gd`, "Paths clear of the enemy": `_rt_pct`,
+`_rt_zones`, `_rz_add`, `_rz_sel`, `_rz_in`, `_rt_cost`, `_rt_seg`, `_rt_eval`, `_rt_way`, `_rt_stale`, `_seg_box`,
+`_rt_point`, `_rt_plan`, `_rt_graph`, `_rt_smooth`, `_rt_grid`; docs/AI.md 64.
+
+**Who.** A unit under a move order (a point, a building's door: ORDER_OCCUPY is a move to it, a wall's stair foot),
+formed, out of contact, on the ground, carrying no siege gear, not by water (the amphibious planner as before), not
+in a building (`_rt_pct`); an AI side's units take a way at most `AP.RT_DETOUR_PCT` % longer than the plain one in a
+field battle (Easy 0: the plain way; Average and Skilled 50) and `AP.RT_TOWN_PCT` in a settlement battle (0 at every
+skill: the siege AI's storms slipping round the defenders by the side streets moved west_walls walls 0 from 52 to 71 %
+attacker wins; docs/AI.md 64), a player's `RT_DETOUR_HUMAN` 50 everywhere (scenario `rt_human`: the ambush set piece
+of determinism_test sets 0 so its company marches straight into the ambush). Attacks (they must go at the enemy),
+pursuit, routers, withdrawals, the ladder, ram, pole and tower carriers, men on a wall, a stair or a ladder, the
+column march's shape, the sortie's attack orders and the ships of 9ce2837 plan as before.
+
+**The zones** (`_rt_zones`, when the way is planned): each enemy unit its side sees (not hidden), formed, not routing,
+on the ground, not in a building or on a wall: its box and `RT_MARGIN` 4 m and the unit's own half width (at most
+`RT_OWN` 6 m: the anchor is its front's middle) can not be crossed; in front of a shooting unit with ammunition (its
+facing +-45 degrees, `RT_ARC`, or its own arc if wider, within its range and `RT_MARGIN`) a metre costs `RT_FIRE_PCT`
+300 % more; in front of a melee unit (its width and `RT_MARGIN` either side, `RT_FRONT` 15 m deep) `RT_FRONT_PCT`
+100 % more. A zone holding the goal is left out (the unit means to go there), a box holding the anchor too.
+
+**The plan** (`_rt_plan`). The path is planned as before (straight, or over the street graph); if that way touches no
+zone nothing changes. Else a way round is searched: over the street graph's nodes where the map has one (`_rt_graph`,
+A*: an edge costs its length and its dearest metre's %, sampled every `RT_STEP` 2 m; edges through a box are shut;
+the distance tables `_dist_table` are not used or changed), else over a grid of the open field (`_rt_grid`, cells
+`RT_CELL` 4 m, coarser to stay within `RT_CELLS` 4,000 in the rectangle round the anchor and the goal with room for
+the detour, 8 neighbours, at most `RT_EXPAND` 4,000 cells), shortcut where the straight line is clear and no dearer
+(`_los_fat` on maps with obstacles), at most `PATH_MAX` waypoints. It is taken when it is through no box, at most the
+detour % longer and cheaper; when the plain way goes through an enemy's box, any way round at most twice the detour
+% longer is taken. `u_rtd` marks a way round (no shortcut past its waypoints, `_path_point`). On the open field the
+unit follows it by `_rt_point` (the same path arrays; reached at `WP_REACH`). Every `RT_REPLAN` 20 ticks the rest of
+the way is looked over (`_rt_stale`: an enemy's box with its margins now across a leg, tested segment against box)
+and the plan is made again; a firing line turning onto the way does not re-plan (the way would swing with every turn).
+
+**State.** `u_rtd` and, on a plain map, the path arrays (`u_pn`, `u_pk`, `u_pgx`, `u_pgy`, `u_pep`, `pth_x`, `pth_y`)
+are hashed once `rt_used` (some unit planned with a zone near); battles where none did hash as before. Snapshots carry
+them (script variables); the zones and the searches are scratch.
+
+**What reads it.** Only the plan of a unit on a move. The AI's estimates read no path (BattleAI and SiegeAI use
+straight distances and the anchor), the stragglers' `_via_goal` and the view's `route_to` (route preview, refusals)
+use the plain street graph, so the AI's choices are unchanged by the term; only the way its units walk.
+
+Measured (`tests/route_probe.gd`, HEAD -> after; the anchor's way, men lost on the way, the outcome; shots
+`--png=DIR`): 60 rodeleros ordered past the front of a 100-man musket line facing across their way (70 m off) walked
+straight in front of it, 104 m, 35 men lost, routed -> went round out of its reach, 312 m against the plain 271 m
+(+15 %), 0 lost, arrived; a defending musket company sent into a house in west_village with the enemy's company
+standing on the plain way to its door walked into it, 91 m, 29 lost, held in the melee short of the door -> went round
+the block by the south and west, 315 m against 180 m (the through-an-enemy limit), 24 lost passing 10 m from the
+company (a musket line's 120 m reach covers any way to that door), inside; the same rodeleros sent to a point 70 m
+behind a musket line facing them (the line turns to its target, so no way round is out of its fire) 85 m, 37 lost,
+routed -> round the flank of its range, 199 m, 38 lost, routed. An attack order on that line goes straight at it
+(no plan round, the anchor within 0.8 m of the straight line). Cost: the plans on the same course about 2 % of a
+bench_2000 tick (the look-overs test only the boxes, segment against box).
+
+Battles (tools/balance, 8 seeds, before a clean copy of HEAD, the whole change: the separation, the crossing for
+heroes and near rocks, the paths; attacker wins %, pooled): open_town 79 -> 88 (19 -> 21 of 24; Havana 38 -> 62, no
+cell beyond its interval); west_named 35 -> 37 (walls 0 / 1 / 2 57 / 38 / 9 -> 62 / 34 / 14); west_walls 38 -> 40
+(52 / 34 / 27 -> 57 / 37 / 27); rome_walls 56 -> 51 (75 / 52 / 42 -> 69 / 50 / 35); the asymmetry probe (Spanish
+wins of 48) asym_field 23 -> 25, asym_field2 45 -> 47. Cells beyond their intervals: Havana walls 1 50 -> 12, Veracruz
+walls 0 50 -> 100, Cumana walls 2 100 -> 50, St Augustine all walls 21 -> 46, Attica walls 1 100 -> 62. The tuning round
+(the first build): the siege AI going round in towns moved west_walls walls 0 52 -> 81 (the separation alone 52 -> 52,
+the paths alone 52 -> 71), hence `RT_TOWN_PCT` 0; the crossing in towns, hence its settlement exclusion kept.
+Campaign pins match (battles settle by formula); the flat goldens skirmish, bench_2000 and test_stone_line
+re-recorded (test_cav_art unchanged).
+
 ## The Caribbean roster, batch 1 (plan, agreed 2026-10-23)
 
 The owner, 2026-10-23: "The different units for different armies is exactly where I want to go with it. They

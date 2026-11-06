@@ -583,6 +583,21 @@ const FORT_STAIR_OFF := 1 << 30  # a West fort's stair whose foot the way does n
 const FORT_CAP_TICKS := 300      # a West fort (slice 2c): attackers hold its parade this long, none of its garrison on it: the fort falls
 const FORT_GUN_SECTOR := 171     # ... its guns shoot within this of their platform's outward way (60 degrees either side)
 const PATH_MAX := 24             # waypoints per unit path
+# Paths clear of the enemy (docs/design/battle_sim.md "Paths clear of the enemy (as built, 2026-11-06)"): a unit on
+# a move plans round the enemy (_rt_plan): never through an enemy unit's box and its margin, dearer in front of it.
+const RT_MARGIN := 4 * M          # an enemy unit's box and this round it: no way through ...
+const RT_OWN := 6 * M             # ... and the unit's own half width (at most this), its anchor being its front's middle
+const RT_FRONT := 15 * M          # a melee unit's front: this deep ahead of it (its width and RT_MARGIN either side) ...
+const RT_FRONT_PCT := 100         # ... costs this % more a metre
+const RT_ARC := 128               # a shooting unit's front: +-45 degrees of its facing (or its own arc if wider) ...
+const RT_FIRE_PCT := 300          # ... within its range and RT_MARGIN costs this % more a metre
+const RT_DETOUR_HUMAN := 50       # a player's unit takes a way at most this % longer than the plain one (the AI: AP.RT_DETOUR_PCT)
+const RT_CELL := 4 * M            # the open field's search grid (no street graph): cells this wide ...
+const RT_CELLS := 4000            # ... at most this many in the searched rectangle (coarser cells beyond)
+const RT_EXPAND := 4000           # a search looks at most this many cells or graph nodes
+const RT_REPLAN := 20             # a unit's way is looked over every this many ticks (planned again if an enemy's box now lies across it)
+const RT_STEP := 2 * M            # a way is sampled every this far
+const RZ_N := 12                  # (ints a zone: kind, 7 parameters, its bounding box)
 const TRAIL := 4                 # waypoints a unit's anchor passed, kept for its stragglers
 const WP_REACH := 4 * M          # a waypoint counts as reached this close
 const PATH_INF := 1 << 28
@@ -1806,6 +1821,28 @@ var mx_h: int = 0
 var mx_next := PackedInt32Array()
 var mx_mv := PackedByteArray()       # per man of a mixing unit: 1 on the move (further than PASS_MOVING from his place)
 var stat_mix_men: int = 0            # man-steps that threaded or gave way (not hashed)
+# Filtering always on (docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)"; scratch, rebuilt
+# from the positions by _sep_build: the pairs every SEP_THINK ticks, the grid every tick).
+var sep_any: int = 0                 # some pair of units comes within SEP_BOX this tick
+var u_sep := PackedByteArray()       # per unit: 1 its men keep their distance from another unit's this tick
+var u_spr := PackedInt32Array()      # per unit (4 a unit: x0, y0, x1, y1): where it comes near the units it pairs with
+var u_spq := PackedInt32Array()      # per unit: a man's room in the separation (_sep_r)
+var sep_rmax: int = 0                # the largest room among the units in the grid this tick
+var _sep_c := PackedInt32Array()     # (the units that may pair, _sep_pairs)
+var mx_used: int = 0                 # mx_head holds men in mx_cells' cells (cleared before the next build)
+var mx_cells := PackedInt32Array()   # (the grid cells holding men, mx_used of them)
+var mx_sep: int = 0                  # the grid holds the separation's men alone (built on an even tick: kept for the odd one)
+var stat_sep_men: int = 0            # man-steps the separation moved (not hashed)
+# Paths clear of the enemy (docs/design/battle_sim.md "Paths clear of the enemy (as built, 2026-11-06)").
+var rt_used: int = 0                 # some unit planned round the enemy (u_rtd and, on a plain map, the paths hashed)
+var rt_human: int = RT_DETOUR_HUMAN  # a player's units' detour % (scenario "rt_human"; static)
+var u_rtd := PackedInt32Array()      # per unit: 1 its path goes round the enemy (no shortcuts past its waypoints)
+var rz := PackedInt32Array()         # scratch: the enemy zones of the plan being made, RZ_N ints each (_rt_zones)
+var rz_n: int = 0
+var rz_act := PackedInt32Array()     # scratch: the offsets of the zones _rt_cost looks at (_rz_sel)
+var rz_na: int = 0
+var stat_rt_plans: int = 0           # plans that looked for a way round (not hashed)
+var stat_rt_detours: int = 0         # ... and took it
 
 # Orders waiting for their tick. Each is a Dictionary of ints.
 var pending_orders: Array = []
@@ -2074,6 +2111,15 @@ const PASS_ODD := M / 32           # between his looks a man threading further t
 const PASS_THINK := 8              # the units that cross a friend are looked for every this many ticks (their men every tick)
 const PASS_CROSS := M * 3 / 10     # a unit crosses a friend when the line down its middle comes within this of the friend's rectangle
 const PASS_AHEAD := 3 * M          # ... that line runs this far ahead of its front (the next PASS_THINK ticks' steps, and room to look)
+# Filtering always on (docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)"): men of two units
+# (either side, out of contact) never stand inside one another: each keeps his room from the other unit's men.
+const SEP_R_FOOT := 230            # a man's room: two men on foot keep 0.45 m apart, centre to centre
+const SEP_R_RIDER := 400           # ... a rider's (a rider and a man on foot 0.63 m, two riders 0.8 m; a beast its body_r)
+const SEP_BOX := M * 3 / 10        # two units pair when their boxes come within their men's joint room and this (the next ticks' steps); their men that near where the boxes meet are in the grid
+const SEP_THINK := 2               # the pairs are looked for every this many ticks (their men every tick)
+const SEP_NUDGE := M / 12          # a man is moved at most this far a tick by the separation (0.85 m/s)
+const SEP_SEEN := 6                # a man heeds at most this many men of other units round him
+const SEP_ROUND := M / 64          # (between his looks a man this little more than SEP_NUDGE off his place stays: held there)
 const DODGE_LOOK := 4 * M         # ... each looked along this far (a cell): room to go round, not a sidestep
 const BLK_FRIEND := 1             # u_blk: passing through a friend (half speed)
 const BLK_QUEUE := 2              # ... waiting behind friends fighting its target
@@ -2274,6 +2320,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_load_types()
 
 	time_limit = maxi(int(scenario.get("time_limit", TIME_LIMIT / TICKS_PER_SECOND)), 60) * TICKS_PER_SECOND
+	rt_human = maxi(int(scenario.get("rt_human", RT_DETOUR_HUMAN)), 0)
 	var units: Array = scenario["units"]
 	if riv_on != 0:
 		# Off the water; the far bank's holder faces the crossing (fortified:
@@ -2451,6 +2498,12 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	u_gtarget.fill(-1)
 	pth_x.resize(n_units * PATH_MAX)
 	pth_x.fill(0)
+	rt_used = 0
+	u_rtd.resize(n_units)
+	u_rtd.fill(0)
+	rz_n = 0
+	stat_rt_plans = 0
+	stat_rt_detours = 0
 	pth_y.resize(n_units * PATH_MAX)
 	pth_y.fill(0)
 	tr_x.resize(n_units * TRAIL)
@@ -2711,6 +2764,15 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	mx_mv.resize(n)
 	mx_mv.fill(0)
 	stat_mix_men = 0
+	sep_any = 0
+	u_sep.resize(n_units)
+	u_sep.fill(0)
+	u_spr.resize(n_units * 4)
+	u_spq.resize(n_units)
+	_sep_c.resize(n_units)
+	mx_used = 0
+	mx_cells.resize(n)
+	stat_sep_men = 0
 	_update_bounds()
 	_update_units_stats()
 	if ter_on != 0 or obs_on != 0 or fwh_on != 0:
@@ -5008,7 +5070,10 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 	u_pn[u] = 1
 	pth_x[base] = gx
 	pth_y[base] = gy
+	if u_rtd[u] != 0:
+		u_rtd[u] = 0
 	if straight:
+		_rt_plan(u, gx, gy, gm)
 		return
 	var best := PATH_INF
 	var ba := -1
@@ -5028,6 +5093,7 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 				bb = b
 				bi = di
 	if ba < 0:
+		_rt_plan(u, gx, gy, gm)
 		return  # no way round (every gate shut): straight on
 	var dtb: PackedInt32Array = tables[bi]
 	var k := 0
@@ -5062,6 +5128,7 @@ func _plan_path(u: int, gx: int, gy: int) -> void:
 	u_pk[u] = pk
 	# Where the unit is now heads its trail (stragglers make for it first).
 	_trail_push(u, ax, ay)
+	_rt_plan(u, gx, gy, gm)
 
 
 ## The way a unit's anchor at (ax, ay) would go to (gx, gy) through the
@@ -5123,6 +5190,599 @@ func route_to(ax: int, ay: int, gx: int, gy: int, gm: int = MapGen.NAV_GROUND) -
 	return out.slice(pk * 2)
 
 
+# Paths clear of the enemy (docs/design/battle_sim.md "Paths clear of the enemy (as built, 2026-11-06)"). A unit on a
+# move (a point, a building's door, a wall's stair) plans its way as before, then looks it over against the enemy
+# units its side sees (_rt_zones): through an enemy's box and RT_MARGIN never, in front of a shooting unit (its arc,
+# its range) RT_FIRE_PCT % dearer a metre, in front of a melee unit RT_FRONT_PCT % dearer. If the plain way touches
+# any of them, a way round is searched (the street graph's nodes where there is one, else a grid of the open field)
+# and taken when it is cheaper and at most _rt_pct % longer (twice that when the plain way goes through an enemy).
+# Attacks, pursuit, routers, withdrawals, ladders and the siege gear, men in contact, on a wall or afloat: as before.
+
+## The detour unit u accepts (% longer than its plain way), 0 none: a move order, formed, out of contact, on the
+## ground, no siege gear carried, not by water; the AI's by its knob (AP.RT_DETOUR_PCT; in a settlement battle
+## AP.RT_TOWN_PCT), a player's rt_human
+## (RT_DETOUR_HUMAN; scenario "rt_human", 0 the plain way: a test's set piece).
+func _rt_pct(u: int) -> int:
+	if u_order[u] != O_MOVE or u_state[u] != U_READY or u_contact[u] != 0 or u_wall[u] != 0 or u_stair[u] != 0 \
+			or u_occ[u] > 0 or u_neng[u] > 0:
+		return 0
+	if (sg_on != 0 and u_carry[u] >= 0) or (shp_on != 0 and is_ship(u)) or (amph_on != 0 and afloat(u)):
+		return 0
+	var sd := u_side[u]
+	if ai_sides[sd] != 0:
+		# (A settlement battle: the siege AI's own knob, 0 at every skill: its storm and plaza moves slipping round the
+		# defenders by the side streets moved west_walls walls 0 from 52 to 71 % attacker wins.)
+		return AIProfile.of(self, sd)[AIProfile.RT_TOWN_PCT if city_on != 0 else AIProfile.RT_DETOUR_PCT]
+	return rt_human
+
+
+## The zones of the enemies of unit u's side it would go round on its way from (ax, ay) to (gx, gy) (rz, rz_n), 8
+## ints each: [0, x0, y0, x1, y1] an enemy's box and RT_MARGIN and u's half width (RT_OWN at most); [1, cx, cy, cos, sin, range, cos of the half arc,
+## %] a shooter's front; [2, ax, ay, cos, sin, half width, depth, %] a melee unit's front. Enemies its side sees, on
+## the ground, formed, not routing, not in a building or on a wall; a zone holding the goal is left out (the unit
+## means to go there), a box holding the anchor too (it stands by it already).
+func _rt_zones(u: int, ax: int, ay: int, gx: int, gy: int) -> void:
+	var sd := u_side[u]
+	var mg := RT_MARGIN + mini(unit_half_width(u), RT_OWN)  # (the anchor's way: its own files either side too)
+	rz_n = 0
+	if rz.size() < n_units * 2 * RZ_N:
+		rz.resize(n_units * 2 * RZ_N)
+	for e in n_units:
+		if u_side[e] == sd or u_alive[e] <= 0 or u_state[e] != U_READY or u_wall[e] != 0 or u_stair[e] != 0 \
+				or u_occ[e] > 0 or hidden_from(e, sd) or (shp_on != 0 and is_ship(e)) or (amph_on != 0 and afloat(e)):
+			continue
+		var x0 := u_minx[e] - mg
+		var y0 := u_miny[e] - mg
+		var x1 := u_maxx[e] + mg
+		var y1 := u_maxy[e] + mg
+		if not (gx >= x0 and gx <= x1 and gy >= y0 and gy <= y1) and not (ax >= x0 and ax <= x1 and ay >= y0 and ay <= y1):
+			_rz_add(0, x0, y0, x1, y1, 0, 0, 0, x0, y0, x1, y1)
+		var ty := u_type[e]
+		var c := FM.cos_a(u_face[e])
+		var sn := FM.sin_a(u_face[e])
+		if t_m_range[ty] > 0 and u_ammo[e] > 0:
+			var rng := t_m_range[ty] + RT_MARGIN
+			var ca := FM.cos_a(maxi(RT_ARC, t_arc[ty]))
+			if _rz_in(1, u_cx[e], u_cy[e], c, sn, rng, ca, gx, gy) == 0:
+				_rz_add(1, u_cx[e], u_cy[e], c, sn, rng, ca, RT_FIRE_PCT, u_cx[e] - rng, u_cy[e] - rng, u_cx[e] + rng, u_cy[e] + rng)
+		elif u_char[e] == 0 or ch_on == 0:
+			var hw := unit_half_width(e) + RT_MARGIN
+			if _rz_in(2, u_ax[e], u_ay[e], c, sn, hw, RT_FRONT, gx, gy) == 0:
+				var rr := hw + RT_FRONT
+				_rz_add(2, u_ax[e], u_ay[e], c, sn, hw, RT_FRONT, RT_FRONT_PCT, u_ax[e] - rr, u_ay[e] - rr, u_ax[e] + rr, u_ay[e] + rr)
+	_rz_sel(0, 0, field_w, field_h)
+
+
+func _rz_add(k: int, a: int, b: int, c: int, d: int, e: int, f: int, g: int, bx0: int, by0: int, bx1: int, by1: int) -> void:
+	if rz.size() < (rz_n + 1) * RZ_N:
+		rz.resize((rz_n + 1) * 2 * RZ_N)
+	var o := rz_n * RZ_N
+	rz[o] = k
+	rz[o + 1] = a
+	rz[o + 2] = b
+	rz[o + 3] = c
+	rz[o + 4] = d
+	rz[o + 5] = e
+	rz[o + 6] = f
+	rz[o + 7] = g
+	rz[o + 8] = bx0
+	rz[o + 9] = by0
+	rz[o + 10] = bx1
+	rz[o + 11] = by1
+	rz_n += 1
+
+
+## The zones _rt_cost looks at (rz_act): those whose bounding boxes meet the rectangle (x0, y0) - (x1, y1).
+func _rz_sel(x0: int, y0: int, x1: int, y1: int) -> void:
+	if rz_act.size() < rz_n:
+		rz_act.resize(rz_n * 2 + 8)
+	rz_na = 0
+	for z in rz_n:
+		var o := z * RZ_N
+		if rz[o + 8] <= x1 and rz[o + 10] >= x0 and rz[o + 9] <= y1 and rz[o + 11] >= y0:
+			rz_act[rz_na] = o
+			rz_na += 1
+
+
+## (x, y) lies in a front zone of kind k (1 a shooter's, 2 a melee unit's) with these parameters: 1, else 0.
+func _rz_in(k: int, zx: int, zy: int, c: int, sn: int, p: int, q: int, x: int, y: int) -> int:
+	var one := FM.TRIG_ONE
+	var dx := x - zx
+	var dy := y - zy
+	var fwd := (dx * c + dy * sn) / one
+	if k == 1:
+		if fwd <= 0 or absi(dx) > p or absi(dy) > p:
+			return 0
+		var d := FM.approx_len(dx, dy)
+		return 1 if d <= p and fwd * one >= d * q else 0
+	if fwd < 0 or fwd > q:
+		return 0
+	return 1 if absi((dy * c - dx * sn) / one) <= p else 0
+
+
+## The extra cost of a metre at (x, y) among the zones (%), -1 inside an enemy's box.
+func _rt_cost(x: int, y: int) -> int:
+	var t := 0
+	for z in rz_na:
+		var o := rz_act[z]
+		if x < rz[o + 8] or x > rz[o + 10] or y < rz[o + 9] or y > rz[o + 11]:
+			continue
+		var k := rz[o]
+		if k == 0:
+			if x >= rz[o + 1] and x <= rz[o + 3] and y >= rz[o + 2] and y <= rz[o + 4]:
+				return -1
+		elif _rz_in(k, rz[o + 1], rz[o + 2], rz[o + 3], rz[o + 4], rz[o + 5], rz[o + 6], x, y) != 0:
+			t += rz[o + 7]
+	return t
+
+
+## The dearest metre (%) of the line from (x0, y0) to (x1, y1) among the zones, sampled every RT_STEP; -1 when it
+## crosses an enemy's box.
+func _rt_seg(x0: int, y0: int, x1: int, y1: int) -> int:
+	var ns := maxi(FM.approx_len(x1 - x0, y1 - y0) / RT_STEP, 1)
+	var t := 0
+	for q in range(1, ns + 1):
+		var c := _rt_cost(x0 + (x1 - x0) * q / ns, y0 + (y1 - y0) * q / ns)
+		if c < 0:
+			return -1
+		t = maxi(t, c)
+	return t
+
+
+## A way's polyline (x, y interleaved) against the zones: (length, cost, 1 through an enemy's box), 1/8 m.
+func _rt_eval(pts: PackedInt32Array) -> Vector3i:
+	var ln := 0
+	var cs := 0
+	var blk := 0
+	var np := pts.size() / 2
+	var sa := rz_na
+	var sv := rz_act.duplicate()
+	for k in range(1, np):
+		var x0 := pts[k * 2 - 2]
+		var y0 := pts[k * 2 - 1]
+		var dx := pts[k * 2] - x0
+		var dy := pts[k * 2 + 1] - y0
+		var l := FM.approx_len(dx, dy)
+		var ns := maxi(l / RT_STEP, 1)
+		var l8 := l / 128
+		ln += l8
+		_rz_sel(mini(x0, x0 + dx), mini(y0, y0 + dy), maxi(x0, x0 + dx), maxi(y0, y0 + dy))
+		if rz_na == 0:
+			cs += l8
+			continue
+		var sc := 0
+		for q in ns:
+			var c := _rt_cost(x0 + dx * (2 * q + 1) / (2 * ns), y0 + dy * (2 * q + 1) / (2 * ns))
+			if c < 0:
+				blk = 1
+				c = 0
+			sc += c
+		cs += l8 * (100 * ns + sc) / (100 * ns)
+	rz_act = sv
+	rz_na = sa
+	return Vector3i(ln, cs, blk)
+
+
+## Unit u's way from its anchor (the rest of its path to (gx, gy)) as a polyline.
+func _rt_way(u: int, gx: int, gy: int) -> PackedInt32Array:
+	var out := PackedInt32Array([u_ax[u], u_ay[u]])
+	var base := u * PATH_MAX
+	for k in range(u_pk[u], u_pn[u] - 1):
+		out.append(pth_x[base + k])
+		out.append(pth_y[base + k])
+	out.append(gx)
+	out.append(gy)
+	return out
+
+
+## Unit u's way to (gx, gy) is stale: an enemy's box now lies across it (a front that turned onto it is not: the way
+## would swing about with every turn of a firing line).
+func _rt_stale(u: int, gx: int, gy: int) -> bool:
+	var sd := u_side[u]
+	var mg := RT_MARGIN + mini(unit_half_width(u), RT_OWN)
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	var base := u * PATH_MAX
+	var k0 := u_pk[u]
+	var last := u_pn[u] - 1
+	for e in n_units:
+		if u_side[e] == sd or u_alive[e] <= 0 or u_state[e] != U_READY or u_wall[e] != 0 or u_stair[e] != 0 \
+				or u_occ[e] > 0 or hidden_from(e, sd) or (shp_on != 0 and is_ship(e)) or (amph_on != 0 and afloat(e)):
+			continue
+		var x0 := u_minx[e] - mg
+		var y0 := u_miny[e] - mg
+		var x1 := u_maxx[e] + mg
+		var y1 := u_maxy[e] + mg
+		if (gx >= x0 and gx <= x1 and gy >= y0 and gy <= y1) or (ax >= x0 and ax <= x1 and ay >= y0 and ay <= y1):
+			continue  # (as _rt_zones: a box holding the goal or the anchor is no bar)
+		var sx := ax
+		var sy := ay
+		for k in range(k0, last + 1):
+			var ex := pth_x[base + k] if k < last else gx
+			var ey := pth_y[base + k] if k < last else gy
+			if _seg_box(sx, sy, ex, ey, x0, y0, x1, y1):
+				rt_used = 1
+				return true
+			sx = ex
+			sy = ey
+	return false
+
+
+## The segment (x0, y0) - (x1, y1) meets the box [bx0, bx1] x [by0, by1] (slabs, integers).
+static func _seg_box(x0: int, y0: int, x1: int, y1: int, bx0: int, by0: int, bx1: int, by1: int) -> bool:
+	if maxi(x0, x1) < bx0 or mini(x0, x1) > bx1 or maxi(y0, y1) < by0 or mini(y0, y1) > by1:
+		return false
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var tn := 0  # (the entry and exit along it, in 1/4096 of its length)
+	var tf := 4096
+	if dx == 0:
+		if x0 < bx0 or x0 > bx1:
+			return false
+	else:
+		var ta := (bx0 - x0) * 4096 / dx
+		var tb := (bx1 - x0) * 4096 / dx
+		tn = maxi(tn, mini(ta, tb))
+		tf = mini(tf, maxi(ta, tb))
+	if dy == 0:
+		if y0 < by0 or y0 > by1:
+			return false
+	else:
+		var ta2 := (by0 - y0) * 4096 / dy
+		var tb2 := (by1 - y0) * 4096 / dy
+		tn = maxi(tn, mini(ta2, tb2))
+		tf = mini(tf, maxi(ta2, tb2))
+	return tn <= tf
+
+
+## The open field (no street graph): unit u on a move to (gx, gy) follows its way round the enemy (planned when the
+## goal changes, again when an enemy's box comes across it, looked for every RT_REPLAN ticks); returns the point
+## to head for.
+func _rt_point(u: int, gx: int, gy: int) -> Vector2i:
+	if u_pn[u] == 0 or u_pgx[u] != gx or u_pgy[u] != gy:
+		u_pgx[u] = gx
+		u_pgy[u] = gy
+		u_pk[u] = 0
+		u_pn[u] = 1
+		pth_x[u * PATH_MAX] = gx
+		pth_y[u * PATH_MAX] = gy
+		u_rtd[u] = 0
+		_rt_plan(u, gx, gy, _ground_mask(u))
+	elif (u + tick) % RT_REPLAN == 0 and _rt_pct(u) > 0 and _rt_stale(u, gx, gy):
+		u_pk[u] = 0
+		u_pn[u] = 1
+		pth_x[u * PATH_MAX] = gx
+		pth_y[u * PATH_MAX] = gy
+		u_rtd[u] = 0
+		_rt_plan(u, gx, gy, _ground_mask(u))
+	var base := u * PATH_MAX
+	var k := u_pk[u]
+	var last := u_pn[u] - 1
+	while k < last and FM.approx_len(pth_x[base + k] - u_ax[u], pth_y[base + k] - u_ay[u]) <= WP_REACH:
+		k += 1
+	u_pk[u] = k
+	if k >= last:
+		return Vector2i(gx, gy)
+	return Vector2i(pth_x[base + k], pth_y[base + k])
+
+
+## After unit u's path to (gx, gy) is planned (_plan_path, or the field's _rt_point): if its way touches an enemy's
+## zones, the way round them (_rt_graph / _rt_grid) replaces it when cheaper and at most _rt_pct % longer (when the
+## plain way goes through an enemy's box: any way round at most twice that longer). u_rtd marks a way round.
+func _rt_plan(u: int, gx: int, gy: int, gm: int) -> void:
+	var pct := _rt_pct(u)
+	if pct <= 0 or ((gm & NAV_WATER) != 0 and amph_on != 0):
+		return
+	var ax := u_ax[u]
+	var ay := u_ay[u]
+	_rt_zones(u, ax, ay, gx, gy)
+	if rz_n == 0:
+		return
+	rt_used = 1
+	var ev := _rt_eval(_rt_way(u, gx, gy))
+	if ev.z == 0 and ev.y <= ev.x:
+		return
+	stat_rt_plans += 1
+	var lim := ev.x * (100 + pct * (2 if ev.z != 0 else 1)) / 100
+	var way := _rt_graph(ax, ay, gx, gy, gm) if not ng_x.is_empty() else _rt_grid(ax, ay, gx, gy, gm, lim)
+	var np := way.size() / 2
+	if np < 2 or np > PATH_MAX + 1:
+		return
+	var e2 := _rt_eval(way)
+	if e2.z != 0 or e2.x > lim or (ev.z == 0 and e2.y >= ev.y):
+		return  # (through an enemy: any way round within the limit; else only a cheaper one)
+	var base := u * PATH_MAX
+	for k in range(1, np):
+		pth_x[base + k - 1] = way[k * 2]
+		pth_y[base + k - 1] = way[k * 2 + 1]
+	u_pn[u] = np - 1
+	u_pk[u] = 0
+	u_rtd[u] = 1
+	stat_rt_detours += 1
+
+
+## The cheapest way round the zones over the street graph from (ax, ay) to (gx, gy) (A*: an edge costs its length
+## and the zones' % at its far node; nodes in an enemy's box are shut), shortcut where the line is clear and no
+## dearer; x, y interleaved from the anchor to the goal, empty if none.
+func _rt_graph(ax: int, ay: int, gx: int, gy: int, gm: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var cnt_n := ng_x.size()
+	var gsc := PackedInt32Array()
+	gsc.resize(cnt_n)
+	gsc.fill(PATH_INF)
+	var nc := PackedInt32Array()  # (the zones' % at each node, -2 not yet known)
+	nc.resize(cnt_n)
+	nc.fill(-2)
+	var from := PackedInt32Array()
+	from.resize(cnt_n)
+	from.fill(-1)
+	var tail := PackedInt32Array()
+	tail.resize(cnt_n)
+	tail.fill(-1)
+	for b in _near_nodes(gx, gy, 2, gm):
+		var cb := _rt_seg(ng_x[b], ng_y[b], gx, gy)
+		if cb >= 0:
+			tail[b] = FM.approx_len(gx - ng_x[b], gy - ng_y[b]) / 128 * (100 + cb) / 100
+	var heap := PackedInt64Array()
+	for a in _near_nodes(ax, ay, 3, gm):
+		var c0 := _rt_seg(ax, ay, ng_x[a], ng_y[a])
+		if c0 < 0:
+			continue
+		var g0 := FM.approx_len(ng_x[a] - ax, ng_y[a] - ay) / 128 * (100 + c0) / 100
+		if g0 < gsc[a]:
+			gsc[a] = g0
+			_heap_push(heap, (g0 + FM.approx_len(gx - ng_x[a], gy - ng_y[a]) / 128) * 8192 + a)
+	var best := PATH_INF
+	var bb := -1
+	var looked := 0
+	while not heap.is_empty() and looked < RT_EXPAND:
+		var top := _heap_pop(heap)
+		var v := int(top & 8191)
+		var f := int(top >> 13)
+		if f >= best:
+			break
+		var gv := gsc[v]
+		if f - FM.approx_len(gx - ng_x[v], gy - ng_y[v]) / 128 > gv:
+			continue  # (stale)
+		looked += 1
+		if tail[v] >= 0 and gv + tail[v] < best:
+			best = gv + tail[v]
+			bb = v
+		for e in range(ng_e0[v], ng_e0[v + 1]):
+			var to := ng_to[e]
+			if not _node_open(to):
+				continue
+			if nc[to] == -2:
+				nc[to] = _rt_cost(ng_x[to], ng_y[to])
+			if nc[to] < 0:
+				continue
+			var ce := _rt_seg(ng_x[v], ng_y[v], ng_x[to], ng_y[to]) if rz_n > 0 else 0
+			if ce < 0:
+				continue
+			var ng := gv + ng_w[e] * (100 + ce) / 100
+			if ng < gsc[to]:
+				gsc[to] = ng
+				from[to] = v
+				_heap_push(heap, (ng + FM.approx_len(gx - ng_x[to], gy - ng_y[to]) / 128) * 8192 + to)
+	if bb < 0:
+		return out
+	var chain := PackedInt32Array()
+	var cur := bb
+	while cur >= 0 and chain.size() < 4 * PATH_MAX:
+		chain.append(cur)
+		cur = from[cur]
+	chain.reverse()
+	var pts := PackedInt32Array([ax, ay])
+	for nd in chain:
+		pts.append(ng_x[nd])
+		pts.append(ng_y[nd])
+	pts.append(gx)
+	pts.append(gy)
+	return _rt_smooth(pts, gm, true)
+
+
+## Shortcut a way (x, y interleaved): from each point on to the farthest later point the straight line reaches
+## without an enemy's box and no dearer than the way between them (and, `walls`, clear of obstacles: _los_fat).
+func _rt_smooth(pts: PackedInt32Array, gm: int, walls: bool) -> PackedInt32Array:
+	var np := pts.size() / 2
+	var cum := PackedInt32Array()  # (the way's cost up to each point)
+	cum.resize(np)
+	cum[0] = 0
+	for k in range(1, np):
+		var ev := _rt_eval(pts.slice(k * 2 - 2, k * 2 + 2))
+		cum[k] = cum[k - 1] + ev.y
+	var out := PackedInt32Array([pts[0], pts[1]])
+	var i := 0
+	while i < np - 1:
+		var j := i + 1
+		var q := i + 2
+		while q < np:
+			var seg := PackedInt32Array([pts[i * 2], pts[i * 2 + 1], pts[q * 2], pts[q * 2 + 1]])
+			var ev2 := _rt_eval(seg)
+			if ev2.z != 0 or ev2.y > cum[q] - cum[i] + 2:
+				break
+			if walls and obs_on != 0 and not _los_fat(pts[i * 2], pts[i * 2 + 1], pts[q * 2], pts[q * 2 + 1], gm):
+				break
+			j = q
+			q += 1
+		out.append(pts[j * 2])
+		out.append(pts[j * 2 + 1])
+		i = j
+	return out
+
+
+## The cheapest way round the zones over a grid of the open field (cells RT_CELL, coarser to keep within RT_CELLS)
+## in the rectangle round the anchor and the goal (room for a way `lim` long), A* with 8 neighbours; shortcut;
+## x, y interleaved from the anchor to the goal, empty if none.
+func _rt_grid(ax: int, ay: int, gx: int, gy: int, gm: int, lim: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	var pad := clampi((lim * 128 - FM.approx_len(gx - ax, gy - ay)) / 2, 24 * M, 160 * M)
+	var x0 := maxi(mini(ax, gx) - pad, 0)
+	var y0 := maxi(mini(ay, gy) - pad, 0)
+	var x1 := mini(maxi(ax, gx) + pad, field_w)
+	var y1 := mini(maxi(ay, gy) + pad, field_h)
+	var cs := RT_CELL
+	while ((x1 - x0) / cs + 1) * ((y1 - y0) / cs + 1) > RT_CELLS:
+		cs *= 2
+	var w := (x1 - x0) / cs + 1
+	var h := (y1 - y0) / cs + 1
+	var nc := w * h
+	_rz_sel(x0, y0, x1, y1)
+	var gsc := PackedInt32Array()
+	gsc.resize(nc)
+	gsc.fill(PATH_INF)
+	var cc := PackedInt32Array()
+	cc.resize(nc)
+	cc.fill(-2)
+	var from := PackedInt32Array()
+	from.resize(nc)
+	from.fill(-1)
+	var si := clampi((ax - x0) / cs, 0, w - 1) + clampi((ay - y0) / cs, 0, h - 1) * w
+	var ti := clampi((gx - x0) / cs, 0, w - 1) + clampi((gy - y0) / cs, 0, h - 1) * w
+	var tx := ti % w
+	var tyy := ti / w
+	var c8 := cs / 128
+	var d8 := cs * 181 / 128 / 128
+	var heap := PackedInt64Array()
+	gsc[si] = 0
+	cc[si] = 0
+	cc[ti] = maxi(_rt_cost(x0 + tx * cs + cs / 2, y0 + tyy * cs + cs / 2), 0)
+	_heap_push(heap, si)
+	var looked := 0
+	var found := false
+	while not heap.is_empty() and looked < RT_EXPAND:
+		var top := _heap_pop(heap)
+		var v := int(top & 1048575)
+		var f := int(top >> 20)
+		var gv := gsc[v]
+		var vx := v % w
+		var vy := v / w
+		var hx := absi(vx - tx)
+		var hy := absi(vy - tyy)
+		if f > gv + mini(hx, hy) * d8 + absi(hx - hy) * c8:
+			continue  # (stale)
+		if v == ti:
+			found = true
+			break
+		looked += 1
+		for k in 8:
+			var nx: int = vx + _DX8[k]
+			var ny: int = vy + _DY8[k]
+			if nx < 0 or ny < 0 or nx >= w or ny >= h:
+				continue
+			var nn: int = ny * w + nx
+			if cc[nn] == -2:
+				var px0: int = x0 + nx * cs + cs / 2
+				var py0: int = y0 + ny * cs + cs / 2
+				var cn := _rt_cost(px0, py0)
+				if cn >= 0 and obs_on != 0 and (nav_at(px0, py0) & gm) == 0:
+					cn = -1
+				cc[nn] = cn
+			if cc[nn] < 0:
+				continue
+			var ng := gv + (c8 if (k & 1) == 0 else d8) * (100 + cc[nn]) / 100
+			if ng < gsc[nn]:
+				gsc[nn] = ng
+				from[nn] = v
+				var qx := absi(nx - tx)
+				var qy := absi(ny - tyy)
+				_heap_push(heap, (ng + mini(qx, qy) * d8 + absi(qx - qy) * c8) * 1048576 + nn)
+	if not found:
+		return out
+	var chain := PackedInt32Array()
+	var cur := ti
+	while cur >= 0:
+		chain.append(cur)
+		cur = from[cur]
+	chain.reverse()
+	var nch := chain.size()
+	var pts := PackedInt32Array()
+	pts.resize(nch * 2)
+	for k in nch:
+		pts[k * 2] = x0 + (chain[k] % w) * cs + cs / 2
+		pts[k * 2 + 1] = y0 + (chain[k] / w) * cs + cs / 2
+	pts[0] = ax
+	pts[1] = ay
+	pts[nch * 2 - 2] = gx
+	pts[nch * 2 - 1] = gy
+	# Shortcut: from each point on to the farthest later one the straight line reaches over open cells no dearer
+	# than the grid's way between them (the cells' costs as the search found them; obstacles: _los_fat).
+	out.append(ax)
+	out.append(ay)
+	var i := 0
+	var half := maxi(cs / 2, 1)
+	while i < nch - 1:
+		var j := i + 1
+		var q := i + 2
+		while q < nch:
+			var sx := pts[i * 2]
+			var sy := pts[i * 2 + 1]
+			var ex := pts[q * 2]
+			var ey := pts[q * 2 + 1]
+			var l := FM.approx_len(ex - sx, ey - sy)
+			var ns := maxi(l / half, 1)
+			var st8 := l / 128
+			var acc := 0
+			var bad := false
+			for m in range(1, ns + 1):
+				var mx := sx + (ex - sx) * m / ns
+				var my := sy + (ey - sy) * m / ns
+				var ci := clampi((mx - x0) / cs, 0, w - 1) + clampi((my - y0) / cs, 0, h - 1) * w
+				if cc[ci] == -2:
+					var cn2 := _rt_cost(x0 + (ci % w) * cs + cs / 2, y0 + (ci / w) * cs + cs / 2)
+					if cn2 >= 0 and obs_on != 0 and (nav_at(x0 + (ci % w) * cs + cs / 2, y0 + (ci / w) * cs + cs / 2) & gm) == 0:
+						cn2 = -1
+					cc[ci] = cn2
+				if cc[ci] < 0:
+					bad = true
+					break
+				acc += 100 + cc[ci]
+			if bad or st8 * acc / (100 * ns) > gsc[chain[q]] - gsc[chain[i]] + c8:
+				break
+			if obs_on != 0 and not _los_fat(sx, sy, ex, ey, gm):
+				break
+			j = q
+			q += 1
+		out.append(pts[j * 2])
+		out.append(pts[j * 2 + 1])
+		i = j
+	return out
+
+
+static func _heap_push(heap: PackedInt64Array, key: int) -> void:
+	heap.append(key)
+	var j := heap.size() - 1
+	while j > 0:
+		var par := (j - 1) >> 1
+		if heap[par] <= key:
+			break
+		heap[j] = heap[par]
+		j = par
+	heap[j] = key
+
+
+static func _heap_pop(heap: PackedInt64Array) -> int:
+	var top := heap[0]
+	var last := heap[heap.size() - 1]
+	heap.resize(heap.size() - 1)
+	var hn := heap.size()
+	if hn == 0:
+		return top
+	var i := 0
+	while true:
+		var c := 2 * i + 1
+		if c >= hn:
+			break
+		if c + 1 < hn and heap[c + 1] < heap[c]:
+			c += 1
+		if heap[c] >= last:
+			break
+		heap[i] = heap[c]
+		i = c
+	heap[i] = last
+	return top
+
+
 ## Keep unit u's path to (gx, gy) current: replan when there is none, a gate
 ## changed, or (`moving_goal`, at most once a second) the goal moved 12 m;
 ## look past the next waypoint now and then. Returns the point to head for.
@@ -5138,6 +5798,8 @@ func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
 		_plan_path(u, gx, gy)
 	elif not moving_goal and (u_pgx[u] != gx or u_pgy[u] != gy):
 		_plan_path(u, gx, gy)
+	elif not moving_goal and (u + tick) % RT_REPLAN == 0 and _rt_pct(u) > 0 and _rt_stale(u, gx, gy):
+		_plan_path(u, gx, gy)  # (an enemy moved onto its way: round it again)
 	var base := u * PATH_MAX
 	var k := u_pk[u]
 	var last := u_pn[u] - 1
@@ -5154,7 +5816,7 @@ func _path_point(u: int, gx: int, gy: int, moving_goal: bool) -> Vector2i:
 		_trail_push(u, wx, wy)
 		k += 1
 		u_pk[u] = k
-	elif (u + tick) % 5 == 0 and k + 1 <= last:
+	elif (u + tick) % 5 == 0 and k + 1 <= last and u_rtd[u] == 0:
 		var b1 := base + k + 1
 		var nxx := pth_x[b1] if k + 1 < last else gx
 		var nxy := pth_y[b1] if k + 1 < last else gy
@@ -9771,6 +10433,8 @@ func step() -> void:
 	_update_contacts()
 	_build_grid()
 	_mix_build()
+	_sep_build()
+	_mx_grid()
 	_update_soldiers()
 	if fw_on != 0:
 		_update_works()
@@ -10202,14 +10866,14 @@ func _half_step(ox: int, oy: int, sx: int, sy: int, spd: int) -> Vector2i:
 # places side-step to let them by (_mix_give), then both walk back to their own places: no slot changes hands.
 
 ## Unit u can mix with a friend (thread through one, or give way): on the ground and formed (ready, not in contact,
-## not charging or knocked about, not on a wall, a stair or a ladder, not in a building, no engines, not afloat), not
-## a hero or an agent (their handful of men slips through files as before), in a field battle (not a settlement
-## battle: there files interleave as before, so streets and gateways never deadlock and the storm's balance stands)
-## and not within 4 m of a rock or a cliff (_u_obs).
+## not charging or knocked about, not on a wall, a stair or a ladder, not in a building, no engines, not afloat), in a
+## field battle (not a settlement battle: there the separation alone keeps men apart, _sep_push; the crossing's holds
+## slowed the defenders falling back through one another into the citadel, determinism_test "shut inner gate" shut
+## at tick 4,081 instead of 901). Heroes and agents and units near a rock or a cliff mix too (since 2026-11-06).
 func _mix_ok(u: int) -> bool:
 	return u_alive[u] > 0 and u_state[u] == U_READY and u_contact[u] == 0 and u_charge[u] == 0 and u_down[u] == 0 \
 		and u_wall[u] == 0 and u_stair[u] == 0 and u_occ[u] <= 0 and u_neng[u] == 0 and not (amph_on != 0 and afloat(u)) \
-		and city_on == 0 and (obs_on == 0 or u >= _u_obs.size() or _u_obs[u] == 0) and not (ch_on != 0 and u_char[u] != 0)
+		and city_on == 0
 
 
 ## Which units mix this tick (u_mix) and the grid of their men (mx_head / mx_next, mx_mv): a unit on the move (not
@@ -10219,8 +10883,6 @@ func _mix_ok(u: int) -> bool:
 ## so nothing here is state.
 func _mix_build() -> void:
 	var nu := n_units
-	if mix_any != 0:
-		mx_head.fill(-1)
 	if tick % PASS_THINK != 0:
 		# (Between searches the pairs found stand, while the units can still mix.)
 		if mix_any == 0:
@@ -10235,9 +10897,6 @@ func _mix_build() -> void:
 					u_mix[u] = 0
 	else:
 		_mix_pairs()
-	if mix_any == 0:
-		return
-	_mix_grid()
 
 
 ## The pair search of _mix_build (every PASS_THINK ticks): u_mix, u_mxr, mix_any.
@@ -10281,38 +10940,105 @@ func _mix_pairs() -> void:
 			mix_any = 1
 
 
-## The grid of the mixing units' men (mx_head / mx_next) and who is on the move (mx_mv), each tick while some mix.
-func _mix_grid() -> void:
+## The grid of the mixing and separating units' men (mx_head / mx_next), who is on the move among the mixing
+## (mx_mv: 0 / 1 in the mixing overlap, 2 not), each tick while some mix (the separation's alone: every other tick).
+func _mx_grid() -> void:
+	if mix_any == 0 and sep_any != 0 and mx_used != 0 and (tick & 1) != 0 and mx_sep == 1:
+		return  # (separation alone: the grid of the even tick serves the odd one, its men 0.2 s on)
+	if mx_used != 0:
+		var hd := mx_head
+		for k in mx_used:
+			hd[mx_cells[k]] = -1
+		mx_used = 0
+	mx_sep = 0
+	if mix_any == 0 and sep_any == 0:
+		return
+	mx_sep = 1 if mix_any == 0 else 0
+	var used := 0
 	var nu := n_units
 	var gs := MX_SHIFT
 	var gw := mx_w
 	var gmax := mx_w * mx_h - 1
+	sep_rmax = 0
 	for u in nu:
-		if u_mix[u] == 0:
+		var mxu := mix_any != 0 and u_mix[u] != 0
+		var spu := sep_any != 0 and u_sep[u] != 0
+		if not mxu and not spu:
 			continue
-		u_mxq[u * 3] = _mix_r(u)
-		u_mxq[u * 3 + 1] = FM.cos_a(u_face[u])
-		u_mxq[u * 3 + 2] = FM.sin_a(u_face[u])
+		var r0 := 1 << 30
+		var r1 := 1 << 30
+		var r2 := -1
+		var r3 := -1
+		if mxu:
+			u_mxq[u * 3] = _mix_r(u)
+			u_mxq[u * 3 + 1] = FM.cos_a(u_face[u])
+			u_mxq[u * 3 + 2] = FM.sin_a(u_face[u])
+			r0 = u_mxr[u * 4]
+			r1 = u_mxr[u * 4 + 1]
+			r2 = u_mxr[u * 4 + 2]
+			r3 = u_mxr[u * 4 + 3]
+		var q0 := 1 << 30
+		var q1 := 1 << 30
+		var q2 := -1
+		var q3 := -1
+		var rr := _sep_r(u)
+		u_spq[u] = rr
+		sep_rmax = maxi(sep_rmax, rr)
+		if spu:
+			q0 = u_spr[u * 4]
+			q1 = u_spr[u * 4 + 1]
+			q2 = u_spr[u * 4 + 2]
+			q3 = u_spr[u * 4 + 3]
 		var base := u_slot_base[u]
+		var ss := slot_soldier
+		var px := pos_x
+		var py := pos_y
+		var mv := mx_mv
+		var nx := mx_next
+		var hd := mx_head
+		var cl := mx_cells
+		if not mxu:
+			# (Keeping their distance only: the men where the boxes meet.)
+			for s in u_alive[u]:
+				var i := ss[base + s]
+				var x := px[i]
+				if x < q0 or x > q2:
+					continue
+				var y := py[i]
+				if y < q1 or y > q3:
+					continue
+				mv[i] = 2
+				var c := clampi((y >> gs) * gw + (x >> gs), 0, gmax)
+				var hc := hd[c]
+				if hc < 0:
+					cl[used] = c
+					used += 1
+				nx[i] = hc
+				hd[c] = i
+			continue
 		var ax := u_ax[u]
 		var ay := u_ay[u]
 		var um := u_moved[u] != 0
-		var r0 := u_mxr[u * 4]
-		var r1 := u_mxr[u * 4 + 1]
-		var r2 := u_mxr[u * 4 + 2]
-		var r3 := u_mxr[u * 4 + 3]
 		for s in u_alive[u]:
 			var k := base + s
-			var i := slot_soldier[k]
-			var x := pos_x[i]
-			var y := pos_y[i]
-			if x < r0 or x > r2 or y < r1 or y > r3:
-				mx_mv[i] = 2  # (outside where it overlaps a friend: he neither looks nor is looked at)
-				continue
+			var i := ss[k]
+			var x := px[i]
+			var y := py[i]
+			var inm := x >= r0 and x <= r2 and y >= r1 and y <= r3
+			if not inm:
+				mv[i] = 2  # (outside where it overlaps a friend it mixes with: he neither threads nor gives way)
+				if x < q0 or x > q2 or y < q1 or y > q3:
+					continue
+			else:
+				mv[i] = 1 if um or absi(ax + off_x[k] - x) + absi(ay + off_y[k] - y) > PASS_MOVING else 0
 			var c := clampi((y >> gs) * gw + (x >> gs), 0, gmax)
-			mx_next[i] = mx_head[c]
-			mx_head[c] = i
-			mx_mv[i] = 1 if um or absi(ax + off_x[k] - x) + absi(ay + off_y[k] - y) > PASS_MOVING else 0
+			var hc := hd[c]
+			if hc < 0:
+				cl[used] = c
+				used += 1
+			nx[i] = hc
+			hd[c] = i
+	mx_used = used
 
 
 ## Unit u (on the move) crosses friend v: the line down u's middle, from PASS_AHEAD ahead of its anchor (its front's
@@ -10393,7 +11119,7 @@ func _mix_step(u: int, ox: int, oy: int, x: int, y: int) -> Vector2i:
 			var j := mx_head[cy * mx_w + cx]
 			while j >= 0 and seen < PASS_SEEN:
 				var uj := unit_of[j]
-				if uj != u and u_side[uj] == sd and state[j] < S_DEAD:
+				if uj != u and u_side[uj] == sd and mx_mv[j] < 2 and state[j] < S_DEAD:
 					var rr := rm + q[uj * 3]
 					var rx := pos_x[j] - ox
 					var ry := pos_y[j] - oy
@@ -10463,7 +11189,7 @@ func _mix_give(u: int, x: int, y: int) -> Vector3i:
 			var j := mx_head[cy * mx_w + cx]
 			while j >= 0 and seen < PASS_SEEN:
 				var uj := unit_of[j]
-				if uj != u and u_side[uj] == sd and mx_mv[j] != 0 and state[j] < S_DEAD:
+				if uj != u and u_side[uj] == sd and mx_mv[j] == 1 and state[j] < S_DEAD:
 					var rr := rm + q[uj * 3]
 					var rl := rr + PASS_LOOK
 					var rx := x - pos_x[j]
@@ -10485,6 +11211,137 @@ func _mix_give(u: int, x: int, y: int) -> Vector3i:
 		gx = gx * PASS_GIVE / gl
 		gy = gy * PASS_GIVE / gl
 	return Vector3i(nx + gx, ny + gy, near)
+
+
+# Filtering always on (docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)"). Beside the
+# crossing (above), every man of a unit out of contact keeps his room (_sep_r) from the men of any other unit near
+# his (either side; the melee has its own push): each tick a man in the grid steps as he would and is then moved
+# out of every other unit's man within their joint room, at most SEP_NUDGE a tick. No slowdown, no hold.
+
+## Unit u's men keep their distance (on the ground, formed and out of contact: not charging or knocked about, not on
+## a wall, a stair or a ladder, not in a building, no engines, not afloat, not a ship; towns and characters too).
+func _sep_ok(u: int) -> bool:
+	return u_alive[u] > 0 and u_state[u] == U_READY and u_contact[u] == 0 and u_charge[u] == 0 and u_down[u] == 0 \
+		and u_wall[u] == 0 and u_stair[u] == 0 and u_occ[u] <= 0 and u_neng[u] == 0 and not (amph_on != 0 and afloat(u)) \
+		and not (shp_on != 0 and is_ship(u))
+
+
+## A man of unit u's room in the separation (half the distance two men keep).
+func _sep_r(u: int) -> int:
+	var ty := u_type[u]
+	if big_on != 0 and t_body_r[ty] > 0:
+		return t_body_r[ty]
+	return SEP_R_RIDER if t_rider[ty] != 0 else SEP_R_FOOT
+
+
+## Which units keep their distance this tick (u_sep, u_spr): every SEP_THINK ticks each pair of units (_sep_ok,
+## not both settled) whose boxes come within their men's joint room and SEP_BOX; between, the pairs found stand while
+## both stay _sep_ok.
+func _sep_build() -> void:
+	var nu := n_units
+	if tick % SEP_THINK != 0:
+		if sep_any == 0:
+			return
+		sep_any = 0
+		for u in nu:
+			if u_sep[u] != 0:
+				if _sep_ok(u):
+					sep_any = 1
+				else:
+					u_sep[u] = 0
+		return
+	if sep_any != 0:
+		u_sep.fill(0)
+	sep_any = 0
+	var cn := 0
+	for u in nu:
+		if _sep_ok(u):
+			_sep_c[cn] = u
+			cn += 1
+	for a in cn:
+		var u := _sep_c[a]
+		var ru := _sep_r(u) + SEP_BOX
+		var x0 := u_minx[u] - ru
+		var x1 := u_maxx[u] + ru
+		var y0 := u_miny[u] - ru
+		var y1 := u_maxy[u] + ru
+		var su := u_settled[u]
+		for b in range(a + 1, cn):
+			var v := _sep_c[b]
+			if u_minx[v] > x1 or u_maxx[v] < x0 or u_miny[v] > y1 or u_maxy[v] < y0 or (su != 0 and u_settled[v] != 0):
+				continue
+			var mg := ru + _sep_r(v)  # (their joint room and the next ticks' steps)
+			if u_minx[v] > u_maxx[u] + mg or u_maxx[v] < u_minx[u] - mg or u_miny[v] > u_maxy[u] + mg or u_maxy[v] < u_miny[u] - mg:
+				continue
+			var rx0 := maxi(u_minx[u], u_minx[v]) - mg
+			var ry0 := maxi(u_miny[u], u_miny[v]) - mg
+			var rx1 := mini(u_maxx[u], u_maxx[v]) + mg
+			var ry1 := mini(u_maxy[u], u_maxy[v]) + mg
+			_sep_rect(u, rx0, ry0, rx1, ry1)
+			_sep_rect(v, rx0, ry0, rx1, ry1)
+			sep_any = 1
+
+
+func _sep_rect(w: int, rx0: int, ry0: int, rx1: int, ry1: int) -> void:
+	var k := w * 4
+	if u_sep[w] == 0:
+		u_spr[k] = rx0
+		u_spr[k + 1] = ry0
+		u_spr[k + 2] = rx1
+		u_spr[k + 3] = ry1
+		u_sep[w] = 1
+	else:
+		u_spr[k] = mini(u_spr[k], rx0)
+		u_spr[k + 1] = mini(u_spr[k + 1], ry0)
+		u_spr[k + 2] = maxi(u_spr[k + 2], rx1)
+		u_spr[k + 3] = maxi(u_spr[k + 3], ry1)
+
+
+## Man i of unit u (room rm) at (x, y) after his step: out of every man of another unit in the grid within their
+## joint room, by the whole overlap (the other, stepping after him or settled, leaves it so), at most SEP_NUDGE in
+## all. Two men on one spot part across u's facing, the lower index to the left.
+func _sep_push(u: int, i: int, x: int, y: int, rm: int) -> Vector2i:
+	var reach := rm + sep_rmax
+	var gs := MX_SHIFT
+	var cx0 := maxi((x - reach) >> gs, 0)
+	var cx1 := mini((x + reach) >> gs, mx_w - 1)
+	var cy0 := maxi((y - reach) >> gs, 0)
+	var cy1 := mini((y + reach) >> gs, mx_h - 1)
+	var gx := 0
+	var gy := 0
+	var seen := 0
+	for cy in range(cy0, cy1 + 1):
+		for cx in range(cx0, cx1 + 1):
+			var j := mx_head[cy * mx_w + cx]
+			while j >= 0 and seen < SEP_SEEN:
+				var uj := unit_of[j]
+				if uj != u and state[j] < S_DEAD:
+					var rr := rm + u_spq[uj]
+					var rx := x - pos_x[j]
+					var ry := y - pos_y[j]
+					if absi(rx) < rr and absi(ry) < rr:
+						var dd := FM.approx_len(rx, ry)
+						if dd < rr:
+							seen += 1
+							if dd == 0:
+								var sg := -1 if i < j else 1
+								rx = -FM.sin_a(u_face[u]) * sg
+								ry = FM.cos_a(u_face[u]) * sg
+								dd = FM.TRIG_ONE
+								gx += rx * rr / dd
+								gy += ry * rr / dd
+							else:
+								gx += rx * (rr - dd) / dd
+								gy += ry * (rr - dd) / dd
+				j = mx_next[j]
+	if gx == 0 and gy == 0:
+		return Vector2i(x, y)
+	var gl := FM.approx_len(gx, gy)
+	if gl > SEP_NUDGE:
+		gx = gx * SEP_NUDGE / gl
+		gy = gy * SEP_NUDGE / gl
+	stat_sep_men += 1
+	return Vector2i(x + gx, y + gy)
 
 
 func _update_units() -> void:
@@ -10742,6 +11599,12 @@ func _update_units() -> void:
 					via = true
 					wx = wp.x
 					wy = wp.y
+			elif not oon and order == O_MOVE and (u_rtd[u] != 0 or _rt_pct(u) > 0):
+				var wq := _rt_point(u, u_dx[u], u_dy[u])  # (the open field: round the enemy, docs "Paths clear of the enemy")
+				if wq.x != wx or wq.y != wy:
+					via = true
+					wx = wq.x
+					wy = wq.y
 			var dx := wx - u_ax[u]
 			var dy := wy - u_ay[u]
 			var d := FM.isqrt(dx * dx + dy * dy)
@@ -12195,6 +13058,58 @@ func _update_soldiers() -> void:
 					_rm[n_rm] = i
 					_rm_why[n_rm] = GONE_WITHDRAWN
 					n_rm += 1
+			if sep_any != 0 and u_sep[u] != 0:
+				# Filtering always on: his step made, a man where his unit comes near another keeps out of its men's
+				# room (_sep_push), looking every other tick (by his index); between, one held a nudge off his place
+				# (his unit standing) stays where he stood. A man held where he stood is at rest (the unit may settle).
+				var srm := u_spq[u]
+				var sq0 := u_spr[u * 4]
+				var sq1 := u_spr[u * 4 + 1]
+				var sq2 := u_spr[u * 4 + 2]
+				var sq3 := u_spr[u * 4 + 3]
+				var still_u := u_moved[u] == 0
+				var pvx := prev_x
+				var pvy := prev_y
+				for s in alive:
+					var k := base + s
+					var i := ss[k]
+					var x := px[i]
+					var y := py[i]
+					if x < sq0 or x > sq2 or y < sq1 or y > sq3 or st[i] >= S_DEAD:
+						continue
+					var ox := pvx[i]
+					var oy := pvy[i]
+					var nx := x
+					var ny := y
+					if ((i + tick) & 1) == 0:
+						var sq := _sep_push(u, i, x, y, srm)
+						if sq.x != x or sq.y != y:
+							nx = clampi(sq.x, 0, fw)
+							ny = clampi(sq.y, 0, fh)
+							if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
+								nx = x
+								ny = y
+					elif still_u and (x != ox or y != oy) \
+							and absi(ax + oxs[k] - ox) + absi(ay + oys[k] - oy) <= SEP_NUDGE + SEP_ROUND:
+						nx = ox
+						ny = oy
+					if nx == x and ny == y:
+						continue
+					sumx += nx - x
+					sumy += ny - y
+					minx = mini(minx, nx)
+					maxx = maxi(maxx, nx)
+					miny = mini(miny, ny)
+					maxy = maxi(maxy, ny)
+					px[i] = nx
+					py[i] = ny
+					if still_u:
+						var was := x != ox or y != oy  # (he stepped: counted on the move)
+						var now := nx != ox or ny != oy
+						if was and not now:
+							moved -= 1
+						elif now and not was:
+							moved += 1
 			_set_bounds(u, sumx / alive, sumy / alive, minx, miny, maxx, maxy)
 			u_fighting[u] = 0
 			u_inreach[u] = 0
@@ -19621,6 +20536,14 @@ func state_hash() -> int:
 		ctx.update(ai_mem.to_byte_array())  # (the default profile keeps memory only for a play: sim/plays.gd)
 	if ai_plays[0] != Plays.ALL or ai_plays[1] != Plays.ALL:
 		ctx.update(ai_plays.to_byte_array())
+	if rt_used != 0:
+		# Paths clear of the enemy (2026-11-06): only once a unit planned round the enemy.
+		ctx.update(u_rtd.to_byte_array())
+		if map_on == 0:
+			for arr in _map_unit_arrays():
+				ctx.update((arr as PackedInt32Array).to_byte_array())
+			ctx.update(pth_x.to_byte_array())
+			ctx.update(pth_y.to_byte_array())
 	if map_on != 0:
 		# Woods / settlement maps only (a plain map hashes as it always did).
 		for arr in _map_unit_arrays():
@@ -20947,6 +21870,13 @@ func _ladder_start(u: int) -> void:
 	u_stair[u] = ST_LADDER
 	u_st0[u] = tick
 	u_wall[u] = sg + 1
+	# (Until _ladder_step first runs for it, each man below waits where he stands: _lw_x / _lw_y are scratch, not in
+	# snapshots, and held another climb's spots, or none, so a restored copy went its own way: lockstep_test siege.)
+	var lb := u_slot_base[u]
+	for s in u_alive[u]:
+		var li := slot_soldier[lb + s]
+		_lw_x[lb + s] = pos_x[li]
+		_lw_y[lb + s] = pos_y[li]
 	var wa := wall_anchor(self, sg, u_wx[u], u_wy[u], u_alive[u], u_type[u])
 	u_files[u] = wall_nf(u_alive[u])
 	u_ax[u] = wa.x
