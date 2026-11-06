@@ -341,6 +341,10 @@ func _check_cover2() -> void:
 	us[1]["type"] = UT.index_of("musketeers")
 	us.append(Scenarios.unit(1, UT.index_of("musketeers"), 10, (int(us[0]["x_m"]) + int(us[1]["x_m"])) / 2 + 30,
 		(int(us[0]["y_m"]) + int(us[1]["y_m"])) / 2, 0, 5))
+	# (Third pass: the defender's front men see past the house from its post, LOF_MEN_ALL; the step is checked with only
+	# its middle read, as the second pass built it.)
+	var scr3: Script = BattleSim
+	scr3.set("LOF_MEN_ALL", 0)
 	var s3 := BattleSim.new()
 	s3.setup(sc3, 7)
 	s3.step()
@@ -354,9 +358,142 @@ func _check_cover2() -> void:
 	for k in 150:
 		s3.step()
 	var moved := int(Vector2(s3.u_ax[1] - hx, s3.u_ay[1] - hy).length()) / 1024
-	if lof0 or not s3.lof_units(1, 0) or moved > 14 or moved < 2:
-		_fail("cover2: the defender's step for a line (line before %s, after %s, moved %d m)" % [str(lof0), str(s3.lof_units(1, 0)), moved])
+	var lof1: bool = s3.lof_units(1, 0)
+	scr3.set("LOF_MEN_ALL", 1)
+	if lof0 or not lof1 or moved > 22 or moved < 2:  # (third pass: a 20 m leash, S_LOF_LEASH)
+		_fail("cover2: the defender's step for a line (line before %s, after %s, moved %d m)" % [str(lof0), str(lof1), moved])
 	print("cover2: checked (light cover %d / %d lost, spot %s / %s, step %d m)" % [lost["front"], lost["open"], str(sp0), str(sp1), moved])
+	_check_cover3()
+
+
+## Cover and line of fire, third pass (2026-11-06; docs/design/battle_sim.md "Cover and line of fire, third pass"):
+## (1) under fire the walk to a fire spot stops at LOF_SPOT_FIRE_GOOD of five front points (a musket line attacking a
+## musket company behind a house fires sooner and walks less than stopping at four); (2) a formed line whose middle is
+## behind a wall but whose flank files see takes the target and fires (it did not with only its middle read); (3) the
+## cover chip's sim side: the units that shot at a unit (cover_shooters), and a house is no cover from its own garrison.
+func _check_cover3() -> void:
+	var Probe = load("res://tests/lof_probe.gd")
+	var scr: Script = BattleSim
+	var was_good: int = BattleSim.LOF_SPOT_FIRE_GOOD
+	var res := {}
+	for good in [was_good, 4]:
+		scr.set("LOF_SPOT_FIRE_GOOD", good)
+		var ft := 0
+		var wk := 0
+		for dist in [40, 60, 100]:
+			var sc: Dictionary = Probe.town("musket", dist, "atk")
+			sc["units"][1]["type"] = UT.index_of("musketeers")
+			var sim := BattleSim.new()
+			sim.setup(sc, 7)
+			sim.queue_order(BattleSim.make_attack_order(0, 0, 1, 0))
+			var x0: int = sim.u_cx[0]
+			var y0: int = sim.u_cy[0]
+			var first := 900
+			for k in 900:
+				sim.step()
+				if sim.stat_shots > 0:
+					for p in sim.pr_t0.size():
+						if sim.pr_t0[p] == sim.tick - 1 and sim.pr_unit[p] == 0 and sim.pr_t1[p] >= sim.tick:
+							first = k
+							break
+				if first < 900:
+					break
+			ft += first
+			wk += int(Vector2(sim.u_cx[0] - x0, sim.u_cy[0] - y0).length()) / 1024
+		res[good] = [ft, wk]
+	scr.set("LOF_SPOT_FIRE_GOOD", was_good)
+	if int(res[was_good][0]) >= int(res[4][0]) or int(res[was_good][1]) >= int(res[4][1]):
+		_fail("cover3: under fire the walk did not stop sooner at %d of 5 (first shots %s ticks, walked %s m) than at 4 (%s, %s)" % [
+			was_good, res[was_good][0], res[was_good][1], res[4][0], res[4][1]])
+	# (2) A partly seeing line: lof_probe's pikes half behind the house (moved out to x 226 / 230 m), a spotter of its
+	# side seeing them: the line's middle has no line past the house corner, its left files have.
+	var lines := {}
+	for men_all in [0, 1]:
+		scr.set("LOF_MEN_ALL", men_all)
+		var shots := 0
+		var lofs := 0
+		for c in [[226, 60], [230, 40]]:
+			var sc2: Dictionary = Probe.scenario("musket", "half", int(c[1]), "faw")
+			sc2["units"][1]["x_m"] = int(c[0])
+			sc2["units"].append(Scenarios.unit(0, UT.index_of("w_pikemen"), 20, 300, 230, 512, 10))
+			var s2 := BattleSim.new()
+			s2.setup(sc2, 3)
+			s2.queue_order(BattleSim.make_fire_order(0, 0, 1))
+			s2.step()
+			if s2.lof_units(0, 1):
+				lofs += 1
+			for k in 200:
+				s2.step()
+			shots += s2.stat_shots
+		lines[men_all] = [lofs, shots]
+	scr.set("LOF_MEN_ALL", 1)
+	if int(lines[0][0]) != 0 or int(lines[1][0]) != 2 or int(lines[1][1]) == 0 or int(lines[0][1]) != 0:
+		_fail("cover3: the partly seeing line (middle only: lines %d of 2, %d shots; its front men too: %d of 2, %d shots)" % [
+			lines[0][0], lines[0][1], lines[1][0], lines[1][1]])
+	# (3) The chip's threats: who shot at the unit, and no cover from a garrison's own house.
+	var sc3 := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 40, 200, 230, Scenarios.FACE_UP, 10),
+			Scenarios.unit(1, UT.index_of("musketeers"), 40, 200, 160, Scenarios.FACE_DOWN, 10)]}
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 2)
+	s3.queue_order(BattleSim.make_fire_order(0, 1, 1))
+	s3.queue_order(BattleSim.make_fire_order(0, 0, 0))
+	var none0: bool = s3.cover_shooters(0, 30).is_empty()
+	for k in 200:
+		s3.step()
+	var sh: PackedInt32Array = s3.cover_shooters(0, 30)
+	if not none0 or sh.size() != 1 or sh[0] != 1:
+		_fail("cover3: cover_shooters (before %s, after %s)" % [str(none0), str(sh)])
+	var st: BattleSim = BattleSim.new()
+	st.setup(Probe.town("musket", 40, "atk"), 7)
+	var skipped := 0
+	var houses := 0
+	for b in st.ob_dx.size():
+		var face := FM.atan2_a(st.ob_iy[b] - st.ob_dy[b], st.ob_ix[b] - st.ob_dx[b])
+		if st.cover_rating(st.ob_dx[b], st.ob_dy[b], face, BattleSim.COVW_LINE) != 2:
+			continue
+		houses += 1
+		if st.cover_rating(st.ob_dx[b], st.ob_dy[b], face, BattleSim.COVW_LINE, b) == 0:
+			skipped += 1
+	if houses == 0 or skipped * 2 < houses:
+		_fail("cover3: a house gave cover from its own garrison (%d of %d door steps still covered)" % [houses - skipped, houses])
+	# (4) Rubble with some height: a breach's heap 3 m before a musket line shot at from beyond (cells turned to
+	# rubble where the yard wall's rocks were laid), against flat rubble (RUBBLE_H 0) and from the open side.
+	var was_h: int = BattleSim.RUBBLE_H
+	var rlost := {}
+	var rrate := {}
+	for cs in ["flat", "heap", "behind"]:
+		scr.set("RUBBLE_H", 0 if cs == "flat" else was_h)
+		var tot := 0
+		for sd in [1, 2]:
+			var rk2 := []
+			for x in range(180, 221, 2):
+				rk2.append([x, 163, 1, 13])
+			var sy := 233 if cs != "behind" else 90
+			var sc4 := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk2},
+				"units": [Scenarios.unit(0, UT.index_of("musketeers"), 60, 200, sy, Scenarios.FACE_UP if cs != "behind" else Scenarios.FACE_DOWN, 15),
+					Scenarios.unit(1, UT.index_of("musketeers"), 40, 200, 160, Scenarios.FACE_DOWN, 10)]}
+			var s4 := BattleSim.new()
+			s4.setup(sc4, sd)
+			for c in s4.obs.size():
+				if MapGen.is_land(s4.obs[c]):
+					s4.obs[c] = MapGen.C_RUBBLE
+					s4.rub_n += 1
+			if sd == 1:
+				rrate[cs] = s4.cover_rating_front(s4.u_ax[1], s4.u_ay[1], FM.atan2_a(s4.u_cy[0] - s4.u_ay[1], s4.u_cx[0] - s4.u_ax[1]), 4 * 1024, BattleSim.COVW_LINE)
+			s4.queue_order(BattleSim.make_fire_order(0, 1, 0))
+			for k in 300:
+				s4.step()
+			tot += s4.u_count0[1] - s4.u_alive[1]
+		rlost[cs] = tot
+	scr.set("RUBBLE_H", was_h)
+	if rlost["heap"] * 4 > rlost["flat"] * 3 or int(rrate["heap"]) != 1 or int(rrate["flat"]) != 0 or int(rrate["behind"]) != 0:
+		_fail("cover3: rubble as cover (lost behind the heap %d, flat rubble %d, shot from the open side %d; ratings %s)" % [
+			rlost["heap"], rlost["flat"], rlost["behind"], str(rrate)])
+	print("cover3: checked (stop under fire %s against %s, partly seeing line %s, shooters %s, garrison houses %d / %d, rubble lost %s ratings %s)" % [
+		str(res[was_good]), str(res[4]), str(lines), str(sh), skipped, houses, str(rlost), str(rrate)])
 
 
 ## The three play scenarios in the Tests and benchmarks menu (docs/AI.md 44.1, 44.5, 44.6; 2026-11-05): each has a

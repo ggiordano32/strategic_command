@@ -423,7 +423,9 @@ const COVER_DIR := 351         # 1: cover troops' spots (_cover_spot) want cover
 const S_LOF_PICK := 360        # 1: a storming flat-weapon missile unit (SiegeAI._storm) counts a defender it has no line of fire to S_LOF_PUSH farther (those it can hit first); 0 the nearest (Easy)
 const S_COVER_DIR := 361       # 1: a West skirmisher's strongpoint (SiegeAI._sp_cover) scores the cover facing the street mouth (BattleSim.cover_rating_front for its troop type) as well as the cover cells round it; 0 the cells only (Easy)
 const S_LOF_STEP := 362        # a defending flat-weapon missile unit at its post with attackers in reach and no line of fire at any steps to the best fire spot this near (metres, sim units; BattleSim.fire_spot); 0 it stands (Easy)
-const N_KNOBS := 363
+const S_LOF_LEASH := 363       # S_LOF_STEP's step for a line goes at most this far from the post (metres, sim units; looked for this far round where it stands); 0: S_LOF_STEP (docs/AI.md 67)
+const S_LOF_HOME := 364        # 1: a defender stepped off its post walks back to it once it has no line there and no spot within the leash, or no attacker is left in its reach; 0 it stays where it stepped (Easy)
+const N_KNOBS := 365
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
@@ -742,6 +744,9 @@ const KNOBS: Array = [
 	[S_LOF_PICK, 0, 1, 1],
 	[S_COVER_DIR, 0, 1, 1],
 	[S_LOF_STEP, 0, 12 * M, 12 * M],
+	# The third pass (docs/AI.md 67): the step reaches 20 m for a line and comes back when the line is lost.
+	[S_LOF_LEASH, 0, 20 * M, 20 * M],
+	[S_LOF_HOME, 0, 1, 1],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],

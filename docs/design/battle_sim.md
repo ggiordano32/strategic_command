@@ -1000,6 +1000,124 @@ uncovered target (gap 6); lines never fire on the move and the walk ignores expo
 on the unit card; suppression, negative cover, cursor-hover cover icons, garrison window arcs and the AI's flanking of
 cover (the plan above); no device check.
 
+### Cover and line of fire, third pass (as built, 2026-11-06)
+
+Why: the second evaluation (session scratchpad `eval2/eval2.md`, its probes in `eval2/probes/`) found the walk to the
+fire spot losing more than it bought against shooters (own losses before the first shot 18 -> 230 in its 81 cases
+against a musket company, the kill exchange 1.31 -> 1.00), lines that partly see not shooting (street defenders with
+men who had a line shot in 4 % of their seconds), the cover chip misleading in towns, the defenders' step held to 12 m
+and the West musket town benchmark +30 %. The main session chose its gaps 1-7; suppression is next.
+
+**1. The walk under fire** (`fire_spot`, `_fs_expose`, `_fire_spot_on`, `_lof_under_fire`).
+- *Exposure in the score:* each candidate spot pays for the enemy's fronts it sees (the path planner's zones of
+  "Paths clear of the enemy", `_rt_zones`: a shooter's front +-45 degrees within its range +300 % a metre, a melee
+  front 15 m deep +100 %, boxes shut; none held back for a goal): `LOF_SPOT_EXP_PCT` 50 % of the extra cost of each
+  metre of the straight walk (sampled every `LOF_SPOT_EXP_STEP` 4 m) plus `LOF_SPOT_EXP_AT` 3 m for each 100 % of
+  fronts over the spot; a walk or spot in an enemy's box is no candidate. The zones are found and narrowed to the
+  searched ground once a search. Not by routing the walk through the planner (the evaluation's move orders to the same
+  spots lost 183 men against 97).
+- *Stop sooner under fire:* a unit is under fire when a missile wounded it within `LOF_FIRE_T` 3 s or its target (a
+  missile unit with shot left) has it in reach. On its way with a line it stops where it stands at
+  `LOF_SPOT_FIRE_GOOD` 2 of the 5 front points with a line (4 otherwise, `LOF_SPOT_GOOD`); the brief's 3 measured
+  worse (exchange 1.07, 75 lost before the first shot; 2: 1.24-1.29, 57-62); the reach for that check and the
+  closing move under fire is `LOF_FIRE_STAND_PCT` 90 % of its range (85 % otherwise: closing from its target's reach
+  to 85 % of its own cost the line 18 s and 23 m under fire in 18 of the 81 cases).
+- *Stable on arrival:* the middle of the line is now one of the five points (no longer required: `_spot_lit` under
+  `LOF_MEN_ALL`), so a line that arrives with its front men seeing fires; with none of its sampled men seeing it searches
+  the next rings as before.
+
+**2. Lines that partly see shoot** (`lof_units`, `LOF_MEN_ALL`). When its middle has no line, every unit now tries
+`LOF_MEN` 4 of its men (before: only units at cover spots): a formed unit's front rank (files 0, a third, two thirds,
+the last), a garrison's men at its windows (past the door's `OCC_DOOR_N`), cover spots as before; a unit with any of
+them seeing takes the target, and each man's shot still needs his own line (so only those who see fire). The answer is
+cached per unit pair between soldier moves (`_lofc`, an epoch bumped at each step's start, after the soldiers move,
+after the cover and characters' passes and on restore; derived, not in snapshots).
+
+**3. The cover chip tells the truth** (docs/design/ui.md "Cover chips and hittable marks", third pass): the sim notes
+each unit's two latest shooters (`_shot_note` at every missile launched at a unit; `u_sbu0` / `u_sbt0` / `u_sbu1` /
+`u_sbt1`, hashed with the map arrays, read by no rule) and answers `cover_shooters(u, within)`; `cover_rating` /
+`cover_rating_front` take `skip_b`, a building whose cells do not count (the house a garrison holds: `held_building`).
+The view rates against those shooters (3 s), the worst of them, else the nearest enemy; shows nothing for open ground;
+the cut range ring loses its spikes.
+
+**4. The defenders' step** (docs/AI.md 67): `S_LOF_LEASH` 20 m (the search round where it stands, and the farthest
+from its post) and `S_LOF_HOME` (back to the post once it has no line there and no spot within the leash, or no
+attacker in its reach), Easy 0.
+
+**5. Cost** (`tests/benchmark.gd`'s bench_west_muskets built by hand, 1,500 ticks, seed 42; profiled with timers
+wrapped round ~40 functions in a scratch copy). The biggest costs on HEAD were the stragglers' `_near_nodes` (a scan
+of every street-graph node, 0.25 ms a tick: now 16 m buckets searched ring by ring, the same six nodes), the
+separation's `_sep_push` (0.16 ms) and the slides (`_slide`, 0.19 ms); of this pass's own work, `lof_block` (per call
+about 20 us) and the step's searches. Built: `_near_nodes` bucketed; `lof_block` reads the obstacle and wood cells
+inline (an open cell skips `_obs_top`, flat ground skips `height_at`); `_sep_push` and the slide's trail loop keep
+their arrays in locals; `lof_units` cached as above; the exposure's zones selected once a search. All but the cache
+and the exposure are the same answers (the benchmark's state hashes equal every 300 ticks before and after them).
+Measured (3 rounds each, the same machine, back to back): 2f17d34 (before the first pass) 1.91 ms a tick, HEAD 2.51
+(+31 %), this pass 2.30 (+20 %): still over the brief's +15 % (2.20). The exact savings take HEAD's own battle from 2.51
+to about 2.29; this pass's behaviour costs some of it back (a different battle: lines that partly see fire, more
+units on the move, 888 men alive at 1,500 ticks against 811; the step's 20 m searches and the men's line traces,
+`lof_units` about 4 traces an answer it cannot take from the cache). Profile (timers, a loaded machine, ms a tick HEAD
+-> this pass): `_near_nodes` 0.42 -> 0.05, `_via_goal` 0.45 -> 0.08, `_slide` 0.31 -> 0.24, `_sep_push` 0.26 -> 0.25,
+`lof_block` 0.17 -> 0.14 (7.0 calls a tick against 5.3), `fire_spot` with its exposure 0.02 -> 0.08 (the step's
+searches), `_lof_step` 0.04 -> 0.11, the soldiers of units on the move 1.27 -> 1.52 (9.8 such units a tick against 8.8).
+
+**6. Rubble has some height** (the owner, added to the pass: "Rubble should have some height to hide behind").
+Rubble cells (a breached wall's, a fallen house's; a broken gate leaves no rubble cells, its opening stays open) now
+stand `RUBBLE_H` 1.3 m (a yard wall's height; static var, 0 = flat as before) for the lines of fire (`_obs_top`,
+`_cell_top`): a ball traced to a man of the line's head (1.74 m) passes over; the chest line (1.2 m) meets the heap and
+`LINE_LOW_STOP` 60 % of those balls stop; a cover man's body line (1.0 m) is stopped as by a low rock; arcing weapons as
+before (their apex clears it; `COV_RUBLINE`'s `COVER_STOP` is 0, so no extra roll). Directional: rubble within
+`RUBBLE_SKIP` 1.5 m of either end of a trace is the man's footing, not his cover, and within `LAND_NEAR` 5 m of either
+man it never blocks the unit-level line (as rocks: cover, not a wall between). A man standing in rubble keeps the old
+all-round roll (`RUBBLE_COVER_PCT`). `cover_rating` counts a heap toward the threat as light for line and cover troops
+(`COV_RUBLINE`, chest high), so the chip and the destination shield know it. View: in the oblique view the rubble is
+drawn heaped to that height (the kit's High pass lifts each stone, `draw_rubble(..., up)`; the Low pass, which drew
+no rubble in the oblique view at all, draws it straight on the board, `draw_rubble_ob`); the top view unchanged.
+Measured (custom_battle_test `_check_cover3` (4): 40 musketeers 3 m behind a 20 m heap, 60 at 70 m on fire at will,
+2 seeds, lost in 30 s): flat rubble 37, the heap 21 (-43 %; the yard wall in the same set piece 51 -> 26); the rating
+light from beyond, none from the open side. Breach fights (this pass with rubble against items 1-5 alone, same seeds): rome_walls 57 -> 59 % (walls 2 48 -> 52, 3 40 ->
+42: a small lean to the attackers, who crouch in the breach's rubble on its inside), west_walls 47 -> 46 % (walls 2
+31 -> 29: the defenders), open_town 85 -> 87 (16 seeds), west_named 35 -> 37; no cell beyond its interval from rubble
+alone.
+
+**Measured** (the evaluation's probes re-run on this tree; before = HEAD 22496cc, its numbers equal to the evaluation's
+"after"; tables and shots in the session scratchpad `cover3/`).
+- *The walk* (`spot_eval2` + `lof_grid`, 81 cases, 120 s; against 40 musketeers that shoot back): own losses before
+  the first shot 230 -> 62 (the first pass 18), all own losses 1,052 -> 775 (602), kills 1,051 -> 959 (789), the exchange
+  1.00 -> 1.24 (1.31), the first line 19.9 -> 15.3 s and the first shot 28.8 -> 21.3 s (18.6), the walk 45 -> 27 m (25),
+  spot changes 1.20 -> 0.65 a case (cases with 2 or more 23 -> 13), balls cut at a face 45.7 -> 46.8 %. Against pikes
+  (no fire back: four points as before): kills 1,388 -> 1,269 (the first pass 1,046), first shot 29.0 -> 27.1 s, walk 48
+  -> 38 m, spot changes 1.54 -> 0.57 (29 -> 12 cases). The end spot in cover facing the target: 0 of 81 still.
+- *The walk past a musket line on the side* (`walk_exposure85`, 13 cases, an enemy musket line 85 m off the walk):
+  own lost 97 -> 112 (12 comparable cases 74 -> 112: two Rome cases stop sooner inside that line's front and lose 21
+  and 48; the others 74 -> 43), arrived 4 -> 6.
+- *Lines that partly see* (`idle_class`, 8 West town battles, AI against AI, the probe's fixed middle-or-cover-spot
+  measure): street defenders standing with no line 268 -> 38 unit-seconds at walls 0, 247 -> 128 at walls 2; garrisons
+  read "no line" 1,401 -> 920 (shot within the next second 28 -> 31 %).
+- *The chip* (`chip_truth3`, the same battles, line troops, lost per 100 balls aimed at the unit): heavy against its
+  shooters 3.4, none against its shooters 13.9, none against a shooting garrison 19.6 (before: heavy against the
+  nearest when that was a garrison 26.2, the lie; it is now 11 unit-seconds with no loss).
+- *Balance* (tools/balance, 8 seeds unless said; before 8928aae7de = HEAD, after 06075aadbc = this pass with rubble;
+  items 1-5 alone 947ed96d64): `open_town` 16 seeds 83 -> 87 % (items 1-5 85); `west_named` 40 -> 37 % (walls 0 / 1 / 2:
+  57 / 45 / 20 -> 55 / 38 / 18; items 1-5 35); `west_walls` 39 -> 46 % (58 / 38 / 21 -> 69 / 41 / 29; items 1-5 47, the
+  pooled row just beyond its interval: the attackers' musket lines now fire from partial lines and stop sooner under
+  fire); `rome_walls` 56 -> 59 % (75 / 52 / 40 -> 83 / 52 / 42; items 1-5 57); all within the 8-point gate, west_walls at
+  its edge. Cells beyond their interval: west granada w0 +38, santiago_de_cuba w1 +50; rome sicilia_or w2 -38.
+- Tests: custom_battle_test `_check_cover3` (rubble as cover: (4) above; the stop under fire: three of lof_probe's town cases fire sooner and walk
+  less than stopping at four; the partly seeing line: lof_probe's half-hidden pikes, middle only no line and no shot,
+  front men a line in both cases and shots; `cover_shooters`; a house no cover from its own garrison at 180 of 180
+  door steps) and `_check_cover2`'s step check (run with only the middle read; the leash 22 m); battle_screen_test (the
+  chip against a shooter, the ring's opening).
+
+**Still open** (for the next evaluation): the exchange against a musket target 1.24 (below the first pass's 1.31: the
+target's own front men now see and shoot too); no spot ends in cover facing the target (0 of 81: the cover bonus
+still equals one unlit point); balls cut at a face 47 % against muskets (no narrowing at a corner); a line stopping
+early inside a second enemy's front loses more (walk_exposure85's two Rome cases); fire at will still takes the
+nearest target; no firing on the move; the chip not on the unit card and no legend; garrison arcs, negative cover,
+cursor icons, flanking; suppression (next); the West musket benchmark at +20 % (the brief's +15 % not reached: the
+next levers are the men's line traces (an answer kept across ticks while nobody moved far) and the separation's
+grid); rubble has no heap in the top view and no unit card mention; no device check.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

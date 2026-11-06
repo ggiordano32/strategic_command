@@ -418,7 +418,8 @@ const COV_HOUSE := 3      # a building's corner
 const COV_WALL := 4       # a wall, tower or gate (on its walk: the battlements, as everyone)
 const COV_FIELD := 5      # a field's hedges and ditches
 const COV_RUBBLE := 6     # standing in rubble: a breached wall's or a fallen house's (destruction, 2026-10-23)
-const COVER_STOP: Array[int] = [0, 45, 60, 50, 50, 25, 60]  # % of soldiers' missiles and balls stopped, by kind (walk men: WALL_COVER as everyone)
+const COV_RUBLINE := 7    # rubble between him and the shooter (third pass of cover, 2026-11-06): a low heap, cover as a yard wall's
+const COVER_STOP: Array[int] = [0, 45, 60, 50, 50, 25, 60, 0]  # % of soldiers' missiles and balls stopped, by kind (walk men: WALL_COVER as everyone)
 const COVER_LOOK := 4 * M  # a rock, house or wall this near toward the shooter covers a man (sampled at 2 and 4 m)
 const COVER_RING: Array[int] = [2048, 0, -2048, 0, 0, 2048, 0, -2048, 2048, 2048, -2048, 2048, 2048, -2048, -2048, -2048,
 	4096, 0, -4096, 0, 0, 4096, 0, -4096]  # (x, y) 2 m round a man and 4 m four ways: in cover (the unit's count)
@@ -553,6 +554,13 @@ const BREACH_KILL_PCT := 60      # a stretch breached: each man on it dies with 
 const COLLAPSE_KILL_PCT := 70    # a held building falls: each man of the unit in it dies with this chance
 const DESTR_MORALE := 150        # ... and the survivors take this morale blow (shaken)
 const RUBBLE_SPEED := 600        # per mille of the pace with the anchor in rubble (slow going)
+# Rubble with some height (third pass of cover, 2026-11-06; the owner: "Rubble should have some height to hide
+# behind"): a breach's or a fallen house's rubble cells stand RUBBLE_H, a yard wall's height, for the lines of fire:
+# a ball traced to a man of the line's head passes over, the chest line meets it (LINE_LOW_STOP), a cover man's body
+# line is stopped as by a low rock, directional (only from beyond the heap: the man's own footing, RUBBLE_SKIP, is
+# not in his way), arcing weapons as before; rubble within LAND_NEAR of either man is cover, not a wall between.
+static var RUBBLE_H := 1331      # 1.3 m (0: flat, as before)
+const RUBBLE_SKIP := 1536        # ... rubble this near either end of a trace is the man's footing, not his cover
 const RUBBLE_COVER_PCT := 35     # men without the cover trait in rubble: this % of the cover trait's stop (COVER_STOP[COV_RUBBLE]); riders none
 const WS_AIM_OUT := 2 * M        # a flat gun battering a stretch aims this far outside its outer face (ws_aim)
 const WS_STANDING := 0           # ws_state / ob_state
@@ -1790,7 +1798,7 @@ var stat_cover_stop: int = 0          # missiles stopped by a cover man's cover
 var stat_line_low: int = 0            # flat balls at a man of the line whose chest line a low wall, rock or hedge met (light cover, 2026-11-06)
 var stat_line_stop: int = 0           # ... balls stopped by a man of the line's light cover (the low wall, woods, hedges)
 var stat_ground_stop: int = 0         # ... and by his going to ground
-var stat_cover_kind := PackedInt32Array([0, 0, 0, 0, 0, 0, 0])  # hits on cover men by the cover they were in (COV_*)
+var stat_cover_kind := PackedInt32Array([0, 0, 0, 0, 0, 0, 0, 0])  # hits on cover men by the cover they were in (COV_*)
 var stat_hidden: int = 0              # unit-checks that found a unit hidden
 var stat_reveals: int = 0             # units seen after hiding
 var stat_lingers: int = 0             # sight lingers granted (VIS_LINGER)
@@ -2877,7 +2885,7 @@ func _unit_arrays() -> Array:
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
 ## so the hash of a plain map is what it always was).
 func _map_unit_arrays() -> Array:
-	return [u_wall, u_sq, u_gtarget, u_pn, u_pk, u_pgx, u_pgy, u_pep, u_trn, u_fsx, u_fsy, u_fst]
+	return [u_wall, u_sq, u_gtarget, u_pn, u_pk, u_pgx, u_pgy, u_pep, u_trn, u_fsx, u_fsy, u_fst, u_sbu0, u_sbt0, u_sbu1, u_sbt1]
 
 
 ## Per-unit stair moves and regrouping (maps with buildings or walls;
@@ -3433,6 +3441,17 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		own = own_works_skip(x0, y0, x1, y1)  # a man or gun on a wall or tower shoots over its own (and the ground it stands on)
 		oskip = maxi(oskip, own)
 	oskip = maxi(oskip, skip0)  # a tower's engine shoots over its own tower
+	# (Third pass, 2026-11-06: the cell lookups inlined, an open cell skipping _obs_top, flat ground skipping
+	# height_at: the same answers at about half the cost.)
+	var ton := ter_on != 0
+	var ohi := obs_hi != 0 and obs_on != 0
+	var obg := obs
+	var obw := ob_w
+	var obh := ob_h
+	var von := veg_on != 0
+	var vgg := veg
+	var vgw := veg_w
+	var vgh := veg_h
 	while a <= end:
 		var px := x0 + dx * a / d
 		var py := y0 + dy * a / d
@@ -3441,19 +3460,25 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 		var z := z0 + dz * a / d
 		if a < d:
 			z += apex * 4 * a / d * (d - a) / d
-		var gz := height_at(px, py)
-		if obs_hi != 0 and a >= oskip:
-			var ot := _obs_top(px, py)
-			if ot > 0 and gz + ot > z and (a >= LAND_NEAR and a <= d - LAND_NEAR or not MapGen.is_land(obs_kind(px, py))):
-				# (A rock or cliff within LAND_NEAR of either man is his
-				# cover, not a wall between them: he shoots over it and can
-				# be shot; cover troops take far fewer hits there.)
-				stat_obs_lof += 1
-				return a
+		var gz := height_at(px, py) if ton else 0
+		if ohi and a >= oskip:
+			var ci := px >> 11
+			var cj := py >> 11
+			var ok := obg[cj * obw + ci] if ci < obw and cj < obh else MapGen.C_OPEN
+			if ok != MapGen.C_OPEN:
+				var ot := _obs_top(px, py)
+				if ot > 0 and gz + ot > z and (a >= LAND_NEAR and a <= d - LAND_NEAR or not (MapGen.is_land(ok) or ok == MapGen.C_RUBBLE)):
+					# (A rock or cliff within LAND_NEAR of either man is his
+					# cover, not a wall between them: he shoots over it and can
+					# be shot; cover troops take far fewer hits there.)
+					stat_obs_lof += 1
+					return a
 		if gz > z and a >= own:
 			return a
-		if veg_on != 0 and a >= tskip:  # (tskip: a cover man shoots out of his own woods' edge)
-			tw += TREE_W[veg_d(px, py)]
+		if von and a >= tskip:  # (tskip: a cover man shoots out of his own woods' edge)
+			var vi := px >> 12
+			var vj := py >> 12
+			tw += TREE_W[(vgg[vj * vgw + vi] & MapGen.V_DENS) if vi < vgw and vj < vgh else 0]
 			if tw > TREE_BLOCK:
 				stat_tree_lof += 1
 				return a
@@ -3521,7 +3546,12 @@ static func _works_cell(k: int) -> bool:
 
 ## Unit-level line of fire for a flat weapon of unit u at unit t (centroid
 ## to centroid), or true for weapons that arc over everything.
-const LOF_MEN := 4  # lof_units: men of a unit at cover spots tried when its middle has no line of fire
+const LOF_MEN := 4  # lof_units: men of a unit tried when its middle has no line of fire (at cover spots; third pass: every unit)
+static var LOF_MEN_ALL := 1    # third pass (2026-11-06): 1 every unit's men tried (its front rank, a garrison's windows), 0 only cover spots (before)
+static var LOF_CACHE_ON := 1   # lof_units answered once per unit pair between soldier moves (0: every call traced; the same answers)
+var _lofc := PackedInt32Array()  # (derived: lof_units' answers, (epoch << 1) | line; not in snapshots)
+var _lofc_n: int = 0
+var _lofc_ep: int = 1            # (bumped at each step's start, after the soldiers move and on restore)
 
 func lof_units(u: int, t: int) -> bool:
 	if ter_on == 0 and map_on == 0:
@@ -3541,28 +3571,54 @@ func lof_units(u: int, t: int) -> bool:
 	# siege fits were made with the 8 m line there, measured: Rome walls 2-3
 	# attackers 56 / 48 -> 38 / 23 % with it.)
 	var stride := LOF_STEP if obs_on != 0 and u_wall[u] == 0 and u_wall[t] == 0 else 2 * LOF_STEP
+	# (Third pass, 2026-11-06: answered once per unit pair between soldier moves, _lofc.)
+	var ck := -1
+	if obs_on != 0 and LOF_CACHE_ON != 0:
+		if _lofc_n != n_units:
+			_lofc_n = n_units
+			_lofc.resize(n_units * n_units)
+			_lofc.fill(0)
+		ck = u * n_units + t
+		var cv := _lofc[ck]
+		if (cv >> 1) == _lofc_ep:
+			return (cv & 1) != 0
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
 		d * t_m_apex[ty] / 100, 0, stride, maxi(_skip0(u), pk.y), _skip1(t), pk.x)
-	if blk < 0:
-		return true
-	if u_cvb[u] < 0 or u_alive[u] <= 0:
-		return false
-	# Men at cover spots (phase C0) stand round the corners, not at their
-	# middle: the unit has a line of fire if one of LOF_MEN of them, spread
-	# through its slots, has (balance T: a strongpoint whose middle was
-	# behind a house never chose a target, its men leaning out at the
-	# corners never shot).
-	var base := u_slot_base[u]
-	var nal := u_alive[u]
-	for k in LOF_MEN:
-		var i := slot_soldier[base + (nal - 1) * k / maxi(LOF_MEN - 1, 1)]
-		var sx := pos_x[i]
-		var sy := pos_y[i]
-		var dm := FM.approx_len(x1 - sx, y1 - sy)
-		if lof_block(sx, sy, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
-				dm * t_m_apex[ty] / 100, 0, stride, maxi(_skip0(u), pk.y), _skip1(t), pk.x) < 0:
-			return true
-	return false
+	var ok := blk < 0
+	stat_lofu += 1
+	stat_lofu_tr += 1
+	if not ok and u_alive[u] > 0 and (u_cvb[u] >= 0 or LOF_MEN_ALL != 0):
+		# Men at cover spots (phase C0) stand round the corners, not at their
+		# middle: the unit has a line of fire if one of LOF_MEN of them, spread
+		# through its slots, has (balance T: a strongpoint whose middle was
+		# behind a house never chose a target, its men leaning out at the
+		# corners never shot). Third pass (2026-11-06): every unit so: a formed
+		# line's men across its front rank (its flank files see round a street
+		# corner its middle does not), a garrison's men at its windows; each
+		# man's own shot still needs his own line.
+		var base := u_slot_base[u]
+		var nal := u_alive[u]
+		var s0 := 0
+		var sn := nal
+		if u_cvb[u] < 0:
+			if occ_on != 0 and u_occ[u] > 0:
+				s0 = mini(OCC_DOOR_N, nal - 1)
+				sn = nal - s0
+			else:
+				sn = mini(maxi(files_of(u), 1), nal)
+		for k in LOF_MEN:
+			var i := slot_soldier[base + s0 + (sn - 1) * k / maxi(LOF_MEN - 1, 1)]
+			var sx := pos_x[i]
+			var sy := pos_y[i]
+			var dm := FM.approx_len(x1 - sx, y1 - sy)
+			stat_lofu_tr += 1
+			if lof_block(sx, sy, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
+					dm * t_m_apex[ty] / 100, 0, stride, maxi(_skip0(u), pk.y), _skip1(t), pk.x) < 0:
+				ok = true
+				break
+	if ck >= 0:
+		_lofc[ck] = (_lofc_ep << 1) | (1 if ok else 0)
+	return ok
 
 
 # ------------------------------------------ buildings block a flat shot ---
@@ -3590,8 +3646,20 @@ const LOF_SPOT_CLOSE_PCT := 50       # ... and each metre nearer the target than
 const LOF_SPOT_NEAR := 30 * M        # ... and each metre nearer the target than this one more (not up against the target's side of the house)
 const LOF_SPOT_BUDGET := 600         # a search makes at most this many traces (the best so far then; the first pass: up to 570)
 const LOF_SPOT_RETRY := 30           # none found: searched again after this long (3 s; was every second)
-const LOF_SPOT_GOOD := 4             # walking to its spot, a unit that has a line from this many of LOF_FRONT_N where it is stops there
+const LOF_SPOT_GOOD := 4             # walking to its spot, a unit that has a line from this many of LOF_FRONT_N where it is stops there ...
+# Third pass (2026-11-06; docs/design/battle_sim.md "Cover and line of fire, third pass"): the walk under fire.
+static var LOF_SPOT_FIRE_GOOD := 2   # ... this many while under fire (_lof_under_fire; the brief's 3 measured worse: tests in the as-built note)
+static var LOF_FIRE_STAND_PCT := 90  # a flat-weapon unit with a line at its target on a map with houses, shot at or its target shooting back, stops closing at this % of its range (85 % otherwise); 0 off
+const LOF_FIRE_T := 30               # under fire: a missile wounded the unit within this long (3 s), or its target can shoot back at it
+static var LOF_SPOT_EXPOSE := 1      # 1: the spot's score counts the enemy's fronts (the path planner's _rt_zones) on the walk and at the spot; 0 not (second pass)
+static var LOF_SPOT_EXP_PCT := 50         # ... each metre of the straight walk counts this % of its fronts' extra cost more (a shooter's front RT_FIRE_PCT 300 %: 1.5 m more a metre) ...
+const LOF_SPOT_EXP_STEP := 4 * M     # ... the walk sampled this often
+static var LOF_SPOT_EXP_AT := 3 * M       # ... and the spot itself this much more for each 100 % of fronts over it
 static var HOUSE_LOB_NEAR := 12 * M  # an arcing weapon's line crossing a building this near its target is a lob over it
+var u_sbu0 := PackedInt32Array()     # third pass (2026-11-06): the last unit that shot at this one + 1 (0 none) ...
+var u_sbt0 := PackedInt32Array()     # ... the tick it last did ...
+var u_sbu1 := PackedInt32Array()     # ... and the one before it (another unit) + 1 ...
+var u_sbt1 := PackedInt32Array()     # ... its tick (the cover chip's threat: cover_shooters; hashed on maps, read by nothing in the rules)
 var u_fsx := PackedInt32Array()      # a unit's fire spot (-1: none within LOF_WALK; hashed on maps)
 var u_fsy := PackedInt32Array()
 var u_fst := PackedInt32Array()      # ... the target it was found for + 1 (0: none)
@@ -3599,6 +3667,12 @@ var stat_lof_walk: int = 0           # ticks a unit walked to a fire spot
 var stat_flat_cut: int = 0           # flat balls ended at a house or wall they were scattered into
 var stat_fs_search: int = 0          # fire spot searches made ...
 var stat_fs_trace: int = 0           # ... and the traces they cost
+var stat_fs_short: int = 0           # ... of them searches nearer than LOF_WALK (the siege AI's step) ...
+var stat_fs_short_tr: int = 0        # ... and their traces
+var stat_step_go: int = 0            # the siege AI's defenders stepping to a fire spot (S_LOF_STEP) ...
+var stat_step_home: int = 0          # ... and back to the post (S_LOF_HOME)
+var stat_lofu: int = 0               # lof_units answers traced (not from its cache) ...
+var stat_lofu_tr: int = 0            # ... and their traces
 
 
 ## The first obstacle a flat shot of unit u from (x0, y0) toward (x1, y1)
@@ -3667,14 +3741,16 @@ func _spot_lit(u: int, t: int, px: int, py: int, reach: int, gm: int, ntr: Packe
 		var lat := 0 if k == 0 else (hw * ((k + 1) / 2) / 2) * (1 if k % 2 == 0 else -1)
 		var cx := px - ((tx - px) * back + (ty - py) * lat) / dd
 		var cy := py - ((ty - py) * back - (tx - px) * lat) / dd
+		# (Third pass: the middle is one point among the five, no longer needed: lof_units now reads the unit's men
+		# across its front too, LOF_MEN_ALL.)
 		if (nav_at(cx, cy) & gm) == 0:
-			if k == 0:
+			if k == 0 and LOF_MEN_ALL == 0:
 				return 0
 			continue
 		ntr[0] += 1
 		if lof_block(cx, cy, elev_at(cx, cy) + LOF_EYE, tx, ty, u_h[t] + LOF_BODY, ap, 0, LOF_STEP, 0, sk1) < 0:
 			lit += 1
-		elif k == 0:
+		elif k == 0 and LOF_MEN_ALL == 0:
 			return 0
 	return lit
 
@@ -3711,6 +3787,12 @@ func fire_spot(u: int, t: int, rmax: int = -1, rmin: int = 0) -> Vector3i:
 	var best_sc := 1 << 40
 	var r := rmin
 	stat_fs_search += 1
+	# (Third pass: the enemy's fronts it sees, as a move plans round them; none held back for a goal.)
+	var expo := LOF_SPOT_EXPOSE != 0
+	if expo:
+		_rt_zones(u, x0, y0, -(1 << 30), -(1 << 30))
+		_rz_sel(x0 - rmax, y0 - rmax, x0 + rmax, y0 + rmax)  # (only the zones over the searched ground, once)
+		expo = rz_na > 0
 	while r <= rmax and ntr[0] < LOF_SPOT_BUDGET:
 		if r - LOF_SPOT_HEAVY >= best_sc:
 			break  # (no spot farther out can beat it)
@@ -3724,6 +3806,13 @@ func fire_spot(u: int, t: int, rmax: int = -1, rmin: int = 0) -> Vector3i:
 			var base := r + maxi(dnow - dd, 0) * LOF_SPOT_CLOSE_PCT / 100 + maxi(LOF_SPOT_NEAR - dd, 0)
 			if base - LOF_SPOT_HEAVY >= best_sc:
 				continue
+			if expo:
+				var ex := _fs_expose(x0, y0, px, py)
+				if ex < 0:
+					continue  # (through an enemy's box)
+				base += ex
+				if base - LOF_SPOT_HEAVY >= best_sc:
+					continue
 			# (Men a spot needs with a line to beat the best: fewer cannot.)
 			var need := LOF_SPOT_MIN
 			var room := best_sc - (base - LOF_SPOT_HEAVY)
@@ -3747,7 +3836,38 @@ func fire_spot(u: int, t: int, rmax: int = -1, rmin: int = 0) -> Vector3i:
 				break
 		r += LOF_SPOT_STEP
 	stat_fs_trace += ntr[0]
+	if rmax < LOF_WALK:
+		stat_fs_short += 1  # (the siege AI's step: docs/AI.md 66-67)
+		stat_fs_short_tr += ntr[0]
 	return best
+
+
+## The exposure of a fire spot (third pass, 2026-11-06): the straight walk from (x0, y0) to (px, py) through the
+## enemy's fronts set up by _rt_zones and selected by fire_spot (sampled every LOF_SPOT_EXP_STEP: LOF_SPOT_EXP_PCT % of each metre's extra cost) and the
+## fronts over the spot (LOF_SPOT_EXP_AT for each 100 %), sim units; -1 when the walk or the spot is in an enemy's box.
+func _fs_expose(x0: int, y0: int, px: int, py: int) -> int:
+	var l := FM.approx_len(px - x0, py - y0)
+	var ns := maxi(l / LOF_SPOT_EXP_STEP, 1)
+	var sc := 0
+	for q in ns:
+		var c := _rt_cost(x0 + (px - x0) * (2 * q + 1) / (2 * ns), y0 + (py - y0) * (2 * q + 1) / (2 * ns))
+		if c < 0:
+			return -1
+		sc += c
+	var at := _rt_cost(px, py)
+	if at < 0:
+		return -1
+	return l / 100 * sc / ns * LOF_SPOT_EXP_PCT / 100 + LOF_SPOT_EXP_AT * at / 100
+
+
+## Unit u is under fire on its way to a spot for target t (third pass): a missile wounded it within LOF_FIRE_T, or t
+## shoots (shot left, u in its reach).
+func _lof_under_fire(u: int, t: int) -> bool:
+	if tick - u_hit_t[u] <= LOF_FIRE_T:
+		return true
+	var tt := u_type[t]
+	return t_m_range[tt] > 0 and u_ammo[t] > 0 and u_cls[t] == UT.CLS_MISSILE \
+		and FM.approx_len(u_cx[u] - u_cx[t], u_cy[u] - u_cy[t]) <= range_vs(t, u)
 
 
 ## fire_spot kept per unit (u_fsx, u_fsy, u_fst): searched when the target
@@ -3798,7 +3918,12 @@ func _fire_spot_on(u: int, t: int) -> Vector3i:
 		var reach := range_vs(u, t) * 17 / 20
 		var gm := _ground_mask(u)
 		var ntr := PackedInt32Array([0])
-		var good := _spot_lit(u, t, u_ax[u], u_ay[u], reach, gm, ntr, LOF_SPOT_GOOD) >= LOF_SPOT_GOOD
+		# (Third pass: under fire it stops at LOF_SPOT_FIRE_GOOD: walking on for the fourth point cost 230 men before
+		# the first shot against a musket company in the evaluation's 81 cases, 18 before the second pass.)
+		var uf := _lof_under_fire(u, t)
+		var need := LOF_SPOT_FIRE_GOOD if uf else LOF_SPOT_GOOD
+		var good := _spot_lit(u, t, u_ax[u], u_ay[u], maxi(reach, range_vs(u, t) * LOF_FIRE_STAND_PCT / 100) if uf else reach,
+			gm, ntr, need) >= need
 		if good:
 			# (Not short of the cover it walks to: here as good a cover facing it.)
 			var fl := mini(maxi(files_of(u), 1), maxi(u_alive[u], 1))
@@ -3839,7 +3964,7 @@ const COVW_COVER := 0
 const COVW_LINE := 1
 const COVW_RIDER := 2
 
-func cover_rating(x: int, y: int, face: int, who: int = COVW_COVER) -> int:
+func cover_rating(x: int, y: int, face: int, who: int = COVW_COVER, skip_b: int = -1) -> int:
 	var vb := veg_bits(x, y)
 	var fx := FM.cos_a(face)
 	var fy := FM.sin_a(face)
@@ -3854,9 +3979,11 @@ func cover_rating(x: int, y: int, face: int, who: int = COVW_COVER) -> int:
 			var cx := x + fx * k / FM.TRIG_ONE
 			var cy := y + fy * k / FM.TRIG_ONE
 			var ck := _cover_cell(obs_kind(cx, cy))
+			if ck == COV_HOUSE and skip_b >= 0 and _ob_cell_at(cx, cy) == skip_b:
+				ck = COV_NONE  # (the house the shooter holds: its windows look out over him, no cover from it)
 			if ck == COV_HOUSE or ck == COV_WALL or (ck == COV_ROCK and _obs_top(cx, cy) >= CS_H_LINE):
 				return 2
-			if ck != COV_NONE and (who == COVW_COVER or (ck == COV_ROCK and _obs_top(cx, cy) >= CS_H)):
+			if ck != COV_NONE and (who == COVW_COVER or ((ck == COV_ROCK or ck == COV_RUBLINE) and _obs_top(cx, cy) >= CS_H)):
 				light = true
 			k += COVER_LOOK / 2
 	if (vb & MapGen.V_FIELD) != 0 and city_on == 0:
@@ -3879,14 +4006,14 @@ func cover_who(u: int) -> int:
 ## cover_rating along a unit's front at (x, y) facing `face`, `hw` either
 ## side (five men): heavy when half of them have heavy cover, light when
 ## half have some, else open.
-func cover_rating_front(x: int, y: int, face: int, hw: int, who: int = COVW_COVER) -> int:
+func cover_rating_front(x: int, y: int, face: int, hw: int, who: int = COVW_COVER, skip_b: int = -1) -> int:
 	var rx := -FM.sin_a(face)
 	var ry := FM.cos_a(face)
 	var nh := 0
 	var nl := 0
 	for k in 5:
 		var o := hw * (k - 2) / 2
-		var c := cover_rating(x + rx * o / FM.TRIG_ONE, y + ry * o / FM.TRIG_ONE, face, who)
+		var c := cover_rating(x + rx * o / FM.TRIG_ONE, y + ry * o / FM.TRIG_ONE, face, who, skip_b)
 		if c == 2:
 			nh += 1
 		if c >= 1:
@@ -3894,6 +4021,50 @@ func cover_rating_front(x: int, y: int, face: int, hw: int, who: int = COVW_COVE
 	if nh * 2 >= 5:
 		return 2
 	return 1 if nl * 2 >= 5 else 0
+
+
+## The building (index) whose 2 m cell holds (x, y), -1 none.
+func _ob_cell_at(x: int, y: int) -> int:
+	if ob_cell.is_empty() or x < 0 or y < 0:
+		return -1
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return -1
+	return ob_cell[j * ob_w + i] - 1
+
+
+## A unit shot at unit t (third pass, 2026-11-06): t's two latest shooters, the newest first (u_sbu0 / u_sbt0, then
+## another unit in u_sbu1 / u_sbt1). Read only by cover_shooters (the view's cover chip).
+func _shot_note(t: int, u: int) -> void:
+	if t >= u_sbu0.size():
+		return
+	if u_sbu0[t] != u + 1:
+		u_sbu1[t] = u_sbu0[t]
+		u_sbt1[t] = u_sbt0[t]
+		u_sbu0[t] = u + 1
+	u_sbt0[t] = tick
+
+
+## The view's question (the cover chip): the enemy units that shot at unit u within the last `within` ticks and are
+## still ready (newest first), none: empty. Changes nothing.
+func cover_shooters(u: int, within: int) -> PackedInt32Array:
+	var out := PackedInt32Array()
+	if u < 0 or u >= u_sbu0.size():
+		return out
+	for k in 2:
+		var s := (u_sbu0[u] if k == 0 else u_sbu1[u]) - 1
+		var t0 := u_sbt0[u] if k == 0 else u_sbt1[u]
+		if s >= 0 and s < n_units and tick - t0 <= within and u_state[s] == U_READY and u_side[s] != u_side[u]:
+			out.append(s)
+	return out
+
+
+## The building a unit holds (its garrison), -1 none: a house is no cover from the men at its own windows.
+func held_building(s: int) -> int:
+	if occ_on == 0 or s < 0 or s >= u_occ.size() or u_occ[s] <= 0:
+		return -1
+	return u_occ[s] - 1
 
 
 # ----------------------------------------------- woods and settlements ---
@@ -4662,7 +4833,9 @@ func _unit_elev(u: int) -> int:
 ## How far an obstacle at (x, y) rises above the ground (line of fire).
 func _obs_top(x: int, y: int) -> int:
 	var k := obs_kind(x, y)
-	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER or k == MapGen.C_RUBBLE:
+	if k == MapGen.C_RUBBLE:
+		return RUBBLE_H
+	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER:
 		return 0
 	if MapGen.is_land(k):
 		# Rocks and cliffs (slice 2b): an outcrop's height, half a cliff's
@@ -4688,7 +4861,9 @@ func _obs_top(x: int, y: int) -> int:
 ## How far the obstacle of 2 m cell c (kind k) rises above the ground: as
 ## _obs_top, by cell.
 func _cell_top(c: int, k: int) -> int:
-	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER or k == MapGen.C_RUBBLE:
+	if k == MapGen.C_RUBBLE:
+		return RUBBLE_H
+	if k == MapGen.C_OPEN or k == MapGen.C_DITCH or k == MapGen.C_WATER:
 		return 0
 	if MapGen.is_land(k):
 		return _land_top(c, k)
@@ -4838,8 +5013,13 @@ func _slide0(u: int, ox: int, oy: int, nx: int, ny: int, mask: int) -> Vector2i:
 		var base := u * TRAIL
 		var best := 0
 		var best_d := 1 << 40
+		var trx := tr_x
+		var try_ := tr_y
 		for k in cnt_n:
-			var d := FM.approx_len(tr_x[base + k] - ox, tr_y[base + k] - oy)
+			# (FM.approx_len inlined: third pass, 2026-11-06.)
+			var ax := absi(trx[base + k] - ox)
+			var ay := absi(try_[base + k] - oy)
+			var d := (ax - (ax >> 5) + ((ay * 3) >> 3) + (ay >> 6)) if ax > ay else (ay - (ay >> 5) + ((ax * 3) >> 3) + (ax >> 6))
 			if d < best_d:
 				best_d = d
 				best = k
@@ -5117,27 +5297,49 @@ func _node_open(k: int) -> bool:
 ## Up to `most` graph nodes near (x, y) with a clear line to it (the nearest
 ## open node if none is clear), nearest first (ties: lower index).
 func _near_nodes(x: int, y: int, most: int = 3, mask: int = MapGen.NAV_GROUND) -> PackedInt32Array:
-	var cnt_n := ng_x.size()
 	var cand := PackedInt32Array()
 	var cd := PackedInt32Array()
-	for k in cnt_n:
-		if not _node_open(k):
-			continue
-		if fort_on != 0 and ng_e0[k + 1] == ng_e0[k]:
-			continue  # (a West fort: a node with no way out, by a bastion's stair, is no way in or out: forts leftovers)
-		var dx := ng_x[k] - x
-		var dy := ng_y[k] - y
-		var d := FM.approx_len(dx, dy)
-		# Insert into the six nearest.
-		var pos := cand.size()
-		while pos > 0 and (cd[pos - 1] > d or (cd[pos - 1] == d and cand[pos - 1] > k)):
-			pos -= 1
-		if pos < 6:
-			cand.insert(pos, k)
-			cd.insert(pos, d)
-			if cand.size() > 6:
-				cand.resize(6)
-				cd.resize(6)
+	# (Third pass, 2026-11-06: the six nearest from the nodes' 16 m buckets, ring by ring round (x, y), until no node
+	# farther out can be nearer than the sixth (approx_len >= 31/32 of the larger axis): the same six as the old scan
+	# of every node, which cost 0.25 ms a tick in the West musket town.)
+	_nn_ready()
+	var nw := _nn_w
+	var nh := _nn_h
+	var qi := (x - _nn_x0) >> NN_SHIFT
+	var qj := (y - _nn_y0) >> NN_SHIFT
+	var rmax := maxi(maxi(absi(qi), absi(nw - 1 - qi)), maxi(absi(qj), absi(nh - 1 - qj)))
+	for r in rmax + 1:
+		if cand.size() >= 6 and cd[5] < (r - 1) * (NN_CELL - NN_CELL / 32) - 2:
+			break
+		var j0 := maxi(qj - r, 0)
+		var j1 := mini(qj + r, nh - 1)
+		for j in range(j0, j1 + 1):
+			var edge := j == qj - r or j == qj + r
+			var i := maxi(qi - r, 0)
+			var i1 := mini(qi + r, nw - 1)
+			while i <= i1:
+				if not edge and i != qi - r and i != qi + r:
+					i = qi + r  # (a middle row of the ring: its two end cells only)
+					continue
+				var c := j * nw + i
+				for q in range(_nn_head[c], _nn_head[c + 1]):
+					var k := _nn_list[q]
+					if not _node_open(k):
+						continue
+					if fort_on != 0 and ng_e0[k + 1] == ng_e0[k]:
+						continue  # (a West fort: a node with no way out, by a bastion's stair, is no way in or out: forts leftovers)
+					var d := FM.approx_len(ng_x[k] - x, ng_y[k] - y)
+					# Insert into the six nearest (by distance, then index).
+					var pos := cand.size()
+					while pos > 0 and (cd[pos - 1] > d or (cd[pos - 1] == d and cand[pos - 1] > k)):
+						pos -= 1
+					if pos < 6:
+						cand.insert(pos, k)
+						cd.insert(pos, d)
+						if cand.size() > 6:
+							cand.resize(6)
+							cd.resize(6)
+				i += 1
 	var out := PackedInt32Array()
 	for k in cand.size():
 		if _los_fat(x, y, ng_x[cand[k]], ng_y[cand[k]], mask):
@@ -5147,6 +5349,53 @@ func _near_nodes(x: int, y: int, most: int = 3, mask: int = MapGen.NAV_GROUND) -
 	if out.is_empty() and not cand.is_empty():
 		out.append(cand[0])
 	return out
+
+
+const NN_SHIFT := 14            # _near_nodes: the nodes' buckets, 16 m
+const NN_CELL := 1 << NN_SHIFT
+var _nn_key := -1                 # (derived from the graph, rebuilt when it changes; not in snapshots)
+var _nn_x0 := 0
+var _nn_y0 := 0
+var _nn_w := 0
+var _nn_h := 0
+var _nn_head := PackedInt32Array()
+var _nn_list := PackedInt32Array()
+
+## The street graph's nodes in 16 m buckets (CSR, each bucket in index order), built again when the graph changes
+## (breaches add nodes; a restored sim has none yet).
+func _nn_ready() -> void:
+	var cnt_n := ng_x.size()
+	var key := cnt_n * 7919 + (ng_x[cnt_n - 1] + ng_y[0] * 3 if cnt_n > 0 else 0)
+	if key == _nn_key and not _nn_head.is_empty():
+		return
+	_nn_key = key
+	var x0 := 0
+	var y0 := 0
+	var x1 := 0
+	var y1 := 0
+	for k in cnt_n:
+		if k == 0 or ng_x[k] < x0: x0 = ng_x[k]
+		if k == 0 or ng_y[k] < y0: y0 = ng_y[k]
+		if k == 0 or ng_x[k] > x1: x1 = ng_x[k]
+		if k == 0 or ng_y[k] > y1: y1 = ng_y[k]
+	_nn_x0 = x0
+	_nn_y0 = y0
+	_nn_w = ((x1 - x0) >> NN_SHIFT) + 1
+	_nn_h = ((y1 - y0) >> NN_SHIFT) + 1
+	var nc := _nn_w * _nn_h
+	var cnt := PackedInt32Array()
+	cnt.resize(nc + 1)
+	cnt.fill(0)
+	for k in cnt_n:
+		cnt[((ng_y[k] - y0) >> NN_SHIFT) * _nn_w + ((ng_x[k] - x0) >> NN_SHIFT) + 1] += 1
+	for c in nc:
+		cnt[c + 1] += cnt[c]
+	_nn_head = cnt.duplicate()
+	_nn_list.resize(cnt_n)
+	for k in cnt_n:
+		var c := ((ng_y[k] - y0) >> NN_SHIFT) * _nn_w + ((ng_x[k] - x0) >> NN_SHIFT)
+		_nn_list[cnt[c]] = k
+		cnt[c] += 1
 
 
 ## Graph distances (1/8 m) from every node to node `dst` with the gates as
@@ -10591,6 +10840,7 @@ func step() -> void:
 		_deploy_step()
 		return
 	_dist_new = 0
+	_lofc_ep += 1
 	_apply_orders()
 	if rsv_on != 0:
 		_update_reserves()
@@ -10625,6 +10875,8 @@ func step() -> void:
 				if kd != u_skc[u]:
 					u_skc[u] = kd  # (roles step 2: into the trees, or back to its places)
 					u_dirty[u] = 1
+	if cs_on != 0 or skd_on != 0 or ch_on != 0 or wp_on != 0:
+		_lofc_ep += 1  # (cover men may have taken their spots: lof_units' answers again)
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -10639,6 +10891,7 @@ func step() -> void:
 	_sep_build()
 	_mx_grid()
 	_update_soldiers()
+	_lofc_ep += 1
 	if fw_on != 0:
 		_update_works()
 	if riv_on != 0:
@@ -11513,15 +11766,24 @@ func _sep_push(u: int, i: int, x: int, y: int, rm: int) -> Vector2i:
 	var gx := 0
 	var gy := 0
 	var seen := 0
+	# (Third pass, 2026-11-06: the arrays in locals; the same pushes.)
+	var mh := mx_head
+	var mn := mx_next
+	var uo := unit_of
+	var stt := state
+	var ppx := pos_x
+	var ppy := pos_y
+	var spq := u_spq
+	var mw := mx_w
 	for cy in range(cy0, cy1 + 1):
 		for cx in range(cx0, cx1 + 1):
-			var j := mx_head[cy * mx_w + cx]
+			var j := mh[cy * mw + cx]
 			while j >= 0 and seen < SEP_SEEN:
-				var uj := unit_of[j]
-				if uj != u and state[j] < S_DEAD:
-					var rr := rm + u_spq[uj]
-					var rx := x - pos_x[j]
-					var ry := y - pos_y[j]
+				var uj := uo[j]
+				if uj != u and stt[j] < S_DEAD:
+					var rr := rm + spq[uj]
+					var rx := x - ppx[j]
+					var ry := y - ppy[j]
 					if absi(rx) < rr and absi(ry) < rr:
 						var dd := FM.approx_len(rx, ry)
 						if dd < rr:
@@ -11536,7 +11798,7 @@ func _sep_push(u: int, i: int, x: int, y: int, rm: int) -> Vector2i:
 							else:
 								gx += rx * (rr - dd) / dd
 								gy += ry * (rr - dd) / dd
-				j = mx_next[j]
+				j = mn[j]
 	if gx == 0 and gy == 0:
 		return Vector2i(x, y)
 	var gl := FM.approx_len(gx, gy)
@@ -11996,6 +12258,10 @@ func _update_units() -> void:
 							stop = (absi(dx) * ((u_maxx[t] - u_minx[t]) >> 1) + absi(dy) * ((u_maxy[t] - u_miny[t]) >> 1)) / d + M
 						elif not mlof:
 							stop = mrange(u) / 4
+						elif obs_on != 0 and LOF_FIRE_STAND_PCT > 0 and not car and _lof_under_fire(u, t):
+							# (Third pass, 2026-11-06: under fire with a line it stands and shoots back sooner: closing
+							# from its target's reach to 85 % of its own cost the line 18 s and 23 m under fire.)
+							stop = maxi(stop, range_vs(u, t) * LOF_FIRE_STAND_PCT / 100)
 						if d > stop and ton:
 							aspeed = aspeed * _fac_dir(u, g0, dx, dy, d) / 1000
 					if u_wall[u] > 0:
@@ -15231,6 +15497,8 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 	pr_ty[p] = ty
 	pr_tu[p] = ft
 	pr_ak[p] = ak
+	if ft >= 0:
+		_shot_note(ft, u)
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -16807,6 +17075,8 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_ty[p] = ty
 	pr_tu[p] = ft
 	pr_ak[p] = k
+	if ft >= 0:
+		_shot_note(ft, u)
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -19369,6 +19639,8 @@ func _ambush(t: int, by: int) -> void:
 func _cover_cell(k: int) -> int:
 	if k == MapGen.C_OPEN:
 		return COV_NONE
+	if k == MapGen.C_RUBBLE:
+		return COV_RUBLINE if RUBBLE_H > 0 else COV_NONE
 	if MapGen.is_land(k):
 		return COV_ROCK
 	if k == MapGen.C_BUILDING:
@@ -19666,7 +19938,12 @@ func _trace(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int,
 					var cy := (iy << 11) + 1024
 					var a := clampi(((cx - x0) * dx + (cy - y0) * dy) / d, 0, d)
 					var land := MapGen.is_land(k)
-					if a >= (s_land if land else s_obs) and d - a >= (t_land if land else t_obs):
+					var sl := s_land if land else s_obs
+					var tl := t_land if land else t_obs
+					if k == MapGen.C_RUBBLE:
+						sl = maxi(s_land, RUBBLE_SKIP)  # (a low heap as a rock; his own footing is not his cover)
+						tl = maxi(t_land, RUBBLE_SKIP)
+					if a >= sl and d - a >= tl:
 						var z := z0 + dz * a / d + apex * 4 * a / d * (d - a) / d
 						if (height_at(cx, cy) if ter else 0) + top > z:
 							_tr_c = c
@@ -20199,7 +20476,7 @@ func _press_n(u: int, o: int) -> int:
 ## Left out of snapshots: rebuilt identically by setup() from the same
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
-const _SNAP_SKIP := {"ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
+const _SNAP_SKIP := {"_lofc": true, "_lofc_n": true, "_lofc_ep": true, "_nn_key": true, "_nn_head": true, "_nn_list": true, "_nn_x0": true, "_nn_y0": true, "_nn_w": true, "_nn_h": true, "ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
 	"ob_ok": true, "ob_z": true, "ob_flat": true, "ob_dx": true, "ob_dy": true, "ob_ix": true, "ob_iy": true, "ob_face": true,
 	"ob_s0": true, "ob_sn": true, "sp_x": true, "sp_y": true, "sp_f": true, "sp_k": true, "occ_bg": true,
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
@@ -20759,6 +21036,7 @@ func restore(blob: PackedByteArray) -> bool:
 		for dst in _dist_have:
 			_dist_cache[dst] = _dijkstra(dst)
 	_xf_restore()
+	_lofc_ep += 1
 	return true
 
 

@@ -1543,8 +1543,8 @@ static func _reserve(sim, u: int) -> void:
 	var t := _nearest_attacker(sim, u, hx, hy, kn[AP.S_RESERVE_R], true)
 	if t >= 0 and sim.u_cls[u] != UT.CLS_ART:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
-			if kn[AP.S_LOF_STEP] > 0:
-				_lof_step(sim, u, kn, hx, hy)  # (no line of fire from the post: a short step for one; docs/AI.md 66)
+			if kn[AP.S_LOF_STEP] > 0 and not _lof_step(sim, u, kn, hx, hy) and kn[AP.S_LOF_HOME] != 0:
+				_go_home(sim, u, hx, hy, sim.u_dface[u], 6)  # (stepped off and nobody left in its reach: back; docs/AI.md 67)
 			return  # shoot from the post (fire at will)
 		if (sim.u_order[u] != O_ATTACK or sim.u_target[u] != t) \
 				and BattleAI._mistake(sim, sim.u_side[u], AP.M_LATE_FLANK, kn):
@@ -1577,7 +1577,10 @@ static func _lof_step(sim, u: int, kn: PackedInt32Array, hx: int, hy: int) -> bo
 			or (sim.occ_on != 0 and (sim.u_occ[u] > 0 or sim.u_ocg[u] > 0)):
 		return false
 	var step: int = kn[AP.S_LOF_STEP]
-	if BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > step + 4 * M and sim.u_order[u] != O_MOVE:
+	if kn[AP.S_LOF_LEASH] > 0:
+		step = kn[AP.S_LOF_LEASH]  # (docs/AI.md 67: 20 m for a step that gains a line)
+	var off := BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy)
+	if off > step + 4 * M and sim.u_order[u] != O_MOVE:
 		return false
 	var side: int = sim.u_side[u]
 	# (The lines are read only on its look ticks, every S_LOF_STEP_EVERY; between
@@ -1609,8 +1612,14 @@ static func _lof_step(sim, u: int, kn: PackedInt32Array, hx: int, hy: int) -> bo
 	var sp: Vector3i = sim.fire_spot(u, near, step)
 	if sp.z == 0 or BattleAI._d(sp.x - sim.u_ax[u], sp.y - sim.u_ay[u]) < 2 * M \
 			or BattleAI._d(sp.x - hx, sp.y - hy) > step + 2 * M:
+		if kn[AP.S_LOF_HOME] != 0 and off > 4 * M and (sp.z == 0 or BattleAI._d(sp.x - sim.u_ax[u], sp.y - sim.u_ay[u]) >= 2 * M):
+			# (Stepped off its post, no line here and none within the leash: back to the post; docs/AI.md 67.)
+			BattleAI._count(sim, side, AP.C_SIEGE)
+			sim.stat_step_home += 1
+			BattleAI._move(sim, u, hx, hy, sim.u_dface[u], BattleAI._width(sim, u), 0, 3)
 		return true
 	BattleAI._count(sim, side, AP.C_SIEGE)
+	sim.stat_step_go += 1
 	BattleAI._move(sim, u, sp.x, sp.y, FM.atan2_a(sim.u_cy[near] - sp.y, sim.u_cx[near] - sp.x), BattleAI._width(sim, u), 0, 3)
 	return true
 

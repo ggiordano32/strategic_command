@@ -2136,7 +2136,8 @@ class _RubbleDraw extends Node2D:
 	func _draw() -> void:
 		kit.CityDraw.draw_sea_passage(self, kit.sim, float(kit.k), Vector2.ZERO)  # (amphibious units: the sea gate's channel)
 		if not kit._rubble_cells.is_empty():
-			kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, false)
+			var up: float = float(kit.k) * kit.BoardView.OBLIQUE_SIN / kit.BoardView.OBLIQUE_COS if kit.BoardView.oblique else 0.0
+			kit.CityDraw.draw_rubble(self, kit.sim, kit._rubble_cells, float(kit.k), Vector2.ZERO, false, up)
 
 
 ## The garden fences from above (the top view): a soft shadow to the lower right, the rails, a post every 2 m.
@@ -2224,6 +2225,10 @@ class _LowDraw extends Node2D:
 		var lowk: float = float(kit.Atlas.LOW_PPM) / float(kit.Atlas.PPM)
 		var stone: Vector3 = kit.STONE_TINT[kit.culture]
 		var sc := Color(0.62 * stone.x, 0.58 * stone.y, 0.52 * stone.z) if not kit._timber else Color(0.45, 0.33, 0.22)
+		if not kit._rubble_cells.is_empty():
+			# (Third pass of cover, 2026-11-06: the rubble heaped to its cover height under everything standing.)
+			draw_set_transform_matrix(Transform2D.IDENTITY)
+			kit.CityDraw.draw_rubble_ob(self, kit.sim, kit._rubble_cells, float(kit.k))
 		for it in kit._ob_order:
 			if int(it[0]) == 1:
 				if int(it[1]) < kit._ob_nwall:

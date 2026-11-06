@@ -4706,3 +4706,28 @@ Easy as before (deliberate mistakes). Measured: battle_sim.md (as built): the st
 strongpoints' cover move no balance cell measurably (`S_LOF_PICK` off, on the build that still had the 4 m stride at
 walls: Rome walls 2-3 38 / 23 -> 42 / 23); the defenders' step finds a spot within 12 m in few street posts (the AI's
 no-line standing barely moves), and in `open_town` (8 seeds) turning it off gave 88 % as with it.
+
+## 67. The defenders' step reaches 20 m and comes back (2026-11-06)
+
+The battle rules are docs/design/battle_sim.md "Cover and line of fire, third pass (as built, 2026-11-06)". The second
+evaluation (session scratchpad `eval2/eval2.md`, `idle_class`) found the street defenders standing with attackers in
+reach and no line for 268 unit-seconds at walls 0 and 247 at walls 2 (4 seeds x 300 s): 62 % of them had men with a
+line yet shot in 4 % of their seconds (the unit-level line read only the middle of a formed line: the sim's third pass
+now reads its front men too), and the step of note 66 found no spot within its 12 m leash in 76 % of the samples.
+
+- **`S_LOF_LEASH`** (363). `_lof_step` looks for its fire spot this far round where the unit stands and takes one at
+  most this far from its post: 20 m (`S_LOF_STEP`'s 12 m when 0).
+- **`S_LOF_HOME`** (364). A defender stepped off its post (more than 4 m) walks back to it when, on one of its looks, it
+  has no line at any attacker in its reach there and no spot within the leash, or when no attacker is left in its reach
+  (the old rule only went home once the attackers had left the town's reach of the post entirely).
+
+| Knob (`sim/ai_profile.gd`, ids 363-364; `N_KNOBS` 365) | Easy | Average | Skilled |
+|---|---|---|---|
+| `S_LOF_LEASH` | 0 (`S_LOF_STEP`: 0, stands) | 20 m | 20 m |
+| `S_LOF_HOME` | 0 | 1 | 1 |
+
+Easy as before (deliberate mistakes). Measured (`idle_class`, the same 8 battles; the probe's fixed line measure, the
+second pass's middle-or-cover-spot read, so a unit that now shoots past a corner still counts as "no line"): street
+defenders standing with no line 268 -> 38 unit-seconds at walls 0, 247 -> 128 at walls 2 (most of the drop is the sim's
+front-men read, the rest the longer step); of those left at walls 2 a third shot in the next second (4 % before). In
+the West musket benchmark the step moved 5 times and walked home 3 times in 150 s. Balance: battle_sim.md (as built).

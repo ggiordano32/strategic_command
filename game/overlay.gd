@@ -1456,61 +1456,90 @@ func _plate_str(pos: Vector2, text: String, fs: int, col: Color) -> void:
 
 
 ## The cover chip (2026-11-06, docs/design/ui.md "Cover chips and hittable marks"): every ready unit's marker carries a
-## small disc at its upper left, green for heavy cover, yellow for light, a dark empty ring for none, against the nearest
-## enemy it sees (its facing with none), for what its troop type gets (BattleSim.cover_rating_front with cover_who: a
-## yellow chip only where the sim gives light cover). A tick on the disc's rim points at the covered side (the threat).
-## Held buildings and wall walks read heavy. Refreshed once a sim second.
+## small shield at its upper left, green and whole for heavy cover, yellow and half filled for light, nothing in the open
+## (third pass, 2026-11-06: the faint "none" ring went; Company of Heroes shows nothing for open ground), for what its
+## troop type gets (BattleSim.cover_rating_front with cover_who). Rated against the enemy units that shot at it in the last
+## CHIP_SHOT_T (BattleSim.cover_shooters; the worst of them), else the nearest enemy it sees (its facing with none); a
+## house the shooter holds is no cover from its windows. A tick on the rim points at the threat rated. Held buildings and
+## wall walks read heavy. Refreshed once a sim second.
+const CHIP_SHOT_T := 30   # sim ticks: the shooters the chip is rated against (3 s)
+
 func _draw_cover_chip(u: int, c: Vector2, r: float, lw: float) -> void:
 	if UT.cls(sim.u_type[u]) == UT.CLS_ART or sim.is_ship(u) or (sim.ch_on != 0 and sim.u_char[u] != 0):
 		return
 	var e := chip_state(u)
 	var cr: int = e[1]
-	var cr_r := maxf(r * 0.7, 5.0 * _lp)   # (at least 5 CSS px: 10 across on a phone)
-	var at := c + Vector2(-r - cr_r * 0.85, -r * 0.55 - cr_r * 0.55)
 	if cr == 0:
-		if int(e[3]) == BattleSim.COVW_RIDER:
-			return  # (riders: heavy only; no empty ring on every squadron)
-		draw_arc(at, cr_r, 0.0, TAU, 12, Color(0, 0, 0, 0.55), lw * 1.6)
-		draw_arc(at, cr_r, 0.0, TAU, 12, Color(0.78, 0.76, 0.7, 0.7), lw * 0.8)
-		return
+		return  # (open ground: no chip)
+	var h := maxf(r * 0.95, 7.0 * _lp)   # (the shield at least 7 CSS px tall: 14 across on a phone)
+	var w := h * 0.82
+	var at := c + Vector2(-r - w * 0.7, -r * 0.55 - h * 0.45)
 	var col := Color(0.45, 0.95, 0.4) if cr == 2 else Color(1.0, 0.84, 0.3)
-	draw_circle(at, cr_r + lw * 0.8, Color(0, 0, 0, 0.7))
-	draw_circle(at, cr_r, col)
+	var top := at + Vector2(0, -h * 0.5)
+	var pts := PackedVector2Array([at + Vector2(-w * 0.5, -h * 0.5), at + Vector2(w * 0.5, -h * 0.5),
+		at + Vector2(w * 0.5, h * 0.05), at + Vector2(0, h * 0.5), at + Vector2(-w * 0.5, h * 0.05)])
+	var ol := maxf(lw, 1.0 * _lp)
+	var outer := PackedVector2Array()
+	for p in pts:
+		outer.append(at + (p - at) * 1.0 + (p - at).normalized() * ol * 1.6)
+	draw_colored_polygon(outer, Color(0.05, 0.04, 0.02, 0.85))
+	if cr == 2:
+		draw_colored_polygon(pts, col)
+	else:
+		draw_colored_polygon(pts, Color(col, 0.28))
+		# (light: its left half filled)
+		draw_colored_polygon(PackedVector2Array([pts[0], top, at + Vector2(0, h * 0.5), pts[4]]), col)
+	draw_polyline(pts + PackedVector2Array([pts[0]]), Color(col.lightened(0.3), 1.0), ol * 0.8)
 	if int(e[2]) >= 0:
 		var b: float = int(e[2]) * TAU / 1024.0
 		var dv := Vector2(cos(b), sin(b) * (BoardView.OBLIQUE_COS if BoardView.oblique else 1.0)).normalized()
 		var tang := Vector2(-dv.y, dv.x)
-		var tip := at + dv * (cr_r + lw * 2.2)
-		draw_colored_polygon(PackedVector2Array([tip, at + dv * cr_r * 0.55 + tang * cr_r * 0.6,
-			at + dv * cr_r * 0.55 - tang * cr_r * 0.6]), Color(0.1, 0.08, 0.05, 0.95))
+		var rr := h * 0.62
+		var tip := at + dv * (rr + ol * 3.0)
+		draw_colored_polygon(PackedVector2Array([tip, at + dv * rr + tang * h * 0.22, at + dv * rr - tang * h * 0.22]),
+			Color(0.1, 0.08, 0.05, 0.95))
 
 
-## Unit u's cover chip as drawn: [sim second, rating 0-2, threat bearing, BattleSim cover_who kind] (cached a sim second).
+## Unit u's cover chip as drawn: [sim second, rating 0-2, threat bearing, BattleSim cover_who kind, the threat unit or
+## -1] (cached a sim second).
 func chip_state(u: int) -> Array:
 	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
 	var e: Array = _chip.get(u, [])
 	if e.is_empty() or int(e[0]) != sec:
-		e = [sec, _chip_rating(u), _chip_bearing(u), sim.cover_who(u)]
+		var rb := _chip_eval(u)
+		e = [sec, rb[0], rb[1], sim.cover_who(u), rb[2]]
 		_chip[u] = e
 	return e
 
 
-## The cover unit u has now against its threat (_chip_bearing), for its troop type: a held building or a wall's walk
-## heavy, else BattleSim.cover_rating_front along its front.
-func _chip_rating(u: int) -> int:
+## The cover unit u has now, for its troop type, against its threats (_chip_threats): [rating, bearing, threat unit]:
+## a held building or a wall's walk heavy; else the worst BattleSim.cover_rating_front along its front over the threats
+## (a house a threat holds not counting against it); none: against its facing.
+func _chip_eval(u: int) -> Array:
+	var th := _chip_threats(u)
+	var b0: int = sim.u_face[u] if th.is_empty() else _bearing(u, th[0])
 	if (sim.occ_on != 0 and sim.u_occ[u] > 0) or sim.u_wall[u] > 0:
-		return 2
-	var b := _chip_bearing(u)
-	if b < 0:
-		b = sim.u_face[u]
+		return [2, b0, th[0] if not th.is_empty() else -1]
 	var files: int = mini(sim.files_of(u), sim.u_alive[u])
 	var hw: int = maxi(files - 1, 0) * UT.stat(sim.u_type[u], "file_sp") / 2
-	return sim.cover_rating_front(sim.u_ax[u], sim.u_ay[u], b, hw, sim.cover_who(u))
+	var who: int = sim.cover_who(u)
+	if th.is_empty():
+		return [sim.cover_rating_front(sim.u_ax[u], sim.u_ay[u], b0, hw, who), b0, -1]
+	var best := [3, b0, th[0]]
+	for o in th:
+		var b := _bearing(u, o)
+		var cr: int = sim.cover_rating_front(sim.u_ax[u], sim.u_ay[u], b, hw, who, sim.held_building(o))
+		if cr < int(best[0]):
+			best = [cr, b, o]
+	return best
 
 
-## The bearing (sim angle) from unit u to the nearest enemy unit it sees within 250 m (centroids; index order on ties), its
-## facing with none.
-func _chip_bearing(u: int) -> int:
+## The enemy units unit u's chip is rated against: those that shot at it in the last CHIP_SHOT_T
+## (BattleSim.cover_shooters), else the nearest enemy unit it sees within 250 m (centroids; index order on ties), else none.
+func _chip_threats(u: int) -> PackedInt32Array:
+	var sh: PackedInt32Array = sim.cover_shooters(u, CHIP_SHOT_T)
+	if not sh.is_empty():
+		return sh
 	var side: int = sim.u_side[u]
 	var best := -1
 	var bd := 250 * 1024
@@ -1521,9 +1550,12 @@ func _chip_bearing(u: int) -> int:
 		if d < bd:
 			bd = d
 			best = o
-	if best < 0:
-		return sim.u_face[u]
-	return int(round(atan2(float(sim.u_cy[best] - sim.u_cy[u]), float(sim.u_cx[best] - sim.u_cx[u])) * 1024.0 / TAU)) & 1023
+	return PackedInt32Array([best]) if best >= 0 else PackedInt32Array()
+
+
+## The bearing (sim angle) from unit u's middle to unit o's.
+func _bearing(u: int, o: int) -> int:
+	return int(round(atan2(float(sim.u_cy[o] - sim.u_cy[u]), float(sim.u_cx[o] - sim.u_cx[u])) * 1024.0 / TAU)) & 1023
 
 
 var _lp := 1.0      # this frame: world units per CSS px (logical_px)
@@ -1892,7 +1924,36 @@ func _house_cut(u: int, rng: int) -> PackedInt32Array:
 		var ey := cy + int(sin(ang) * rng)
 		var b: int = sim.lof_works_block(u, cx, cy, ex, ey)
 		out[k] = b if b >= 0 else rng
+	out = _ring_open(out)
 	_ring[u] = [sec, cx, cy, out]
+	return out
+
+
+## The cut ring without its spikes (third pass, 2026-11-06: rays down a street reached the full range between houses a
+## few metres off and drew long orange spikes that read as paths): a grey-scale opening over the ring steps (the least
+## within RING_OPEN steps either side, then the most of those), so a reach narrower than 2 RING_OPEN + 1 steps (25
+## degrees) is pulled in to its neighbours while wider open sectors and every cut stay. Last step = first (a closed ring).
+const RING_OPEN := 2
+
+func _ring_open(r: PackedInt32Array) -> PackedInt32Array:
+	var n := r.size() - 1
+	if n < 2 * RING_OPEN + 1:
+		return r
+	var mn := PackedInt32Array()
+	mn.resize(n)
+	for k in n:
+		var m := r[k]
+		for j in range(-RING_OPEN, RING_OPEN + 1):
+			m = mini(m, r[(k + j + n) % n])
+		mn[k] = m
+	var out := PackedInt32Array()
+	out.resize(n + 1)
+	for k in n:
+		var m := mn[k]
+		for j in range(-RING_OPEN, RING_OPEN + 1):
+			m = maxi(m, mn[(k + j + n) % n])
+		out[k] = m
+	out[n] = out[0]
 	return out
 
 

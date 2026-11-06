@@ -1615,3 +1615,30 @@ The second pass of line of fire and cover (docs/design/battle_sim.md "Cover and 
   851, top and oblique).
 - Known: the "none" ring is faint at a distance; the marks and the chip are not on the unit card; a chip on every
   marker adds clutter in big battles (the owner's eye); no device check.
+
+**Third pass (as built, 2026-11-06;** docs/design/battle_sim.md "Cover and line of fire, third pass"**).** The second
+evaluation (session scratchpad `eval2/eval2.md`) found the chip misleading in town fights: line troops read "none" 97 %
+of the time and the ring was invisible at 844 x 390; a pike block beside a garrisoned house read green while the
+windows cut it down (26 lost per 100 balls against 19 with no chip), because the chip was rated against the nearest
+enemy, and a house counted as cover from the men at its own windows.
+- **Rated against the shooters** (`_chip_eval`, `_chip_threats`, `CHIP_SHOT_T` 3 s): the enemy units that shot at the
+  unit in the last 3 s (`BattleSim.cover_shooters`: the sim notes each unit's two latest shooters when a missile is
+  launched at it, `u_sbu0` / `u_sbt0` / `u_sbu1` / `u_sbt1`, read by nothing in the rules), the worst rating among
+  them; with nobody shooting, the nearest enemy it sees as before; the tick points at the threat rated (`chip_state`'s
+  fifth element is that unit).
+- **No cover from a garrison's own house** (`cover_rating(..., skip_b)`, `held_building`): the cells of the building
+  the threat holds do not count toward the rating against it.
+- **Nothing for open ground**: the faint ring is gone; heavy is a small green shield, light a yellow shield filled on
+  its left half, both at least 7 CSS px tall with a dark rim (readable at 844 x 390: session scratchpad
+  `cover3/shots/`).
+- **The cut range ring without spikes** (`_ring_open`): the 72 rays' house cuts get a grey-scale opening (the least
+  within 2 steps either side, then the most of those), so a ray reaching the full range down a street between houses a
+  few metres off (a reach narrower than 25 degrees) is pulled in to its neighbours; wider open sectors and every cut
+  stay. The hittable marks are unchanged.
+- Measured (`chip_truth3`, the evaluation's 8 West town battles, line troops, men lost per 100 balls aimed at the unit
+  in the next second): heavy against shooters 3.4 (52 unit-seconds), none against shooters 13.9, none against a
+  shooting garrison 19.6; the false green against a garrison (before 79 unit-seconds at 26.2) is down to 11
+  unit-seconds with no loss. Cover troops: none against shooters 7.5, against the nearest 1.8.
+- Tests: battle_screen_test `_cover_cases` (the chip rated against a unit that shot at it; the opening pulls in a
+  two-step spike and keeps a wide sector), custom_battle_test `_check_cover3` (the sim's shooters and the garrison's
+  house). Known: the chip still is not on the unit card; still no legend; no device check.

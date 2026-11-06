@@ -1027,7 +1027,9 @@ func _native() -> void:
 	_check(b300 > 0 and sim2.stat_mbat_blows == b300 and sim2.g_state[g] == BattleSim.GATE_CLOSED, "native: Hold stops the battering")
 	# The siege AI: a walls-2 oppidum (iron-bound gate, no ram): Average batters the gate with them, Easy gives no order.
 	for skill in [1, 0]:
-		var ga := _torch_gate_sc(2, [0, 1], skill, [[UT.HEAVY, 80], [UT.SPEAR, 80]])
+		# (Third pass of cover, 2026-11-06: the defenders' front men now see past the gateway's corners and shoot, so
+		# 60 raiders broke at 13 of the 16 blows the iron-bound gate needs; 80 raiders, the check's intent unchanged.)
+		var ga := _torch_gate_sc(2, [0, 1], skill, [[UT.HEAVY, 80], [UT.SPEAR, 80]], [[UT.index_of("torch_raiders"), 80]])
 		var sc3: Dictionary = ga[0]
 		var g3: int = ga[1]
 		var s3 := BattleSim.new()

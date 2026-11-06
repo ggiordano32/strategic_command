@@ -1239,8 +1239,48 @@ static func draw_sea_passage(ci: CanvasItem, sim, sc: float, o: Vector2) -> void
 		ci.draw_line(o + (a + e * hw * s) * sc, o + (b + e * hw * s) * sc, STONE_DARK, maxf(sc * 0.6, 1.5))
 
 
-static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, low: bool) -> void:
+## `up` (the oblique view, third pass of cover 2026-11-06): board px a metre of height; the stones are then heaped up
+## to the rubble's cover height (BattleSim.RUBBLE_H, a yard wall's: men crouch behind it), a darker face down to the
+## bed under each; 0 (the top view): flat as before.
+## The rubble heaped in the oblique view drawn straight on the board (the kit's Low pass: no lift shader): as
+## draw_rubble with `up`, each point through BoardView.to_board (its height by to_board's h_m). Two stones a cell.
+static func draw_rubble_ob(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float) -> void:
 	var ow: int = sim.ob_w
+	var hmax := float(BattleSim.RUBBLE_H) / 1024.0
+	for c in cells:
+		var p := Vector2((c % ow) * 2, (c / ow) * 2) * sc
+		var h := (((c % ow) * 73856093) ^ ((c / ow) * 19349663)) & 0x7FFFFFFF
+		var q := PackedVector2Array()
+		for v in [Vector2(-0.25, -0.25), Vector2(2.25, -0.25), Vector2(2.25, 2.25), Vector2(-0.25, 2.25)]:
+			q.append(BattleKit.BoardView.to_board(p + (v as Vector2) * sc))
+		ci.draw_colored_polygon(q, RUBBLE_DUST.darkened(float(h % 7) * 0.025))
+	if hmax <= 0.0:
+		return
+	for c in cells:
+		var i := c % ow
+		var j := c / ow
+		var h := ((i * 73856093) ^ (j * 19349663)) & 0x7FFFFFFF
+		var p := Vector2(i * 2, j * 2) * sc
+		for qn in 3:
+			var hq := ((h >> (qn * 5)) * 2654435761 + qn * 40503) & 0x7FFFFFFF
+			var at := p + Vector2(float(hq % 19) / 19.0 * 2.0, float((hq / 19) % 19) / 19.0 * 2.0) * sc
+			var r := (0.35 + float((hq / 361) % 6) * 0.08) * sc
+			var col: Color = RUBBLE_STONES[(hq / 2166) % RUBBLE_STONES.size()]
+			var cm := p + Vector2(1.0, 1.0) * sc
+			var mid := 1.0 - clampf(at.distance_to(cm) / (1.4 * sc), 0.0, 1.0)
+			var hm := hmax * (0.45 + 0.55 * mid) * (0.75 + float((hq / 7) % 6) * 0.05)
+			var ax := Vector2(r, 0.0)
+			var ay := Vector2(0.0, r * 0.7)
+			var lo := at + ay
+			ci.draw_colored_polygon(PackedVector2Array([BattleKit.BoardView.to_board(lo - ax), BattleKit.BoardView.to_board(lo + ax),
+				BattleKit.BoardView.to_board(lo + ax, hm), BattleKit.BoardView.to_board(lo - ax, hm)]), col.darkened(0.35))
+			ci.draw_colored_polygon(PackedVector2Array([BattleKit.BoardView.to_board(at - ax - ay, hm), BattleKit.BoardView.to_board(at + ax * 0.9 - ay, hm),
+				BattleKit.BoardView.to_board(at + ax + ay * 0.8, hm), BattleKit.BoardView.to_board(at - ax * 0.8 + ay, hm)]), col)
+
+
+static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, low: bool, up: float = 0.0) -> void:
+	var ow: int = sim.ob_w
+	var hmax := float(BattleSim.RUBBLE_H) / 1024.0
 	for c in cells:
 		var i := c % ow
 		var j := c / ow
@@ -1263,6 +1303,20 @@ static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float,
 			var ax := Vector2(cos(ang), sin(ang)) * r
 			var ay := Vector2(-ax.y, ax.x) * 0.7
 			var poly := PackedVector2Array([at - ax - ay, at + ax * 0.9 - ay * 1.1, at + ax + ay * 0.8, at - ax * 0.8 + ay])
+			if up > 0.0 and hmax > 0.0:
+				# (Oblique: a heap, the stones stacked from the bed to about the cover height, the tallest in the
+				# cell's middle; the face toward the viewer darker.)
+				var cm := p + Vector2(1.0, 1.0) * sc
+				var mid := 1.0 - clampf(at.distance_to(cm) / (1.4 * sc), 0.0, 1.0)
+				var hm := hmax * (0.45 + 0.55 * mid) * (0.75 + float((hq / 7) % 6) * 0.05)
+				var lift := Vector2(0.0, -hm * up)
+				var top := PackedVector2Array()
+				for v in poly:
+					top.append(v + lift)
+				var lo := at + Vector2(0.0, r * 0.8)
+				ci.draw_colored_polygon(PackedVector2Array([lo - ax, lo + ax, lo + ax + lift, lo - ax + lift]), col.darkened(0.35))
+				ci.draw_colored_polygon(top, col)
+				continue
 			if not low:
 				var sh := Vector2(0.18, 0.18) * sc
 				var spoly := PackedVector2Array()

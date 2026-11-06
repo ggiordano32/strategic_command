@@ -748,6 +748,29 @@ func _cover_cases() -> void:
 	_check(int(low[1]) == 1 and int(tall[1]) == 2 and int(open[1]) == 0 and int(rider[1]) == 0,
 		"cover chips: a musket line behind the yard wall light (%d), behind the tall wall heavy (%d), in the open none (%d), riders by the low wall none (%d)" % [low[1], tall[1], open[1], rider[1]])
 	_check(absi(((int(low[2]) - 256 + 512) & 1023) - 512) < 64, "cover chips: the tick points at the enemy (bearing %d, down 256)" % int(low[2]))
+	# (Third pass: rated against the units that shot at it in the last 3 s: the line behind the yard wall shot at.)
+	s.queue_order(BattleSim.make_fire_order(s.tick, 4, 1))
+	var shooters := PackedInt32Array()
+	for t in 300:
+		s.step()
+		shooters = s.cover_shooters(0, ov.CHIP_SHOT_T)
+		if not shooters.is_empty():
+			break
+	ov._chip.clear()
+	var shot_at: Array = ov.chip_state(0)
+	_check(not shooters.is_empty() and shooters.has(int(shot_at[4])),
+		"cover chips: rated against a unit that shot at it (threat %d, shooters %s)" % [int(shot_at[4]), str(shooters)])
+	var spike := PackedInt32Array()
+	for k in 73:
+		spike.append(100 if k == 10 or k == 11 else 20)
+	spike[72] = spike[0]
+	var opened: PackedInt32Array = ov._ring_open(spike)
+	var wide := PackedInt32Array()
+	for k in 73:
+		wide.append(100 if k >= 10 and k < 30 else 20)
+	var wopened: PackedInt32Array = ov._ring_open(wide)
+	_check(opened[10] == 20 and opened[11] == 20 and wopened[15] == 100 and wopened[40] == 20,
+		"range ring: a two-step spike down a street is pulled in (%d), a wide open sector kept (%d)" % [opened[10], wopened[15]])
 	b._select(0)
 	ov.queue_redraw()
 	b.queue_free()
