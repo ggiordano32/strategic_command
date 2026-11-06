@@ -44,6 +44,12 @@ func _fail(msg: String) -> void:
 
 
 func _init() -> void:
+	if OS.get_cmdline_user_args().has("--only=vet"):
+		_check_vet()
+		await _check_vet_picker()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	var setups := {}
 	for id in CS.TEMPLATES:
 		setups["template " + id] = CS.template(id, 11)
@@ -200,7 +206,9 @@ func _init() -> void:
 	_check_occupy()
 	_check_play_scenarios()
 	_check_lof()
+	_check_vet()
 	await _check_names()
+	await _check_vet_picker()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -1736,3 +1744,172 @@ func _check_occupy() -> void:
 		_fail("occupy:" + bad)
 	else:
 		print("PASS occupy: occ_on 1 on every West custom town (walls 0-3 and plans fitted to open towns), 0 on Rome's")
+
+
+## Veterancy in battle (docs/design/battle_sim.md "Veterancy in battle (as built, 2026-11-06)"): the per-level
+## effects on a level-3 unit against level 0 (to-hit attack and defence, pikes about half, shield block for shield
+## units only, reload, scatter, morale at spawn and its cap, suppression gained, rally speed), the cap (no hit points,
+## armour, damage, reach or ammunition change), no level: no "vet" key and the hash as before, a level: hashed and
+## through snapshot / restore; the custom setup's picker (the unit entry's fourth element, kept by the ammunition
+## picker, into the scenario's "vet", through a JSON round trip).
+func _check_vet() -> void:
+	var mus := UT.index_of("musketeers")
+	var pik := UT.index_of("w_pikemen")
+	var war := UT.index_of("native_warriors")
+	var bad := 0
+	for lv in [1, 2, 3]:
+		var units := []
+		for k in 6:
+			var ty: int = [mus, mus, pik, pik, war, war][k]
+			var u := Scenarios.unit(k & 1, ty, 100, 60 + 40 * k, 150 if (k & 1) == 0 else 100,
+				Scenarios.FACE_UP if (k & 1) == 0 else Scenarios.FACE_DOWN)
+			if (k & 1) == 0:
+				u["vet"] = lv
+			units.append(u)
+		var sc := {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "units": units}
+		var sim := BattleSim.new()
+		sim.setup(sc, 77)
+		sim._update_units_stats()
+		var ok: bool = sim.vet_on == 1 and sim.u_vet[0] == lv and sim.u_vet[1] == 0
+		for p in 3:
+			var a := 2 * p
+			var b := a + 1
+			var pike := p == 1
+			var da: int = (BattleSim.VET_ATT_PIKE if pike else BattleSim.VET_ATT)[lv]
+			var dd: int = (BattleSim.VET_DEF_PIKE if pike else BattleSim.VET_DEF)[lv]
+			if sim.u_att[a] - sim.u_att[b] != da or sim.u_def[a] - sim.u_def[b] != dd:
+				ok = false
+				_fail("vet %d unit %d: attack / defence +%d / +%d (want +%d / +%d)" % [lv, a, sim.u_att[a] - sim.u_att[b],
+					sim.u_def[a] - sim.u_def[b], da, dd])
+			if sim.u_morale[a] - sim.u_morale[b] != BattleSim.VET_MOR[lv] or sim._mor0(a) - sim._mor0(b) != BattleSim.VET_MOR[lv]:
+				ok = false
+				_fail("vet %d unit %d: morale at spawn / its cap +%d / +%d" % [lv, a, sim.u_morale[a] - sim.u_morale[b], sim._mor0(a) - sim._mor0(b)])
+			if sim.u_dmg[a] != sim.u_dmg[b] or sim.u_reach[a] != sim.u_reach[b] or sim.u_ammo[a] != sim.u_ammo[b]:
+				ok = false
+				_fail("vet %d unit %d: damage, reach or ammunition changed" % [lv, a])
+		for i in sim.n:
+			if sim.unit_of[i] == 0 and sim.hp[i] != UT.stat(mus, "hp"):
+				ok = false
+		if sim._vet_rl(0, 1000) != 1000 * (100 - BattleSim.VET_RL[lv]) / 100 or sim._vet_rl(1, 1000) != 1000:
+			ok = false
+			_fail("vet %d: reload %d (fresh %d)" % [lv, sim._vet_rl(0, 1000), sim._vet_rl(1, 1000)])
+		if sim._vet_spr(0, 1000) != 1000 * (100 - BattleSim.VET_SPR[lv]) / 100 or sim._vet_spr(1, 1000) != 1000:
+			ok = false
+			_fail("vet %d: scatter %d" % [lv, sim._vet_spr(0, 1000)])
+		# Suppression gained: the same missile on both musket lines.
+		sim.sup_on = 1
+		sim._supp_add(0, 400, 1, mus, false)
+		sim._supp_add(1, 400, 0, mus, false)
+		if sim.u_sup[1] <= 0 or sim.u_sup[0] != sim.u_sup[1] * (100 - BattleSim.VET_SUP[lv]) / 100:
+			ok = false
+			_fail("vet %d: suppression gained %d against fresh %d" % [lv, sim.u_sup[0], sim.u_sup[1]])
+		# Rally: a router out of reach gains 40 a second, a Seasoned one 25 % more, a Hardened 50 %.
+		var rsim := BattleSim.new()
+		rsim.setup({"width_m": 600, "height_m": 600, "ai_sides": [], "orders": [], "units": [
+			Scenarios.unit(0, mus, 100, 100, 300, Scenarios.FACE_UP).merged({"vet": lv}),
+			Scenarios.unit(0, mus, 100, 200, 300, Scenarios.FACE_UP),
+			Scenarios.unit(1, mus, 100, 300, 30, Scenarios.FACE_DOWN)]}, 5)
+		for u in 2:
+			rsim._start_rout(u)
+			rsim.u_morale[u] = -400
+		for t in 20:
+			rsim.step()
+		var g0: int = rsim.u_morale[0] + 400
+		var g1: int = rsim.u_morale[1] + 400
+		if g1 <= 0 or g0 * 100 != g1 * (100 + BattleSim.VET_RALLY[lv]):
+			ok = false
+			_fail("vet %d: rally gain %d against fresh %d" % [lv, g0, g1])
+		# Shield block: the West pikemen's shield (melee and missile) gains; the musketeers (none) do not.
+		var shm := pik
+		if UT.stat(shm, "shield") <= 0 or UT.stat(mus, "shield") != 0:
+			ok = false
+			_fail("vet: the shield rows changed (pikemen %d, musketeers %d)" % [UT.stat(shm, "shield"), UT.stat(mus, "shield")])
+		# Hashed and through snapshot / restore.
+		var h0: int = sim.state_hash()
+		var sim2 := BattleSim.new()
+		sim2.setup(sc, 77)
+		var blob := sim.snapshot()
+		var sim3 := BattleSim.new()
+		sim3.setup(sc, 77)
+		sim3.u_vet.fill(0)
+		if not sim3.restore(blob) or sim3.u_vet[0] != lv or sim3.state_hash() != h0:
+			ok = false
+			_fail("vet %d: snapshot / restore lost the level" % lv)
+		var fresh := sc.duplicate(true)
+		for u in fresh["units"]:
+			(u as Dictionary).erase("vet")
+		var sf := BattleSim.new()
+		sf.setup(fresh, 77)
+		if sf.vet_on != 0 or sf.state_hash() == sim2.state_hash():
+			ok = false
+			_fail("vet %d: the level is not in the hash (or a fresh battle hashes it)" % lv)
+		if not ok:
+			bad += 1
+	if bad == 0:
+		print("PASS veterancy in battle: per level attack %s / defence %s (pikes %s / %s), morale %s, reload and scatter -%s / -%s %%, suppression -%s %%, rally +%s %%; no hp, armour, damage, reach or ammunition change; hashed, through snapshot / restore" % [
+			str(BattleSim.VET_ATT), str(BattleSim.VET_DEF), str(BattleSim.VET_ATT_PIKE), str(BattleSim.VET_DEF_PIKE), str(BattleSim.VET_MOR),
+			str(BattleSim.VET_RL), str(BattleSim.VET_SPR), str(BattleSim.VET_SUP), str(BattleSim.VET_RALLY)])
+	# The picker: the unit entry's fourth element.
+	var st := CS.default_setup(21)
+	var e: Array = ["javelin", 60]
+	st["sides"][0]["armies"][0]["units"] = [e, ["heavy", 100]]
+	CS.set_unit_vet(e, 2)
+	var fire := -1
+	for k in CS.ammo_choices(UT.index_of("javelin")):
+		fire = k
+	if fire >= 0:
+		CS.set_unit_ak(e, fire)
+	var ok2 := CS.unit_vet(e) == 2 and CS.unit_vet(["heavy", 100]) == 0 and (fire < 0 or CS.unit_ak(e) == fire)
+	var bt := CS.build(JSON.parse_string(JSON.stringify(st)))
+	var vu := -1
+	var n_vet := 0
+	for ud in bt["scenario"]["units"]:
+		if (ud as Dictionary).has("vet"):
+			n_vet += 1
+			vu = int(ud["vet"])
+	if n_vet != 1 or vu != 2:
+		ok2 = false
+	CS.set_unit_vet(e, 0)
+	if CS.unit_vet(e) != 0 or (fire < 0 and e.size() != 2):
+		ok2 = false
+	var b0 := CS.build(st)
+	for ud in b0["scenario"]["units"]:
+		if (ud as Dictionary).has("vet"):
+			ok2 = false
+	if ok2:
+		print("PASS veterancy picker: a unit's level (the entry's fourth element) reaches the scenario's \"vet\" through a JSON round trip, kept by the ammunition picker; level 0 writes no key")
+	else:
+		_fail("veterancy picker: %s -> %d units with vet %d" % [str(e), n_vet, vu])
+
+
+## The setup screen's Veterancy picker: a unit row's button (custom_vet_side_army_unit) reads Fresh, a tap sets Blooded
+## (the entry's fourth element), a second Seasoned; the button reads the level.
+func _check_vet_picker() -> void:
+	const CustomBattle := preload("res://game/custom/custom_battle.gd")
+	var st := CS.default_setup(4)
+	st["sides"][0]["armies"][0]["units"] = [["heavy", 100], ["archer", 80]]
+	var cb: Control = CustomBattle.new()
+	cb.setup = st
+	root.add_child(cb)
+	await process_frame
+	await process_frame
+	cb._rebuild()
+	await process_frame
+	var b0 := cb.find_child("custom_vet_0_0_0", true, false) as Button
+	var t0 := b0.text if b0 != null else "-"
+	if b0 != null:
+		b0.pressed.emit()
+	await process_frame
+	var b1 := cb.find_child("custom_vet_0_0_0", true, false) as Button
+	if b1 != null:
+		b1.pressed.emit()
+	await process_frame
+	var b2 := cb.find_child("custom_vet_0_0_0", true, false) as Button
+	var e: Array = cb.setup["sides"][0]["armies"][0]["units"][0]
+	var ok := t0 == "Fresh" and b2 != null and b2.text == "Seasoned" and CS.unit_vet(e) == 2 \
+		and CS.unit_vet(cb.setup["sides"][0]["armies"][0]["units"][1]) == 0
+	cb.queue_free()
+	if ok:
+		print("PASS veterancy picker on the setup screen: Fresh, a tap Blooded, another Seasoned (the entry %s)" % str(e))
+	else:
+		_fail("veterancy picker on the setup screen: %s -> %s, entry %s" % [t0, b2.text if b2 != null else "-", str(e)])

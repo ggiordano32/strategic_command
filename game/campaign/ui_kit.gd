@@ -604,6 +604,42 @@ static func trim_lines(r: Rect2, inset: float, blen: float) -> Array:
 	return out
 
 
+## Veterancy (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): the brass of the stars.
+const COL_BRASS := Color(0.93, 0.74, 0.36)
+
+
+## A five-pointed star of outer radius r at c.
+static func draw_star(ci: CanvasItem, c: Vector2, r: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for k in 10:
+		var ang := -PI * 0.5 + k * PI / 5.0
+		var rr := r if k % 2 == 0 else r * 0.45
+		pts.append(c + Vector2(cos(ang), sin(ang)) * rr)
+	ci.draw_colored_polygon(pts, col)
+
+
+## The veterancy badge (the arrow badge's pattern: a dark plate ringed in brass): n (1-3) brass stars of radius sr
+## in a row centred on c. Returns the plate's rect (a tap hint's).
+static func draw_vet_badge(ci: CanvasItem, c: Vector2, n: int, sr: float, a: float = 1.0) -> Rect2:
+	if n <= 0:
+		return Rect2()
+	var step := sr * 1.9
+	var w := step * n + sr * 0.9
+	var h := sr * 2.6
+	var rc := Rect2(c.x - w * 0.5, c.y - h * 0.5, w, h)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.1, 0.09, 0.07, 0.95 * a)
+	sb.border_color = Color(COL_BRASS, a)
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(int(h * 0.5))
+	sb.anti_aliasing = true
+	ci.draw_style_box(sb, rc)
+	var x0 := c.x - step * (n - 1) * 0.5
+	for k in n:
+		draw_star(ci, Vector2(x0 + k * step, c.y + sr * 0.08), sr, Color(COL_BRASS.lightened(0.15), a))
+	return rc
+
+
 ## Draw the trim on any CanvasItem (the selected card, a custom panel).
 static func draw_trim(ci: CanvasItem, r: Rect2, inset: float = 4.0, blen: float = 12.0, col: Color = COL_RULE) -> void:
 	var ls := trim_lines(r, inset, blen)
@@ -1005,6 +1041,7 @@ class PressRow extends Control:
 ## strength bar with men / full, and optional right-hand text. Toggleable
 ## (selected rows are framed). Emits `pressed`.
 class UnitRow extends PressRow:
+	const KitV := preload("res://game/campaign/ui_kit.gd")
 	var ty := 0
 	var men := 0
 	var full := 1
@@ -1039,6 +1076,12 @@ class UnitRow extends PressRow:
 		set(v):
 			upgrade_tip = v
 			queue_redraw()
+	## Veterancy (2026-11-06): the unit's level (0-3: its stars after the name) and its tip (Traits.vet_text).
+	var vet := 0:
+		set(v):
+			vet = v
+			queue_redraw()
+	var vet_tip := ""
 
 	## The name the card shows: the faction's own (CData.unit_name).
 	func display_name() -> String:
@@ -1097,9 +1140,15 @@ class UnitRow extends PressRow:
 			if x0 + nw + aw + 28 <= sz.x - rw:
 				draw_string(font, Vector2(x0 + nw, 16), adj, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Traits.ammo_color(ak))
 				nw += aw
+		var vx := 0.0
+		if vet > 0:
+			# Veterancy: the brass stars right after the name.
+			var vr: Rect2 = KitV.draw_vet_badge(self, Vector2(x0 + nw + 8 + (vet * 9.5 + 4.5) * 0.5, 11), vet, 5.0)
+			_hits.append([vr, vet_tip if vet_tip != "" else Traits.VET_NAMES[vet]])
+			vx = vr.size.x + 6
 		if detail:
 			# Line 1: up to three trait glyphs after the name.
-			var gx := x0 + nw + 8
+			var gx := x0 + nw + 8 + vx
 			for t in Traits.traits(ty, faction):
 				if gx + 16 > sz.x - rw:
 					break

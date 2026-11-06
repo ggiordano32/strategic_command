@@ -1532,6 +1532,8 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 		var row := Kit.UnitRow.new(ty, int(u["n"]), _fc(af), "", mine)
 		row.name_f = af
 		row.ak = UT.ammo_index(str(u.get("ak", "")))
+		row.vet = Traits.vet_of(u)
+		row.vet_tip = Traits.vet_short(u)
 		row.selected = sel.has(k)
 		row.name = "unit_%d" % k
 		var kk := k
@@ -1539,7 +1541,7 @@ func army_panel(box: VBoxContainer, id: int) -> void:
 			reorder.items.append(row)
 			row.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, UT.ammo_index(str(u.get("ak", "")))))
+			row.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, UT.ammo_index(str(u.get("ak", ""))), u, id, kk))
 		row.pressed.connect(func():
 			var cur: Array = _split_sel.get(id, [])
 			if cur.has(kk):
@@ -2011,6 +2013,8 @@ func _xc_row(u: Dictionary, uf: int, tag: String, nm: String, active: bool, cb: 
 	var row := Kit.UnitRow.new(CState.unit_type(u), int(u["n"]), _fc(uf), tag, false)
 	row.name_f = uf
 	row.ak = UT.ammo_index(str(u.get("ak", "")))
+	row.vet = Traits.vet_of(u)
+	row.vet_tip = Traits.vet_short(u)
 	row.name = nm
 	row.selected = tag != ""
 	if active:
@@ -3347,7 +3351,7 @@ func _event_color(e: Dictionary, f: int) -> Color:
 			return Kit.COL_BAD if int(e["o"]) == f else Kit.COL_GOLD
 		"siege_lifted":
 			return Kit.COL_GOOD if int(e["o"]) == f else Kit.COL_DIM
-		"peace", "trade", "built", "recruited", "grew", "victory", "gift", "gift_money", "ransom", "char_recruited":
+		"peace", "trade", "built", "recruited", "grew", "victory", "gift", "gift_money", "ransom", "char_recruited", "retrained":
 			return Kit.COL_GOOD
 		"char_wounded", "char_captured":
 			return Kit.COL_BAD if int(e["f"]) == f else Kit.COL_GOOD
@@ -3383,8 +3387,37 @@ func _loss_text(e: Dictionary) -> String:
 
 
 func event_text(e: Dictionary, f: int) -> String:
+	var t := _event_text0(e, f)
+	if t != "" and str(e["k"]) == "battle" and e.has("vet"):
+		var vl := vet_lines(e, f)
+		if vl != "":
+			t += " " + vl
+	return t
+
+
+static func ordinal(n: int) -> String:
+	return Traits.ordinal(n)
+
+
+## Veterancy (2026-11-06): faction f's levels gained and lost in battle event e (its "vet" rows [faction, army,
+## unit key, nth of its type, level, was]): "The 2nd Musketeers earned a star: now Seasoned." "" none.
+func vet_lines(e: Dictionary, f: int) -> String:
+	var out: Array[String] = []
+	for v in e.get("vet", []):
+		if f >= 0 and int(v[0]) != f:
+			continue
+		out.append(Traits.vet_change_text(v, CData.unit_name(str(v[2]), int(v[0]))))
+	return " ".join(out)
+
+
+func _event_text0(e: Dictionary, f: int) -> String:
 	var city := func(r): return str(CData.REGIONS[int(r)]["city"])
 	match str(e["k"]):
+		"retrained":
+			if f >= 0 and int(e["f"]) != f:
+				return ""
+			return "%s: the %s %s retrained as %s." % [city.call(e["r"]), ordinal(int(e.get("nth", 1))),
+				CData.unit_name(str(e["from"]), int(e["f"])), CData.unit_name(str(e["t"]), int(e["f"]))]
 		"battle":
 			var w := "the attackers won" if int(e["winner"]) == 0 else "the defenders held"
 			var how := str(e["mode"]).replace("formula", "fought out of sight")

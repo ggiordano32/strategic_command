@@ -2573,6 +2573,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	u_rtd.resize(n_units)
 	u_rtd.fill(0)
 	_supp_setup()
+	u_vet.resize(n_units)
+	u_vet.fill(0)
+	vet_on = 0
 	rz_n = 0
 	stat_rt_plans = 0
 	stat_rt_detours = 0
@@ -2630,11 +2633,15 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 		u_count0[u] = cnt
 		u_alive[u] = cnt
 		u_state[u] = U_READY
-		u_morale[u] = t_morale[ty]
+		# Veterancy (scenario "vet" 0-3): a unit parameter like the tier.
+		u_vet[u] = clampi(int(ud.get("vet", 0)), 0, VET_MAX)
+		if u_vet[u] > 0:
+			vet_on = 1
+		u_morale[u] = t_morale[ty] + VET_MOR[u_vet[u]]
 		if ud.has("morale_pct"):
 			# A unit that starts shaken (the campaign: an army caught on a
 			# forced march): this % of its type's morale.
-			u_morale[u] = t_morale[ty] * clampi(int(ud["morale_pct"]), 10, 100) / 100
+			u_morale[u] = (t_morale[ty] + VET_MOR[u_vet[u]]) * clampi(int(ud["morale_pct"]), 10, 100) / 100
 		u_files[u] = clampi(int(ud.get("files", 20)), 1, cnt)
 		u_ax[u] = int(ud["x_m"]) * M
 		u_ay[u] = int(ud["y_m"]) * M
@@ -4017,6 +4024,58 @@ var stat_pin_ticks: int = 0          # ... and pinned
 var stat_sup_fall: int = 0           # pinned AI units sent to cover (BattleAI.supp_fallback)
 
 
+## Veterancy (2026-11-06, docs/design/battle_sim.md "Veterancy in battle"): a unit parameter like the tier, 0 fresh,
+## 1 Blooded, 2 Seasoned, 3 Hardened (the scenario's unit key "vet"; the campaign's CRules.vet_level). Each level makes
+## the men better at what they already do, capped by the line's own step from tier 1 to tier 2; never hit points,
+## armour, damage, charge, speed, range or ammunition. Index by level. (Static: tests/vet_duel.gd --tune sets them.)
+static var VET_ATT: Array[int] = [0, 2, 3, 5]        # melee attack (the to-hit roll)
+static var VET_DEF: Array[int] = [0, 1, 2, 3]        # melee defence (the same roll)
+static var VET_ATT_PIKE: Array[int] = [0, 1, 2, 2]   # pikes: about half (TIER_SKILL's 50 %: a pike wall multiplies small gains)
+static var VET_DEF_PIKE: Array[int] = [0, 0, 1, 1]
+static var VET_SH: Array[int] = [0, 2, 4, 6]         # shield block, melee and missile, points (units with that shield only)
+static var VET_RL: Array[int] = [0, 3, 6, 10]        # reload time, % less (foot and riders' own weapons; engines none)
+static var VET_SPR: Array[int] = [0, 3, 6, 10]       # scatter, % less
+static var VET_MOR: Array[int] = [0, 25, 45, 70]     # morale at the start and its recovery cap
+static var VET_SUP: Array[int] = [0, 5, 10, 15]      # suppression gained, % less (planned -10 / -20 / -30: halved, the cap; 2026-11-06)
+static var VET_RALLY: Array[int] = [0, 0, 25, 50]    # a router's rally speed, % more
+const VET_MAX := 3
+var u_vet := PackedInt32Array()  # per unit: its level 0-3 (static; hashed only once a unit has one: vet_on)
+var vet_on: int = 0              # 1: some unit has a level (the battle's veterancy rules run; u_vet hashed)
+
+
+## Veterancy: unit u's melee attack and defence gains (pikes about half).
+func _vet_att(u: int) -> int:
+	var lv := u_vet[u]
+	return VET_ATT_PIKE[lv] if t_cls[u_otype[u]] == UT.CLS_PIKE else VET_ATT[lv]
+
+
+func _vet_def(u: int) -> int:
+	var lv := u_vet[u]
+	return VET_DEF_PIKE[lv] if t_cls[u_otype[u]] == UT.CLS_PIKE else VET_DEF[lv]
+
+
+## Veterancy: reload time `r` (ticks) of unit u's own weapon.
+func _vet_rl(u: int, r: int) -> int:
+	if vet_on == 0 or u_vet[u] == 0:
+		return r
+	return maxi(r * (100 - VET_RL[u_vet[u]]) / 100, 1)
+
+
+## Veterancy: unit u's scatter `sp`.
+func _vet_spr(u: int, sp: int) -> int:
+	if vet_on == 0 or u_vet[u] == 0:
+		return sp
+	return sp * (100 - VET_SPR[u_vet[u]]) / 100
+
+
+## Unit u's full morale: its men's type's, plus its veterancy.
+func _mor0(u: int) -> int:
+	var m := t_morale[u_otype[u]]
+	if vet_on != 0:
+		m += VET_MOR[u_vet[u]]
+	return m
+
+
 func _supp_setup() -> void:
 	var on := 1
 	for s in 2:
@@ -4126,6 +4185,8 @@ func _supp_add(u: int, base: int, s: int, ty: int, art: bool, sh: int = 100) -> 
 	elif u_suc[u] == 1:
 		cp = SUPP_COVER_L
 	var g := base * w * cp / 10000
+	if vet_on != 0 and u_vet[u] > 0:
+		g = g * (100 - VET_SUP[u_vet[u]]) / 100  # (veterancy: slower to be pinned)
 	if sh < 100:
 		g = g * sh / 100  # (second pass: a suppressed or pinned shooter's balls suppress at its fire share)
 	if g <= 0:
@@ -13479,6 +13540,9 @@ func _unit_stats(u: int) -> void:
 		u_def[u] = t_defence[ty]
 		u_dmg[u] = t_damage[ty]
 		u_reach[u] = t_reach[ty]
+	if vet_on != 0 and u_vet[u] > 0:
+		u_att[u] += _vet_att(u)  # (veterancy: they land more blows and parry more)
+		u_def[u] += _vet_def(u)
 	if sg_on != 0 and u_carry[u] >= 0:
 		# Carrying siege equipment: it defends itself poorly.
 		u_att[u] = u_att[u] * CARRY_MELEE_PCT / 100
@@ -15399,7 +15463,7 @@ func _melee(a: int, d: int, pen: int, parting: bool = false) -> void:
 			return
 	if hk >= 0:
 		stat_ch_rolls[hk + 1] += 1  # (blows past the to-hit roll: in / out of a foot hero's aura)
-	if frontal and _rand() % 100 < t_shield[td]:
+	if frontal and _rand() % 100 < (t_shield[td] + VET_SH[u_vet[ud]] if vet_on != 0 and t_shield[td] > 0 else t_shield[td]):
 		return
 	var dmg := maxi(dmg0 - t_armour[td], 4)
 	dmg = dmg * (85 + _rand() % 31) / 100
@@ -15818,6 +15882,7 @@ func _update_missiles() -> void:
 		var kstd := t_m_ak[ty]
 		var pref := ks >= 0 and u_akind[u] != 0
 		var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
+		reload = _vet_rl(u, reload)
 		var tries := 0
 		var high := t_crew_sh[ty] > 1  # shooters on a beast's back shoot while it fights
 		while acc >= reload and tries < shooters:
@@ -15901,6 +15966,7 @@ func _pm_unit(u: int) -> void:
 	var kstd := t_m_ak[ty]
 	var pref := ks >= 0 and u_akind[u] != 0
 	var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
+	reload = _vet_rl(u, reload)
 	if sup_on != 0 and u_sus[u] != SUP_NONE:
 		reload = reload * 100 / _supp_fire(u)  # (suppressed, pinned: each man reloads slower)
 	var order := u_order[u]
@@ -16063,7 +16129,7 @@ func _pm_sight(i: int, u: int, j: int) -> bool:
 ## fires at any range.
 func _gun_unit(u: int) -> void:
 	var ty := u_type[u]
-	var reload := t_m_reload[ty]
+	var reload := _vet_rl(u, t_m_reload[ty])
 	var acc := u_fire_acc[u]
 	var cm := cm_on != 0 and (t_abil[ty] & (1 << UT.AB_ROLL)) != 0
 	if u_state[u] == U_READY and (u_moved[u] == 0 or (tick & 1) == 0) \
@@ -16210,6 +16276,7 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 	if heroed:
 		spread = spread * (100 - t_chv[CV_SPR]) / 100  # a missile hero near: straighter
 		stat_ch_rng += 1
+	spread = _vet_spr(u, spread)  # (veterancy: they shoot straighter)
 	if vis_on != 0 and u_seen[ft] == 0:
 		spread = spread * BLIND_SPREAD / 100  # lobbed at where it was last seen
 		stat_blind += 1
@@ -16451,7 +16518,10 @@ func _missile_hit(p: int, d: int) -> void:
 	var sd := state[d]
 	var frontal := sd != S_ROUTING and sd != S_DOWN \
 		and absi(FM.angle_diff(facing[d], from_def)) <= FRONT_ARC
-	if frontal and _rand() % 100 < t_mshield[td] * (100 - t_m_spen[ty]) / 100:
+	var msh := t_mshield[td]
+	if vet_on != 0 and msh > 0:
+		msh += VET_SH[u_vet[unit_of[d]]]  # (veterancy: better use of the shield)
+	if frontal and _rand() % 100 < msh * (100 - t_m_spen[ty]) / 100:
 		return  # (a javelin's weight drives through part of the shields: m_spen)
 	stat_missile_hits += 1
 	var k := pr_ak[p]
@@ -16889,6 +16959,7 @@ func _gate_volleys() -> void:
 		var kstd := t_m_ak[ty]
 		var pref := ks >= 0 and u_akind[u] != 0
 		var reload := t_m_reload[ty] * t_k_rate[ks if pref else kstd] / 100 if kstd >= 0 else t_m_reload[ty]
+		reload = _vet_rl(u, reload)
 		var tries := 0
 		while acc >= reload and tries < alive:
 			acc -= reload
@@ -16925,7 +16996,7 @@ func _fire_gate(i: int, u: int, g: int, ty: int, k: int) -> void:
 		stat_ak_shots += 1
 	stat_shots += 1
 	facing[i] = FM.atan2_a(dy, dx)
-	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var spread := _vet_spr(u, t_m_spread0[ty] + dist * t_m_spread[ty] / 1000)
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	var ux := dx * FM.TRIG_ONE / dist
@@ -18570,7 +18641,7 @@ func _update_morale() -> void:
 		if us == U_READY:
 			if u_contact[u] == 0 and u_fighting[u] == 0 and tick - u_hit_t[u] > UNDER_FIRE_TICKS and u_awe[u] == 0 \
 					and (sup_on == 0 or u_sus[u] != SUP_PIN):
-				var base_m := t_morale[u_otype[u]]
+				var base_m := _mor0(u)
 				var cap := base_m - (u_count0[u] - u_alive[u]) * base_m / (2 * u_count0[u])
 				if m < cap:
 					m = mini(m + MORALE_RECOVER, cap)
@@ -18616,7 +18687,7 @@ func _update_morale() -> void:
 					safe = d > RALLY_SAFE_RANGE
 					_set_flee(u, dx, dy, d)
 				if safe and (ch_on == 0 or u_hold[u] <= tick):
-					m += 40  # (routers stopped by a diplomat's white flag wait: no rally meanwhile)
+					m += 40 if vet_on == 0 else 40 * (100 + VET_RALLY[u_vet[u]]) / 100  # (routers stopped by a diplomat's white flag wait: no rally meanwhile)
 			u_morale[u] = clampi(m, -MORALE_MAX, MORALE_MAX)
 			# u_routs counts this rout too: a unit may rally from its first
 			# MAX_ROUTS routs; after that the rout is final.
@@ -18836,7 +18907,7 @@ func _update_auras() -> void:
 			u_morale[u] -= loss
 		if held > 0:
 			stat_cmd += 1
-			var base_m := t_morale[tu]
+			var base_m := _mor0(u)
 			var cap := base_m - (u_count0[u] - u_alive[u]) * base_m / (2 * u_count0[u])
 			if u_morale[u] < cap:
 				u_morale[u] = mini(u_morale[u] + held, cap)
@@ -21961,6 +22032,9 @@ func state_hash() -> int:
 	if strk_used != 0:
 		# Shots strike the walls they cross (2026-11-06): only once a stone has struck one.
 		ctx.update(pr_wh.to_byte_array())
+	if vet_on != 0:
+		# Veterancy (2026-11-06): only in a battle where some unit has a level.
+		ctx.update(u_vet.to_byte_array())
 	if sup_used != 0:
 		# Suppression (2026-11-06): only once a unit gained some.
 		for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb, u_suh, u_spv, u_sst]:
@@ -24552,7 +24626,7 @@ func _cm_unit(u: int, ft: int, still: int) -> void:
 	if (u_order[u] != O_ATTACK or u_target[u] != ft) and d > t_m_volley[ty] and not _closing(ft, u):
 		stat_volley_held += 1
 		return
-	var reload := t_m_reload[ty]
+	var reload := _vet_rl(u, t_m_reload[ty])
 	var clk := u_cmc[u]
 	var alive := u_alive[u]
 	var now := ((u_abs[u] >> (UT.AB_ROLL * 2)) & 3) == UT.AB_NOW
@@ -24823,7 +24897,7 @@ func _caracole(u: int) -> void:
 	elif u_ammo[u] <= 0:
 		_car_halt(u)
 		return
-	elif u_fire_acc[u] < t_m_reload[ty] or tick - u_crk[u] < CAR_WAIT_MIN:
+	elif u_fire_acc[u] < _vet_rl(u, t_m_reload[ty]) or tick - u_crk[u] < CAR_WAIT_MIN:
 		return
 	_car_attack(u, t)
 	u_car[u] = 1

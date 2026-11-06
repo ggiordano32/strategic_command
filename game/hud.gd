@@ -730,6 +730,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 		face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.icon = Icons.icon_of(sim.u_otype[u])
 		face.general = UT.stat(sim.u_type[u], "cmd_r") > 0
+		face.vet = sim.u_vet[u] if sim.vet_on != 0 else 0  # (veterancy: its stars by the marker)
 		face.char_icon = Traits.char_icon(sim.u_otype[u])  # a hero or agent: crown / dagger / scroll
 		face.side_col = Icons.SIDE_COLORS[player_side]
 		face.role = UT.role(sim.u_otype[u])   # the role badge and its colour band
@@ -2645,6 +2646,8 @@ func update_cards(sim) -> void:
 			word = "Pinned" if sus == BattleSim.SUP_PIN else "Suppressed"
 		f.state_text = word
 		f.summary = summary + " " + mstate
+		if f.vet > 0:
+			f.summary += " | %s (%d star%s)" % [Traits.VET_NAMES[f.vet], f.vet, "" if f.vet == 1 else "s"]
 		if f.char_icon != "":
 			f.summary += " | " + Traits.char_text(sim.u_otype[u])
 		var st := 0
@@ -3089,9 +3092,23 @@ class CardFace extends Control:
 	var ak_rc := Rect2()   # where the glyph was last drawn (empty: none)
 	## The control groups the unit is in ("2", "1 3", "1 2+"): a small tab at the card's top left.
 	var group_text := ""
+	## Veterancy (2026-11-06): its level 0-3, brass stars on a plate at the marker's lower right (vet_rect).
+	var vet := 0
 
 	const SUPP_RED := Color(1.0, 0.42, 0.34)
 	const SUPP_YELLOW := Color(1.0, 0.84, 0.3)
+	const VET_SR := 3.2
+
+	## Where the veterancy stars' plate is drawn: on the marker's lower right (empty: no level).
+	func vet_rect() -> Rect2:
+		if vet <= 0:
+			return Rect2()
+		var r := minf(size.y * 0.3, 10.0)
+		var mc := Vector2(r + 3, r + 3) if narrow else Vector2(r + 3, size.y * 0.5)
+		var w := VET_SR * 1.9 * vet + VET_SR * 0.9
+		var h := VET_SR * 2.6
+		var c := Vector2(maxf(mc.x + r * 0.35, w * 0.5 + 1.0), minf(mc.y + r * 0.85, size.y - h * 0.5 - 1.0))
+		return Rect2(c.x - w * 0.5, c.y - h * 0.5, w, h)
 
 	## The strip's suppression glyph as the marker's chip (Overlay._draw_supp_chip): a dark-rimmed plate, one yellow
 	## chevron pressing onto a bar (suppressed) or two red ones (pinned), thick enough to read at 11 px.
@@ -3248,6 +3265,8 @@ class CardFace extends Control:
 		if narrow and car_phase:
 			draw_string(font, Vector2(bx + 2 + font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 3, by + 10), state_text.left(1),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(1.0, 0.85, 0.4))
+		if vet > 0 and state != ST_GONE:
+			Kit.draw_vet_badge(self, vet_rect().get_center(), vet, VET_SR)
 		if char_icon != "":
 			var cxg := sz.x - (26.0 if foreign else 15.0)
 			Kit.UiIcons.draw_icon(self, char_icon, Rect2(cxg, 2, 12, 12),

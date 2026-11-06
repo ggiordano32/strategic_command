@@ -81,7 +81,7 @@ static func snapshot(st: Dictionary, b: Dictionary, viewer: int) -> Dictionary:
 				if n > 0:
 					on = 1 if fk.has("%d:%d" % [int(a["id"]), k]) else 2
 				g["units"].append({"unit": k, "ty": ty, "n": n, "full": maxi(UT.size_of(ty), 1), "on": on,
-					"ak": str(u.get("ak", ""))})
+					"ak": str(u.get("ak", "")), "vet": Traits.vet_of(u)})
 			sides[sd].append(g)
 	if kind != "field":
 		var gar := CRules.garrison(st, r)
@@ -506,6 +506,7 @@ static func _side(snap: Dictionary, sd: int, res: Dictionary) -> Control:
 			card.name_f = int(g["f"])
 			card.fielded = int(u["on"]) != 0
 			card.ak = UT.ammo_index(str(u.get("ak", "")))
+			card.vet = int(u.get("vet", 0))
 			var key := "%d:%d" % [int(g["army"]), int(u["unit"])]
 			if not res.is_empty() and card.fielded:
 				var e: Dictionary = res.get(key, {})
@@ -623,6 +624,13 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 	v.add_child(ol)
 	if int(outcome.get("scale", 100)) < 100:
 		v.add_child(Kit.label("(Big battle: auto-resolved at half unit size, results scaled up.)", Kit.FONT_SMALL, Kit.COL_DIM, true))
+	var vt := vet_line(snap, st)
+	if vt != "":
+		# Veterancy (2026-11-06): the stars this battle gave and took, the viewer's side's units.
+		var vl := Kit.label(vt, Kit.FONT_SMALL, Kit.COL_BRASS, true)
+		vl.name = "result_vet"
+		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(vl)
 	var res := {}
 	for e in outcome.get("units", []):
 		res["%d:%d" % [int(e["army"]), int(e["unit"])]] = e
@@ -673,6 +681,23 @@ static func result(s, snap: Dictionary, outcome: Dictionary, st: Dictionary, eve
 		for t2 in events:
 			v.add_child(Kit.label(str(t2), Kit.FONT_SMALL, Color.WHITE, true))
 	return v
+
+
+## Veterancy (2026-11-06): the level changes of battle snap["bid"] (its "battle" event's "vet" rows in st) for the
+## viewer's side's factions (every side's when the viewer fought in neither): "The 2nd Musketeers earned a star: now
+## Seasoned." ("" none).
+static func vet_line(snap: Dictionary, st: Dictionary) -> String:
+	var rows: Array = []
+	for e in st.get("events", []):
+		if str(e.get("k", "")) == "battle" and int(e.get("battle", -1)) == int(snap.get("bid", -2)):
+			rows = e.get("vet", [])
+	var me := int(snap.get("me", -1))
+	var out: Array[String] = []
+	for v in rows:
+		if me >= 0 and not (snap["facs"][me] as Array).has(int(v[0])):
+			continue
+		out.append(Traits.vet_change_text(v, CData.unit_name(str(v[2]), int(v[0]))))
+	return " ".join(out)
 
 
 ## One line: what the battle decided (city taken / held, armies destroyed,
@@ -734,6 +759,7 @@ class UnitCard extends Control:
 	var picked := false  # its kills are expanded under the cards
 	signal tapped
 	var ak := -1  # its special ammunition kind (UT.AMMO row), -1 none
+	var vet := 0  # veterancy level at the battle's start: its stars on the marker's lower right (2026-11-06)
 	var fielded := true
 	var col := Color.WHITE
 	var name_f := -1  # the card's faction, for its display name (CData.unit_name)
@@ -773,6 +799,8 @@ class UnitCard extends Control:
 			t += "; carries %s" % UT.ammo_text(ak, "name").to_lower()
 		if UT.stat(ty, "cmd_r") > 0:
 			t += "; the army's general"
+		if vet > 0:
+			t += "; %s (%d star%s)" % [Traits.VET_NAMES[vet], vet, "" if vet == 1 else "s"]
 		var trs := Traits.traits(ty)
 		if not trs.is_empty():
 			var names: Array[String] = []
@@ -789,6 +817,10 @@ class UnitCard extends Control:
 		var r := 11.0
 		var disc := col if fielded else Color(0.45, 0.45, 0.45)
 		Icons.draw_marker(self, Icons.icon_of(ty), Vector2(r + 4, r + 4), r, disc)
+		if vet > 0:
+			var vsr := 3.2
+			Kit.draw_vet_badge(self, Vector2(maxf(r + 4 + r * 0.4, (vsr * 1.9 * vet + vsr * 0.9) * 0.5 + 1.0), r * 2 + 6), vet, vsr,
+				1.0 if fielded else 0.55)
 		if UT.stat(ty, "cmd_r") > 0:
 			# The general: his standard in gold in the top right corner.
 			Kit.UiIcons.draw_icon(self, "general", Rect2(sz.x - 16, 3, 13, 13), Kit.COL_GOLD if fielded else Kit.COL_DIM)

@@ -492,6 +492,14 @@ func _ld_scenario() -> void:
 			_ld_scn["terrain"] = {"kind": int(a.get_slice("=", 1))}
 		elif a.begins_with("--ground="):
 			gr = int(a.get_slice("=", 1))  # testing aid: ground palette (and its woods)
+		elif a.begins_with("--vet="):
+			# Testing aid: veterancy levels (0-3) on every unit of side 0, and of side 1 after a comma
+			# ("--vet=3" Hardened against fresh; "--vet=3,1"), the scenario's "vet".
+			var lv := a.get_slice("=", 1).split(",")
+			for ud in _ld_scn.get("units", []):
+				var sd := int(ud.get("side", 0))
+				if sd < lv.size():
+					ud["vet"] = clampi(int(lv[sd]), 0, 3)
 	if gr >= 0 and _ld_scn.has("terrain") and not (_ld_scn["terrain"] as Dictionary).has("city"):
 		_ld_scn["terrain"]["ground"] = gr
 		_ld_scn["terrain"]["forest"] = MapGen.PALETTE_FOREST[clampi(gr, 0, MapGen.PALETTE_FOREST.size() - 1)]
@@ -721,7 +729,7 @@ func _ld_connect() -> void:
 		_count("add_mode_on" if on else "add_mode_off"))
 	hud.orders_toggled.connect(_on_orders_toggled)
 	hud.book_pressed.connect(func(): _open_book(-1, "book_open"))
-	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_otype[u], "book_open_card"))
+	hud.card_long_pressed.connect(func(u: int): _open_book(sim.u_otype[u], "book_open_card", sim.u_vet[u] if sim.vet_on != 0 else 0))
 	hud.chip_book_pressed.connect(func(): _open_book(sim.u_otype[selected] if selected >= 0 and selected < sim.n_units else -1, "book_open_chip"))
 	hud.cards_reordered.connect(func(): _count("card_reorder"))
 	hud.book.closed.connect(_on_book_closed)
@@ -2257,13 +2265,13 @@ func _cg_hint(text: String, n: int) -> void:
 
 ## Unit book over the battle. Solo play: opening it pauses, closing it
 ## restores the pause state from before.
-func _open_book(ty: int, counter: String) -> void:
+func _open_book(ty: int, counter: String, vet: int = 0) -> void:
 	_count(counter)
 	_t("book_open", {"from": counter, "unit_type": ty, "tick": sim.tick})
 	if not hud.book.visible:
 		_paused_before_book = paused
 		_set_paused(true)
-	hud.book.open(ty)
+	hud.book.open(ty, -1, vet)
 	overlay.preview_on = false
 	_dragging = false
 	_touches.clear()
@@ -4667,7 +4675,7 @@ func _keys_held(delta: float) -> void:
 		_field_lp_start = -1.0
 		var u := _pick_unit(_screen_to_world(_press_pos))
 		if u >= 0:
-			_open_book(sim.u_otype[u], "book_open_longpress")
+			_open_book(sim.u_otype[u], "book_open_longpress", sim.u_vet[u] if sim.vet_on != 0 else 0)  # (veterancy: either side's: the enemy sees it)
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:

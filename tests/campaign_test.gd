@@ -85,6 +85,11 @@ var fails := 0
 
 
 func _init() -> void:
+	if OS.get_cmdline_user_args().has("--only=vet"):
+		_vet()
+		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
+		quit(0 if fails == 0 else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=shore"):
 		# (2026-11-05) Support the shore and the contested landings alone.
 		_port_landing()
@@ -93,6 +98,7 @@ func _init() -> void:
 		quit(0 if fails == 0 else 1)
 		return
 	_data()
+	_vet()
 	_round_trip()
 	_determinism()
 	_movement()
@@ -4151,7 +4157,9 @@ func _ai_skilled() -> void:
 	# carries the landings' new event keys and marks; were bac3b6c4 / 520790384 and, Easy, 82ddfac4 / 1051292326.)
 	# (2026-11-05, the formula knows the fort and the walls (docs/AI.md 58: no storm on arrival against stone walls
 	# with no way in, a siege instead); were 62200135 / 520790384 and, Easy, 8e7bb4b5 / 1051292326.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "57eedaff" and int(g["rng"]) == 3275932353,
+	# (2026-11-06, veterancy and Retrain: the format 10 play's units earn experience, the strength term and the AI's
+	# VET_CARE and RETRAIN (Average's RNG draws move too); were 57eedaff / 3275932353 and, Easy, d3f33b3b.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "15853336" and int(g["rng"]) == 2309884102,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4162,7 +4170,7 @@ func _ai_skilled() -> void:
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
 	# (Moved 2026-11-01 with the attack fixes: the targets' cells kept out of a march and the zone lock
 	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "d3f33b3b" and int(ge["rng"]) == 656603057,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "427959d4" and int(ge["rng"]) == 656603057,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -8758,3 +8766,216 @@ func _shore_support() -> void:
 	_check(CRules.apply_order(sth, tf, {"t": "fshore", "fleet": int(tfl["id"]), "on": 0}) == "" and not tfl.has("sh"),
 		"shore: ... and calls it off")
 	_check(CRules.apply_order(sth, mk, {"t": "fshore", "fleet": int(tfl["id"]), "on": 1}) != "", "shore: another's fleet is refused")
+
+
+## Veterancy and Retrain (2026-11-06; docs/design/campaign_rules.md "Veterancy and Retrain (as built, 2026-11-06)";
+## "--only=vet"): the setting (on for a new campaign, the option off and older formats without it), the levels, the
+## XP of a battle (fought, won, routed off, kills and their cap, men lost, a reserve that never arrived, a landing,
+## a siege held, the weak-enemy half), bled white, the refill (three-quarters trained, the floor), merge, split and
+## exchange keeping it, the strength term, the level reaching the battle sim; Retrain's gate (level, buildings,
+## money, a tier-2 row), cost, the mustering turn, the result (men, experience and level kept; its ammunition kind),
+## the recruit slot not used, a lapse paid back; the AI retraining (Average) and not (Easy).
+func _vet() -> void:
+	var rome := _f("rome")
+	var st := _new6([rome])
+	_check(int(st["settings"].get("vet", 0)) == 1 and CRules.vet_on(st), "veterancy: a new campaign has it on (settings.vet 1)")
+	var off := CState.new_campaign("t", 4242, [rome], {"vet": 0})
+	_check(not (off["settings"] as Dictionary).has("vet") and not CRules.vet_on(off), "veterancy: the option off writes no key and is off")
+	_check(not (CState.as_format(st, 6)["settings"] as Dictionary).has("vet") and not CRules.vet_on(CState.as_format(st, 9)),
+		"veterancy: older formats have none")
+	var lv_ok := true
+	for x in [[0, 0], [CState.VET_XP[1] - 1, 0], [CState.VET_XP[1], 1], [CState.VET_XP[2] - 1, 1], [CState.VET_XP[2], 2], [CState.VET_XP[3] - 1, 2], [CState.VET_XP[3], 3], [9000, 3]]:
+		if CState.vet_level({"xp": x[0]}) != int(x[1]):
+			lv_ok = false
+	_check(lv_ok and CState.vet_level({}) == 0, "veterancy: levels at %d / %d / %d XP" % [CState.VET_XP[1], CState.VET_XP[2], CState.VET_XP[3]])
+	# A battle's XP.
+	var enemy := _f("epirus")
+	var e6 := _empty6()
+	_italy(e6, rome)
+	var c0 := CState.field_cell(_r("latium"))
+	var a := _put(e6, rome, c0, ["heavy", "heavy", "spear", "archer", "heavy"])
+	var bu: Array = []
+	for k in 10:
+		bu.append("heavy")
+	var b := _put(e6, enemy, c0, bu)
+	a["units"][4]["xp"] = 750
+	var bt := CRules.start_field_battle(e6, _r("latium"), [a], [b])
+	var ida := int(a["id"])
+	var idb := int(b["id"])
+	var rr := CData.ROUT_RETURN
+	var out := {"winner": 0, "mode": "fought", "units": [
+		{"army": ida, "unit": 0, "killed": 20, "routed": 0, "withdrawn": 0, "remaining": 80, "kills": 30},
+		{"army": ida, "unit": 1, "killed": 0, "routed": 0, "withdrawn": 0, "remaining": 100, "kills": 0, "absent": 1},
+		{"army": ida, "unit": 2, "killed": 80, "routed": 20, "withdrawn": 0, "remaining": 0, "kills": 0},
+		{"army": ida, "unit": 3, "killed": 10, "routed": 0, "withdrawn": 0, "remaining": 70, "kills": 100},
+		{"army": ida, "unit": 4, "killed": 80, "routed": 0, "withdrawn": 0, "remaining": 20, "kills": 0},
+		{"army": idb, "unit": 0, "killed": 50, "routed": 0, "withdrawn": 0, "remaining": 50, "kills": 10}]}
+	CRules.apply_outcome(e6, int(bt["id"]), out)
+	var a1 := CState.army(e6, ida)
+	var b1 := CState.army(e6, idb)
+	var n2 := 20 * rr / 100
+	var F := CRules.VET_FOUGHT
+	var W := CRules.VET_WIN
+	var want := [F + W + 30 + 2, 0, F + 0 + 0 + mini((100 - n2) / 10, 10), F + W + CRules.VET_KILLS_MAX + 1, CState.VET_XP[1]]
+	var got: Array = []
+	for k in 5:
+		got.append(int(a1["units"][k].get("xp", 0)))
+	_check(str(got) == str(want), "veterancy: XP of a won field battle: fought + won + kills + men lost %s (want %s: a reserve that never arrived none, routed off no win bonus, kills capped, a Seasoned unit bled white to 20 men Blooded at its threshold)" % [str(got), str(want)])
+	_check(int(a1["units"][0].get("xb", 0)) == 1 and int(a1["units"][0].get("xk", 0)) == 30 and not (a1["units"][1] as Dictionary).has("xb"),
+		"veterancy: battles and kills counted for the card (xb, xk)")
+	_check(int(b1["units"][0].get("xp", 0)) == F + 10 + 5, "veterancy: the loser's unit: fought + kills + men lost (%d)" % int(b1["units"][0].get("xp", 0)))
+	var evv: Array = []
+	for ev in e6["events"]:
+		if str(ev.get("k", "")) == "battle" and ev.has("vet"):
+			evv = ev["vet"]
+	_check(evv.size() == 1 and int(evv[0][4]) == 1 and int(evv[0][5]) == 2, "veterancy: the battle event lists the level lost (%s)" % str(evv))
+	# The weak-enemy half, a landing, a siege held, a draw.
+	var e7 := _empty6()
+	_italy(e7, rome)
+	var a7 := _put(e7, rome, c0, ["heavy", "heavy", "heavy", "heavy"])
+	var b7 := _put(e7, enemy, c0, ["heavy"])
+	b7["units"][0]["n"] = 20
+	var bt7 := CRules.start_field_battle(e7, _r("latium"), [a7], [b7])
+	bt7["shore"] = []
+	CRules.apply_outcome(e7, int(bt7["id"]), {"winner": 0, "mode": "fought", "units": [
+		{"army": int(a7["id"]), "unit": 0, "killed": 0, "routed": 0, "withdrawn": 0, "remaining": 100, "kills": 20}]})
+	_check(int(CState.army(e7, int(a7["id"]))["units"][0].get("xp", 0)) == (F + W + 20 + 15) / 2,
+		"veterancy: a landing +15, halved against an enemy under a third of the side's strength (%d)" % int(CState.army(e7, int(a7["id"]))["units"][0].get("xp", 0)))
+	var e8 := _empty6()
+	_italy(e8, rome)
+	var a8 := _put(e8, rome, c0, ["heavy"])
+	var b8 := _put(e8, enemy, c0, ["heavy"])
+	var bt8 := CRules.start_field_battle(e8, _r("latium"), [a8], [b8])
+	CRules.apply_outcome(e8, int(bt8["id"]), {"winner": 1, "draw": 1, "mode": "formula", "units": [
+		{"army": int(a8["id"]), "unit": 0, "killed": 30, "routed": 0, "withdrawn": 0, "remaining": 70},
+		{"army": int(b8["id"]), "unit": 0, "killed": 40, "routed": 0, "withdrawn": 0, "remaining": 60}]})
+	var x8a := int(CState.army(e8, int(a8["id"]))["units"][0].get("xp", 0))
+	var x8b := int(CState.army(e8, int(b8["id"]))["units"][0].get("xp", 0))
+	_check(x8a == F + 10 + 40 + 3 and x8b == F + 10 + 30 + 4, "veterancy: a draw +10 each, a formula battle shares the side's kills by men (%d, %d)" % [x8a, x8b])
+	var held := {"settlement": 1}
+	var vr := [[{"t": "heavy", "n": 90}, 1, 100, {"routed": 0, "remaining": 90, "kills": 0}, -1, 1]]
+	CRules._vet_accrue(e8, held, {}, vr, [100, 100], [100, 100], [0, 0], 1, false)
+	_check(int(vr[0][0].get("xp", 0)) == F + W + 1 + 15, "veterancy: the defenders of an assault that held +15 (%d)" % int(vr[0][0].get("xp", 0)))
+	# The refill: three-quarters trained, never below the level held.
+	_check(CRules.vet_refill(800, 50, 50) == 800 * (5000 + 3750) / 10000 and CRules.vet_refill(CState.VET_XP[1] + 10, 50, 50) == CState.VET_XP[1]
+		and CRules.vet_refill(100, 50, 50) == 87 and CRules.vet_refill(0, 50, 50) == 0, "veterancy: a refill waters it down (recruits three-quarters trained), never below the level held")
+	var e9 := _new6([rome])
+	var a9: Dictionary = CState.armies_of(e9, rome)[0]
+	a9["units"][0]["n"] = 40
+	a9["units"][0]["xp"] = 900
+	CRules.end_of_turn(e9)
+	var n9 := int(a9["units"][0]["n"])
+	_check(n9 > 40 and int(a9["units"][0]["xp"]) == maxi(900 * (100 * 40 + 75 * (n9 - 40)) / (100 * n9), CState.VET_XP[2]),
+		"veterancy: replenishment at the end of a turn applies it (40 -> %d men, 900 -> %d XP)" % [n9, int(a9["units"][0]["xp"])])
+	# Merge, split and exchange carry it (whole units).
+	var e10 := _empty6()
+	_italy(e10, rome)
+	var p1 := _put(e10, rome, c0, ["heavy", "spear"])
+	var p2 := _put(e10, rome, c0, ["cav"])
+	p1["units"][1]["xp"] = 777
+	p2["units"][0]["xp"] = 333
+	var nid := CRules.new_army_id(e10, rome)
+	var ok10 := CRules.apply_order(e10, rome, {"t": "split", "army": int(p1["id"]), "units": [1], "new": nid}) == ""
+	ok10 = ok10 and int(CState.army(e10, nid)["units"][0].get("xp", 0)) == 777
+	ok10 = ok10 and CRules.apply_order(e10, rome, {"t": "exchange", "from": int(p2["id"]), "to": nid, "units": [0]}) == ""
+	ok10 = ok10 and int(CState.army(e10, nid)["units"][1].get("xp", 0)) == 333
+	ok10 = ok10 and CRules.apply_order(e10, rome, {"t": "merge", "army": nid, "into": int(p1["id"])}) == ""
+	var xs: Array = []
+	for u in CState.army(e10, int(p1["id"]))["units"]:
+		xs.append(int(u.get("xp", 0)))
+	_check(ok10 and str(xs) == str([0, 777, 333]), "veterancy: split, exchange and merge carry each unit's XP (%s)" % str(xs))
+	# The strength term and the battle sim's level.
+	var s0 := CState.strength({"units": [{"t": "heavy", "n": 100}]})
+	var s3 := CState.strength({"units": [{"t": "heavy", "n": 100, "xp": 1200}]})
+	_check(s3 == s0 * (100 + 3 * CState.VET_STR_PCT) / 100, "veterancy: a Hardened unit counts %d %% more strength (%d / %d)" % [3 * CState.VET_STR_PCT, s3, s0])
+	var e11 := _empty6()
+	_italy(e11, rome)
+	var g1 := _put(e11, rome, c0, ["heavy", "heavy"])
+	var g2 := _put(e11, enemy, c0, ["heavy"])
+	g1["units"][1]["xp"] = 800
+	var bt11 := CRules.start_field_battle(e11, _r("latium"), [g1], [g2])
+	var built := CBattle.build(e11, bt11, rome)
+	var vets: Array = []
+	for su in built["scenario"]["units"]:
+		vets.append(int(su.get("vet", 0)))
+	_check(vets.has(2) and vets.count(2) == 1, "veterancy: the battle scenario gives a Seasoned unit \"vet\" 2 (%s)" % str(vets))
+	# Retrain.
+	var e12 := _empty6()
+	_italy(e12, rome)
+	var lat := _r("latium")
+	var line := "heavy"
+	var k1 := CState.roster_type(rome, line, 1)
+	var k2 := CState.roster_type(rome, line, 2)
+	var rs: Dictionary = e12["regions"][lat]
+	var keep: Array = []
+	for sl in rs["slots"]:
+		if int(sl[0]) != CData.BARRACKS:
+			keep.append(sl)
+	rs["slots"] = keep
+	CState._add_building(rs, CData.BARRACKS, 1, 99)
+	var ra := _put(e12, rome, CGrid.site(lat), [k1, k1])
+	var rid := int(ra["id"])
+	ra["units"][0]["xp"] = 550
+	ra["units"][1]["xp"] = 720
+	e12["factions"][rome]["treasury"] = 5000
+	var i0 := CRules.retrain_info(e12, rome, rid, 0)
+	var i1 := CRules.retrain_info(e12, rome, rid, 1)
+	var cost := maxi(CRules.unit_price(e12, rome, lat, k2) - CRules.unit_price(e12, rome, lat, k1), 0) + CRules.unit_price(e12, rome, lat, k2) / 4
+	_check(str(i0.get("why", "")) == "needs Seasoned" and str(i1.get("why", "")).begins_with("needs ") and str(i1.get("t", "")) == k2,
+		"retrain: refused below Seasoned (%s) and without the tier-2 row's building (%s)" % [str(i0.get("why", "")), str(i1.get("why", ""))])
+	(rs["slots"] as Array).clear()
+	CState._add_building(rs, CData.BARRACKS, 2, 99)
+	i1 = CRules.retrain_info(e12, rome, rid, 1)
+	_check(not i1.has("why") and int(i1["cost"]) == cost, "retrain: a Seasoned %s at Barracks 2 may become %s for %d (the price difference plus a quarter of the tier-2 price; %s)" % [k1, k2, cost, str(i1)])
+	e12["factions"][rome]["treasury"] = cost - 1
+	_check(str(CRules.retrain_info(e12, rome, rid, 1).get("why", "")) == "not enough money", "retrain: refused without the money")
+	e12["factions"][rome]["treasury"] = 5000
+	var rcheck0 := CRules.recruit_check(e12, rome, lat, k1)
+	_check(CRules.apply_order(e12, rome, {"t": "retrain", "army": rid, "unit": 1}) == "" and int(e12["factions"][rome]["treasury"]) == 5000 - cost,
+		"retrain: the order pays %d" % cost)
+	_check(CRules.mustering(e12, rid) and CRules.apply_order(e12, rome, {"t": "retrain", "army": rid, "unit": 1}) == "retraining",
+		"retrain: the army is mustering this turn; the unit is not retrained twice")
+	_check(CRules.recruit_check(e12, rome, lat, k1) == rcheck0 and (rs["queue"] as Array).is_empty(), "retrain: the recruit slot is not used")
+	var mv := CRules.apply_order(e12, rome, {"t": "move", "army": rid, "x": CGrid.cx(c0), "y": CGrid.cy(c0)})
+	_check(mv == "mustering", "retrain: a march that turn is refused (%s)" % mv)
+	CRules.end_of_turn(e12)
+	var ru: Dictionary = CState.army(e12, rid)["units"][1]
+	_check(str(ru["t"]) == k2 and int(ru["xp"]) == 720 and int(ru["n"]) == UT.size_of(UT.index_of(k1)) and not ru.has("rt")
+		and not CRules.mustering(e12, rid), "retrain: at the end of the turn the unit is %s, its men, experience and level kept (%s)" % [k2, str(ru)])
+	var rev := {}
+	for ev in e12["events"]:
+		if str(ev.get("k", "")) == "retrained":
+			rev = ev
+	_check(str(rev.get("t", "")) == k2 and int(rev.get("nth", 0)) == 2, "retrain: the event names the 2nd %s (%s)" % [k1, str(rev)])
+	var pan = Panels.new(null)
+	var rtxt: String = pan.event_text(rev, rome)
+	_check(rtxt.find("retrained as") >= 0, "retrain: the turn report says \"%s\"" % rtxt)
+	var btxt: String = pan.vet_lines({"k": "battle", "vet": evv}, rome)
+	_check(btxt.find("Blooded again") >= 0, "veterancy: the battle result's line \"%s\"" % btxt)
+
+	_check(str(CRules.retrain_info(e12, rome, rid, 1).get("why", "")) == "no higher tier", "retrain: a tier-2 unit has no Retrain")
+	# A lapse: the army gone from the settlement by the end of the turn: paid back.
+	ra["units"][0]["xp"] = 700
+	var t0 := int(e12["factions"][rome]["treasury"])
+	var paid := CRules.apply_order(e12, rome, {"t": "retrain", "army": rid, "unit": 0}) == "" and int(e12["factions"][rome]["treasury"]) < t0
+	CState.place(CState.army(e12, rid), CState.field_cell(_r("bruttium")))
+	CRules._finish_retrains(e12)
+	CState.place(CState.army(e12, rid), CGrid.site(lat))
+	_check(paid and int(e12["factions"][rome]["treasury"]) == t0 and str(CState.army(e12, rid)["units"][0]["t"]) == k1,
+		"retrain: an army that left the settlement keeps its unit and its money")
+	_check(str(CRules.retrain_info(off, rome, int(CState.armies_of(off, rome)[0]["id"]), 0).get("why", "")) == "unknown order",
+		"retrain: no Retrain with veterancy off")
+	# The AI retrains (Average) and does not (Easy).
+	for skill in [CP.AVERAGE, CP.EASY]:
+		var e13 := CState.copy(e12)
+		e13["factions"][rome]["treasury"] = 20000
+		e13["humans"] = []
+		e13["factions"][rome]["ai_skill"] = skill
+		var army13 := CState.army(e13, rid)
+		army13["units"][0]["xp"] = 800
+		var orders := CAI.retrain_orders(e13, rome)
+		var has := false
+		for o in orders:
+			if str(o.get("t", "")) == "retrain" and int(o["army"]) == rid and int(o["unit"]) == 0:
+				has = true
+		_check(has == (skill == CP.AVERAGE), "retrain: the AI at %s %s" % [CP.SKILL_NAMES[skill], "retrains its Seasoned unit" if has else "does not retrain"])

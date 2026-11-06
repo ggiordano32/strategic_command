@@ -135,6 +135,7 @@ func _initialize() -> void:
 		_m_far, _m_far1, _m_far2, _m_far_check, _m_block_setup, _m_block_check, _m_gift_setup, _m_gift_tap, _m_gift_row, _m_gift_confirm, _m_gift_check,
 		_r_setup, _r_card, _r_check, _r_march, _r_keep, _r_march2, _r_cancel_march, _r_marching, _r_again, _r_x, _r_x_check,
 		_r_region, _r_picker, _r_picker2, _r_picker3, _r_raise_check, _r_raise_x,
+		_v_setup, _v_page, _v_tap, _v_check,
 		_a_setup, _a_scroll, _a_press, _a_wait, _a_drag, _a_up, _a_check1, _a_mouse, _a_mouse_up, _a_check2, _a_undo1, _a_undo2,
 		_a_scroll, _a_mouse_top, _a_mouse_top_up, _a_resolve,
 		_d_select, _d_tap, _d_check, _d_dip, _d_dip_tap, _d_dip_check, _d_other, _d_other_check,
@@ -4064,6 +4065,70 @@ func _r_setup() -> void:
 	await process_frame
 	await process_frame
 	cs.select_army(g0)
+
+
+## Veterancy and Retrain (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): a Seasoned tier-1 company of the
+## army at Roma (Barracks 2): its card on the bar carries two stars inside the card and says "Seasoned: 2 stars, 9
+## battles"; its unit page has the record line and the Retrain line with the cost; the Retrain button plans the order
+## (the price off the previewed treasury) and the card then reads "retrains".
+func _v_setup() -> void:
+	if cs.dialog.visible:
+		cs.close_dialog()
+	cs.orders = []
+	var a := CState.army(cs.st, g0)
+	CState.place(a, CGrid.site(_lat))
+	var k1 := CState.roster_type(rome, "heavy", 1)
+	a["units"][0] = {"t": k1, "n": UT.size_of(UT.index_of(k1)), "xp": 750, "xb": 9, "xk": 140}
+	var rs: Dictionary = cs.st["regions"][_lat]
+	var got := false
+	for sl in rs["slots"]:
+		if int(sl[0]) == CData.BARRACKS:
+			sl[1] = 2
+			got = true
+	if not got:
+		(rs["slots"] as Array).append([CData.BARRACKS, 2])
+	cs.st["factions"][rome]["treasury"] = 20000
+	_v_bar = cs.no_bar
+	cs.no_bar = false  # (the bar's unit cards: switched back after _v_check)
+	cs._replan()
+	cs.select_army(g0)
+
+
+var _v_bar := true
+
+
+func _v_page() -> void:
+	var card = cs.cmd_bar.find_child("unit_card_0", true, false)
+	var vr: Rect2 = card.vet_rect() if card != null else Rect2()
+	_check(card != null and card.vet == 2 and str(card.tooltip_text).contains("Seasoned: 2 stars, 9 battles")
+		and Rect2(Vector2.ZERO, card.size).encloses(vr) and vr.size.x > 8.0,
+		"veterancy: the bar's card carries 2 stars inside the card (%s in %s) and says Seasoned: 2 stars, 9 battles" % [str(vr), str(card.size) if card else "-"])
+	var u: Dictionary = CState.army(cs.ps, g0)["units"][0]
+	cs.open_unit_page(CState.unit_type(u), Callable(), "", rome, -1, u, g0, 0)
+
+
+func _v_tap() -> void:
+	var vt = cs.dialog_box.find_child("vet_text", true, false)
+	var rl = cs.dialog_box.find_child("retrain_line", true, false)
+	_check(vt != null and (vt as Label).text.begins_with("Seasoned (2 stars): 9 battles, 140 kills."),
+		"veterancy: the unit page's record (%s)" % ((vt as Label).text if vt else "-"))
+	_check(rl != null and (rl as Label).text.begins_with("Retrain as ") and (rl as Label).text.contains("gold"),
+		"retrain: the unit page's line with the cost (%s)" % ((rl as Label).text if rl else "-"))
+	_tap_button("dlg_Retrain", "Retrain")
+
+
+func _v_check() -> void:
+	var has := false
+	for o in cs.orders:
+		if str(o.get("t", "")) == "retrain" and int(o["army"]) == g0 and int(o["unit"]) == 0:
+			has = true
+	var pu: Dictionary = CState.army(cs.ps, g0)["units"][0]
+	var card = cs.cmd_bar.find_child("unit_card_0", true, false)
+	_check(has and pu.has("rt") and int(cs.ps["factions"][rome]["treasury"]) < 20000 and card != null and str(card.sub) == "retrains",
+		"retrain: the button planned the order, the price is off the previewed treasury, the card reads retrains")
+	cs.orders = []
+	cs.no_bar = _v_bar
+	cs._replan()
 
 
 ## Filled chits of a recruit_slots row (a filled chit's number is drawn bright).

@@ -47,6 +47,7 @@ var soldiers
 ## Battle._card_states: the card strip's state list of a unit, [glyph, word] each (the tokens show the same).
 var token_states := Callable()
 var standards_us := 0
+var honours_drawn := 0  # (veterancy) standards drawn with their honours last frame (tests)
 var _std_col: Array[Color] = []
 var _std_emb: Array[String] = []
 var _std_tex: Array = []
@@ -1344,6 +1345,7 @@ func _draw_standards(r: float) -> void:
 	var box_off := (o + Marks.BOX.position * sm) * w
 	var box_size := Marks.BOX.size * sm * w
 	var mr := r * 1.7
+	honours_drawn = 0
 	for u in sim.n_units:
 		var st: int = sim.u_state[u]
 		if st > BattleSim.U_ROUTING:
@@ -1375,13 +1377,16 @@ func _draw_standards(r: float) -> void:
 		var sel := selected_units.has(u)
 		var ci: int = u * 2 + (1 if sel else 0)
 		var stex: Texture2D = _std_tex[ci]
+		var vet: int = sim.u_vet[u] if sim.vet_on != 0 else 0  # (veterancy: its honours, either side's: the enemy sees them)
 		if stex == null:
-			stex = Marks.standard_tex(_std_col[u], sel, sim.u_side[u] == player_side, str(u + 1), _std_emb[u])
+			stex = Marks.standard_tex(_std_col[u], sel, sim.u_side[u] == player_side, str(u + 1), _std_emb[u], vet)
 			_std_tex[ci] = stex
+		if vet > 0:
+			honours_drawn += 1
 		_up(corner)
 		var lf := Vector2(0, -wl)
 		if stex == null:
-			Marks.draw_standard_tex(self, null, corner + o * w + lf, sm * w, _std_col[u])
+			Marks.draw_standard_tex(self, null, corner + o * w + lf, sm * w, _std_col[u], vet)
 		else:
 			draw_texture_rect(stex, Rect2(corner + tex_off + lf, tex_size), false)
 		_flat()

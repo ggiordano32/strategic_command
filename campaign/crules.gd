@@ -34,6 +34,11 @@ extends RefCounted
 ##        new army inside the walls; an army with recruits queued for it is
 ##        mustering: it cannot march this turn; see _recruit)
 ##   {"t": "build", "r": region, "chain": building chain index}
+##   {"t": "retrain", "army": id, "unit": unit index}  (veterancy, settings.vet:
+##        a Seasoned or better tier-1 unit of an army at its settlement becomes
+##        its roster line's tier-2 row at the end of the turn, keeping its men,
+##        experience and level; it costs the price difference plus a fee; the
+##        army is mustering; see retrain_info)
 ##   {"t": "merge", "army": id, "into": id}             (same region;
 ##        version 6: on the same or a neighbouring cell)
 ##   {"t": "split", "army": id, "units": [unit indices], "new": new army id}
@@ -160,6 +165,8 @@ static func apply_order(st: Dictionary, f: int, o: Dictionary) -> String:
 			return _build(st, f, int(o.get("r", -1)), int(o.get("chain", -1)))
 		"recruit":
 			return _recruit(st, f, o)
+		"retrain":
+			return _retrain(st, f, int(o.get("army", -1)), int(o.get("unit", -1)))
 		"recruit_char":
 			return CChars.recruit(st, f, o)
 		"attach":
@@ -481,7 +488,7 @@ static func queued_into(st: Dictionary, id: int) -> int:
 ## cannot march this turn (its move is refused, "mustering"; a stored
 ## march carries on next turn).
 static func mustering(st: Dictionary, id: int) -> bool:
-	return id >= 0 and queued_into(st, id) > 0
+	return id >= 0 and (queued_into(st, id) > 0 or retraining(CState.army(st, id)))
 
 
 ## The queue entries of region r as [[unit key, army id | QA_RAISE |
@@ -2154,6 +2161,24 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	for s in 2:
 		for a in arm[s]:
 			before[s] += CState.men(a)
+	# Veterancy (settings.vet): who fought, each side's strength, men and kills before the losses.
+	var vet := vet_on(st)
+	var vrows: Array = []  # [unit entry, campaign side, men before, outcome row, army id, nth of its type]
+	var vside := {}
+	var vstr := [0, 0]
+	var vmen := [0, 0]
+	var vkill := [0, 0]
+	if vet:
+		for s in 2:
+			for a in arm[s]:
+				vside[int(a["id"])] = s
+				vstr[s] += CState.strength(a)
+		if not open_field:
+			vstr[1] += _vet_gar_strength(st, r)  # (the garrison fights on the owner's side)
+		for u in outcome.get("units", []):
+			var ks := 1 if int(u["army"]) < 0 else int(vside.get(int(u["army"]), -1))
+			if ks >= 0:
+				vkill[1 - ks] += int(u["killed"])
 	# Losses per unit.
 	for u in outcome.get("units", []):
 		var aid := int(u["army"])
@@ -2166,8 +2191,18 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		if k < 0 or k >= CState.unit_count(a):
 			continue
 		var unit: Dictionary = a["units"][k]
+		if vet and vside.has(aid):
+			var nth := 1
+			for k2 in k:
+				if str(a["units"][k2]["t"]) == str(unit["t"]):
+					nth += 1
+			vrows.append([unit, int(vside[aid]), int(unit["n"]), u, aid, nth])
+			vmen[int(vside[aid])] += int(unit["n"])
 		var back := int(u["remaining"]) + int(u["withdrawn"]) + int(u["routed"]) * CData.ROUT_RETURN / 100
 		unit["n"] = clampi(back, 0, int(unit["n"]))
+	var vet_ev: Array = []
+	if vet:
+		vet_ev = _vet_accrue(st, b, outcome, vrows, vstr, vmen, vkill, winner, open_field or field)
 	for a in st["armies"]:
 		var keep: Array = []
 		for unit in a["units"]:
@@ -2277,6 +2312,8 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 		ev["sacked"] = 1
 	if int(outcome.get("fort_holds", 0)) != 0 and winner == 0 and new_owner < 0 and sacked < 0:
 		ev["fort_holds"] = 1
+	if not vet_ev.is_empty():
+		ev["vet"] = vet_ev  # (veterancy) levels gained and lost: [faction, army id, unit key, nth of its type, level, was]
 	event(st, ev)
 	CDip.on_battle(st, facs, winner)  # (version 10) fought side by side; (2026-11-02) won against a common enemy
 	check_eliminations(st)
@@ -2285,6 +2322,213 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	check_victory(st)
 	if (st["battles"] as Array).is_empty() and str(st["phase"]) == "battles":
 		st["phase"] = "plan"
+
+
+# ------------------------------------------------------------ veterancy ---
+# (2026-11-06; docs/design/campaign_rules.md "Veterancy and Retrain (as built, 2026-11-06)") A unit's entry keeps
+# its experience "xp" (the level: CState.vet_level, 250 / 600 / 1,000 for Blooded / Seasoned / Hardened), and for
+# the card the battles "xb" and the enemies killed "xk"; all optional, read as 0 (new_unit writes none). Earned in
+# apply_outcome (_vet_accrue), watered down by replenishment (vet_refill), lost a level when bled white; the battle
+# sim takes the level as the scenario unit's "vet" (CBattle._entry / _unit_extras). Only with settings.vet
+# (vet_on); version 10.
+
+const VET_NAMES: Array[String] = ["Fresh", "Blooded", "Seasoned", "Hardened"]
+const VET_FOUGHT := 60       # XP for a battle fought (a reserve that never arrived: none)
+const VET_WIN := 30          # ... its side won (a unit that routed off the field: none)
+const VET_DRAW := 10         # ... a draw
+const VET_KILLS_MAX := 45    # ... enemies killed x 100 / its full size, at most this
+const VET_LOST_MAX := 10     # ... its men lost (%) / 10, at most this
+const VET_HOLD := 15         # ... the defenders of a settlement assault that held; the attackers of a landing
+const VET_WEAK_DIV := 3      # half the XP against an enemy under 1 / this of the side's strength
+const VET_CAP := 160         # at most this a battle (the tuning round of 2026-11-06: 50 / 25 / 40 / 140 and levels 300 / 700 / 1,200 planned)
+const VET_REFILL_PCT := 75   # a recruit counts this % trained when the unit is refilled
+const VET_BLED_PCT := 25     # a unit left below this % of its full size drops a level
+const RETRAIN_LEVEL := 2     # Retrain from Seasoned up ...
+const RETRAIN_FEE_PCT := 25  # ... for the price difference plus this % of the tier-2 price
+
+
+## Veterancy is on in this campaign (version 10 and settings.vet).
+static func vet_on(st: Dictionary) -> bool:
+	return int(st.get("version", 0)) >= 10 and int((st.get("settings", {}) as Dictionary).get("vet", 0)) != 0
+
+
+static func vet_level(u: Dictionary) -> int:
+	return CState.vet_level(u)
+
+
+## Experience after refilling a unit of n men with a recruits: they count VET_REFILL_PCT % trained; never below the
+## level it holds.
+static func vet_refill(xp: int, n: int, a: int) -> int:
+	if xp <= 0 or a <= 0 or n + a <= 0:
+		return xp
+	var lv := CState.vet_level({"xp": xp})
+	var x := xp * (100 * n + VET_REFILL_PCT * a) / (100 * (n + a))
+	return maxi(x, CState.VET_XP[lv])
+
+
+## The garrison's strength (men x price per man) of settlement r: the weak-enemy test's.
+static func _vet_gar_strength(st: Dictionary, r: int) -> int:
+	var g := 0
+	for u in garrison(st, r):
+		var ty := UT.index_of(str(u["t"]))
+		g += int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1)
+	return g
+
+
+## Battle XP for the units in vrows (see VET_*); writes xp, xb, xk; returns the levels gained and lost
+## [[faction, army id, unit key, nth of its type in its army, level, was]].
+static func _vet_accrue(st: Dictionary, b: Dictionary, outcome: Dictionary, vrows: Array, vstr: Array, vmen: Array,
+		vkill: Array, winner: int, in_field: bool) -> Array:
+	var out: Array = []
+	var draw := int(outcome.get("draw", 0)) != 0
+	var held := not in_field and winner == 1 and int(b.get("settlement", 1)) != 0
+	var landing := b.has("shore")
+	for row in vrows:
+		var unit: Dictionary = row[0]
+		var s := int(row[1])
+		var n0 := int(row[2])
+		var u: Dictionary = row[3]
+		if n0 <= 0 or int(u.get("absent", 0)) != 0:
+			continue  # (a reserve that never reached the field)
+		var full := maxi(UT.size_of(CState.unit_type(unit)), 1)
+		var n1 := int(unit["n"])
+		var g := VET_FOUGHT
+		if draw:
+			g += VET_DRAW
+		elif s == winner and not (int(u["routed"]) > 0 and int(u["remaining"]) == 0):
+			g += VET_WIN
+		var kills := int(u["kills"]) if u.has("kills") else int(vkill[s]) * n0 / maxi(int(vmen[s]), 1)
+		g += mini(kills * 100 / full, VET_KILLS_MAX)
+		g += mini((n0 - n1) * 100 / n0 / 10, VET_LOST_MAX)
+		if (held and s == 1) or (landing and s == 0):
+			g += VET_HOLD
+		if int(vstr[1 - s]) * VET_WEAK_DIV < int(vstr[s]):
+			g /= 2  # (no farming stragglers)
+		g = mini(g, VET_CAP)
+		var was := CState.vet_level(unit)
+		var xp := int(unit.get("xp", 0)) + g
+		var lv := CState.vet_level({"xp": xp})
+		if lv > 0 and n1 > 0 and n1 * 100 < full * VET_BLED_PCT:
+			lv -= 1
+			xp = CState.VET_XP[lv]  # (bled white: the old hands are dead)
+		unit["xp"] = xp
+		unit["xb"] = int(unit.get("xb", 0)) + 1
+		unit["xk"] = int(unit.get("xk", 0)) + kills
+		if lv != was and n1 > 0:
+			var a := CState.army(st, int(row[4]))
+			out.append([int(a["f"]) if not a.is_empty() else -1, int(row[4]), str(unit["t"]), int(row[5]), lv, was])
+	return out
+
+
+## 1 if army a has a unit with a Retrain ordered this turn.
+static func retraining(a: Dictionary) -> bool:
+	if a.is_empty():
+		return false
+	for u in a["units"]:
+		if (u as Dictionary).has("rt"):
+			return true
+	return false
+
+
+## Retrain unit k of army id (faction f): {t: the tier-2 key, cost, r: the settlement} or {why} (and t / cost when
+## known). The unit is Seasoned or better (RETRAIN_LEVEL), a tier-1 row of f's roster line; the army is f's, at one
+## of its settlements (recruit_region), not in a battle, not besieged; the settlement's buildings allow the line's
+## tier-2 row (recruit_check's gates: needs, UNIT_NEEDS, a treaty line), the recruit slot not used; the cost is
+## the price difference between the rows plus RETRAIN_FEE_PCT % of the tier-2 price.
+static func retrain_info(st: Dictionary, f: int, id: int, k: int) -> Dictionary:
+	if not vet_on(st):
+		return {"why": "unknown order"}
+	var a := CState.army(st, id)
+	if a.is_empty() or int(a["f"]) != f:
+		return {"why": "no such army"}
+	if k < 0 or k >= CState.unit_count(a):
+		return {"why": "no such unit"}
+	var u: Dictionary = a["units"][k]
+	var ty := CState.unit_type(u)
+	var line := UT.line_of(ty)
+	if CState.roster_type(f, line, 1) != str(u["t"]):
+		return {"why": "no higher tier"}
+	var key2 := CState.roster_type(f, line, 2)
+	if key2 == "" or key2 == str(u["t"]):
+		return {"why": "no higher tier"}
+	var out := {"t": key2}
+	if u.has("rt"):
+		out["why"] = "retraining"
+		return out
+	if CState.vet_level(u) < RETRAIN_LEVEL:
+		out["why"] = "needs %s" % VET_NAMES[RETRAIN_LEVEL]
+		return out
+	var r := recruit_region(st, a)
+	if r < 0:
+		out["why"] = "not at a settlement"
+		return out
+	out["r"] = r
+	out["cost"] = maxi(unit_price(st, f, r, key2) - unit_price(st, f, r, str(u["t"])), 0) + unit_price(st, f, r, key2) * RETRAIN_FEE_PCT / 100
+	if int(a["busy"]) != 0 or not CState.battle_at(st, r).is_empty():
+		out["why"] = "in a battle"
+		return out
+	if not CState.siege_at(st, r).is_empty():
+		out["why"] = "besieged"
+		return out
+	var tw := CDip.line_why(st, f, line)
+	if tw != "":
+		out["why"] = tw
+		return out
+	var nd := needs(key2)
+	if CState.building(st, r, nd[0]) < int(nd[1]):
+		out["why"] = "needs %s %d" % [CData.CHAINS[nd[0]]["name"], nd[1]]
+		return out
+	for nd2 in CData.UNIT_NEEDS.get(key2, []):
+		if CState.building(st, r, int(nd2[0])) < int(nd2[1]):
+			out["why"] = "needs %s %d" % [CData.CHAINS[int(nd2[0])]["name"], int(nd2[1])]
+			return out
+	if int(out["cost"]) > int(st["factions"][f]["treasury"]):
+		out["why"] = "not enough money"
+	return out
+
+
+static func _retrain(st: Dictionary, f: int, id: int, k: int) -> String:
+	var info := retrain_info(st, f, id, k)
+	if info.has("why"):
+		return str(info["why"])
+	st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) - int(info["cost"])
+	CState.army(st, id)["units"][k]["rt"] = [str(info["t"]), int(info["r"]), int(info["cost"])]
+	return ""
+
+
+## End of turn: each unit with a Retrain becomes its tier-2 row (its men, experience and level kept; the special
+## ammunition kind the settlement gives that row, as a recruit's) if its army is still f's at the settlement, not in
+## a battle, and the settlement still f's; else the order lapses and the price is paid back. Event "retrained".
+static func _finish_retrains(st: Dictionary) -> void:
+	for a in st["armies"]:
+		if not retraining(a):
+			continue
+		var f := int(a["f"])
+		for k in CState.unit_count(a):
+			var u: Dictionary = a["units"][k]
+			if not u.has("rt"):
+				continue
+			var rt: Array = u["rt"]
+			u.erase("rt")
+			var key2 := str(rt[0])
+			var r := int(rt[1])
+			if int(a["busy"]) != 0 or r < 0 or r >= CData.region_count() or CState.owner(st, r) != f \
+					or CGrid.cheb(CState.cell(a), CGrid.site(r)) > 1 or UT.index_of(key2) < 0:
+				st["factions"][f]["treasury"] = int(st["factions"][f]["treasury"]) + int(rt[2])
+				continue
+			var nth := 1
+			for k2 in k:
+				if str(a["units"][k2]["t"]) == str(u["t"]):
+					nth += 1
+			var was := str(u["t"])
+			u["t"] = key2
+			u["n"] = mini(int(u["n"]), UT.size_of(UT.index_of(key2)))
+			var ak := ammo_for(st, f, r, key2)
+			if ak != "":
+				u["ak"] = ak
+			else:
+				u.erase("ak")
+			event(st, {"k": "retrained", "f": f, "r": r, "a": int(a["id"]), "from": was, "t": key2, "nth": nth})
 
 
 static func _capture(st: Dictionary, r: int, f: int, how: String = "") -> void:
@@ -2996,6 +3240,7 @@ static func end_of_turn(st: Dictionary) -> void:
 			event(st, {"k": "recruited", "r": r, "f": o, "units": q.duplicate()})
 			rs["queue"] = []
 		rs.erase("qa")
+	_finish_retrains(st)
 	CChars.appear(st)
 	CChars.pay_ransom(st)
 	CSea.before_money(st)  # (N2) the flota home, the blockades
@@ -3042,7 +3287,10 @@ static func end_of_turn(st: Dictionary) -> void:
 			var full := UT.size_of(ty)
 			var lvl := CState.building(st, r, int(CData.LINE_CHAIN[UT.line_of(ty)]))
 			var add := full * (CData.REPLENISH_BASE + CData.REPLENISH_PER_LEVEL * lvl) / 100
-			unit["n"] = mini(int(unit["n"]) + maxi(add, 1), full)
+			var n0 := int(unit["n"])
+			unit["n"] = mini(n0 + maxi(add, 1), full)
+			if unit.has("xp") and int(unit["n"]) > n0:
+				unit["xp"] = vet_refill(int(unit["xp"]), n0, int(unit["n"]) - n0)  # (veterancy: recruits water it down)
 	# Sieges: supplies, starvation, surrender.
 	_siege_turn(st)
 	# Garrisons and growth (both stop while besieged).

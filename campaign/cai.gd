@@ -151,6 +151,8 @@ static func act(st: Dictionary, f: int, moves: Array = [], fmoves: Array = []) -
 			cx = _context6(st, f)  # (shared with the fleet AI: one pass over the enemies)
 			(load("res://campaign/cai_fleet.gd") as GDScript).call("act", st, f, moves, fmoves, cx)
 		_move_grid(st, f, moves, cx)
+		for o in retrain_orders(st, f, moves):
+			CRules.apply_order(st, f, o)
 		_recruit(st, f, moves)
 		_characters(st, f, moves)
 		return
@@ -247,6 +249,7 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 	var up := CRules.upkeep(st, f)
 	var guard := 0
 	var keep_pct := CP.of(st, f)[CP.CUT_DEBT_PCT]
+	var care := CP.of(st, f)[CP.VET_CARE] > 0
 	while up > inc * keep_pct / 100 and guard < 40:
 		guard += 1
 		var best_a := {}
@@ -257,6 +260,8 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 				continue
 			for k in CState.unit_count(a):
 				var n := int(a["units"][k]["n"]) * 100 / maxi(UT.size_of(CState.unit_type(a["units"][k])), 1)
+				if care and (a["units"][k] as Dictionary).has("xp"):
+					n += 1000 * CState.vet_level(a["units"][k])  # (veterancy: the levelled last, the higher level later)
 				if n < best_n:
 					best_n = n
 					best_a = a
@@ -265,6 +270,35 @@ static func _cut_debt(st: Dictionary, f: int) -> void:
 			return
 		up -= CState.upkeep_of(CState.unit_type(best_a["units"][best_k]))
 		CRules.apply_order(st, f, {"t": "disband", "army": int(best_a["id"]), "units": [best_k]})
+
+
+## (Veterancy, docs/AI.md 74; CP.RETRAIN) The Retrain orders faction f gives this turn: each Seasoned or better
+## tier-1 unit (CRules.retrain_info) of an army holding (not in `moves`, not in a battle) at its settlement, in army
+## and unit order, while the treasury stays above the recruiting reserve and a turn's upkeep. [] at Easy, without
+## veterancy or the overworld.
+static func retrain_orders(st: Dictionary, f: int, moves: Array = []) -> Array:
+	var out: Array = []
+	var kn := CP.of(st, f)
+	if kn[CP.RETRAIN] == 0 or not CRules.vet_on(st) or not CState.grid_on(st):
+		return out
+	var marching := {}
+	for mv in moves:
+		if int(mv[2]) == f:
+			marching[int(mv[0])] = 1
+	var money := int(st["factions"][f]["treasury"])
+	var floor_gold := maxi(_reserve(st, f) / maxi(kn[CP.RECRUIT_RESERVE_DIV], 1), CRules.upkeep(st, f))
+	for a in CState.armies_of(st, f):
+		if marching.has(int(a["id"])) or int(a["busy"]) != 0:
+			continue
+		for k in CState.unit_count(a):
+			if CState.vet_level(a["units"][k]) < CRules.RETRAIN_LEVEL:
+				continue
+			var info := CRules.retrain_info(st, f, int(a["id"]), k)
+			if info.has("why") or money - int(info["cost"]) < floor_gold:
+				continue
+			money -= int(info["cost"])
+			out.append({"t": "retrain", "army": int(a["id"]), "unit": k})
+	return out
 
 
 # ---------------------------------------------------------------- build ---
@@ -2766,6 +2800,31 @@ static func _odds_on(st: Dictionary, t: int, att: Array, defs: Array, kit: int, 
 	return int(CBattle.odds_of(int(s[0]), int(s[1]) + extra)["win"])
 
 
+## (Veterancy, docs/AI.md 74; CP.VET_CARE) Army a's levelled share: % of its strength (men x price per man) in
+## units with a level, each weighted by its level / 3 (0-100).
+static func _vet_share(a: Dictionary) -> int:
+	var s := 0
+	var v := 0
+	for u in a["units"]:
+		var ty := CState.unit_type(u)
+		var w := int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1)
+		s += w
+		if u.has("xp"):
+			v += w * CState.vet_level(u) / 3
+	return v * 100 / maxi(s, 1)
+
+
+## Our chance `win` (%) of a battle army a would fight, as the AI weighs it: the chance of losing counted
+## VET_CARE % more for a fully levelled army (its share, _vet_share); `win` itself without veterans or at Easy.
+static func _care_win(kn: PackedInt32Array, a: Dictionary, win: int) -> int:
+	if kn[CP.VET_CARE] <= 0 or a.is_empty():
+		return win
+	var sh := _vet_share(a)
+	if sh <= 0:
+		return win
+	return maxi(100 - (100 - win) * (100 + kn[CP.VET_CARE] * sh / 100) / 100, 0)
+
+
 ## Our chance (%) standing fortified in the field with strength `mine`
 ## against `att` (the field defender's edge counted).
 static func _stand_win(att: int, mine: int) -> int:
@@ -3428,6 +3487,8 @@ static func _fall_back(st: Dictionary, f: int, free: Array, etas: Dictionary, us
 		var skip := {id: 1}
 		var s := _str(cx, a)
 		var now := _danger(st, f, CState.cell(a), s * CBattle._stance_pct(a, true) / 100, foes, skip, kn)
+		if kn[CP.VET_CARE] > 0:
+			now = 100 - _care_win(kn, a, 100 - now)  # (veterancy: a levelled army is risked less)
 		if now < _thr_foe(st, kn, CP.SK_SAFE_WIN):
 			continue
 		var full := CState.max_mp6(_default_of(a))
@@ -3659,7 +3720,7 @@ static func _screen6(st: Dictionary, f: int, free: Array, etas: Dictionary, used
 			if kn[CP.SCREENS] == 0:
 				break  # no screens at this level
 			var id := int(a["id"])
-			if used.has(id) or CRules.siege_role(st, a) != 0 or _stand_win(thr, _str(cx, a)) < screen_win or _hold(cx, st, f, a):
+			if used.has(id) or CRules.siege_role(st, a) != 0 or _care_win(kn, a, _stand_win(thr, _str(cx, a))) < screen_win or _hold(cx, st, f, a):
 				continue
 			var tt := int(etas[id]["t"][r])
 			var fz := false
@@ -3699,7 +3760,7 @@ static func _stances6(st: Dictionary, f: int, free: Array, used: Dictionary, cx:
 		for b in free:
 			if int(b["r"]) == r and not used.has(int(b["id"])):
 				mine += _str(cx, b)
-		if _stand_win(thr, mine) < shelter and not CRules.inside(st, a):
+		if _care_win(CP.of(st, f), a, _stand_win(thr, mine)) < shelter and not CRules.inside(st, a):
 			used[id] = 1
 			_go(out, a, CGrid.site(r), f, CData.MODE_SIEGE)  # into the walls
 			continue

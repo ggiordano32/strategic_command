@@ -475,10 +475,12 @@ func _card_h() -> float:
 	return (PHONE_H if phone else DESK_H) - 12.0 - (4.0 if phone else 14.0)
 
 
-func _card(ty: int, men: int, full: int, fac: int, ak := -1) -> UnitCard:
+func _card(ty: int, men: int, full: int, fac: int, ak := -1, u: Dictionary = {}) -> UnitCard:
 	var c := UnitCard.new(0.0, _card_h())
 	c.ty = ty
 	c.ak = ak
+	c.vet = Traits.vet_of(u)
+	c.vet_tip = Traits.vet_short(u)
 	c.men = men
 	c.full = maxi(full, 1)
 	c.faction = fac
@@ -488,6 +490,8 @@ func _card(ty: int, men: int, full: int, fac: int, ak := -1) -> UnitCard:
 	c.tooltip_text = CData.unit_name(UT.key_of(ty), fac)
 	if ak >= 0:
 		c.tooltip_text += ", " + Traits.ammo_adj(ak)
+	if c.vet_tip != "":
+		c.tooltip_text += "\n" + c.vet_tip  # (veterancy: "Seasoned: 2 stars, 11 battles")
 	return c
 
 
@@ -655,19 +659,23 @@ func _build_army(id: int) -> void:
 		reorder.name = "unit_reorder"
 		reorder.vertical = false
 		reorder.moved.connect(func(from: int, to: int): s.panels._arrange(id, from, to))
-		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af, UT.ammo_index(str(units[i].get("ak", "")))))
+		reorder.held.connect(func(i: int): s.open_unit_page(CState.unit_type(units[i]), Callable(), "", af, UT.ammo_index(str(units[i].get("ak", ""))),
+			units[i], id, i))
 	for k in units.size():
 		var u: Dictionary = units[k]
 		var ty := CState.unit_type(u)
 		var uak := UT.ammo_index(str(u.get("ak", "")))
-		var c := _card(ty, int(u["n"]), UT.size_of(ty), af, uak)
+		var c := _card(ty, int(u["n"]), UT.size_of(ty), af, uak, u)
 		c.name = "unit_card_%d" % k
+		if u.has("rt"):
+			c.sub = "retrains"  # (a Retrain this turn: the tier-2 row at the end of the turn)
+			c.tooltip_text += "\nRetrains as %s at the end of the turn" % CData.unit_name(str(u["rt"][0]), af)
 		c.custom_minimum_size.x = cw
 		c.selected = sel.has(k)
 		var kk := k
 		c.pressed.connect(func():
 			if not mine or busy:
-				s.open_unit_page(ty, Callable(), "", af, uak)
+				s.open_unit_page(ty, Callable(), "", af, uak, u, id, kk)
 				return
 			var cur_sel: Array = s.panels._split_sel.get(id, [])
 			if cur_sel.has(kk):
@@ -680,7 +688,7 @@ func _build_army(id: int) -> void:
 			reorder.items.append(c)
 			c.gui_input.connect(func(e: InputEvent): reorder.feed(e, kk))
 		else:
-			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, uak))
+			c.long_pressed.connect(func(): s.open_unit_page(ty, Callable(), "", af, uak, u, id, kk))
 		cards.append(c)
 	for k in arriving.size():
 		var rty := UT.index_of(str(arriving[k]["unit"]))
@@ -1096,6 +1104,8 @@ class UnitCard extends Control:
 	var sub := ""              # replaces "men/full" under the bar
 	var pips := 0              # filled tier pips
 	var ak := -1               # the special ammunition kind it carries (UT.AMMO row, -1 none): a badge on the symbol
+	var vet := 0               # veterancy level 0-3: brass stars on a plate at the symbol's upper right (2026-11-06)
+	var vet_tip := ""          # ... their tap hint ("Seasoned: 2 stars, 11 battles")
 	var _press_t := -1.0
 	var _long_fired := false
 	var _hits: Array = []
@@ -1106,6 +1116,20 @@ class UnitCard extends Control:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		set_process(false)
 
+	## Where the veterancy stars' plate is drawn (empty: no level): the symbol's upper right, inside the card.
+	func vet_rect() -> Rect2:
+		if vet <= 0:
+			return Rect2()
+		var compact := size.y < 90.0
+		var fs := 10 if compact else 11
+		var r := 13.0 if compact else 17.0
+		var cy := fs + 5 + r
+		var sr := 4.0 if compact else 4.5
+		var vw := sr * 1.9 * vet + sr * 0.9
+		var vh := sr * 2.6
+		var c := Vector2(minf(size.x * 0.5 + r * 0.55 + vw * 0.5, size.x - vw * 0.5 - 2.0), cy - r * 0.78)
+		return Rect2(c.x - vw * 0.5, c.y - vh * 0.5, vw, vh)
+
 	func _make_custom_tooltip(_for_text: String) -> Object:
 		if ty < 0 or men < 0:
 			return null
@@ -1115,6 +1139,8 @@ class UnitCard extends Control:
 		row.faction = faction
 		row.name_f = faction
 		row.ak = ak
+		row.vet = vet
+		row.vet_tip = vet_tip
 		p.add_child(row)
 		return p
 
@@ -1194,7 +1220,11 @@ class UnitCard extends Control:
 			draw_circle(bc, br, Color(0.1, 0.09, 0.07, 0.95 * a))
 			draw_arc(bc, br, 0, TAU, 20, Color(kc, a), 1.5, true)
 			IconRaster.draw_icon(self, Traits.ammo_icon(ak), Rect2(bc.x - br * 0.72, bc.y - br * 0.72, br * 1.44, br * 1.44), Color(kc, a))
-		# Tier pips down the left edge (the campaign has no experience: tier).
+		if vet > 0:
+			# Veterancy: 1-3 brass stars on a dark plate ringed in brass at the symbol's upper right (the arrow badge's
+			# pattern; the tier pips stay on the left edge, the arrow badge on the lower right).
+			Kit.draw_vet_badge(self, vet_rect().get_center(), vet, 4.0 if compact else 4.5, a)  # (no tap hint: a finger lands on the card)
+		# Tier pips down the left edge (the tier; veterancy is the stars).
 		for k in 3:
 			var py := cy + (k - 1) * 8.0
 			var on := (2 - k) < pips

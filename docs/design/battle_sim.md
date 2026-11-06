@@ -4340,3 +4340,69 @@ water (the attackers' ships and parties); the parties' landing is a move order (
 a hull is never boarded and never sunk in the land battle (silenced at worst); Rome's fleets do not support the shore
 (the pack's ships script has no `SHORE_SUPPORT`; Rome's galleys have no guns and no marines row); the Land chip lands
 all of one ship's party at once (no partial landings).
+
+### Veterancy in battle (as built, 2026-11-06)
+
+The owner: "veterancy that helps give the units better accuracy and reload speeds, better use of shields and higher
+chance of landing attacks ... Lower tendency to flee ... not break the units by making them crazy overpowered." Built as
+the plan of 2026-11-06 (scratch `vet/plan.md`) with the owner's three decisions: three levels (Blooded, Seasoned,
+Hardened), the softened refill (the campaign side: campaign_rules.md "Veterancy and Retrain (as built, 2026-11-06)") and
+the enemy sees it (the marks: ui.md "Veterancy marks and Retrain (as built, 2026-11-06)").
+
+- **A unit parameter like the tier:** the scenario unit's key `"vet"` (0-3, clamped; absent 0) is read at setup into
+  `u_vet` (a PackedInt32Array kept out of `_unit_arrays`) and `vet_on` (1 when any unit has a level). Both are script
+  variables, so `snapshot()` / `restore()` carry them; `state_hash()` adds `u_vet` only when `vet_on` is 1, so a battle
+  with no level hashes as it always did (every determinism and bench golden stays). The campaign hands the level over in
+  `CBattle._entry` / `_unit_extras`; the custom battle's per-unit picker writes it; `--vet=L0[,L1]` sets it on every
+  unit of side 0 (and side 1) of any scenario (testing aid, `game/battle.gd`).
+- **The effects per level** (tables `VET_*`, static so `tests/vet_duel.gd --tune` can ablate them), on top of the
+  unit's row, never on hit points, armour, damage, charge, speed, range or ammunition:
+
+| Effect | Where | L1 | L2 | L3 |
+|---|---|---|---|---|
+| Melee attack (the to-hit roll) | `_unit_stats` (`u_att`) | +2 | +3 | +5 |
+| Melee defence | `_unit_stats` (`u_def`) | +1 | +2 | +3 |
+| Pikes (`CLS_PIKE`): attack / defence | the same (`VET_ATT_PIKE`, `VET_DEF_PIKE`, TIER_SKILL's half) | +1 / 0 | +2 / +1 | +2 / +1 |
+| Shield block, melee and missile (units with that shield only) | `_melee`'s frontal `t_shield` roll, `_missile_hit`'s `t_mshield` roll | +2 | +4 | +6 |
+| Reload time (the unit's own weapon; engines none) | `_vet_rl`: the volley pool, `_pm_unit`, `_gun_unit`, the countermarch, the gate volleys, the caracole's wait | -3 % | -6 % | -10 % |
+| Scatter | `_vet_spr` in `_fire` and `_fire_gate` (engines none) | -3 % | -6 % | -10 % |
+| Morale at the start and its recovery caps | setup (`morale_pct` scales the sum), `_mor0` in `_update_morale` and the command aura | +25 | +45 | +70 |
+| Suppression gained | `_supp_add` | -5 % | -10 % | -15 % (planned -10 / -20 / -30: halved after the probe, the cap) |
+| Rally (a router's +40 a second out of reach) | `_update_morale` | - | +25 % | +50 % |
+
+- **Tests:** `custom_battle_test` `_check_vet` (`--only=vet`): per level the attack, defence (pikes half), morale at
+  spawn and its cap, reload and scatter, suppression gained against a fresh line under the same missile, the rally gain
+  of a router, no damage, reach, ammunition or hit point change, the level in the hash and through snapshot / restore,
+  a fresh battle with `vet_on` 0; the picker (`_check_vet_picker`). `lockstep_test --only=vet`: bench_2000 with levels
+  1-3 on side 0, the hash differs from the fresh battle's, a copy restored at 60 s on a fresh setup runs 300 ticks
+  hash-equal.
+
+**The probe** (`tests/vet_duel.gd`, 8 seeds, one unit against one, each attacking the other, the levelled unit on side
+0 in even seeds and side 1 in odd ones; "levelled wins" counts its wins, draws none):
+
+| Case | As built: levelled wins | men lost (levelled v other) | Suppression -5/-10/-15 % | Suppression none |
+|---|---|---|---|---|
+| musket L3 v L0 | 100 % | 32.6 v 64.4 of 100 | 100 % | 87 % |
+| musket L3 v musketeers2 | 75 % | 55.5 v 64.5 of 100 | 62 % | 50 % |
+| musket L0 v L0 (mirror) | 25 % | 83.9 v 71.2 of 100 | 25 % | 25 % |
+| musket L0 v musketeers2 (base) | 0 % | 78.0 v 46.4 of 100 | 0 % | 0 % |
+| pike L3 v L0 | 100 % | 41.4 v 119.9 of 120 | 100 % | 100 % |
+| pike L3 v w_pikemen2 | 0 % | 120.0 v 42.0 of 120 | 0 % | 0 % |
+| pike L0 v w_pikemen2 (base) | 0 % | 120.0 v 29.8 of 120 | 0 % | 0 % |
+| bowmen L3 v L0 | 100 % | 34.1 v 54.1 of 80 | 100 % | 100 % |
+| bowmen L3 v archer2 | 100 % | 31.9 v 59.2 of 80 | 100 % | 100 % |
+| bowmen L0 v archer2 (base) | 100 % | 40.0 v 53.4 of 80 | 100 % | 100 % |
+| warriors L3 v L0 | 100 % | 26.5 v 100.0 of 100 | 100 % | 100 % |
+| warriors L3 v native_warriors2 | 25 % | 84.6 v 50.1 of 100 | 25 % | 25 % |
+| warriors L0 v native_warriors2 (base) | 0 % | 100.0 v 22.8 of 100 | 0 % | 0 % |
+| musket L1 v L0 | 87 % | 49.4 v 70.1 of 100 | 75 % | 50 % |
+| warriors L1 v L0 | 62 % | 57.1 v 74.0 of 100 | 62 % | 62 % |
+
+Known: a one-against-one duel of equal units snowballs, so any real edge reads near 100 % (a fresh tier 2 beats its
+tier 1 in every seed of every line); the men lost are the better yardstick. The gate the plan set, a Hardened tier 1 at
+most 55 % against the fresh tier 2, holds for pikes, warriors and (with the ablation) muskets; as built the musket line
+wins 75 % against Veteran Musketeers, and the ablations show the suppression cut is what does it (the Hardened line stays
+under the pin while the fresh one is pinned): without it 50 %, at half (-5 / -10 / -15 %) 62 %. Bowmen against Rome's
+archer2 are no test of the cap (fresh native bowmen beat archer2 in every seed). **Decision (2026-11-06, the same day):** the
+suppression cut halved to -5 / -10 / -15 %; re-run (musket rows, 8 seeds): Hardened v Veteran Musketeers 62 %, men lost
+64.5 v 70.4 (about even in men: the reload gain kept at -10 %), Hardened v fresh 100 % (35 v 62 men), Blooded v fresh 75 %.

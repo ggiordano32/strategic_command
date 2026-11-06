@@ -4871,3 +4871,20 @@ behind hit). One knob, id 373 (372 and 375-376 are note 72's; 374 is unused, `KN
 The siege AI's batter targets are unchanged. Measured (scratch `proj/scan_probe.gd`, 4 seeds): with 60 men at the wall
 and 30 men 35 m further in, Easy hits the wall (walls 2, 80 m: 24 strikes, 53 of the 60 lost, none of the 30), Average
 shoots the 30 (0 strikes, 40 lost) at walls 2 and 3; at Rome walls 1 the near face reads as reachable and both keep the 60.
+
+## 74. Veterancy: risking veterans, keeping them, and Retrain (2026-11-06)
+
+The rules: docs/design/campaign_rules.md "Veterancy and Retrain (as built, 2026-11-06)". The battle AI is unchanged
+(fighting with better men is enough; it targets as before). The formula and every campaign AI decision that reads
+strength see a levelled unit through `CState.strength` (`VET_STR_PCT` 4 % a level). Two campaign knobs
+(`campaign/cai_profile.gd`, `N_KNOBS` `SK_SUPPORT + 65`):
+
+| knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|
+| `VET_CARE` (`SK_SUPPORT + 63`) | 0 | 25 | 50 | an army's chance of losing a battle it would stand in counts this % more for a fully levelled army (its levelled share of strength, each unit weighted by level / 3: `_vet_share`, `_care_win`): the shelter-inside test and the screen pick (`_stances6`, `_screen`) and Skilled's fall back from danger (`_fall_back`); debt disbanding (`_cut_debt`) takes fresh units before levelled ones and the lower level first |
+| `RETRAIN` (`SK_SUPPORT + 64`) | 0 | 1 | 1 | `retrain_orders`: each Seasoned or better tier-1 unit of an army holding this turn (not marching, not in a battle) at its settlement whose buildings allow the tier-2 row, in army and unit order, while the treasury stays above the recruiting reserve (`_reserve / RECRUIT_RESERVE_DIV`) and a turn's upkeep; before recruiting |
+
+Merging moves whole armies (`_merge`): there is no unit choice in it, so the level plays no part there. Recruiting
+(`MIX_LIVE`) is untouched. Both knobs are inert without veterancy (no `xp` in the state: format 6 and 8 campaigns, the
+setting off). Measured: campaign_rules.md "Veterancy and Retrain", the measure table (retrains a campaign, the levels by
+faction).

@@ -2190,3 +2190,103 @@ bonus by position, the foe and the next region, the war tried first, the War lod
 - The Miskito never declare war on Tierra Firme (its strength is above their war ratio). The towns they take from it
   come when Tierra Firme is the one at war with them.
 - The Itza still almost never land.
+
+### Veterancy and Retrain (as built, 2026-11-06)
+
+The owner: "veterancy that helps give the units better accuracy and reload speeds, better use of shields and higher
+chance of landing attacks ... Lower tendency to flee ... not break the units by making them crazy overpowered", and
+"Would it make sense to have a way to upgrade the units from tier 1 to tier 2 once they are seasoned? This should cost a
+little resources, but it would allow you to bring in tier 2 bonuses like poison and fire arrows without having to
+disband and recreate units". Built as the plan of 2026-11-06 with the owner's decisions (three levels, the softened
+refill, the enemy sees it) plus Retrain. The battle side: battle_sim.md "Veterancy in battle (as built, 2026-11-06)";
+the marks: ui.md "Veterancy marks and Retrain (as built, 2026-11-06)"; the AI: docs/AI.md 74.
+
+- **The setting** `settings.vet` (`CRules.vet_on`: version 10 and the key): `CState.new_campaign` writes 1 unless the
+  creation option "Veterancy" says Off (then no key); `as_format` below 10 drops it. Absent reads as off, so older saves,
+  the legacy formats (6, 8) and their pins play exactly as before. No `CState.VERSION` bump: the new keys are optional
+  and change no existing meaning (an online campaign of an older build is refused by the rules hash anyway).
+- **The unit entry** gains `xp` (experience), `xb` (battles) and `xk` (enemies killed), optional, read as 0, the `ak`
+  pattern (`CRules.new_unit` writes none). The level is computed, never stored: `CState.vet_level` (`VET_XP` 250 / 600 /
+  1,000: Blooded, Seasoned, Hardened; `CRules.VET_NAMES`). A Retrain ordered this turn is the entry's `rt` [tier-2 key,
+  region, price] until the end of the turn.
+- **The numbers after the tuning round (2026-11-06):** fighting 60 (planned 50), winning +30 (25), kills up to +45
+  (40), the cap 160 (140), the levels at **250 / 600 / 1,000** XP (300 / 700 / 1,200); the rest as below. A player's
+  winning core army in a model of the rules (`vetb/mc.py`: 80 % won, losses 15-55 % won / 50-75 % lost, refilled
+  between battles): Seasoned in 98 % after 10 battles, Hardened in 24 % after 15, 66 % after 20, 95 % after 30 (the
+  planned numbers: 29 % Seasoned at 10, 1 % Hardened at 25).
+- **XP of a battle** (`CRules._vet_accrue`, in `apply_outcome` after the losses, for every unit of an army on either
+  side; never at sea, never for a garrison): 60 for fighting (a reserve that never reached the field, the outcome row's
+  `absent` from the sim result's `reserve`, gets nothing), +30 if its side won (not for a unit that routed off the field:
+  routed men and none remaining) or +10 for a draw, + kills x 100 / its full size up to 45 (a fought battle's own
+  `kills`; a formula or auto battle shares its side's kills, the other side's `killed`, by the unit's men), + its men
+  lost % / 10 up to 10, +15 for the defenders of a settlement battle that held or the attackers of a battle with ships at
+  the shore (a landing); halved when the enemy's strength (armies, plus the garrison of a settlement battle) was under a
+  third of its side's (`VET_WEAK_DIV`); at most 160 (`VET_CAP`). `xb` + 1, `xk` + kills.
+- **Bled white:** a unit left alive below 25 % of its full size (`VET_BLED_PCT`) after the battle drops a level (its XP
+  set to the threshold of the level below).
+- **The refill** (end of turn, replenishment): `xp = xp x (n + 3/4 a) / (n + a)` for n men left and a added (integers:
+  `xp x (100 n + 75 a) / (100 (n + a))`, `vet_refill`), never below the threshold of the level it holds.
+- **Merge, exchange, split, gifts, the end-of-turn auto-merge** move whole unit entries, so a unit's XP, battles and
+  kills go with it (no rule needed; tested).
+- **The strength term:** `CState.strength` counts a levelled unit `VET_STR_PCT` % more a level, so the formula, the shown
+  odds and every AI decision that reads strength see veterans. Planned at 5; the refit set it at **4** (+4 / +8 / +12 %):
+  `tests/campaign_battles.gd --only=fitvet` fought the West field mix at equal men with the attackers Hardened (48 seeds:
+  attackers win 52.1 %, loss ratio 0.904, against 33.3 % fresh), the fit's new cell (`FIT_VET`) gave the formula 59.0 %
+  at +15 % (6.9 points out) and 52.0 % at +12 %; every old cell unchanged; fit PASS.
+- **The battle sim** gets the level as the scenario unit's `"vet"` (`CBattle._entry` / `_unit_extras`).
+- **Events:** the battle event's `vet` [[faction, army id, unit key, nth of its type in its army, level, was], ...]
+  (levels gained and lost), "retrained" {f, r, a, from, t, nth}. The turn report: "Roma: the 2nd Heavy Swords retrained
+  as Principes."; the battle line adds "The 2nd Musketeers earned a star: now Seasoned." / "... were cut to pieces and
+  are Blooded again."
+- **Retrain** (order `{"t": "retrain", "army": id, "unit": k}`, `CRules.retrain_info` / `_retrain`): a unit of level 2+
+  (`RETRAIN_LEVEL`), whose type is its roster line's tier-1 row, in an army of the faction standing on or next to one of
+  its settlements (`recruit_region`), not in a battle, the settlement not besieged and its buildings allowing the line's
+  tier-2 row (`needs`, `CData.UNIT_NEEDS`, a treaty line: the recruiting gates), costs the price difference between the
+  rows plus 25 % of the tier-2 price (`RETRAIN_FEE_PCT`; a pirate haven's discount applies to both), paid at once. The
+  army is mustering that turn (`mustering`: it cannot march). The recruit slot is not used (a Retrain trains no new men,
+  and the slot is the town's capacity to raise companies; using it would make Retrain compete with recruits the player
+  is short of already). At the end of the turn (`_finish_retrains`, after the recruits) the unit becomes the tier-2 row
+  with its men (capped at the row's size), experience and level, and the special ammunition kind the town gives that row
+  (`ammo_for`, as a recruit's `ak`); if by then its army is in a battle, left the settlement or the town changed hands,
+  the order lapses and the price is paid back. A tier-2 unit has no Retrain ("no higher tier").
+- **Tests** (`campaign_test --only=vet`, also in the full run): the setting, the levels, a won field battle's XP per
+  unit (fought, won, routed off, kills capped, a reserve, men lost), the loser's, the battle event, a landing halved
+  against a weak enemy, a draw shared by men, a held assault, the refill and its floor, end-of-turn replenishment,
+  split / exchange / merge, the strength term, the scenario's `vet`; Retrain refused below Seasoned and without the
+  building, its cost, refused without the money, paid, mustering, not twice, the slot unused, the march refused, the
+  result at the end of the turn, the event and its report line, the battle's result line, a lapse paid back, veterancy
+  off; the AI's Retrain at Average and none at Easy.
+
+**The measure** (campaign_sim, 72 seeds x 60 turns per pack, before = HEAD, after = this build with the tuning round):
+
+| | West f10 before | after | Rome f10 before | after |
+|---|---|---|---|---|
+| Battles a seed | 43.3 | 43.5 | 38.3 | 38.4 |
+| Field battles a seed | 2.8 | 2.6 | 4.2 | 4.6 |
+| Itza / Miskito eliminated by turn 60 | 5 / 1 of 72 | 4 / 1 of 72 | - | - |
+| Brethren eliminated | 14 of 72 | 15 of 72 | - | - |
+| Gauls / Macedon / Rome eliminated | - | - | 18 / 31 / 6 | 13 / 26 / 9 |
+| Units at level 1 / 2 / 3, turn 30 | - | 0.9 / 0 / 0 % (17,361 units) | - | 2.6 / 0 / 0 % (14,397) |
+| Units at level 1 / 2 / 3, turn 60 | - | 3.8 / 0 / 0 % (18,747) | - | 10.2 / 0.25 / 0 % (13,965) |
+| Retrains a campaign | - | 0.03 (2, the Miskito) | - | 0.10 (7: Carthage 5, Greeks 2) |
+
+(The first build, before the tuning round: Blooded at turn 60 2.9 % West, 8.8 % Rome, no retrain.) Every faction's
+eliminations stay within the 95 % interval. Level 1 by faction at turn 60: West France 7.6 %, Miskito 5.0 %, Dutch
+4.8 %, Tierra Firme 3.5 %, Itza 3.4 %, New Spain 3.2 %, England 0.2 %, Brethren 0; Rome Carthage 18.0 %, Greeks 11.3 %,
+Rome 10.6 % (0.53 % Seasoned), Gauls 8.4 %, Iberians 7.2 %, Syracuse 4.4 % (1.93 % Seasoned), Macedon 1.5 %, Epirus 0.
+Format 6: 72 of 72 seeds of each pack hash as before.
+
+What blocks Retrain for the AI (every Seasoned unit at the end of a turn, unit-turns, 72 seeds a pack, `rt_why`):
+West: no tier-2 row in its line 41, needs a building 14, not at a settlement 3, could 7; Rome: not at a settlement 636,
+needs a building 487, no tier-2 row 293, could 63. Never the treasury. The real gate is reaching Seasoned at all (0.25 %
+of Rome's units, none in the West); among those, an army in the field and the town's buildings. Not opened further
+(one measure).
+
+Known: the AI still levels far less than the plan's model expected (about 1 in 6 Blooded by turn 60; the West has 1 in
+26, Rome 1 in 10). An AI unit fights 2-3 battles in 60 turns, and diagnosis (8 West seeds, instrumented): 28 % of its
+battles are halved against a weak enemy, it averages 35 % men lost a battle, and it is refilled about three times a
+battle from low numbers, so a unit with 10 battles held 130-260 XP. The player's core army, which fights far more and is
+refilled between battles, reaches the levels as intended. Further levers (the weak-enemy half, the refill's 75 %) are
+the owner's call. The pins: `campaign_sim --format=10` Rome and West move (every seed), and the pins played at format 10
+and hashed as an older format move with them (`ROME_20` and its V8 / V7, the AI goldens as format 7); format 6 and the
+pack state hash stay; format 8 measured: unchanged (Rome `3d28ceda ...`, West `1db1f379 ...`, the 2026-11-05 pins).

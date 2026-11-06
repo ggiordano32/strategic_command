@@ -8,6 +8,9 @@ extends SceneTree
 ##   tools/balance west_walls / rome_walls, field battles at strength ratios 0.7 /
 ##   1.0 / 1.4): the formula alone, fast; PASS when every cell is within 5 points
 ##   and 20 % of the loss ratio.
+## fitvet: the fought reference of the fit's veterancy cell (2026-11-06): the West field mix at equal men, the
+##   attackers Hardened (xp 1,200: the sim's "vet" 3), fought AI v AI by the battle sim, --n seeds (default 40 here:
+##   the four field regions in turn); prints the attacker win % and the loss ratio for FIT_VET.
 ## calib: random armies (2-12 units a side, random lines and tiers, some
 ##   garrisoned settlements with walls) fought by the sim AI vs AI and
 ##   predicted by the formula: how often the formula's favourite wins in the
@@ -37,6 +40,8 @@ func _init() -> void:
 		_calib()
 	if only == "" or only == "fit":
 		_fit()
+	if only == "fitvet":
+		_fit_vet_fought()
 	CData.use_pack("rome")
 	quit(0)
 
@@ -199,6 +204,14 @@ const FIT_FOUGHT := [
 	["west", "field", 70, 2.1, 1.149], ["west", "field", 100, 33.3, 0.991], ["west", "field", 140, 81.2, 0.841]]
 
 
+## Veterancy (2026-11-06; docs/design/campaign_rules.md "Veterancy and Retrain"): the West field mix at equal men
+## with the attackers Hardened against fresh defenders, fought (--only=fitvet, 48 seeds over the four field
+## regions); [pack, ratio, attacker win %, attackers' / defenders' men killed]. The formula sees CState.VET_STR_PCT
+## (4 % a level: 12 % at Hardened; planned at 5, out by 6.9 points). Measured 2026-11-06: 52.1 % and 0.904 (the fresh cell at ratio 1.0: 33.3 %, 0.991).
+const FIT_VET := [["west", 100, 52.1, 0.904]]
+const FIT_VET_REGIONS := ["havana", "cartagena", "granada", "new_orleans"]
+
+
 ## The natives against walls (2026-11-05): [faction key, walls, attacker win %, attackers' / defenders' men killed],
 ## tools/balance native_walls_itza / native_walls_miskito (16 seeds a town, the six walled native towns), with the
 ## fort storm of 2026-11-05 in place (it does not touch these ring towns).
@@ -350,4 +363,52 @@ func _fit() -> void:
 		bad += 0 if ok else 1
 		print("west %s walls %d: fought %.1f %% / %.3f, formula %.1f %% / %.3f, gap %+.1f points / %+.0f %% %s" % [
 			fk, w, float(row[2]), float(row[3]), float(got[0]), float(got[1]), dw, dl * 100.0, "ok" if ok else "OUT"])
+	for row in FIT_VET:
+		if float(row[2]) < 0.0:
+			print("west field veterancy: no fought reference yet (--only=fitvet)")
+			continue
+		var sts: Array = []
+		for tk in FIT_VET_REGIONS:
+			sts.append(_fit_vet_state(CData.region_index(tk)))
+		var got := _fit_cell(sts, 200)
+		var dw: float = float(got[0]) - float(row[2])
+		var dl: float = float(got[1]) / float(row[3]) - 1.0
+		var ok := absf(dw) <= 5.0 and absf(dl) <= 0.2
+		bad += 0 if ok else 1
+		print("west field veterancy (Hardened attackers, ratio 1.0): fought %.1f %% / %.3f, formula %.1f %% / %.3f, gap %+.1f points / %+.0f %% %s" % [
+			float(row[2]), float(row[3]), float(got[0]), float(got[1]), dw, dl * 100.0, "ok" if ok else "OUT"])
 	print("fit: %s" % ("PASS" if bad == 0 else "%d cells out" % bad))
+
+
+## The veterancy cell's state: _fit_state's West field battle at ratio 100 with the attackers Hardened.
+func _fit_vet_state(r: int, turn: int = 5) -> Dictionary:
+	CData.use_pack("west")
+	var st := _fit_state("west", r, 100, -1, true, 0)
+	st["turn"] = turn
+	st["battles"][0]["turn"] = turn
+	for u in st["armies"][0]["units"]:
+		u["xp"] = 1200
+	return st
+
+
+func _fit_vet_fought() -> void:
+	var seeds := n if n != 40 else 48
+	print("=== Veterancy cell, fought (West field mix, equal men, the attackers Hardened; %d seeds)" % seeds)
+	var wins := 0
+	var ka := 0
+	var kd := 0
+	var lvl := 0
+	for i in seeds:
+		var st := _fit_vet_state(CData.region_index(FIT_VET_REGIONS[i % FIT_VET_REGIONS.size()]), 5 + i)
+		var out := _run(st)
+		var o := CBattle.outcome_from_result(out["built"], out["res"], "auto")
+		if int(o["winner"]) == 0 and int(o.get("draw", 0)) == 0:
+			wins += 1
+		for u in o["units"]:
+			if int(u["army"]) == 1:
+				ka += int(u["killed"])
+			else:
+				kd += int(u["killed"])
+		for su in out["built"]["scenario"]["units"]:
+			lvl = maxi(lvl, int(su.get("vet", 0)))
+	print("fitvet: attacker win %.1f %%, loss ratio %.3f (the sim's level %d)" % [100.0 * wins / seeds, float(ka) / maxi(kd, 1), lvl])

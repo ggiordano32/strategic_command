@@ -27,7 +27,8 @@ extends RefCounted
 ## }
 ## A unit's optional third element is the special ammunition kind it
 ## carries (a UnitTypes.AMMO key riding on its weapon; "" or absent: none),
-## the scenario's "ak". An ammunition wagon (a type with a "wagon" row)
+## the scenario's "ak"; its optional fourth its veterancy level 0-3 (absent:
+## 0 fresh; the scenario's "vet", BattleSim.VET_*; the picker's testing aid). An ammunition wagon (a type with a "wagon" row)
 ## stocks the special kinds its own army's units carry (the scenario's
 ## "aks"), as a campaign army's wagon does.
 ## Side 0 deploys at the bottom, side 1 at the top. Controllers: an army of
@@ -254,12 +255,36 @@ static func unit_ak(e: Array) -> int:
 	return ak if ammo_choices(UT.index_of(str(e[0]))).has(ak) else -1
 
 
-## Set (ak -1: clear) the special kind of unit entry e.
+## Set (ak -1: clear) the special kind of unit entry e (its level kept).
 static func set_unit_ak(e: Array, ak: int) -> void:
+	var lv := unit_vet(e)
 	if e.size() > 2:
 		e.resize(2)
 	if ak >= 0:
 		e.append(UT.ammo_text(ak, "key"))
+	set_unit_vet(e, lv)
+
+
+## Veterancy names by level (the campaign's too: CRules.VET_NAMES).
+const VET_NAMES: Array[String] = ["Fresh", "Blooded", "Seasoned", "Hardened"]
+
+
+## Unit entry e's veterancy level (0-3; absent 0).
+static func unit_vet(e: Array) -> int:
+	return clampi(int(e[3]), 0, 3) if e.size() > 3 else 0
+
+
+## Set unit entry e's veterancy level (0: drop the element; its ammunition kind kept).
+static func set_unit_vet(e: Array, lv: int) -> void:
+	if e.size() > 3:
+		e.resize(3)
+	if lv <= 0:
+		if e.size() == 3 and str(e[2]) == "":
+			e.resize(2)
+		return
+	if e.size() < 3:
+		e.append("")
+	e.append(clampi(lv, 0, 3))
 
 
 static func is_wagon(ty: int) -> bool:
@@ -391,6 +416,8 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 				var x := {}
 				if unit_ak(e) >= 0:
 					x["ak"] = unit_ak(e)
+				if unit_vet(e) > 0:
+					x["vet"] = unit_vet(e)
 				if is_wagon(ty) and not kinds.is_empty():
 					x["aks"] = kinds.duplicate()
 				extra[s].append(x)

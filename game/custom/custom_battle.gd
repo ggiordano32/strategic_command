@@ -544,6 +544,17 @@ func _army_view(s: int, ai: int) -> Control:
 				ks.map(func(x: int) -> String: return UT.ammo_text(x, "name"))))), Kit.FONT_SMALL, Kit.COL_DIM)
 			sl.name = "custom_stock_%d_%d_%d" % [s, ai, k]
 			r.add_child(sl)
+		if ty >= 0 and not CS.is_wagon(ty):
+			# Veterancy (a testing aid for the feel of it): tap to cycle Fresh / Blooded / Seasoned / Hardened.
+			var lv := CS.unit_vet(e)
+			var vb := _opt(CS.VET_NAMES[lv], func():
+				CS.set_unit_vet(e, (lv + 1) % 4)
+				_changed(), ed)
+			vb.name = "custom_vet_%d_%d_%d" % [s, ai, k]
+			vb.tooltip_text = "Veterancy: %s. Tap for the next level (the campaign's stars: better blows, shields, reload, aim and nerve)." % CS.VET_NAMES[lv]
+			if lv > 0:
+				vb.add_theme_color_override("font_color", Kit.COL_GOLD)
+			r.add_child(vb)
 		r.add_child(Kit.label(str(CS.unit_cost(str(e[0]), int(e[1]))), Kit.FONT_SMALL, Kit.COL_DIM))
 		if ed:
 			r.add_child(Kit.button("x", func():

@@ -296,6 +296,8 @@ func _process(_d: float) -> bool:
 				_rub.marks, _rub.cells.size(), _rub.marks_ob])
 		_rub.queue_free()
 		_rub = null
+	if _vet_b != null:
+		_vet_frame()
 	if _roll_phase == 1:
 		_roll_frame()
 	if _wait > 0:
@@ -450,6 +452,7 @@ func _process(_d: float) -> bool:
 				_roll_cases()
 				_track_cases()
 				_weather_cases()
+				_vet_cases()
 			if _roll_phase == 1:
 				_step -= 1  # (the stone's roll is drawn on the next frames: _roll_frame)
 				return false
@@ -1073,6 +1076,52 @@ func _roll_cases() -> void:
 	_roll_b = b
 	_roll_frames = 0
 	_roll_phase = 1
+
+
+## Veterancy (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): units with a level (the scenario's "vet") fly
+## their honours on the standard, a ribbon a level, on either side (the enemy sees them): the overlay draws the standards
+## of the two levelled units (one ours, one the enemy's) with honours and the fresh ones without; our levelled unit's card
+## carries its stars. Checked on the frames after (_vet_frame).
+var _vet_b = null
+var _vet_frames := 0
+
+
+func _vet_cases() -> void:
+	var was := CData.pack
+	CData.use_pack("west")
+	var b := Battle.new()
+	var mu := UT.index_of("musketeers")
+	var us: Array = [Scenarios.unit(0, mu, 60, 160, 200, Scenarios.FACE_UP), Scenarios.unit(0, mu, 60, 240, 200, Scenarios.FACE_UP),
+		Scenarios.unit(1, mu, 60, 160, 100, Scenarios.FACE_DOWN), Scenarios.unit(1, mu, 60, 240, 100, Scenarios.FACE_DOWN)]
+	us[1]["vet"] = 2
+	us[2]["vet"] = 3
+	b.custom_scenario = {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "los": 0, "units": us}
+	b.seed_value = 5
+	root.add_child(b)
+	b.paused = true
+	if b.dive_t >= 0.0:
+		b.dive_finish()
+	b._cam_to(b.overlay.to_px(200 * 1024, 150 * 1024))
+	b.camera.force_update_scroll()
+	b.overlay.queue_redraw()
+	CData.use_pack(was)
+	_vet_b = b
+	_vet_frames = 0
+
+
+func _vet_frame() -> void:
+	_vet_frames += 1
+	var ov = _vet_b.overlay
+	if ov.honours_drawn < 2 and _vet_frames < 8:
+		ov.queue_redraw()
+		return
+	var s: BattleSim = _vet_b.sim
+	var face = _vet_b.hud._faces.get(1)
+	_check(s.vet_on == 1 and s.u_vet[1] == 2 and s.u_vet[2] == 3 and ov.honours_drawn == 2 and face != null and face.vet == 2,
+		"veterancy: the overlay drew %d standards with honours (ours Seasoned, the enemy's Hardened: the enemy sees them), the fresh ones without; our card's stars %d" % [
+			ov.honours_drawn, face.vet if face != null else -1])
+	_vet_b.queue_free()
+	_vet_b = null
 
 
 func _roll_frame() -> void:

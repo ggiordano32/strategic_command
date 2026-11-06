@@ -49,6 +49,7 @@ const LandTrees := preload("res://game/campaign/landtrees.gd")
 const TableFrame := preload("res://game/campaign/table_frame.gd")
 const Weather := preload("res://game/weather.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Traits := preload("res://game/unit_traits.gd")
 const Saves := preload("res://game/campaign/saves.gd")
 const Panels := preload("res://game/campaign/campaign_panels.gd")
 const AutoResolve := preload("res://game/campaign/auto_resolve.gd")
@@ -1835,7 +1836,11 @@ func _update_deselect() -> void:
 
 ## Unit book page as a recruitment card: the UnitEntry view with a Recruit
 ## button.
-func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String, fac: int = -1, ak: int = -1) -> void:
+## Veterancy (2026-11-06): u, the campaign unit entry (army id, its index k), adds the unit's stars and record
+## (Traits.vet_text) above the book page and, for a unit of ours at one of our settlements, its Retrain line: the
+## tier-2 row, the cost or why not, and a Retrain button (CRules.retrain_info).
+func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String, fac: int = -1, ak: int = -1,
+		u: Dictionary = {}, army: int = -1, k: int = -1) -> void:
 	var entry := UnitEntry.new()
 	entry.custom_minimum_size = Vector2(0, minf(_vp().y * 0.62, 520))
 	entry.set_unit_type(ty, CData.faction_color(f), fac, ak)
@@ -1844,7 +1849,53 @@ func open_unit_page(ty: int, recruit_cb: Callable, recruit_text: String, fac: in
 		btns.push_front([recruit_text, func():
 			recruit_cb.call()
 			close_dialog()])
-	show_dialog(CData.unit_name(UT.key_of(ty), fac), entry, btns, 900)
+	var content: Control = entry
+	if not u.is_empty() and not ps.is_empty() and CRules.vet_on(ps):
+		var box := Kit.vbox(6)
+		box.name = "vet_box"
+		var lv := Traits.vet_of(u)
+		var hb := Kit.hbox(6)
+		if lv > 0:
+			var stars := VetStars.new()
+			stars.n = lv
+			hb.add_child(stars)
+		var vl := Kit.label(Traits.vet_text(u), Kit.FONT_SMALL, Kit.COL_BONE, true)
+		vl.name = "vet_text"
+		vl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		hb.add_child(vl)
+		box.add_child(hb)
+		if fac == f and f >= 0 and army >= 0 and k >= 0:
+			var info := CRules.retrain_info(ps, f, army, k)
+			if info.has("t"):
+				var nm2 := CData.unit_name(str(info["t"]), f)
+				var why := str(info.get("why", ""))
+				var line := "Retrain as %s: %s" % [nm2, ("%d gold, a turn at %s; keeps its men and its stars" % [int(info["cost"]),
+					CData.REGIONS[int(info["r"])]["city"]]) if why == "" else (why + (" (%d gold)" % int(info["cost"]) if info.has("cost") else ""))]
+				var rl := Kit.label(line, Kit.FONT_SMALL, Kit.COL_GOOD if why == "" else Kit.COL_DIM, true)
+				rl.name = "retrain_line"
+				box.add_child(rl)
+				if why == "":
+					var aid := army
+					var kk := k
+					btns.push_front(["Retrain", func():
+						if add_order({"t": "retrain", "army": aid, "unit": kk}) == "":
+							close_dialog()])
+		box.add_child(entry)
+		content = box
+	show_dialog(CData.unit_name(UT.key_of(ty), fac), content, btns, 900)
+
+
+## The unit page's stars (veterancy): n brass stars on their plate.
+class VetStars extends Control:
+	const KitV := preload("res://game/campaign/ui_kit.gd")
+	var n := 0
+
+	func _init() -> void:
+		custom_minimum_size = Vector2(48, 22)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func _draw() -> void:
+		KitV.draw_vet_badge(self, size * 0.5, n, 6.0)
 
 
 ## A selection whose army / fleet no longer exists (destroyed, merged away or taken in a battle) is dropped, so

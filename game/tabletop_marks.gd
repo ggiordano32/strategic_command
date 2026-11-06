@@ -35,7 +35,8 @@ static func text_line(text: String, fs: int) -> TextLine:
 ## The standard about origin `o` (screen px) at scale sm: pole, swallow-tailed pennant in `col` with the crest where the
 ## faction has one, a parchment roundel with `text` at the pole's foot. sel: the gold rim and a small lift; own: the white
 ## rim (the overworld's "human" armies).
-static func draw_standard(ci: CanvasItem, o: Vector2, sm: float, col: Color, sel: bool, own: bool, text: String, emblem: String, u := 1.0) -> void:
+static func draw_standard(ci: CanvasItem, o: Vector2, sm: float, col: Color, sel: bool, own: bool, text: String, emblem: String, u := 1.0,
+		vet := 0) -> void:
 	var rim := COL_SELECTED if sel else Color(1, 1, 1)
 	if sel:
 		o += Vector2(0, -3.0 * sm)
@@ -45,6 +46,8 @@ static func draw_standard(ci: CanvasItem, o: Vector2, sm: float, col: Color, sel
 	ci.draw_line(Vector2(pole_x, top - 3.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), Color(0.55, 0.42, 0.26), 1.5 * u)
 	ci.draw_circle(Vector2(pole_x, top - 4.0 * sm), 2.0 * u, COL_OUTLINE)
 	ci.draw_circle(Vector2(pole_x, top - 4.0 * sm), 1.0 * u, Color(0.85, 0.7, 0.35))
+	if vet > 0:
+		draw_honours(ci, Vector2(pole_x, top - 2.0 * sm), sm, vet, u)
 	var pw := 27.0 * sm
 	var pts := PackedVector2Array([Vector2(pole_x, top), Vector2(pole_x + pw, top), Vector2(pole_x + pw - 6.0 * sm, top + 8.0 * sm),
 		Vector2(pole_x + pw, top + 16.0 * sm), Vector2(pole_x, top + 16.0 * sm)])
@@ -70,6 +73,31 @@ static func draw_standard(ci: CanvasItem, o: Vector2, sm: float, col: Color, sel
 		tl = text_line(text, afs)
 	var base := rc + Vector2(-tl.get_size().x * 0.5, afs * 0.34)
 	tl.draw(ci.get_canvas_item(), base - Vector2(0.0, tl.get_line_ascent()), Color(0.1, 0.06, 0.03))
+
+
+## Veterancy (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): battle honours, n (1-3) brass ribbons tied
+## under the finial at `at` (the pole's top), streaming down on the pole's left (the pennant flies right), each longer than
+## the last, swallow-tailed, outlined: seen by both sides.
+const COL_HONOUR := Color(0.93, 0.74, 0.36)
+const COL_HONOUR2 := Color(0.72, 0.16, 0.12)
+
+
+static func draw_honours(ci: CanvasItem, at: Vector2, sm: float, n: int, u := 1.0) -> void:
+	for k in mini(n, 3):
+		var y0 := at.y + k * 2.4 * sm
+		var rl := (5.0 + 2.0 * k) * sm
+		var dx := -0.4 * rl
+		var dy := 0.92 * rl
+		var w := 1.7 * sm
+		var a := Vector2(at.x - 0.3 * sm, y0)
+		var b := a + Vector2(dx, dy)
+		var nrm := Vector2(dy, -dx).normalized() * w
+		var tail := Vector2(dx, dy).normalized() * w * 1.3
+		var pts := PackedVector2Array([a - nrm * 0.5, b - nrm * 0.5, b - tail * 0.2, b + nrm * 0.5 - tail, a + nrm * 0.5])
+		var outline := pts.duplicate()
+		outline.append(pts[0])
+		ci.draw_polyline(outline, COL_OUTLINE, 1.6 * u)
+		ci.draw_colored_polygon(pts, COL_HONOUR if k != 1 else COL_HONOUR2)
 
 
 ## A plastic counter of radius r at c: a dark rim, the body colour with a lit top, a small shadow to the lower right and
@@ -114,19 +142,23 @@ static func draw_token(ci: CanvasItem, c: Vector2, r: float, glyph: String, body
 
 ## The baked standard (a texture made once per colour, number, rim and crest; null while it bakes and in headless runs): the
 ## same picture as draw_standard at scale BAKE_SM, so one draw call stands for about thirty.
-static func standard_tex(col: Color, sel: bool, own: bool, text: String, emblem: String) -> Texture2D:
+static func standard_tex(col: Color, sel: bool, own: bool, text: String, emblem: String, vet := 0) -> Texture2D:
 	var key := "std:%s|%s|%d|%d|%s" % [col.to_html(false), text, 1 if sel else 0, 1 if own else 0, emblem]
+	if vet > 0:
+		key += "|v%d" % vet  # (veterancy: its honours)
 	var px := Vector2i(BAKE_SIZE)
 	return GlyphBake.bake(key, px, func(c: Control) -> void:
-		draw_standard(c, -BOX.position * BAKE_SM + Vector2(BAKE_PAD, BAKE_PAD), BAKE_SM, col, sel, own, text, emblem, BAKE_SM))
+		draw_standard(c, -BOX.position * BAKE_SM + Vector2(BAKE_PAD, BAKE_PAD), BAKE_SM, col, sel, own, text, emblem, BAKE_SM, vet))
 
 
 ## The plain pole and pennant drawn while a standard bakes (o: its origin, sm: its scale, both in world px).
-static func draw_standard_tex(ci: CanvasItem, _tex: Texture2D, o: Vector2, sm: float, col: Color) -> void:
+static func draw_standard_tex(ci: CanvasItem, _tex: Texture2D, o: Vector2, sm: float, col: Color, vet := 0) -> void:
 	var pole_x := o.x - 9.0 * sm
 	var top := o.y - 17.0 * sm
 	ci.draw_line(Vector2(pole_x, top - 4.0 * sm), Vector2(pole_x, o.y + 8.0 * sm), Color(0.55, 0.42, 0.26), 1.5 * sm)
 	ci.draw_rect(Rect2(pole_x, top, 27.0 * sm, 16.0 * sm), col)
+	if vet > 0:
+		draw_honours(ci, Vector2(pole_x, top - 2.0 * sm), sm, vet, sm)
 
 
 ## A token baked (null while it bakes): the counter of glyph / body colour at radius TOK_R in a TOK_PX square.

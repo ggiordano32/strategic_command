@@ -179,6 +179,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=vet"):
+		_test_vet()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=shore"):
 		_test_lockstep_shore()
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -212,8 +217,48 @@ func _init() -> void:
 	_test_deploy("h2h_drop")
 	_test_deploy_unlimited()
 	_test_sea()
+	_test_vet()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## 16. Veterancy (2026-11-06; "--only=vet"): bench_2000 with side 0's units at levels 1-3 by index and side 1 fresh,
+## both sides AI: the levels are in the state hash (the same battle with no level hashes otherwise from the first
+## tick), a copy restored from a snapshot at 60 s carries them and runs on hash-equal for 30 s, and a battle with no
+## level keeps vet_on 0 (u_vet out of the hash: every golden stays).
+func _test_vet() -> void:
+	var scen: Dictionary = Scenarios.make("battle_2000")
+	scen["ai_sides"] = [0, 1]
+	var plain: Dictionary = scen.duplicate(true)
+	var k := 0
+	for ud in scen["units"]:
+		if int(ud["side"]) == 0:
+			ud["vet"] = 1 + k % 3
+			k += 1
+	var a := BattleSim.new()
+	a.setup(scen, 4711)
+	var p := BattleSim.new()
+	p.setup(plain, 4711)
+	if a.vet_on != 1 or p.vet_on != 0 or a.state_hash() == p.state_hash():
+		_fail("vet: the levels are not in the hash (vet_on %d / %d)" % [a.vet_on, p.vet_on])
+		return
+	while a.tick < 600 and a.winner < 0:
+		a.step()
+	var b := BattleSim.new()
+	b.setup(plain, 4711)
+	if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash() or b.vet_on != 1 or b.u_vet != a.u_vet:
+		_fail("vet: restore at 60 s did not reproduce the levels and the hash")
+		return
+	var bad := 0
+	for t in 300:
+		a.step()
+		b.step()
+		if a.state_hash() != b.state_hash():
+			bad += 1
+	if bad > 0:
+		_fail("vet: the restored copy diverged (%d of 300 ticks)" % bad)
+	else:
+		print("PASS vet: levels 1-3 on side 0 in the hash, through snapshot / restore at 60 s (restored on a fresh setup), 300 ticks equal; no level: vet_on 0")
 
 
 ## 15. Sea battles (N3a; "--only=sea"; tests/sea_checks.gd): two peers

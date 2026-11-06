@@ -27,7 +27,9 @@ extends RefCounted
 ##     ("ask" | "auto"), ai_aggression (50-150, %); optional (absent =
 ##     Average, campaign/cai_profile.gd): ai_battle_skill, ai_campaign_skill
 ##     (0 Easy, 1 Average, 2 Skilled); version 10: ai_alliances (absent = 1;
-##     0: AI factions never propose alliances to one another)},
+##     0: AI factions never propose alliances to one another); version 10:
+##     vet (1: veterancy and Retrain; written by new_campaign unless the
+##     option says 0; absent = off, so older saves play as they did)},
 ##   humans [faction ...] (who is a player, sorted; any count; version 6:
 ##     permanently allied, version 7: allied through "teams" below),
 ##   teams [team id per faction] (version 7; factions with one id are on one
@@ -65,7 +67,10 @@ extends RefCounted
 ##     view only: post-conquest buildings in the owner's style; anything
 ##     not listed is in the founder's style, see builder_culture)}]
 ##     indexed like CData.REGIONS,
-##   armies [{id, f, r, units [{t: unit key, n: men}], from (region it came
+##   armies [{id, f, r, units [{t: unit key, n: men; optional (absent 0 / none): ak its special
+##     ammunition kind (2026-11-02), xp its experience, xb the battles and xk the enemies it has
+##     fought and killed (veterancy, 2026-11-06: settings.vet; vet_level), rt a Retrain
+##     ordered this turn [tier-2 key, region, price paid] (only during a turn's resolution)}], from (region it came
 ##     from this turn, -1), moved (0/1), busy (0/1: committed to a battle);
 ##     version 5: mp (movement points left this turn), dest (-1 or the
 ##     region it is marching to over several turns), mode (what it does on
@@ -159,6 +164,12 @@ static func new_campaign(p_name: String, p_seed: int, humans: Array, settings: D
 	# not kept in the settings.
 	var treaties := int(s.get("treaties", 1)) != 0
 	s.erase("treaties")
+	# Veterancy (2026-11-06, version 10, CRules.vet_on): 1 unless the option
+	# says 0; absent (older saves, the option off) = off.
+	if int(s.get("vet", 1)) != 0:
+		s["vet"] = 1
+	else:
+		s.erase("vet")
 	# Fog of war (version 8): a top-level key, 1 unless the option says 0.
 	st["fog"] = 0 if s.has("fog") and int(s["fog"]) == 0 else 1
 	s.erase("fog")
@@ -510,6 +521,7 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 		for k in ["repute", "regard", "gift", "passage", "fought", "regard_log", "aleaving", "called", "answered"]:
 			c.erase(k)
 		(c["settings"] as Dictionary).erase("ai_alliances")
+		(c["settings"] as Dictionary).erase("vet")  # (veterancy: version 10 only)
 	if v < 9:
 		for rs in c["regions"]:
 			(rs as Dictionary).erase("breach")
@@ -972,8 +984,25 @@ static func upkeep_of(ty: int) -> int:
 	return UT.price_of(ty) * CData.UPKEEP_PCT / 100 * UT.stat(ty, "upkeep_pct") / 100
 
 
+## Veterancy (2026-11-06; docs/design/campaign_rules.md "Veterancy and Retrain"): the experience a unit needs
+## for each level (Blooded, Seasoned, Hardened) and the strength each level adds (%, the formula and the AI's
+## odds: CRules.vet_*). VET_STR_PCT was planned at 5; the refit (tests/campaign_battles.gd --only=fit, its
+## veterancy cell: Hardened attackers fought 52.1 % at equal men, the formula 59.0 % at +15 %) set it at 4.
+const VET_XP: Array[int] = [0, 250, 600, 1000]  # (planned 300 / 700 / 1,200; the tuning round of 2026-11-06)
+const VET_STR_PCT := 4
+
+
+## Unit entry u's veterancy level (0-3) from its "xp" (absent 0).
+static func vet_level(u: Dictionary) -> int:
+	var xp := int(u.get("xp", 0))
+	for lv in range(3, 0, -1):
+		if xp >= VET_XP[lv]:
+			return lv
+	return 0
+
+
 ## Military strength of an army (men weighted by price per man; the AI and
-## the battle formula use it).
+## the battle formula use it). A levelled unit counts VET_STR_PCT % more a level.
 static func strength(a: Dictionary) -> int:
 	var s := 0
 	var mis := 0
@@ -982,6 +1011,8 @@ static func strength(a: Dictionary) -> int:
 	for u in a["units"]:
 		var ty := unit_type(u)
 		var v := int(u["n"]) * UT.price_of(ty) / maxi(UT.size_of(ty), 1) * UT.stat(ty, "str_pct") / 100
+		if u.has("xp"):
+			v = v * (100 + VET_STR_PCT * vet_level(u)) / 100
 		s += v
 		var c := UT.cls(ty)
 		if c == UT.CLS_MISSILE or c == UT.CLS_ART:

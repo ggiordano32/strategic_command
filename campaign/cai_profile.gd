@@ -232,7 +232,15 @@ const AMB_SPEND_PCT := SK_SUPPORT + 60   # the ambition's buildings (a War lodge
 ## transport that landed troops on an enemy's port stays off the beach for the battle (1) or sails (0).
 const SHORE_DEF := SK_SUPPORT + 61
 const SHORE_ATT := SK_SUPPORT + 62
-const N_KNOBS := SK_SUPPORT + 63
+## (2026-11-06, docs/AI.md 74) Veterancy (settings.vet; CRules.vet_*): VET_CARE: when choosing which armies to risk
+## (the attack's odds and the stand-or-fall-back test, docs/AI.md 4.9) its own levelled units count this % more of
+## their strength in the loss it would suffer, and merging and disbanding for debt keep the higher level first
+## (0: as before); RETRAIN: a Seasoned or better tier-1 unit in an army holding at a settlement that allows its
+## line's tier-2 row is retrained when the treasury stays above the recruiting reserve and a turn's upkeep (1), or
+## never (0).
+const VET_CARE := SK_SUPPORT + 63
+const RETRAIN := SK_SUPPORT + 64
+const N_KNOBS := SK_SUPPORT + 65
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -428,6 +436,8 @@ const KNOBS: Array = [
 	[AMB_SPEND_PCT, 0, 50, 50],
 	[SHORE_DEF, 0, 1, 1],
 	[SHORE_ATT, 0, 1, 1],
+	[VET_CARE, 0, 25, 50],
+	[RETRAIN, 0, 1, 1],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

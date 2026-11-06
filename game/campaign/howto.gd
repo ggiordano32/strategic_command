@@ -20,6 +20,7 @@ const T := {
 	"armies_1": "An army is a stack of companies. Soldiers cost gold to raise and a little every turn to keep: that is their upkeep.",
 	"armies_2": "Select an army that stands in a town and press Recruit to add companies. A town trains only a few a turn, and its buildings decide which kinds.",
 	"armies_3": "Recruits join at the end of the turn, and an army that recruits stays where it is that turn.",
+	"armies_4": "Companies that fight earn brass stars: Blooded, Seasoned, Hardened (a few battles, about ten, about twenty). A star lands more blows, blocks with the shield, reloads and aims better and holds longer; never more men or armour. Refilling waters it down, a company cut below a quarter loses a star, and a Seasoned company in a town that trains the better kind can Retrain into it for the price difference and a fee, keeping its stars.",
 	# 4. Movement and supply
 	"move_1": "Select an army and tap the ground to march there. The shaded area is how far it gets this turn; a farther spot takes more turns.",
 	"move_2": "Marching costs movement points, and the slowest company sets the pace. A tap on the same spot again cancels the march.",
@@ -147,7 +148,7 @@ const T := {
 const SECTIONS := [
 	{"id": "map", "title": "The map and the turn", "lines": ["map_1", "map_2", "map_3"]},
 	{"id": "towns", "title": "Towns and buildings", "lines": ["towns_1", "towns_2", "towns_3"]},
-	{"id": "armies", "title": "Armies and recruiting", "lines": ["armies_1", "armies_2", "armies_3"]},
+	{"id": "armies", "title": "Armies and recruiting", "lines": ["armies_1", "armies_2", "armies_3", "armies_4"]},
 	{"id": "move", "title": "Movement and supply", "lines": ["move_1", "move_2", "move_3"]},
 	{"id": "siege", "title": "Sieges", "lines": ["siege_1", "siege_2", "siege_3"]},
 	{"id": "battle", "title": "Battles and the chips", "lines": ["battle_1", "battle_2", "battle_3"]},

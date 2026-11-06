@@ -158,6 +158,71 @@ static func ammo_adj(k: int) -> String:
 	return str(AMMO_ADJ.get(str(UT.AMMO[k]["key"]), UT.ammo_text(k, "short")))
 
 
+## Veterancy (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): the level names (the sim's VET_*, the
+## campaign's CRules.VET_NAMES) and the experience each needs (CState.VET_XP).
+const VET_NAMES: Array[String] = ["Fresh", "Blooded", "Seasoned", "Hardened"]
+const VET_XP: Array[int] = [0, 250, 600, 1000]
+const VET_DOES := "Lands more blows, blocks more with its shield, reloads faster, shoots straighter, holds longer and rallies sooner."
+
+
+## A campaign unit entry's level from its "xp" (0-3).
+static func vet_of(u: Dictionary) -> int:
+	var xp := int(u.get("xp", 0))
+	for lv in range(3, 0, -1):
+		if xp >= VET_XP[lv]:
+			return lv
+	return 0
+
+
+## The card's tip line: "Seasoned: 2 stars, 11 battles" ("" fresh and never fought).
+static func vet_short(u: Dictionary) -> String:
+	var lv := vet_of(u)
+	var nb := int(u.get("xb", 0))
+	if lv == 0 and nb == 0:
+		return ""
+	if lv == 0:
+		return "Fresh: %d battle%s" % [nb, "" if nb == 1 else "s"]
+	return "%s: %d star%s, %d battle%s" % [VET_NAMES[lv], lv, "" if lv == 1 else "s", nb, "" if nb == 1 else "s"]
+
+
+## The unit page's lines: "Seasoned (2 stars): 9 battles, 140 kills. Lands more blows ... Next: Hardened at 1,000 XP
+## (now 840)."
+static func vet_text(u: Dictionary) -> String:
+	var lv := vet_of(u)
+	var xp := int(u.get("xp", 0))
+	var t := "%s%s: %d battles, %d kills." % [VET_NAMES[lv], " (%d star%s)" % [lv, "" if lv == 1 else "s"] if lv > 0 else "",
+		int(u.get("xb", 0)), int(u.get("xk", 0))]
+	if lv > 0:
+		t += " " + VET_DOES
+	if lv < 3:
+		t += " Next: %s at %s XP (now %s)." % [VET_NAMES[lv + 1], _thousands(VET_XP[lv + 1]), _thousands(xp)]
+	return t
+
+
+## A battle's level change for the report and the result screen: v is a battle event's "vet" row [faction, army, unit
+## key, nth of its type, level, was], name the unit's display name: "The 2nd Musketeers earned a star: now Seasoned."
+static func vet_change_text(v: Array, name: String) -> String:
+	var nm := "The %s %s" % [ordinal(int(v[3])), name]
+	var lv := int(v[4])
+	if lv > int(v[5]):
+		return "%s earned a star: now %s." % [nm, VET_NAMES[lv]]
+	if lv > 0:
+		return "%s were cut to pieces and are %s again." % [nm, VET_NAMES[lv]]
+	return "%s were cut to pieces and lost their star." % nm
+
+
+## "1st", "2nd", "3rd", "4th" ...
+static func ordinal(n: int) -> String:
+	var suf := "th"
+	if n % 100 < 11 or n % 100 > 13:
+		suf = ["th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th"][n % 10]
+	return "%d%s" % [n, suf]
+
+
+static func _thousands(n: int) -> String:
+	return str(n) if n < 1000 else "%d,%03d" % [n / 1000, n % 1000]
+
+
 ## What the carried kind does, for a long press: "Carries poisoned arrows (...)".
 static func ammo_mark_text(k: int) -> String:
 	if k < 0 or k >= UT.AMMO.size():

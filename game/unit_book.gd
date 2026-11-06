@@ -20,9 +20,16 @@ const CBattleL := preload("res://campaign/cbattle.gd")
 const CData := preload("res://campaign/cdata.gd")
 
 var entry: UnitEntry
+## Veterancy (2026-11-06): the inspected unit's level (open's vet; either side's unit: the enemy sees it), a brass
+## line above the page while that unit's type is shown.
+var vet_label: Label
+var _vet := 0
+var _vet_ty := -1
 ## Page shown: a unit type, UT.count() for the Terrain page, UT.count() + 1
 ## for Settlements and sieges.
 var current := 0
+const VET_NAMES: Array[String] = ["Fresh", "Blooded", "Seasoned", "Hardened"]
+const VET_DOES := "Lands more blows, blocks more with its shield, reloads faster, shoots straighter, holds longer and rallies sooner."
 var terrain_page: ScrollContainer
 var terrain_text: Label
 var side_color := Color(0.35, 0.6, 1.0)
@@ -176,6 +183,13 @@ func _init() -> void:
 	close_button = _button("Close")
 	close_button.pressed.connect(close)
 	head.add_child(close_button)
+	vet_label = Label.new()
+	vet_label.name = "book_vet"
+	vet_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vet_label.add_theme_font_size_override("font_size", 14)
+	vet_label.add_theme_color_override("font_color", Color(0.93, 0.74, 0.36))
+	vet_label.visible = false
+	page.add_child(vet_label)
 	entry = UnitEntry.new()
 	page.add_child(entry)
 	terrain_page = TouchScroll.new()
@@ -537,8 +551,10 @@ static func siege_help() -> String:
 	return "\n".join(lines)
 
 
-func open(ty: int = -1, fac: int = -1) -> void:
+func open(ty: int = -1, fac: int = -1, vet: int = 0) -> void:
 	visible = true
+	_vet = vet
+	_vet_ty = ty
 	var pk := pack if pack != "" else CData.pack
 	if pk != _shown:
 		# Only the setting's rows in the list (Rome: exactly as before the West rows).
@@ -607,6 +623,9 @@ func show_type(ty: int) -> void:
 		terrain_page.scroll_vertical = 0
 	else:
 		entry.set_unit_type(current, side_color, faction)
+	vet_label.visible = _vet > 0 and current == _vet_ty
+	if vet_label.visible:
+		vet_label.text = "This unit: %s (%d star%s). %s" % [VET_NAMES[_vet], _vet, "" if _vet == 1 else "s", VET_DOES]
 
 
 func _unhandled_input(event: InputEvent) -> void:

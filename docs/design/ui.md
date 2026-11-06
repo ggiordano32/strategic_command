@@ -1874,3 +1874,53 @@ load); expected from the desktop pair: the soldiers column ~1.2 s -> 0.2 s, tree
   awaited only when the last took over 20 ms, so a phone that runs steps in 30 ms gets a frame per step; the warm-up is a hitch
   in the menu and was not tried on a phone; the web cold shader compile on the first frames is not touched; the cold-vs-warm
   mapgen saving of a repeated seed is the engine's cache, not the warm-up.
+
+### Veterancy marks and Retrain (as built, 2026-11-06)
+
+The rules: campaign_rules.md "Veterancy and Retrain (as built, 2026-11-06)" and battle_sim.md "Veterancy in battle (as
+built, 2026-11-06)". The mark is brass **stars**, not chevrons (the tier and suppression already use chevrons), and the
+names avoid "Veteran" (the tier-2 rows use it). The owner's decision: the enemy sees it.
+
+- **The badge** (`Kit.draw_vet_badge`, `Kit.draw_star`, `Kit.COL_BRASS`): 1-3 five-pointed brass stars in a row on a
+  dark pill ringed in brass, the special arrow badge's pattern. Shared texts in `game/unit_traits.gd`: `vet_of(u)`,
+  `vet_short(u)` ("Seasoned: 2 stars, 11 battles"), `vet_text(u)` ("Seasoned (2 stars): 9 battles, 140 kills. Lands
+  more blows ... Next: Hardened at 1,000 XP (now 840)."), `vet_change_text` and `ordinal` for the report lines.
+- **The army bar chit** (`command_bar.gd` `UnitCard.vet`, `vet_rect()`): the badge at the symbol's upper right (stars of
+  radius 4 / 4.5 px; the tier pips stay on the left edge, the arrow badge on the lower right), inside the card at every
+  width; no tap hint on it (a finger lands on the card), the tip line "Seasoned: 2 stars, 11 battles" in its tooltip; a
+  unit with a Retrain this turn reads "retrains" under the bar, its tip "Retrains as X at the end of the turn".
+- **Unit rows** (`Kit.UnitRow.vet`, `vet_tip`: the army panel, the exchange and gift rows, the chit's hover row): the
+  stars right after the name, a tap on them the tip.
+- **The unit page** (`CampaignScreen.open_unit_page(..., u, army, k)`, from the bar's long press, the army panel's rows):
+  with veterancy on, a line above the book page: the stars and `vet_text`; for our unit at our settlement whose line
+  has a tier-2 row, the **Retrain line** "Retrain as Principes: 412 gold, a turn at Roma; keeps its men and its stars"
+  (green) or the refusal ("needs Seasoned", "needs Barracks 2", "not enough money (412 gold)", "retraining", "besieged",
+  "in a battle", "not at a settlement": dim), and a **Retrain** button in the dialog's row when it can (the order
+  through `add_order`; Undo takes it back).
+- **The battle HUD card** (`hud.gd` `CardFace.vet`, `vet_rect()`): the badge (stars 3.2 px) on the marker's lower
+  right, inside the card on narrow and wide cards; the summary adds "Seasoned (2 stars)".
+- **The field:** honours on the standard (`TabletopMarks.draw_honours`): a brass, a red, a brass ribbon (one a level)
+  tied under the finial, streaming down the pole's left (the pennant flies right), swallow-tailed, outlined; drawn for
+  both sides' units (the enemy sees them), in the baked standard (the bake key adds the level) and its plain fallback;
+  `Overlay.honours_drawn` counts them a frame (tests). The marker disc is unchanged.
+- **Inspecting a unit in battle** (a long press on any unit, ours or the enemy's, or our card): the unit book opens on
+  its type with a brass line "This unit: Hardened (3 stars). Lands more blows ..." (`UnitBook.open(ty, fac, vet)`).
+- **Battle results** (`battle_screen.gd`): the cards (pre-battle and result) carry the stars on the marker's lower
+  right and say the level in their tip; the result has a brass line `result_vet` with the viewer's side's changes
+  ("The 2nd Musketeers earned a star: now Seasoned.", "The Pikemen were cut to pieces and are Blooded again."), from the
+  battle event's `vet` rows, which the Reports list repeats.
+- **New campaign:** the setting row "Veterancy" (On / Off; on by default; fixed when the campaign is created).
+- **The custom battle** (`custom_battle.gd`): a button per unit row cycling Fresh / Blooded / Seasoned / Hardened (gold
+  once levelled), the unit entry's fourth element (`CustomSetup.unit_vet` / `set_unit_vet`; the ammunition picker keeps
+  it), the scenario's `"vet"`.
+- **The book** (`howto.gd`, Armies and recruiting): a fourth line on stars, what they do, the refill, the quarter rule
+  and Retrain.
+- **Tests:** `hud_fit_test` `_vet_mark_check` at every size (the stars inside the card, none on a fresh card, the level
+  in the summary); `battle_screen_test` `_vet_cases` in the three views (honours drawn for our Seasoned and the enemy's
+  Hardened unit, none for the fresh, our card's stars); `campaign_input_test` `_v_*` (the chit's two stars inside the
+  card and its tip, the unit page's record and Retrain line, the Retrain button planning the order, the card then
+  "retrains"); `custom_battle_test` `_check_vet_picker` (the setup screen's button).
+
+Known: no star burst animation on the result card (a line instead); the ribbons are drawn on the 2D standard, which the
+3D view shows through the overlay as before; the badge on a 56 px chit at three stars covers the symbol's upper right
+corner.

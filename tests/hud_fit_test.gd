@@ -727,6 +727,7 @@ func _run() -> void:
 			root.get_texture().get_image().save_png("%s/hud_phone_mixed_more.png" % _shots)
 			b.hud._set_more_open(false)
 		await _ammo_mark_check()
+		await _vet_mark_check()
 		await _groups_check(by_role, sz[2])
 		await _ship_check(sz[2])
 	await _states(by_role)
@@ -819,6 +820,49 @@ func _ammo_mark_check() -> void:
 	_check(h._faces[mine[1]].ak_use == 1 and h._faces[mine[2]].ak_use == 0, "%s: the glyph is lit for the kind shot now, held back otherwise" % _size_name)
 	_check(Traits.ammo_icon(want[1]) != "" and Kit.UiIcons.has(Traits.ammo_icon(want[1])) and Kit.UiIcons.has(Traits.ammo_icon(want[2])),
 		"%s: both kinds have a drawn icon" % _size_name)
+
+
+## Veterancy (2026-11-06; docs/design/ui.md "Veterancy marks and Retrain"): a unit's level (the scenario's "vet") puts 1-3
+## brass stars on its card, inside the card and clear of the count, a fresh unit's card has none; the summary names the
+## level.
+func _vet_mark_check() -> void:
+	var mu := UT.index_of("musketeers")
+	var units: Array = []
+	for k in 4:
+		var su := Scenarios.unit(0, mu, 100, 60 + 40 * k, 150, 0)
+		if k > 0:
+			su["vet"] = k
+		units.append(su)
+	units.append(Scenarios.unit(1, UT.index_of("spear"), 80, 150, 40, 512))
+	var sc := Scenarios._test(units, [])
+	sc["ai_sides"] = [1]
+	await _new_battle(sc)
+	var h = b.hud
+	var mine: Array[int] = []
+	for u in b.sim.n_units:
+		if b.sim.u_side[u] == 0:
+			mine.append(u)
+	await _pick(mine)
+	h.update_cards(b.sim)
+	await _frames(3)
+	var bad: Array[String] = []
+	for k in 4:
+		var f = h._faces[mine[k]]
+		var vr: Rect2 = f.vet_rect()
+		if f.vet != k:
+			bad.append("card %d vet %d" % [k, f.vet])
+		if k == 0:
+			if vr.size != Vector2.ZERO:
+				bad.append("a fresh unit's card has stars")
+			continue
+		if not Rect2(Vector2.ZERO, f.size).grow(0.5).encloses(vr) or vr.size.x < 8.0:
+			bad.append("card %d stars %s outside the card %s" % [k, str(vr), str(f.size)])
+		if str(f.summary).find(Traits.VET_NAMES[k]) < 0:
+			bad.append("card %d summary without %s" % [k, Traits.VET_NAMES[k]])
+	_check(f_ok(bad), "%s: a levelled unit's card carries its 1-3 stars inside the card, a fresh one none; the summary names the level (%s)" % [
+		_size_name, ", ".join(bad)])
+	if _shots != "":
+		root.get_texture().get_image().save_png("%s/hud_vet_%s.png" % [_shots, _size_name])
 
 
 ## Control groups (docs/design/ui.md "Control groups"): the Groups cluster with 0, 3 and 9 groups fits at every size (chips on

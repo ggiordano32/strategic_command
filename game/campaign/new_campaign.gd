@@ -492,6 +492,9 @@ func _build_settings() -> Control:
 	settings["fog"] = 1
 	_setting_seg(body, "fog", "Fog of war", "Hide what your armies cannot see.", ["On", "Off"],
 		"Fog of war", "On: you see your regions and their neighbours, and what your armies, fleets and cities can see; the rest shows as last known. Off: everything is visible. Fixed when the campaign is created.")
+	settings["vet"] = 1
+	_setting_seg(body, "vet", "Veterancy", "Units that fight earn stars, and Seasoned ones can Retrain.", ["On", "Off"],
+		"Veterancy", "On: companies earn brass stars from their battles (Blooded, Seasoned, Hardened): they fight a little better (blows, shields, reload, aim, nerve; never more men or armour), and a Seasoned company can Retrain as its line's better kind where a town trains it. Off: as before. Fixed when the campaign is created.")
 	settings["deploy_time"] = 60
 	var db := Kit.dropdown(Kit.DEPLOY_OPTIONS, 60, func(x): settings["deploy_time"] = int(x), 0, 14)
 	db.name = "deploy_time"
@@ -642,7 +645,8 @@ func _set_pack(key: String) -> void:
 
 const CHOICES := {"victory_regions": [15, 20, 25, 30], "victory_capitals": [2, 3, 4, 5],
 	"turn_timeout_h": [0, 12, 24, 48, 72], "autoresolve": ["ask", "auto"], "ai_aggression": [70, 100, 130],
-	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0], "team_regions": [0, 1], "ai_alliances": [1, 0]}
+	"ai_battle_skill": [0, 1, 2], "ai_campaign_skill": [0, 1, 2], "fog": [1, 0], "team_regions": [0, 1], "ai_alliances": [1, 0],
+	"vet": [1, 0]}
 ## AI skill levels (campaign/cai_profile.gd EASY / AVERAGE / SKILLED).
 const AI_AVERAGE := 1
 const SKILL_LABELS: Array[String] = ["Easy", "Average", "Skilled"]

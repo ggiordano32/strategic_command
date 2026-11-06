@@ -869,6 +869,8 @@ static func _entry(a: Dictionary, k: int) -> Dictionary:
 		ent["morale"] = CData.FORCED_MORALE_PCT
 	if u.has("ak"):
 		ent["ak"] = str(u["ak"])  # its special ammunition kind
+	if u.has("xp") and CState.vet_level(u) > 0:
+		ent["vet"] = CState.vet_level(u)  # its veterancy level (the sim's "vet": a unit parameter like the tier)
 	if UT.stat(UT.index_of(str(u["t"])), "wagon") >= 0:
 		# The special kinds its army's missile troops carry: its wagons carry
 		# stock of them (scenario "aks").
@@ -1131,6 +1133,8 @@ static func _settlement_reserve(units: Array, res: Dictionary, entries: Array, l
 ## Scenario unit su from campaign entry e: its special ammunition kind
 ## (scenario "ak", a UnitTypes.AMMO row).
 static func _unit_extras(su: Dictionary, e: Dictionary) -> void:
+	if int(e.get("vet", 0)) > 0:
+		su["vet"] = int(e["vet"])
 	if e.has("ak"):
 		var k := UT.ammo_index(str(e["ak"]))
 		if k >= 0:
@@ -1402,6 +1406,8 @@ static func outcome_from_result(built: Dictionary, res: Dictionary, mode: String
 			e["routed"] = int(e["routed"]) * cn / sn
 			e["withdrawn"] = int(e["withdrawn"]) * cn / sn
 			e["remaining"] = maxi(cn - int(e["killed"]) - int(e["routed"]) - int(e["withdrawn"]), 0)
+		if int(r.get("reserve", 0)) != 0:
+			e["absent"] = 1  # (a reinforcement that never reached the field: no veterancy for it)
 		if mode != "auto":
 			# A fought battle: the enemies each unit's men killed (optional
 			# key; auto-resolved battles leave it out).
