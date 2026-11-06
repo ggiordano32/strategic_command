@@ -1945,3 +1945,51 @@ from behind the camera (half way round) still shows the paint's top-lit look; th
 seen from the camera, cast from the lamp's side; the board's foam steps are lit by the lamp but most of the hills' look is painted;
 the opening yaw decides where the lamp stands for the whole battle (a battle opening at 180 has it in the south-east); no device
 check of the shadows' cost on the phone.
+### The stone rolls and breaks (as built, 2026-11-06)
+
+The owner: "I think instead of just showing a line, the rock should roll once it hits the ground, then it can break
+apart or disappear." A stone that came down drew a dust ring and a fixed 8 m furrow line for 1.5 s and vanished.
+
+**Where the rest point comes from.** The sim already decides how far a stone runs on: `_land_stone`'s plough (`m_plough`
+cut by the slope, the trees and `_obs_run`'s walls and houses) along which it knocks men down, ending sooner where its
+energy is spent on bodies (`SHOT_STOP`); a gun's ball runs on `m_plough` past its landing point at body height
+(`_land_bolt`, cut where the line meets the ground or a work). No impact rule changed: the run the sim worked out is
+written to its view-only impact ring (`fx_*`, never read by the sim, not hashed) as `fx_r` (the plough reached, or the
+distance where the last man spent it), with `fx_k` (what it was: `FXK_STONE`, `FXK_BALL` (a gun's ball, `t_m_gun`; the
+ring now holds gun balls too), `FXK_STRIKE` (a stone that struck a wall, tower or gate on its way: battle_sim.md "Shots
+strike the walls they cross (as built, 2026-11-06)"), `FXK_BALL_STRIKE` (a ball stopped by a work, a house or the ground
+before it came down), `FXK_BURST`) and `fx_h` (a strike's height up the face, dm). So the roll is drawn by the view from
+the sim's own numbers: both peers draw the same rest point, and nothing new is in the state.
+
+**The view** (`overlay._draw_impacts`, the overlay all three views draw through, so the CPU-fed soldier path and Graphics
+Low get the same): on the view clock (`sim.tick - 1 + soldiers.alpha`, so it moves smoothly between ticks, as the missiles
+do), for each ring entry up to 5 s old:
+- *A stone that landed*: the dust ring where it came down (as before); the stone, a shaded ball (rim, body, highlight;
+  0.9 m as the missile in flight), runs on along its flight at about 9 m/s on average, slowing evenly to a stop
+  (`stone_run_at`: 0.3-2 s), its furrow following it from the landing point and fading after it stops; then, two in three
+  (by the point: deterministic), it breaks into three tumbling five-sided fragments thrown out a metre or two with a small
+  hop over one second, a puff where it broke; the third sinks into the ground over two seconds (smaller, lower, darker,
+  fading).
+- *A gun's ball*: one bounce over the first 40 % of its run (up to 1.6 m high, 0.2-0.5 s), a puff at the second touch, then
+  the roll and its furrow (fainter), rest, and it sinks over two seconds.
+- *A stone that struck a work* (`FXK_STRIKE`; also a stone that landed on a walk, a tower or a held roof, whose old upright
+  ring stays): no ring, no furrow, no run; at the strike, `fx_h` up the face (upright in the oblique and 3D views), a pale
+  flash, a burst of dust in three soft puffs swelling and settling down the face (plain discs, `_puff`: the cotton tufts did
+  not read on pale masonry), and four fragments thrown back off the face falling under gravity to its foot, lying a moment
+  and fading (1-3 s). A ball stopped there knocks out the dust and three small chips and drops to the foot.
+- The missile's own flight ends at the strike: the sim's landing point is the strike and the soldier layer's
+  `_pr_heights` takes the landing height from `pr_wh` (the strike's height), so the stone comes down onto the face at the
+  height it met it, in all three views and both soldier paths (no shader change).
+- Upright items stand at their own ground point (`_up` per item) in the oblique and 3D views; the top view draws the
+  same at the ground, a stone in the air a little larger.
+
+`overlay.impact_stats` counts what was drawn (running, breaking, sinking, shattering) for the tests; battle_screen_test
+`_roll_cases` checks the run (from 0 to the full run, slowing, at rest at the end; the ball's bounce) and that a running
+stone, a breaking and a sinking one and a shatter are drawn, in the top, oblique and 3D views. Shots at 844 x 390 in the
+session scratchpad `proj/shots/` (`{roll,break,sink,ball,strike}_{top,oblique,3d}.png`, `ball_oblique_cpu.png`,
+`strike_oblique_cpu.png`; `proj/roll_shot.gd`).
+
+**Known.** The overlay draws over everything, so a rolling stone behind a house or a figure shows through it (the dust
+ring did before); a scattered gun ball that strikes a work before its landing point is still drawn flying on to its landing
+point (the strike's dust comes at the face when it lands: the sim's trace is at landing, unchanged); no ricochet off walls;
+the fragments are flat polygons, not meshes in the 3D view; no device check.

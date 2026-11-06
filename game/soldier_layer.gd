@@ -1384,6 +1384,8 @@ func _pr_heights() -> void:
 			continue
 		var hs := _end_dm(sim.pr_unit[i], sim.pr_sx[i], sim.pr_sy[i], wdm)
 		var he := _end_dm(sim.pr_tu[i], sim.pr_x[i], sim.pr_y[i], wdm)
+		if i < sim.pr_wh.size() and sim.pr_wh[i] > 0:
+			he = (sim.pr_wh[i] - 1) * 10 / 1024  # (a stone that strikes a work on its way: up its face, 2026-11-06)
 		_pr_hs[i] = hs
 		_pr_he[i] = he
 		_pr_hpack[i] = hs + 1024 * he

@@ -760,6 +760,114 @@ LINE OF FIRE", the gun by the gate too.
   within 10 m of a tower now shoots past that tower's body; the fort guns' 60-degree sector (`FORT_GUN_SECTOR`) is
   unchanged.
 
+### Shots strike the walls they cross (as built, 2026-11-06)
+
+The owner: "the cannons and rock throwers should impact the walls if the collision would pass through a wall or
+palisade. Right now the rock thrower can tend to go through walls-2 towers in order to hit the units right against the
+wall. Overall it is working great though."
+
+**What was there.** An engine's stone (`m_kind` 2: stone throwers, the tower engines' stones, mortars) flew to its
+scattered landing point whatever stood between: "lobbed over everything" (`lob_over_wall` exempts crews), so a stone
+aimed at men pressed against the inside of a wall came down among them through the wall, a walls-2 tower or a shut gate.
+A flat ball or bolt (`m_kind` 1: field guns, the fort guns, the ships' batteries, bolt throwers) was already traced
+(`_land_bolt`'s `lof_block` with its 2 % apex) and stopped at the first wall, house, crest or tree it met, doing a
+stretch or a building its hit points there (`_destr_hit`), but a shut gate or a tower that stopped it took nothing (a
+gate only from a shot aimed at it, `_gate_hit`; towers have no hit points). Arrows and musket balls stop at faces
+already ("Buildings block a flat shot").
+
+**The rule** (sim; one decision at launch, deterministic, no new per-unit state).
+- *The arc.* An engine's stone flies the parabola the views draw (`projectiles.gdshaderinc`'s `hk` 0.28 for stones):
+  its rise above the straight line at mid-flight `STONE_APEX_PCT` 28 % of the distance (a 120 m shot tops out 34 m up,
+  coming down at about 48 degrees), from `LOF_EYE` over the engine's footing (`elev_at`: a tower engine at its walk) to
+  `LOF_BODY` over the landing point's. `arc_strike` samples it every `ARC_STRIKE_STEP` 2 m (the obstacle grid's cell:
+  a palisade is one or two cells) from past the engine's own works (`_skip0`, `own_works_skip`: a tower engine and a
+  fort gun shoot over their own parapet) to the landing point, against the top of each standing work (`_arc_meets`:
+  wall body and walk `wall_h` + the parapet, a tower `wall_h` + 4 m, a shut gate `wall_h` + 1 m, over the cell's own
+  ground; a stair flight half the walk, its middle; rubble, an open or a broken gate let it through; houses, rocks and
+  the ground do not stop a stone, as before), and backs the first hit to the face by half metres.
+- *The strike.* `_art_strike` (called by `_art_fire`, `_art_fire_gate` and `_art_fire_at` for every engine stone when
+  `ARC_STRIKE_ON` and the map has works): the aim is untouched (the player or the AI may still aim at men behind a wall;
+  the scatter as before); if the scattered flight meets a work, the slot's landing point becomes the strike, its flight
+  shortened in proportion (at least 3 ticks), and `pr_wh` (per slot, the strike's height above the ground + 1) marks it.
+  On landing (`_land_stone`) a struck stone does to the work what a stone landing on it does (`GATE_STONE` x the
+  ammunition's `t_k_obj`, a bursting shell's blast added), through `_works_strike`: a shut gate's cell its gate
+  (`g_hp`, `_break_gate`), a wall or walk cell its stretch (`_destr_hit`: hit points, `_breach`), a tower's cell the
+  stretch the tower joins (towers stand, siege_and_towns.md: the nearest standing stretch within `STRIKE_TOWER_R` 16 m
+  takes the blow); the defenders' own stones do their works no harm (as `_destr_hit`). Nobody behind it is touched (no
+  plough); if it struck within `STRIKE_TOP` 2 m of the work's top, the men standing on works within its direct hit
+  (`m_blast`, at least `STONE_R_INF`) round the spot are struck as men where a stone lands (`_strike_men`: the same
+  damage and knock-down; the engine and men on the ground are not). A bursting shell bursts at the face (`_land_blast`
+  as before). Suppression (`_supp_art`) still counts the crash near the men it was aimed at.
+- *Flat balls* keep their trace (it was right); where `_land_bolt`'s trace stops at a shut gate or a tower,
+  `_works_strike` now does the gate or the tower's stretch the same `GATE_BOLT` x `t_k_obj` x `m_obj` it did to a
+  stretch (a culverin's ball into a shut gate: 360 of its 2,700 hit points).
+- *The aim* (docs/AI.md 73): the artillery target scans (`BattleAI`'s battery scan; `_art_think`'s fire at will, any
+  side's) score a target whose stone the arc cannot reach (`art_arc_strike`: from the battery's first engine at the
+  target's near face, as `_art_fire` aims) at `ART_ARC_PCT` % (knob 373: Easy 100, Average and Skilled 10): the AI
+  prefers what it can hit; Easy keeps shooting at the men and hits the wall. An attack order still shoots (and batters
+  the wall). The siege AI's batter targets (`_art_fire_wall`, `_art_fire_gate`, the batter order's point) are
+  unchanged; their stones meet the aimed stretch or gate first and do the same damage (a stone aimed at a stretch's walk
+  may now strike its outer parapet: the same stretch).
+- *The preview* (`overlay._draw_wall_strike`): a stone battery's attack line whose arc meets a work draws to the strike
+  (a red burst there, faint beyond) and says "THE SHOT WILL STRIKE THE WALL".
+- *State.* `pr_wh` (hashed from the first strike, `strk_used`, so battles where no stone strikes a work hash as before;
+  reset at landing; in snapshots as every script variable); the view's impact ring gains `fx_k` / `fx_r` / `fx_h`
+  (view only, art_pipeline.md "The stone rolls and breaks (as built, 2026-11-06)"). Stats `stat_strikes`,
+  `stat_strike_dmg`. `ARC_STRIKE_ON` (static, 1) is the probes' before / after switch.
+
+**Measured** (a scratch probe, session scratchpad `proj/strike_probe.gd`: a Rome town (level 1, flat) at walls 1 / 2 / 3
+and a West walls-1 palisade, a stone battery (18 men, three engines) at 80 / 120 / 160 m out from 60 spearmen whose
+middle stands 4 m inside the wall's inner face (their front rank about 1 m from it), an attack order for 90 s, no AI,
+the towers' engines holding; 4 seeds, 72 stones a row; "inside" = stones that came down inside the walls; wall hp all
+the stones did to the works; a stretch breaches at 1,200 / 2,000 / 3,000 hp, after which the rubble lets the rest
+through):
+
+| case | m | before: inside / wall hp / men lost | after: inside / strikes / wall hp / men lost |
+|---|---|---|---|
+| Rome walls 1 | 80 | 63 / 2,520 / 79 | 49 / 17 / 5,760 / 54 |
+| | 120 | 57 / 4,320 / 59 | 46 / 11 / 5,760 / 53 |
+| | 160 | 48 / 5,400 / 52 | 42 / 10 / 5,760 / 47 |
+| Rome walls 2 | 80 | 62 / 2,880 / 76 | 36 / 28 / 8,640 / 50 |
+| | 120 | 53 / 5,040 / 67 | 37 / 22 / 8,640 / 42 |
+| | 160 | 47 / 5,760 / 52 | 32 / 22 / 8,640 / 31 |
+| Rome walls 3 | 80 | 66 / 1,440 / 82 | 30 / 36 / 12,960 / 40 |
+| | 120 | 50 / 6,840 / 56 | 23 / 35 / 12,960 / 28 |
+| | 160 | 52 / 5,400 / 47 | 26 / 35 / 12,960 / 19 |
+| West palisade | 80 | 64 / 1,080 / 74 | 47 / 25 / 8,280 / 48 |
+| | 120 | 55 / 3,240 / 49 | 41 / 28 / 8,640 / 32 |
+| | 160 | 46 / 4,320 / 40 | 35 / 18 / 9,360 / 29 |
+
+Behind a tower (`--tower=1`: the men 20 m in from a tower's middle, the battery out along the stretch's normal): walls 2
+at 80 m men lost 74 -> 62 (18 strikes), walls 3 88 -> 41 (31). A culverin (three guns) at the same men fires nothing,
+before and after: no line at body height over the wall (the flat rule, unchanged). Aimed at 60 archers on the walk
+(`proj/strike_probe_walk.gd`, before on a clean HEAD copy): stones strike 2-16 of 72 (scattered short into the outer
+face), walk men lost within noise (walls 2 at 120 m 171 -> 175 of 240); a culverin's balls identical to HEAD (29 shots,
+the same wall hp and losses: they strike the parapet only where they did). The custom_battle_test set pieces
+(`_check_strike`, Rome seed 303, 700 ticks): a battery 120 m out at men 14 m inside a walls-2 tower: 13 stones, 7 struck
+the tower, its stretch lost 1,080 hp, 2 men lost (with `ARC_STRIKE_ON` 0: none struck, 11 lost); from 160 m at men 30 m
+inside the palisade: 13 stones, none struck, 11 lost; a ball put in flight at men behind the shut gate: the gate 2,700 ->
+2,340 hp, nobody behind hit.
+
+**Balance** (`tools/balance`, 8 seeds, HEAD 7dc9d5dd4b -> cfab5167b4): `rome_walls` attacker wins walls 1 / 2 / 3 75 / 50 /
+42 -> 75 / 46 / 42 (overall 56 -> 54, within 8 points; cells beyond their interval zeugitana w3 -38 and massalia w1 -38;
+mean wall damage a battle 3,867 -> 3,844, wall shots 10.4 -> 8.4, defenders killed 534 -> 529, attackers 524 -> 509): the
+attackers' artillery kills fewer behind the wall, its damage now goes into the works instead. `west_walls` was still
+running at hand-off (71 of 96 jobs; its before is the fort tuning worktree's HEAD run of the same code hash).
+Knob (`proj/scan_probe.gd`, a battery on fire at will, 60 men at the wall and 30 men 35 m further in): Easy fires at
+the 60 and strikes the wall (walls 2 at 80 m 24 strikes, 53 lost of the 60, 0 of the 30); Average turns to the 30 at
+walls 2 and 3 (0 strikes, 40 lost) and at the palisade splits; at Rome walls 1 the scan judges the near face reachable
+and keeps the 60 (as Easy).
+
+**Tests.** custom_battle_test `_check_strike` (above; the repeat identical); battle_screen_test `_roll_cases` (the
+view); determinism_test's `over_walls` (a stone battery outside walls 2 at a unit in the plaza: its stones still land
+inside) and the rest as listed in STATUS.
+
+**Known.** The arc is the views' parabola, one for every engine stone (a mortar lobs no higher than a stone thrower);
+a tower's blow goes into the neighbouring stretch (towers have no hit points); the rampart and stakes of the field works
+are not in the obstacle grid and stop nothing (as before); houses do not stop a lobbed stone (it lands on the roof as
+before); a stone aimed at a point is decided at launch, so a gate opened while it flies still stops it; flat balls are
+still traced at landing (a scattered ball that strikes before its landing point is drawn flying on to it).
+
 ### Buildings block a flat shot (as built, 2026-11-06)
 
 Why (the owner, a beauty pass on the battlefield): "I want to start to look at buildings being in the way when rounds

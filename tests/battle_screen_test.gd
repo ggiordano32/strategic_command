@@ -58,6 +58,9 @@ var _hero: Dictionary = {}
 var _oblique := false   # the second run: the oblique battle view
 var _v3d := false       # the third run: the 3D battle view (game/view3d.gd; oblique true as well: the same board transform)
 var _rub: _RubNode = null  # (the top view's rubble mark, drawn on a frame after _cover_cases)
+var _roll_b = null           # (the stone rolls and breaks: a battle whose overlay draws its impact ring on the next frames)
+var _roll_phase := 0         # 0 not begun in this view, 1 drawing, 2 checked
+var _roll_frames := 0
 
 
 ## Cover and line of fire, fourth pass (2026-11-06): draws a breached West stretch's rubble as the top view does (up
@@ -293,6 +296,8 @@ func _process(_d: float) -> bool:
 				_rub.marks, _rub.cells.size(), _rub.marks_ob])
 		_rub.queue_free()
 		_rub = null
+	if _roll_phase == 1:
+		_roll_frame()
 	if _wait > 0:
 		_wait -= 1
 		return false
@@ -433,14 +438,20 @@ func _process(_d: float) -> bool:
 			if _eb != null and not _eb_exit and _frame < 40000:
 				_step -= 1
 				return false
-			_check(_eb_exit, "and returns to the campaign")
-			_end_close()
-			_facing_cases()
-			_casualty_cases()
-			_ship_cases()
-			_flash_cases()
-			_cover_cases()
-			_supp_cases()
+			if _roll_phase == 0:
+				_check(_eb_exit, "and returns to the campaign")
+				_end_close()
+				_facing_cases()
+				_casualty_cases()
+				_ship_cases()
+				_flash_cases()
+				_cover_cases()
+				_supp_cases()
+				_roll_cases()
+			if _roll_phase == 1:
+				_step -= 1  # (the stone's roll is drawn on the next frames: _roll_frame)
+				return false
+			_roll_phase = 0
 			if not _oblique or not _v3d:
 				# Again, in the oblique battle view, then in the 3D view.
 				_v3d = _oblique
@@ -820,6 +831,73 @@ func _supp_cases() -> void:
 				word, s.supp_state(0), s.supp_state(1), (fl / SoldierLayer.F_CROUCH) & 3, str(cpu_ok), str(cs_), str(tok)])
 		b.overlay._tok_at.fill(-100)
 	b.queue_free()
+
+
+## The stone rolls and breaks (2026-11-06; docs/design/art_pipeline.md "The stone rolls and breaks (as built,
+## 2026-11-06)"): a landed stone runs on its sim run (BattleSim.fx_r) from 0 to the full run, slowing, then rests; a
+## ball's first 40 % is one bounce off the ground; a stone that struck a wall (FXK_STRIKE) shatters at the face. The
+## overlay draws, on the next frames, a running stone, a ball, a breaking stone, a sinking one and a shatter (its draw
+## counts), in each view.
+func _roll_cases() -> void:
+	const Terrain := preload("res://sim/terrain.gd")
+	const Ov := preload("res://game/overlay.gd")
+	var a0 := Ov.stone_run_at(12.0, 0.0, false)
+	var a1 := Ov.stone_run_at(12.0, 6.0, false)
+	var a2 := Ov.stone_run_at(12.0, 40.0, false)
+	var mid := Ov.stone_run_at(12.0, 6.66, false)
+	var b_hop := Ov.stone_run_at(20.0, 2.0, true)
+	var b_roll := Ov.stone_run_at(20.0, 8.0, true)
+	_check(a0.x == 0.0 and a1.x > 0.0 and a1.x < 12.0 and a1.z < 0.0 and a2.x == 12.0 and a2.z > 0.0 and mid.x > 6.0 \
+			and b_hop.y > 0.0 and b_hop.x <= 8.0 and b_roll.y == 0.0 and b_roll.x > 8.0,
+		"the stone rolls: a 12 m run from %.1f to %.1f (moving %.1f m at 0.6 s, half time %.1f m: slowing) to rest at 12 m; a ball's bounce %.2f m up at %.1f m, then rolling at %.1f m" % [
+			a0.x, a2.x, a1.x, mid.x, b_hop.y, b_hop.x, b_roll.x])
+	var b := Battle.new()
+	b.custom_scenario = {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "los": 0, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT},
+		"units": [Scenarios.unit(0, UT.STONE, 18, 200, 100, Scenarios.FACE_DOWN),
+			Scenarios.unit(1, UT.SPEAR, 60, 200, 160, Scenarios.FACE_UP)]}
+	b.seed_value = 3
+	root.add_child(b)
+	b.paused = true
+	var s: BattleSim = b.sim
+	s.step()
+	s.step()
+	b.soldiers.upload()
+	b.soldiers.set_alpha(1.0)
+	var cx: int = s.u_cx[1]
+	var cy: int = s.u_cy[1]
+	var now := s.tick - 1
+	# (kind, x offset m, run m, height dm, age ticks): running, a ball bouncing, three at rest (two break, one sinks: the
+	# split is by the point: three points a metre apart, one of each), a shatter at a wall's face 6 m up.
+	var rows := [[BattleSim.FXK_STONE, -12, 12, 0, 4], [BattleSim.FXK_BALL, -6, 20, 0, 2],
+		[BattleSim.FXK_STONE, 0, 6, 0, 10], [BattleSim.FXK_STONE, 1, 6, 0, 10], [BattleSim.FXK_STONE, 2, 6, 0, 10],
+		[BattleSim.FXK_STRIKE, 12, 0, 60, 3]]
+	for r in rows:
+		var f: int = s._fx_add(cx + int(r[1]) * 1024, cy, 0, 4096, int(r[0]), int(r[2]) * 1024, int(r[3]))
+		s.fx_t[f] = now - int(r[4])
+	if b.dive_t >= 0.0:
+		b.dive_finish()
+	b._cam_to(b.overlay.to_px(cx, cy))
+	b.camera.force_update_scroll()
+	b.overlay.impact_stats = PackedInt32Array([0, 0, 0, 0])
+	b.overlay.queue_redraw()
+	_roll_b = b
+	_roll_frames = 0
+	_roll_phase = 1
+
+
+func _roll_frame() -> void:
+	_roll_frames += 1
+	var st: PackedInt32Array = _roll_b.overlay.impact_stats
+	if (st[0] <= 0 or st[1] <= 0 or st[2] <= 0 or st[3] <= 0) and _roll_frames < 6:
+		_roll_b.overlay.queue_redraw()
+		return
+	_check(st[0] > 0 and st[1] > 0 and st[2] > 0 and st[3] > 0,
+		"the stone rolls and breaks: the overlay drew stones running %d, breaking %d, sinking %d, shattering at a wall %d (frames %d)" % [
+			st[0], st[1], st[2], st[3], _roll_frames])
+	_roll_b.queue_free()
+	_roll_b = null
+	_roll_phase = 2
 
 
 func _cover_cases() -> void:

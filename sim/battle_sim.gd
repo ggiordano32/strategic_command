@@ -304,6 +304,11 @@ const BLAST_DOWN_BIG := 10       # an elephant is not thrown: down 1 s
 const FRIGHT_MAX := 200
 const FRIGHT_DECAY := 1          # per tick: a stone's fright (60) lasts 6 s
 const FX_CAP := 32               # view: recent stone impacts (not state)
+const FXK_STONE := 0             # ... a stone that landed (and ran on fx_r) ...
+const FXK_BALL := 1              # ... a gun's ball that landed (bounced and ran on fx_r) ...
+const FXK_STRIKE := 2            # ... a stone that struck a work on its way (fx_h up its face) ...
+const FXK_BALL_STRIKE := 3       # ... a ball stopped by a work, a house or the ground on its way ...
+const FXK_BURST := 4             # ... a bursting stone
 # Refill (artillery): a battery told to refill takes REFILL_FULL ticks to
 # settle into it (2 per tick back out), and while it is not back at 0 it
 # cannot move, traverse or shoot; once in, crews at their engines bring up
@@ -614,6 +619,18 @@ static var WALL_RANGE_PCT: Array[int] = [0, 0, 15, 15]  # missile troops on a wa
 static var ARC_OVER_WALL_PCT := 60
 const ARC_WALL_STEP := 4 * M     # lob_over_wall samples the line this often (a wall band is at least 8 m thick)
 const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
+## Shots strike the walls they cross (docs/design/battle_sim.md, as built 2026-11-06; the owner: "the cannons and rock
+## throwers should impact the walls if the collision would pass through a wall or palisade"): an engine's lobbed stone
+## flies the arc the views draw (its rise at mid-flight STONE_APEX_PCT % of the distance, from LOF_EYE over the engine's
+## footing to LOF_BODY over the landing point's), sampled every ARC_STRIKE_STEP over the obstacle grid; where it first
+## passes below the top of a standing wall body, walkway, stair, tower or shut gate (rubble, an open or broken gate let it
+## through) the stone ends there (arc_strike, at launch: _art_strike), strikes that work (_works_strike) and kills nobody
+## behind it. Flat balls were stopped already (_land_bolt's lof_block); they now strike a gate or a tower there too.
+static var ARC_STRIKE_ON := 1    # 0: stones fly through the works to their landing point as before (probes, before / after)
+const STONE_APEX_PCT := 28       # a lobbed engine stone's rise at mid-flight, % of the distance (the views' arc: hk 0.28)
+const ARC_STRIKE_STEP := 2 * M   # ... sampled this often (the obstacle grid's cell: a palisade or a gate is one or two cells)
+const STRIKE_TOWER_R := 16 * M   # a shot striking a tower (towers stand) goes into the stretch it joins: the nearest standing within this
+const STRIKE_TOP := 2 * M        # a stone striking a work this near its top (or higher) hits the men on its walk or tower round the spot
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
 const CAPTURE_MEN := 10          # an attacking unit needs this many men to hold it
@@ -1501,6 +1518,14 @@ var pr_next := PackedInt32Array()     # bucket / free list link
 var pr_bucket := PackedInt32Array()   # landing tick % PR_BUCKETS -> first
 var pr_free: int = 0
 var pr_count: int = 0
+## Shots strike the walls they cross (2026-11-06): per projectile slot 0, or for an engine's stone whose arc meets a
+## standing work before its landing point (the slot's landing point is then the strike): its height there above the
+## ground + 1 (sim units). Set at launch, cleared at landing; hashed once a stone has struck (strk_used), so battles
+## where none does hash as before; the view draws the stone to that height.
+var pr_wh := PackedInt32Array()
+var strk_used: int = 0
+var stat_strikes: int = 0         # engine stones that struck a work on their way (wall, walk, tower, shut gate)
+var stat_strike_dmg: int = 0      # hit points they and the flat balls stopped by a gate or tower did to the works
 
 # Unit type stats copied out of UnitTypes for fast indexed access.
 var t_cls := PackedInt32Array()
@@ -2009,6 +2034,11 @@ var fx_dx := PackedInt32Array()
 var fx_dy := PackedInt32Array()
 var fx_t := PackedInt32Array()
 var fx_head: int = 0
+## ... and (2026-11-06, the stone rolls and breaks) what it was (FXK_*), how far it ran on along its flight after it
+## landed (the plough the sim worked out: sim units; 0 for a strike) and, for a strike, its height there (dm).
+var fx_k := PackedInt32Array()
+var fx_r := PackedInt32Array()
+var fx_h := PackedInt32Array()
 ## Deployment phase (section at the end of the file). Hashed only when the
 ## scenario has one (dep_on), so battles without it hash as before.
 var phase: int = PHASE_BATTLE
@@ -2412,7 +2442,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_sw_v.resize(SWEEP_CAP)
 	_sw_a.resize(SWEEP_CAP)
 	_sw_l.resize(SWEEP_CAP)
-	for arr in [fx_x, fx_y, fx_dx, fx_dy, fx_t]:
+	for arr in [fx_x, fx_y, fx_dx, fx_dy, fx_t, fx_k, fx_r, fx_h]:
 		arr.resize(FX_CAP)
 		arr.fill(0)
 	fx_t.fill(-1000)
@@ -2777,6 +2807,9 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	pr_count = 0
 	pr_bucket.resize(PR_BUCKETS)
 	pr_bucket.fill(-1)
+	pr_wh.resize(PR_CAP)
+	pr_wh.fill(0)
+	strk_used = 0
 
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
@@ -3407,6 +3440,149 @@ func wall_cross_at(x0: int, y0: int, x1: int, y1: int) -> int:
 			return a
 		a += ARC_WALL_STEP
 	return -1
+
+
+## Shots strike the walls they cross (as built 2026-11-06): where the lobbed arc from (x0, y0) at height z0 to (x1, y1)
+## at z1 (absolute, sim units; rising `apex` above the straight line at mid-flight, parabolic: lof_block's arc) first
+## passes below the top of a standing work (wall body, walkway, stair, tower, shut gate; rubble and an open or broken
+## gate let it through), sampled every ARC_STRIKE_STEP from `skip0` (and the works the engine stands on:
+## own_works_skip) to the landing point and backed to the work's face by half metres: Vector2i(the distance there, the
+## arc's height there above that point's ground); x -1 if it clears them all. Reads only static cells, the gates'
+## states and the ground (the view's preview asks it too).
+func arc_strike(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, skip0: int = 0) -> Vector2i:
+	if obs_on == 0 or wall_h <= 0:
+		return Vector2i(-1, 0)
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	if d <= ARC_STRIKE_STEP:
+		return Vector2i(-1, 0)
+	var dz := z1 - z0
+	var a := maxi(maxi(skip0, own_works_skip(x0, y0, x1, y1)), ARC_STRIKE_STEP)
+	var hit := -1
+	while a <= d:
+		if _arc_meets(x0 + dx * a / d, y0 + dy * a / d, z0 + dz * a / d + apex * 4 * a / d * (d - a) / d):
+			hit = a
+			break
+		a += ARC_STRIKE_STEP
+	if hit < 0:
+		return Vector2i(-1, 0)
+	var lo := hit - ARC_STRIKE_STEP  # (the last sample clear of it)
+	var b := hit
+	while b - M / 2 > lo and _arc_meets(x0 + dx * (b - M / 2) / d, y0 + dy * (b - M / 2) / d,
+			z0 + dz * (b - M / 2) / d + apex * 4 * (b - M / 2) / d * (d - b + M / 2) / d):
+		b -= M / 2
+	var px := x0 + dx * b / d
+	var py := y0 + dy * b / d
+	var z := z0 + dz * b / d + apex * 4 * b / d * (d - b) / d
+	return Vector2i(b, maxi(z - gh_at(px, py), 0))
+
+
+## The arc at (x, y), height z (absolute), is below the top of a standing work there (arc_strike).
+func _arc_meets(x: int, y: int, z: int) -> bool:
+	if x < 0 or y < 0:
+		return false
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return false
+	var c := j * ob_w + i
+	var k := obs[c]
+	if k == MapGen.C_WALL or k == MapGen.C_WALK or k == MapGen.C_TOWER \
+			or (MapGen.is_gate(k) and g_state[k - MapGen.C_GATE] == GATE_CLOSED):
+		return gh_at(x, y) + _cell_top(c, k) > z
+	if k == MapGen.C_STAIR:
+		return gh_at(x, y) + wall_h / 2 > z  # (a flight against the inner face: its middle, as elev_at)
+	return false
+
+
+## Where battery u's stone at unit t (aimed as _art_fire aims it: the near face of t seen from u's middle) would strike a
+## work on its way: the distance from u's middle (-1 it reaches its target). The artillery scans (ART_ARC_PCT) and the
+## attack order's preview ask it.
+func art_arc_strike(u: int, t: int) -> int:
+	if ARC_STRIKE_ON == 0 or obs_hi == 0 or obs_on == 0 or wall_h <= 0 or t_m_kind[u_type[u]] != 2:
+		return -1
+	var sx := u_cx[u]
+	var sy := u_cy[u]
+	if u_neng[u] > 0 and e_state[u_eng0[u]] == E_OK:
+		sx = e_x[u_eng0[u]]
+		sy = e_y[u_eng0[u]]
+	var nf := _near_face(t, sx, sy, u_cx[t], u_cy[t])
+	var d := FM.approx_len(nf.x - sx, nf.y - sy)
+	if d <= 0:
+		return -1
+	return arc_strike(sx, sy, elev_at(sx, sy) + LOF_EYE, nf.x, nf.y, elev_at(nf.x, nf.y) + LOF_BODY,
+		d * STONE_APEX_PCT / 100, _skip0(u)).x
+
+
+## An engine's stone just put in flight in slot p by battery u (Shots strike the walls they cross, 2026-11-06): if its
+## arc meets a standing work before its landing point, the landing point becomes the strike (pr_wh its height + 1) and
+## the flight is shortened in proportion. Returns the flight (ticks).
+func _art_strike(p: int, u: int, flight: int) -> int:
+	var sx := pr_sx[p]
+	var sy := pr_sy[p]
+	var lx := pr_x[p]
+	var ly := pr_y[p]
+	var d := FM.approx_len(lx - sx, ly - sy)
+	if d <= 0:
+		return flight
+	var st := arc_strike(sx, sy, elev_at(sx, sy) + LOF_EYE, lx, ly, elev_at(lx, ly) + LOF_BODY,
+		d * STONE_APEX_PCT / 100, _skip0(u))
+	if st.x < 0:
+		return flight
+	pr_x[p] = sx + (lx - sx) * st.x / d
+	pr_y[p] = sy + (ly - sy) * st.x / d
+	pr_wh[p] = st.y + 1
+	strk_used = 1
+	stat_strikes += 1
+	return maxi(flight * st.x / d, 3)
+
+
+## A shot of unit `by` strikes the work at (x, y) for dmg (a gate's hit points; a building takes arc_pct % of it, as
+## _destr_hit): a shut gate's cell its gate, a tower's cell the stretch the tower joins (towers stand: the nearest
+## standing stretch within STRIKE_TOWER_R), else _destr_hit (a wall stretch, a building). The defenders' own shots do
+## the works no harm (over their walls). Returns true if it struck something with hit points.
+func _works_strike(x: int, y: int, dmg: int, by: int, arc_pct: int) -> bool:
+	if obs_on == 0 or dmg <= 0:
+		return false
+	var k := obs_kind(x, y)
+	var own := by >= 0 and by < n_units and u_side[by] == city_def
+	if MapGen.is_gate(k):
+		var g := k - MapGen.C_GATE
+		if g >= n_gates or g_state[g] != GATE_CLOSED or own:
+			return false
+		g_hp[g] -= dmg * 100
+		g_hit_t[g] = tick
+		stat_gate_art += dmg
+		stat_strike_dmg += dmg
+		if g_hp[g] <= 0:
+			_break_gate(g)
+		return true
+	if k == MapGen.C_TOWER:
+		if own or ws_state.is_empty():
+			return false
+		var best := -1
+		var bo := STRIKE_TOWER_R + 1
+		for sg in ws_state.size():
+			if ws_state[sg] != WS_STANDING:
+				continue
+			var o := _seg_off(sg, x, y)
+			if o < bo:
+				bo = o
+				best = sg
+		if best < 0:
+			return false
+		ws_hp[best] -= dmg * 100
+		ws_hit_t[best] = tick
+		stat_wall_dmg += dmg
+		stat_strike_dmg += dmg
+		if ws_hp[best] <= 0:
+			_breach(best, by)
+		return true
+	var hit := _destr_hit(x, y, dmg, by, arc_pct)
+	if hit:
+		stat_strike_dmg += dmg
+	return hit
 
 
 ## Missile troops on a wall shooting at men not on one: WALL_RANGE_PCT % of
@@ -15666,6 +15842,7 @@ func _update_missiles() -> void:
 		var nxt := pr_next[p]
 		if pr_t1[p] == tick:
 			_land(p)
+			pr_wh[p] = 0
 			pr_t1[p] = -1
 			pr_next[p] = pr_free
 			pr_free = p
@@ -16986,6 +17163,10 @@ func _art_think(u: int) -> void:
 				ft = cur
 			else:
 				var best_score := 0
+				# (Shots strike the walls they cross, docs/AI.md 73: a stone's target its arc cannot reach scores
+				# AP.ART_ARC_PCT %; the test only for a target that would be chosen.)
+				var arc_pct: int = AIProfile.of(self, u_side[u])[AIProfile.ART_ARC_PCT] \
+					if t_m_kind[ty] == 2 and ARC_STRIKE_ON != 0 and obs_hi != 0 else 100
 				for o in n_units:
 					if u_side[o] == u_side[u] or u_state[o] >= U_DESTROYED or u_alive[o] <= 0:
 						continue
@@ -17001,6 +17182,8 @@ func _art_think(u: int) -> void:
 					var bear := FM.atan2_a(u_cy[o] - u_cy[u], u_cx[o] - u_cx[u])
 					if absi(FM.angle_diff(u_face[u], bear)) <= t_arc[ty]:
 						score += 400
+					if arc_pct != 100 and (ft < 0 or score > best_score) and art_arc_strike(u, o) >= 0:
+						score = score * arc_pct / 100
 					# The (dearer) safety and line-of-fire test only for a
 					# target that would be chosen.
 					if (ft < 0 or score > best_score) and art_safe(u, o):
@@ -17647,6 +17830,9 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	pr_ak[p] = k
 	if ft >= 0:
 		_shot_note(ft, u)
+	if t_m_kind[ty] == 2 and ARC_STRIKE_ON != 0 and obs_hi != 0:
+		flight = _art_strike(p, u, flight)  # (Shots strike the walls they cross: the arc meets a work first)
+		pr_t1[p] = tick + flight
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -17696,6 +17882,9 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 	pr_ty[p] = ty
 	pr_tu[p] = -2 - g
 	pr_ak[p] = k
+	if t_m_kind[ty] == 2 and ARC_STRIKE_ON != 0 and obs_hi != 0:
+		flight = _art_strike(p, u, flight)  # (Shots strike the walls they cross: the arc meets a work first)
+		pr_t1[p] = tick + flight
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -17755,6 +17944,9 @@ func _art_fire_at(e: int, u: int, wa: Vector2i, ty: int) -> bool:
 	pr_ty[p] = ty
 	pr_tu[p] = -1
 	pr_ak[p] = k
+	if t_m_kind[ty] == 2 and ARC_STRIKE_ON != 0 and obs_hi != 0:
+		flight = _art_strike(p, u, flight)  # (Shots strike the walls they cross: the arc meets a work first)
+		pr_t1[p] = tick + flight
 	var b := (tick + flight) % PR_BUCKETS
 	pr_next[p] = pr_bucket[b]
 	pr_bucket[b] = p
@@ -17928,11 +18120,12 @@ func _land_bolt(p: int) -> void:
 		if blk >= 0:
 			a1 = mini(a1, blk)
 			stat_bolt_ground += 1
-			if not obs0.is_empty():
-				# (Into a wall stretch or a building: its hit points, as a gate's.)
+			if obs_on != 0:
+				# (Into a wall stretch or a building: its hit points, as a gate's;
+				# 2026-11-06: into a shut gate or a tower too, _works_strike.)
 				for q in 3:
 					var ha := blk + q * M
-					if _destr_hit(sx + ux * ha / FM.TRIG_ONE, sy + uy * ha / FM.TRIG_ONE,
+					if _works_strike(sx + ux * ha / FM.TRIG_ONE, sy + uy * ha / FM.TRIG_ONE,
 							GATE_BOLT * ob / 100 * mo / 100, u, 100):
 						break
 	_sweep(sx, sy, ux, uy, maxi(BOLT_SKIP, _skip0(u)), a1, BOLT_R_INF, BOLT_R_CAV)
@@ -17942,8 +18135,20 @@ func _land_bolt(p: int) -> void:
 	var from := FM.atan2_a(-dy, -dx)
 	var hits := 0
 	_hit_units.fill(-1)
+	var fh := -1
+	if t_m_gun[ty] != 0:
+		# View (2026-11-06, the stone rolls and breaks): a gun's ball bounces and runs on to a1 (filled in below where
+		# it is spent sooner), or stops at what it struck before it came down.
+		if a1 < dist:
+			var bx := sx + ux * a1 / FM.TRIG_ONE
+			var by := sy + uy * a1 / FM.TRIG_ONE
+			_fx_add(bx, by, ux, uy, FXK_BALL_STRIKE, 0, maxi(z0 + dz * a1 / dist - gh_at(bx, by), 0) * 10 / M)
+		else:
+			fh = _fx_add(pr_x[p], pr_y[p], ux, uy, FXK_BALL, a1 - dist, 0)
 	for sk in _sw_n:
 		if energy < SHOT_STOP or hits >= pierce:
+			if fh >= 0:
+				fx_r[fh] = clampi(_sw_a[sk] - dist, 0, fx_r[fh])
 			break
 		var v := _sw_v[sk]
 		if ter_on != 0 or obs_on != 0:
@@ -17954,6 +18159,8 @@ func _land_bolt(p: int) -> void:
 				continue
 		if v < 0:
 			_engine_hit(-v - 1, energy)
+			if fh >= 0:
+				fx_r[fh] = clampi(_sw_a[sk] - dist, 0, fx_r[fh])
 			break
 		if state[v] >= S_DEAD:
 			continue
@@ -17987,6 +18194,7 @@ func _land_stone(p: int) -> void:
 	var ob := t_k_obj[ak] if ak >= 0 else 100
 	if t_mbat[pr_ty[p]] != 0:
 		ob = 0  # (native siege: a torch raider's fire pot burns, it does not batter: its axes do, _update_mbat)
+	var wh := pr_wh[p]  # (a strike: the arc met a work on its way; its height there + 1)
 	if pr_tu[p] <= -2 and _gate_hit(p, GATE_STONE * ob / 100):
 		return
 	var tw_hit := false
@@ -17994,13 +18202,17 @@ func _land_stone(p: int) -> void:
 		tw_hit = _tower_hit(p, TOWER_STONE_DMG * ob / 100)  # (and it smashes on among the crew)
 		if n_eq > 0:
 			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG * ob / 100)
-	if not tw_hit and not obs0.is_empty():
+	if not tw_hit and (wh > 0 or not obs0.is_empty()):
 		# (On a wall stretch or a building: its hit points, as a gate's; a
-		# bursting shell by its blast too.)
+		# bursting shell by its blast too. A strike: the stretch, the gate or
+		# the tower's stretch it met, _works_strike.)
 		var sd := GATE_STONE * ob / 100
 		if ak >= 0 and t_k_aoe[ak] != 0:
 			sd += (t_m_blast[pr_ty[p]] + t_k_blast[ak]) * DESTR_BLAST_K / M
-		_destr_hit(pr_x[p], pr_y[p], sd, pr_unit[p], OB_ARC_PCT)
+		if wh > 0:
+			_works_strike(pr_x[p], pr_y[p], sd, pr_unit[p], OB_ARC_PCT)
+		else:
+			_destr_hit(pr_x[p], pr_y[p], sd, pr_unit[p], OB_ARC_PCT)
 	var u := pr_unit[p]
 	var ty := pr_ty[p]
 	var lx := pr_x[p]
@@ -18014,6 +18226,10 @@ func _land_stone(p: int) -> void:
 	var blast := blast0 + t_k_blast[ak] if ak >= 0 else blast0
 	if ak >= 0 and t_k_aoe[ak] != 0:
 		_land_blast(u, ty, ak, lx, ly, ux, uy, blast)
+		return
+	if wh > 0:
+		_strike_men(u, ty, ak, lx, ly, ux, uy, blast, wh - 1)
+		_art_fright(ty, ak)
 		return
 	var r := maxi(blast, STONE_R_INF)
 	var plough := t_m_plough[ty]
@@ -18044,13 +18260,8 @@ func _land_stone(p: int) -> void:
 	var ap := clampi(t_m_ap[ty] + t_k_ap[ak], 0, 100) if ak >= 0 else t_m_ap[ty]
 	var hits := 0
 	_hit_units.fill(-1)
-	# View: impact mark (not state).
-	fx_x[fx_head] = lx
-	fx_y[fx_head] = ly
-	fx_dx[fx_head] = ux
-	fx_dy[fx_head] = uy
-	fx_t[fx_head] = tick
-	fx_head = (fx_head + 1) % FX_CAP
+	# View: impact mark (not state); the run on is filled in below.
+	var fh := _fx_add(lx, ly, ux, uy, FXK_STONE, plough, 0)
 	var absorbed := 0
 	for k in _sw_n:
 		if hits >= pierce:
@@ -18069,9 +18280,11 @@ func _land_stone(p: int) -> void:
 			continue
 		var energy := energy0 - absorbed - maxi(al, 0) * STONE_ROLL_LOSS / M
 		if energy < SHOT_STOP:
+			fx_r[fh] = clampi(al, 0, plough)  # (spent: it stops here)
 			break
 		if v < 0:
 			_engine_hit(-v - 1, energy * 2)
+			fx_r[fh] = clampi(al, 0, plough)
 			break
 		if state[v] >= S_DEAD:
 			continue
@@ -18082,6 +18295,55 @@ func _land_stone(p: int) -> void:
 		absorbed += STONE_BODY + t_armour[td]
 		hits += 1
 	_art_fright(ty, ak)
+
+
+## View: an impact mark in the ring (not state, never read by the sim): returns its index.
+func _fx_add(x: int, y: int, ux: int, uy: int, k: int, r: int, h_dm: int) -> int:
+	var f := fx_head
+	fx_x[f] = x
+	fx_y[f] = y
+	fx_dx[f] = ux
+	fx_dy[f] = uy
+	fx_t[f] = tick
+	fx_k[f] = k
+	fx_r[f] = r
+	fx_h[f] = h_dm
+	fx_head = (f + 1) % FX_CAP
+	return f
+
+
+## A stone that struck a work on its way (Shots strike the walls they cross, 2026-11-06), at (lx, ly), h above the
+## ground there: it shatters at the face and runs on nowhere. If it struck within STRIKE_TOP of the work's top (the
+## parapet, the walk, the tower's top) the men standing on works within its direct hit (m_blast) round the spot are
+## struck as where a stone lands (_land_stone's direct hit); nobody behind the work, nobody on the ground.
+func _strike_men(u: int, ty: int, ak: int, lx: int, ly: int, ux: int, uy: int, blast: int, h: int) -> void:
+	_fx_add(lx, ly, ux, uy, FXK_STRIKE, 0, h * 10 / M)
+	var top := _obs_top(lx, ly)
+	if h + STRIKE_TOP < top:
+		return  # (low on its face: the walk above is not reached)
+	var r := maxi(blast, STONE_R_INF)
+	_sweep(lx, ly, ux, uy, -r, r, r, r)
+	var energy := t_m_dmg[ty] * t_k_dmg[ak] / 100 if ak >= 0 else t_m_dmg[ty]
+	var pierce := t_m_pierce[ty] * t_k_pierce[ak] / 100 if ak >= 0 else t_m_pierce[ty]
+	var ap := clampi(t_m_ap[ty] + t_k_ap[ak], 0, 100) if ak >= 0 else t_m_ap[ty]
+	var hits := 0
+	_hit_units.fill(-1)
+	for k in _sw_n:
+		if hits >= pierce or energy < SHOT_STOP:
+			break
+		var v := _sw_v[k]
+		if v < 0 or state[v] >= S_DEAD:
+			continue
+		var al := _sw_a[k]
+		var lt := _sw_l[k]
+		if al * al + lt * lt > r * r or not _works_cell(obs_kind(pos_x[v], pos_y[v])):
+			continue
+		var td := u_otype[unit_of[v]]
+		var dmg := maxi(energy - t_armour[td] * (100 - ap) / 100, 1) * t_m_vuln[td] / 100 \
+			* (85 + _rand() % 31) / 100
+		_art_wound(v, dmg, u, mini(energy / 2 + STONE_KNOCK, 90))
+		energy -= STONE_BODY + t_armour[td]
+		hits += 1
 
 
 ## A bursting stone (ammunition kind with aoe; docs/DESIGN.md "Explosive
@@ -18098,12 +18360,7 @@ func _land_blast(u: int, ty: int, ak: int, lx: int, ly: int, ux: int, uy: int, b
 	var energy0 := t_m_dmg[ty] * t_k_dmg[ak] / 100
 	var ap := clampi(t_m_ap[ty] + t_k_ap[ak], 0, 100)
 	_hit_units.fill(-1)
-	fx_x[fx_head] = lx
-	fx_y[fx_head] = ly
-	fx_dx[fx_head] = ux
-	fx_dy[fx_head] = uy
-	fx_t[fx_head] = tick
-	fx_head = (fx_head + 1) % FX_CAP
+	_fx_add(lx, ly, ux, uy, FXK_BURST, 0, 0)
 	var r := maxi(blast, 1)
 	var r2 := r * r
 	# Gather the men inside, nearest first (ties: lower index).
@@ -21701,6 +21958,9 @@ func state_hash() -> int:
 		ctx.update(ai_mem.to_byte_array())  # (the default profile keeps memory only for a play: sim/plays.gd)
 	if ai_plays[0] != Plays.ALL or ai_plays[1] != Plays.ALL:
 		ctx.update(ai_plays.to_byte_array())
+	if strk_used != 0:
+		# Shots strike the walls they cross (2026-11-06): only once a stone has struck one.
+		ctx.update(pr_wh.to_byte_array())
 	if sup_used != 0:
 		# Suppression (2026-11-06): only once a unit gained some.
 		for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb, u_suh, u_spv, u_sst]:

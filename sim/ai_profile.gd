@@ -435,10 +435,12 @@ const S_FORT_FALLBACK := 369   # 1: when a West fort town's streets fall (SiegeA
 const S_FB_GATE := 370         # ... this many melee units (nearest the gate) hold the fort's gate
 # Suppression, second pass (docs/AI.md 71, 2026-11-06): id 371.
 const SUPP_FLANK_TIME := 371   # 1: BattleAI's flank of a pinned unit (SUPP_FLANK_PCT) only when the melee unit can run the way round (1.5 x the gap) before the pin lapses with no further fire (BattleSim.supp_pin_left); else it goes straight in on the pinned front; 0 as the first pass (Easy)
-const N_KNOBS := 372
+# Shots strike the walls they cross (docs/AI.md 73, 2026-11-06): id 373 (372 left to the fort tuning pass).
+const ART_ARC_PCT := 373       # a stone battery's target scan (BattleAI's artillery scan, BattleSim._art_think's fire at will): a target its stone's arc cannot reach (BattleSim.art_arc_strike: it would strike a wall, tower or shut gate first) scores this % (100: as any other, Easy: it shoots at the men and hits the wall)
+const N_KNOBS := 374
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
+const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360], [372, 373]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -766,6 +768,8 @@ const KNOBS: Array = [
 	[SUPP_FLANK_PCT, 0, 50, 75],
 	[SUPP_HOLD, 0, 1, 1],
 	[SUPP_FLANK_TIME, 0, 1, 1],
+	# Shots strike the walls they cross (docs/AI.md 73): Easy keeps shooting at the men behind the wall (a deliberate mistake).
+	[ART_ARC_PCT, 100, 10, 10],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],

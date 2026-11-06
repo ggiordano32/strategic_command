@@ -495,6 +495,7 @@ func _check_cover3() -> void:
 	print("cover3: checked (stop under fire %s against %s, partly seeing line %s, shooters %s, garrison houses %d / %d, rubble lost %s ratings %s)" % [
 		str(res[was_good]), str(res[4]), str(lines), str(sh), skipped, houses, str(rlost), str(rrate)])
 	_check_cover4()
+	_check_strike()
 	_check_suppress()
 
 
@@ -726,6 +727,168 @@ func _check_suppress2() -> void:
 	print("PASS suppress2: the pin held %d of 300 ticks after it began (pinned at %s; the first pass's quiet %d, at %s); the charge into a pinned line %d m in 10 s against %d m (the crawl), a pinned line's hit gains 0 against %d; a garrison peaks at %d (suppressed), a heavy-cover line %d (pinned); 2 s quiet from 700: %d against %d" % [
 		held[1], str(firsts[1]), held[0], str(firsts[0]), ran[1], ran[0], g[0], res[true][0], res[false][0], res[true][2], res[false][2]])
 
+
+
+## Shots strike the walls they cross (2026-11-06; docs/design/battle_sim.md "Shots strike the walls they cross (as built,
+## 2026-11-06)"), a Rome town (seed 303, level 1) on flat ground, no AI, the towers' engines holding: (1) a stone
+## thrower 120 m out aimed at 60 spearmen 14 m inside a walls-2 tower (behind it from the battery): the arc meets the
+## tower (art_arc_strike, the cell a tower's), its stones strike it (stat_strikes; the shatter in the view's ring),
+## the stretch the tower joins loses hit points and the men lose fewer than with ARC_STRIKE_ON 0 (every stone through);
+## (2) the same battery 160 m out from walls 1 (the palisade) aimed at men 30 m inside: the arc clears it, no strike,
+## the stones come down among them; (3) a culverin's ball fired flat at men behind a shut gate (put in flight by hand:
+## a gun refuses a shot with no line) strikes the gate (its hit points fall) and kills nobody behind it.
+func _strike_sc(walls: int, ty: int, tower: bool, d_m: int, in_m: int) -> Dictionary:
+	var city := {"seed": 303, "level": 1, "walls": walls, "bld": [1, 2, 4]}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 303 * 7 + 3, "forest": 0, "ground": 1}
+	var att := [[ty, UT.size_of(ty)]]
+	for k in 16:
+		att.append([UT.SPEAR, 160])  # (room: the field grows with the attackers' layout; replaced below)
+	var sc: Dictionary = Scenarios.settlement(city, terr, att, [[UT.SPEAR, 60]], 1, [])["scenario"]
+	sc.erase("deploy_zones")
+	var probe := BattleSim.new()
+	probe.setup(sc, 1)
+	for sg in probe.ws_x0.size():
+		var mx: int = (probe.ws_x0[sg] + probe.ws_x1[sg]) / 2
+		var my: int = (probe.ws_y0[sg] + probe.ws_y1[sg]) / 2
+		if tower:
+			if probe.ws_nb[sg * 2] < 0:
+				continue
+			mx = probe.ws_jx[sg * 2]
+			my = probe.ws_jy[sg * 2]
+		var dc: int = FM.cos_a(probe.ws_dir[sg])
+		var ds: int = FM.sin_a(probe.ws_dir[sg])
+		var tx: int = mx - dc * in_m * 1024 / FM.TRIG_ONE
+		var tyy: int = my - ds * in_m * 1024 / FM.TRIG_ONE
+		var bx: int = tx + dc * d_m * 1024 / FM.TRIG_ONE
+		var by: int = tyy + ds * d_m * 1024 / FM.TRIG_ONE
+		var ok := true
+		for q in [[tx, tyy, 2], [bx, by, 6]]:
+			for i in range(-int(q[2]), int(q[2]) + 1, 2):
+				for j in range(-int(q[2]), int(q[2]) + 1, 2):
+					var xx: int = int(q[0]) + i * 1024
+					var yy: int = int(q[1]) + j * 1024
+					if xx < 4096 or yy < 4096 or xx > probe.field_w - 4096 or yy > probe.field_h - 4096 \
+							or probe.obs_kind(xx, yy) != MapGen.C_OPEN:
+						ok = false
+		if not ok:
+			continue
+		sc["units"] = [Scenarios.unit(0, ty, UT.size_of(ty), bx / 1024, by / 1024, FM.atan2_a(tyy - by, tx - bx)),
+			Scenarios.unit(1, UT.SPEAR, 60, tx / 1024, tyy / 1024, FM.atan2_a(by - tyy, bx - tx))]
+		sc["orders"] = [Scenarios.attack(0, 0, 1, 0)]
+		sc["strike_sg"] = sg
+		return sc
+	return {}
+
+
+func _strike_run(sc: Dictionary, on: int, ticks: int) -> Dictionary:
+	var scr: Script = BattleSim
+	scr.set("ARC_STRIKE_ON", on)
+	var sim := BattleSim.new()
+	sim.setup(sc, 7)
+	for o in sim.n_units:
+		if sim.u_side[o] == 1:
+			sim.u_fire[o] = 0
+	var sg: int = int(sc["strike_sg"])
+	var hp0: int = sim.ws_hp[sg]
+	var arc: int = sim.art_arc_strike(0, 1)
+	var arc_k := -1
+	if arc >= 0:
+		var nf: Vector2i = sim._near_face(1, sim.e_x[sim.u_eng0[0]], sim.e_y[sim.u_eng0[0]], sim.u_cx[1], sim.u_cy[1])
+		var ex: int = sim.e_x[sim.u_eng0[0]]
+		var ey: int = sim.e_y[sim.u_eng0[0]]
+		var dd := maxi(FM.approx_len(nf.x - ex, nf.y - ey), 1)
+		arc_k = sim.obs_kind(ex + (nf.x - ex) * arc / dd, ey + (nf.y - ey) * arc / dd)
+	var fxh: int = sim.fx_head
+	var shatter := 0
+	var tower_strikes := 0
+	for k in ticks:
+		sim.step()
+		while fxh != sim.fx_head:
+			if sim.fx_k[fxh] == BattleSim.FXK_STRIKE:
+				shatter += 1
+				if sim.obs_kind(sim.fx_x[fxh], sim.fx_y[fxh]) == MapGen.C_TOWER:
+					tower_strikes += 1
+			fxh = (fxh + 1) % BattleSim.FX_CAP
+	scr.set("ARC_STRIKE_ON", 1)
+	return {"arc": arc, "arc_k": arc_k, "stones": sim.stat_stones, "strikes": sim.stat_strikes, "shatter": shatter,
+		"tower": tower_strikes, "dmg": (hp0 - sim.ws_hp[sg]) / 100, "lost": 60 - sim.u_alive[1], "hash": sim.state_hash()}
+
+
+func _check_strike() -> void:
+	# (1) A stone aimed past a walls-2 tower strikes the tower.
+	var sc1 := _strike_sc(2, UT.STONE, true, 120, 14)
+	if sc1.is_empty():
+		_fail("strike: no walls-2 tower with open ground 14 m inside and 120 m out")
+		return
+	var on := _strike_run(sc1, 1, 700)
+	var off := _strike_run(sc1, 0, 700)
+	if int(on["arc"]) < 0 or int(on["arc_k"]) != MapGen.C_TOWER or int(on["strikes"]) < 3 or int(on["tower"]) < 3 \
+			or int(on["dmg"]) <= 0 or int(on["lost"]) >= int(off["lost"]) or int(off["strikes"]) != 0 or int(off["dmg"]) != 0:
+		_fail("strike: past a walls-2 tower (on %s, off %s)" % [str(on), str(off)])
+		return
+	var again := _strike_run(sc1, 1, 700)
+	if int(again["hash"]) != int(on["hash"]):
+		_fail("strike: the repeat diverged")
+		return
+	# (2) A high lob over a low palisade passes.
+	var sc2 := _strike_sc(1, UT.STONE, false, 160, 30)
+	if sc2.is_empty():
+		_fail("strike: no palisade stretch with open ground 30 m inside and 160 m out")
+		return
+	var lob := _strike_run(sc2, 1, 700)
+	if int(lob["arc"]) >= 0 or int(lob["stones"]) < 6 or int(lob["strikes"]) * 5 > int(lob["stones"]) or int(lob["lost"]) <= 0:
+		_fail("strike: the lob over the palisade (%s)" % str(lob))
+		return
+	# (3) A flat ball into a shut gate hits the gate.
+	var city := {"seed": 303, "level": 1, "walls": 2, "bld": [1, 2, 4]}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 303 * 7 + 3, "forest": 0, "ground": 1}
+	var gun := UT.index_of("field_gun")
+	var sc3: Dictionary = Scenarios.settlement(city, terr, [[gun, UT.size_of(gun)]], [[UT.SPEAR, 60]], 1, [])["scenario"]
+	sc3.erase("deploy_zones")
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 3)
+	var g := 0
+	var gc := Vector2i(s3.g_x[g], s3.g_y[g])
+	var gd: int = s3.g_dir[g]
+	var ox: int = FM.cos_a(gd)
+	var oy: int = FM.sin_a(gd)
+	var gu := -1
+	var tu := -1
+	for u in s3.n_units:
+		if s3.u_side[u] == 0 and s3.u_neng[u] > 0 and gu < 0:
+			gu = u
+		elif s3.u_side[u] == 1 and tu < 0 and s3.u_neng[u] == 0:
+			tu = u
+	var hp_g0: int = s3.g_hp[g]
+	var alive0 := 0
+	for u in s3.n_units:
+		if s3.u_side[u] == 1:
+			alive0 += s3.u_alive[u]
+	var p: int = s3.pr_free
+	s3.pr_free = s3.pr_next[p]
+	s3.pr_count += 1
+	s3.pr_sx[p] = gc.x + ox * 100 * 1024 / FM.TRIG_ONE
+	s3.pr_sy[p] = gc.y + oy * 100 * 1024 / FM.TRIG_ONE
+	s3.pr_x[p] = gc.x - ox * 15 * 1024 / FM.TRIG_ONE
+	s3.pr_y[p] = gc.y - oy * 15 * 1024 / FM.TRIG_ONE
+	s3.pr_t0[p] = s3.tick
+	s3.pr_t1[p] = s3.tick
+	s3.pr_unit[p] = gu
+	s3.pr_ty[p] = s3.u_type[gu]
+	s3.pr_tu[p] = tu
+	s3.pr_ak[p] = -1
+	var gst: int = s3.g_state[g]
+	s3._land(p)
+	var alive1 := 0
+	for u in s3.n_units:
+		if s3.u_side[u] == 1:
+			alive1 += s3.u_alive[u]
+	if gst != BattleSim.GATE_CLOSED or s3.g_hp[g] >= hp_g0 or alive1 != alive0:
+		_fail("strike: a ball into the shut gate (state %d, hp %d -> %d, the defenders %d -> %d)" % [gst, hp_g0, s3.g_hp[g], alive0, alive1])
+		return
+	print("PASS strike: past a walls-2 tower %d stones, %d struck (%d on the tower), the stretch lost %d hp, %d men lost (every stone through: %d stones, %d struck, %d lost); over the palisade from 160 m %d stones, %d struck, %d lost; a ball into the shut gate %d -> %d hp, nobody behind hit" % [
+		on["stones"], on["strikes"], on["tower"], on["dmg"], on["lost"], off["stones"], off["strikes"], off["lost"],
+		lob["stones"], lob["strikes"], lob["lost"], hp_g0 / 100, s3.g_hp[g] / 100])
 
 
 ## A field set piece of the fourth pass: 60 musketeers (side 0) at (200, 200) shooting at a line of 40 (side 1) at

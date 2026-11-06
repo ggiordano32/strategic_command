@@ -1789,7 +1789,7 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			if primary:
 				_dstr(a + Vector2(r, r * 2.5), "TARGET OUT OF SIGHT: SHOOTING BLIND" if arc_w \
 					else "TARGET OUT OF SIGHT: HOLDING FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
-		elif not (shooter and _draw_blocked(u, t, lw)):
+		elif not (shooter and (_draw_blocked(u, t, lw) or _draw_wall_strike(u, t, lw, primary))):
 			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
 		if primary and sim.supp_state(u) == BattleSim.SUP_PIN and sim.u_fighting[u] == 0:
 			# Suppression (2026-11-06): a pinned unit holds where it is (a move or withdraw order moves it, at the walk).
@@ -1852,32 +1852,232 @@ func _draw_art_range(u: int, lw: float) -> void:
 		_dl(c + d * maxf(rmin, px_per_m), ends[e], col, lw)
 
 
-## Stone impacts in the last FX_TICKS ticks: a dust ring that spreads and
-## fades, and the furrow the stone ploughed on along its flight.
+## Stone impacts in the last FX_TICKS ticks: a dust ring that spreads and fades where it came down. The stone rolls and
+## breaks (as built 2026-11-06, view only; docs/design/art_pipeline.md): a stone that landed runs on along its flight
+## for the sim's own run (BattleSim.fx_r: the plough it worked out, cut short where it was spent, so both peers draw the
+## same rest point), slowing to a stop, leaving its furrow, then breaks into three tumbling fragments (or, one in three,
+## sinks into the ground over two seconds); a gun's ball bounces once and rolls, rests and sinks; a stone that struck a
+## wall, tower or gate on its way (FXK_STRIKE) shatters at the face at its height (BattleSim.fx_h): a burst of dust and
+## fragments falling to the foot, no furrow; a ball stopped there knocks out dust and chips and drops. Drawn on the view
+## clock (the soldier layer's interpolated tick), upright at their ground points in the oblique and 3D views.
+const FX_ROLL_LIFE := 50.0   # ticks: the longest of the runs, rests, breaks and sinks
+const FX_BREAK_T := 10.0     # the fragments tumble this long (1 s) ...
+const FX_SINK_T := 20.0      # ... a stone sinks this long (2 s)
+const FX_G := 0.098          # m a tick squared (gravity: falling fragments)
+const COL_STONE := Color(0.5, 0.47, 0.42)
+const COL_IRON := Color(0.17, 0.16, 0.16)
+
+
 func _draw_impacts(lw: float) -> void:
-	var now: float = sim.tick
+	var now: float = float(sim.tick)
+	if soldiers != null:
+		now = float(sim.tick) - 1.0 + float(soldiers.alpha)
+	var vr := _view_rect()
+	var has_k: bool = sim.fx_k.size() == sim.fx_t.size()
 	for k in sim.fx_t.size():
 		var age: float = now - sim.fx_t[k]
-		if age < 0.0 or age > FX_TICKS:
+		if age < 0.0 or age > FX_ROLL_LIFE:
 			continue
-		var f := age / FX_TICKS
 		var p := to_px(sim.fx_x[k], sim.fx_y[k])
+		var run_m: float = float(sim.fx_r[k]) / 1024.0 if has_k else 0.0
+		if not vr.grow(run_m * px_per_m).has_point(p):
+			continue  # (the stone may have run that far from where it came down)
 		var dir := Vector2(sim.fx_dx[k], sim.fx_dy[k]) / 4096.0
-		var a := 0.85 * (1.0 - f)
+		var kind: int = sim.fx_k[k] if has_k else BattleSim.FXK_STONE
+		var sd: int = (sim.fx_x[k] >> 10) * 7 + (sim.fx_y[k] >> 10) * 13
 		# A stone that landed on a wall walk (or a tower), in a held building or on a siege tower lands there, at the height
-		# the men on it are drawn at (SoldierLayer.point_dm).
-		var up_h := 0.0
-		if BoardView.oblique and sim.obs_on != 0:
-			up_h = float(SoldierLayer.point_dm(sim, sim.fx_x[k], sim.fx_y[k])) * 0.1 * px_per_m * BoardView.ob_s
-		_up(p)
-		draw_circle(p + Vector2(0, -up_h - px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
-		if up_h > 0.0:
-			draw_arc(p + Vector2(0, -up_h), px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
-			_flat()
-			continue
+		# the men on it are drawn at (SoldierLayer.point_dm): it shatters there as a strike does.
+		var land_dm := 0
+		if sim.obs_on != 0 and (kind == BattleSim.FXK_STONE or kind == BattleSim.FXK_BURST):
+			land_dm = SoldierLayer.point_dm(sim, sim.fx_x[k], sim.fx_y[k])
+		if age <= FX_TICKS and kind != BattleSim.FXK_STRIKE and kind != BattleSim.FXK_BALL_STRIKE:
+			_impact_ring(p, age / FX_TICKS, land_dm, lw)
+		match kind:
+			BattleSim.FXK_STONE:
+				if land_dm > 0:
+					_shatter(p, dir, float(land_dm) * 0.1, age, sd, false)
+				else:
+					_stone_run(p, dir, run_m, age, sd, lw, false)
+			BattleSim.FXK_BALL:
+				_stone_run(p, dir, run_m, age, sd, lw, true)
+			BattleSim.FXK_STRIKE:
+				_shatter(p, dir, float(sim.fx_h[k]) * 0.1, age, sd, false)
+			BattleSim.FXK_BALL_STRIKE:
+				_shatter(p, dir, float(sim.fx_h[k]) * 0.1, age, sd, true)
+	_flat()
+
+
+## The dust ring where a stone or ball came down (f 0-1 of FX_TICKS), upright at land_dm on a walk or roof.
+func _impact_ring(p: Vector2, f: float, land_dm: int, lw: float) -> void:
+	var a := 0.85 * (1.0 - f)
+	var up_h := 0.0
+	if BoardView.oblique and land_dm > 0:
+		up_h = float(land_dm) * 0.1 * px_per_m * BoardView.ob_s
+	_up(p)
+	draw_circle(p + Vector2(0, -up_h - px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
+	if up_h > 0.0:
+		draw_arc(p + Vector2(0, -up_h), px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
 		_flat()
-		draw_arc(p, px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
-		draw_line(p, p + dir * px_per_m * 8.0, Color(0.35, 0.27, 0.18, a), maxf(lw * 1.5, px_per_m * 0.5))
+		return
+	_flat()
+	draw_arc(p, px_per_m * (1.0 + 2.5 * f), 0, TAU, 16, Color(0.85, 0.75, 0.55, a), lw)
+
+
+## World px a height of h metres is drawn up the screen (upright items; 0 in the top view).
+func _h_px(h_m: float) -> float:
+	return h_m * px_per_m * BoardView.ob_s if BoardView.oblique else 0.0
+
+
+## A round stone (or iron ball) of radius r sitting at ground point g, h metres up: rim, body, highlight. Upright in the
+## oblique views; in the top view a stone in the air is drawn a little larger, as the missiles are.
+func _ball(g: Vector2, r: float, h_m: float, col: Color, a: float) -> void:
+	_up(g)
+	var rr := r * (1.0 + (0.08 * h_m if not BoardView.oblique else 0.0))
+	var c := g + Vector2(0, -_h_px(h_m) - (rr if BoardView.oblique else 0.0))
+	draw_circle(c, rr, Color(col.darkened(0.6), a))
+	draw_circle(c, rr * 0.78, Color(col, a))
+	draw_circle(c + Vector2(-rr * 0.28, -rr * 0.28), rr * 0.3, Color(col.lightened(0.35), a * 0.9))
+	_flat()
+
+
+## A landed stone's (ball's) run: run_m metres along dir, a ball's first 40 % in one bounce; then it rests and breaks
+## into fragments or sinks (a ball sinks). Its furrow follows it.
+## Where a landed stone (ball) is `age` ticks after it came down, for a run of run_m metres: Vector3(metres along its
+## flight, metres up (a ball's one bounce over the first 40 % of the run), ticks it has been at rest (<= 0: moving)).
+## It runs at about 9 m/s on average, slowing evenly to a stop (a run of at least 0.3 s and at most 2 s).
+static func stone_run_at(run_m: float, age: float, ball: bool) -> Vector3:
+	var hop_m := run_m * 0.4 if ball and run_m > 1.25 else 0.0
+	var hop_t := clampf(hop_m / 3.0, 2.0, 5.0) if hop_m > 0.0 else 0.0
+	var roll_m := run_m - hop_m
+	var roll_t := clampf(roll_m / 0.9, 3.0, 20.0) if roll_m > 0.2 else 0.0
+	if age < hop_t:
+		var g := age / hop_t
+		return Vector3(hop_m * g, clampf(hop_m * 0.12, 0.3, 1.6) * 4.0 * g * (1.0 - g), age - hop_t - roll_t)
+	if age < hop_t + roll_t:
+		var f := (age - hop_t) / roll_t
+		return Vector3(hop_m + roll_m * (1.0 - (1.0 - f) * (1.0 - f)), 0.0, age - hop_t - roll_t)
+	return Vector3(run_m, 0.0, age - hop_t - roll_t)
+
+
+## Draw counts (view only; tests): stones and balls drawn running, breaking, sinking, shattering at a work.
+var impact_stats := PackedInt32Array([0, 0, 0, 0])
+
+
+func _stone_run(p: Vector2, dir: Vector2, run_m: float, age: float, sd: int, lw: float, ball: bool) -> void:
+	var r := maxf(px_per_m * (0.4 if ball else 0.45), 1.6 / zoom)
+	var hop_m := run_m * 0.4 if ball and run_m > 1.25 else 0.0
+	var st := stone_run_at(run_m, age, ball)
+	var s_m := st.x
+	var h_m := st.y
+	var rest_t := st.z   # (> 0: at rest)
+	var g := p + dir * s_m * px_per_m
+	# The furrow from where it first ran on the ground to where it is now, fading after it stops.
+	var fa := 0.75 * clampf(1.0 - maxf(rest_t, 0.0) / FX_SINK_T, 0.0, 1.0)
+	var f0 := p + dir * hop_m * px_per_m
+	if fa > 0.0 and s_m > hop_m + 0.2:
+		_dl(f0, g, Color(0.33, 0.25, 0.16, fa * (0.5 if ball else 0.7)), maxf(lw * 1.2, px_per_m * (0.25 if ball else 0.35)))
+	var hop_t := clampf(hop_m / 3.0, 2.0, 5.0) if hop_m > 0.0 else 0.0
+	if ball and hop_t > 0.0 and age >= hop_t and age < hop_t + 6.0:
+		# (the second touch: a small puff)
+		var pf := (age - hop_t) / 6.0
+		_up(f0)
+		draw_circle(f0 + Vector2(0, -px_per_m * 0.4 * pf if BoardView.oblique else 0.0), px_per_m * (0.4 + 1.0 * pf), Color(0.6, 0.5, 0.36, 0.45 * (1.0 - pf)))
+		_flat()
+	if rest_t <= 0.0:
+		_ball(g, r, h_m, COL_IRON if ball else COL_STONE, 0.95)
+		impact_stats[0] += 1
+		return
+	var breaks := not ball and posmod(sd, 3) != 0
+	if breaks:
+		if rest_t > FX_BREAK_T:
+			return
+		impact_stats[1] += 1
+		var bf := rest_t / FX_BREAK_T
+		var a := 0.95 * clampf((1.0 - bf) * 1.6, 0.0, 1.0)
+		for j in 3:
+			var ang := atan2(dir.y, dir.x) + (float(j) - 1.0) * 1.1 + float(posmod(sd + j * 5, 7)) * 0.12
+			var out := Vector2(cos(ang), sin(ang)) * px_per_m * (0.5 + 0.5 * float(j % 2)) * (0.3 + 1.6 * bf)
+			var fh := 0.7 * sin(PI * minf(bf * 1.4, 1.0)) * (0.6 + 0.2 * j)
+			_fragment(g + out, r * (0.8 - 0.15 * j), fh, rest_t * (0.5 + 0.25 * j) + j, COL_STONE, a)
+		if rest_t < 3.0:
+			_up(g)
+			draw_circle(g + Vector2(0, -r if BoardView.oblique else 0.0), r * (1.0 + rest_t), Color(0.7, 0.6, 0.46, 0.4 * (1.0 - rest_t / 3.0)))
+			_flat()
+		return
+	if rest_t > FX_SINK_T:
+		return
+	impact_stats[2] += 1
+	var sf := rest_t / FX_SINK_T
+	# Sinking: drawn lower and smaller, darkening into the ground.
+	var col := (COL_IRON if ball else COL_STONE).lerp(Color(0.33, 0.27, 0.2), sf * 0.7)
+	_ball(g, r * (1.0 - 0.55 * sf), -0.35 * sf, col, 0.95 * (1.0 - sf * sf))
+
+
+## A soft puff of dust: three nested discs, densest at the core (no texture: reads at any zoom, in every view).
+func _puff(c: Vector2, r: float, col: Color) -> void:
+	draw_circle(c, r, Color(col.darkened(0.15), col.a * 0.4))
+	draw_circle(c + Vector2(r * 0.12, -r * 0.1), r * 0.72, Color(col, col.a * 0.55))
+	draw_circle(c + Vector2(-r * 0.1, -r * 0.18), r * 0.42, Color(col.lightened(0.2), col.a * 0.6))
+
+
+## A stone fragment: a small tumbling chip (a rotated quad) at ground point g, h metres up.
+func _fragment(g: Vector2, r: float, h_m: float, spin: float, col: Color, a: float) -> void:
+	_up(g)
+	var c := g + Vector2(0, -_h_px(maxf(h_m, 0.0)) - (r if BoardView.oblique else 0.0))
+	var pts := PackedVector2Array()
+	var rim := PackedVector2Array()
+	for q in 5:
+		var ang := spin + q * TAU / 5.0 + (0.3 if q % 2 == 0 else 0.0)
+		var v := Vector2(cos(ang), sin(ang)) * r * (1.0 if q % 2 == 0 else 0.72)
+		pts.append(c + v)
+		rim.append(c + v * 1.3 + v.normalized() * 0.6 / zoom)
+	draw_colored_polygon(rim, Color(0.12, 0.1, 0.08, a * 0.85))
+	draw_colored_polygon(pts, Color(col, a))
+	draw_circle(c + Vector2(-r * 0.2, -r * 0.25), r * 0.32, Color(col.lightened(0.35), a * 0.85))
+	_flat()
+
+
+## A stone that struck a work at h metres up its face (or a ball stopped there): a burst of pale dust at the face and
+## fragments (chips for a ball) falling to the foot, scattering back from the face; a ball drops to the foot and rests.
+## No furrow, no ring on the ground.
+func _shatter(p: Vector2, dir: Vector2, h_m: float, age: float, sd: int, ball: bool) -> void:
+	var pm := px_per_m
+	if age > 30.0:
+		return
+	impact_stats[3] += 1
+	var up := _h_px(h_m)
+	var r := maxf(pm * 0.45, 1.6 / zoom)
+	var side := Vector2(-dir.y, dir.x)
+	# The dust: two pale tufts at the face, swelling and settling down it.
+	if age < 18.0:
+		var f := age / 18.0
+		_up(p)
+		var c := p + Vector2(0, -up + _h_px(0.8 * f))
+		if age < 2.0:
+			draw_circle(c, pm * 1.4 * (1.0 + age * 0.6), Color(1.0, 0.93, 0.75, 0.85 * (1.0 - age / 2.0)))
+		var fa := 1.0 - f * f
+		_puff(c - dir * pm * 1.6 * f, pm * (1.6 + 2.6 * f), Color(0.78, 0.68, 0.52, 0.95 * fa))
+		_puff(c + side * pm * 1.6 * f - dir * pm * 0.9 * f, pm * (1.2 + 2.0 * f), Color(0.62, 0.54, 0.42, 0.9 * fa))
+		_puff(c - side * pm * 1.4 * f + Vector2(0, _h_px(1.5 * f)), pm * (1.0 + 1.8 * f), Color(0.86, 0.78, 0.62, 0.8 * fa))
+		_flat()
+	# The pieces: thrown back off the face and sideways, falling under gravity to the foot, lying a moment, fading.
+	var n := 3 if ball else 4
+	for j in n:
+		var t := age
+		var fall_t := sqrt(maxf(2.0 * h_m / FX_G, 0.0))
+		var tt := minf(t, fall_t)
+		var hz := maxf(h_m + 0.15 * tt - 0.5 * FX_G * tt * tt, 0.0)
+		var sp := 0.25 + 0.1 * float(posmod(sd + j * 3, 4))
+		var lat := (float(j) - (n - 1) * 0.5) * 0.18
+		var off := (-dir * sp + side * lat * 1.5) * pm * minf(t, fall_t + 2.0)
+		var a := 0.95 * clampf((30.0 - t) / 12.0, 0.0, 1.0)
+		var rr := r * ((0.3 if ball else 0.62) - 0.08 * (j % 3))
+		_fragment(p + off, rr, hz, t * (0.6 + 0.2 * j) + j * 1.7, COL_STONE if not ball else Color(0.62, 0.56, 0.47), a)
+	if ball:
+		var bt := sqrt(maxf(2.0 * h_m / FX_G, 0.0))
+		var hz2 := maxf(h_m - 0.5 * FX_G * age * age, 0.0)
+		var g := p - dir * pm * 0.6 * minf(age / maxf(bt, 1.0), 1.0)
+		_ball(g, maxf(pm * 0.4, 1.6 / zoom), hz2, COL_IRON, 0.95 * clampf((30.0 - age) / 10.0, 0.0, 1.0))
 
 
 ## A dashed order line over a faint dark underlay, so it reads on light and
@@ -2037,6 +2237,36 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var fs := maxi(_font_size(12.0), label_fs(12.0))
 	_plate_str(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE: MOVING AROUND" if sp.z != 0 else "NO LINE OF FIRE",
 		fs, Color(1.0, 0.45, 0.38))
+	return true
+
+
+## Shots strike the walls they cross (2026-11-06): a stone battery whose arc at its target meets a wall, tower or shut
+## gate first (BattleSim.art_arc_strike) draws its line to the strike, a burst there, faint beyond, and "THE SHOT WILL
+## STRIKE THE WALL" (the order stands: the stones batter the wall). False when the arc reaches the target.
+func _draw_wall_strike(u: int, t: int, w: float, primary: bool) -> bool:
+	if sim.u_neng[u] <= 0 or UT.stat(sim.u_type[u], "m_kind") != 2:
+		return false
+	var sa: int = sim.art_arc_strike(u, t)
+	if sa < 0:
+		return false
+	var e0: int = sim.u_eng0[u]
+	var sx: int = sim.e_x[e0] if sim.e_state[e0] == BattleSim.E_OK else sim.u_cx[u]
+	var sy: int = sim.e_y[e0] if sim.e_state[e0] == BattleSim.E_OK else sim.u_cy[u]
+	var nf: Vector2i = sim._near_face(t, sx, sy, sim.u_cx[t], sim.u_cy[t])
+	var d := maxf(Vector2(nf.x - sx, nf.y - sy).length(), 1.0)
+	var a := to_px(sim.u_cx[u], sim.u_cy[u])
+	var b := to_px(sim.u_cx[t], sim.u_cy[t])
+	var hit := to_px(sx, sy).lerp(to_px(nf.x, nf.y), clampf(sa / d, 0.0, 1.0))
+	_dd(a, hit, COL_FIRE, w * 1.3, 10.0 / zoom, false)
+	_dd(hit, b, Color(COL_FIRE, 0.3), w, 4.0 / zoom)
+	var s := 8.0 / zoom
+	for k in 4:
+		var ang := PI * 0.25 + k * PI * 0.5
+		draw_line(hit + Vector2(cos(ang), sin(ang)) * s * 0.35, hit + Vector2(cos(ang), sin(ang)) * s * 1.2, COL_BLOCKED, w * 2.0)
+	draw_circle(hit, s * 0.3, COL_BLOCKED)
+	if primary:
+		_plate_str(hit + Vector2(s * 1.4, -s * 0.6), "THE SHOT WILL STRIKE THE WALL",
+			maxi(_font_size(12.0), label_fs(12.0)), Color(1.0, 0.72, 0.4))
 	return true
 
 

@@ -4830,3 +4830,18 @@ gone, but no more flanks land, because two companies now break the pinned target
 yard-wall case routed 60.3 -> 53.0 s). `sup_town` (8 West AI town battles, 300 s): knobs 366-369 on against off, men
 lost 723 / 1,047 against 715 / 1,052, one fallback against none: the siege AI's fallback and hold still measure as
 noise in towns (a garrison is never pinned, and street defenders are pinned 22 unit-seconds in 5,679 under fire).
+
+## 73. Shots strike the walls they cross: the artillery scan prefers what its stones can reach (2026-11-06)
+
+The battle rule is docs/design/battle_sim.md "Shots strike the walls they cross (as built, 2026-11-06)": an engine's
+stone whose arc meets a wall, tower or shut gate before its landing point strikes it there (damage to the works, nobody
+behind hit). One knob, id 373 (372 left free for the fort tuning pass; `KNOB_GAPS` [372, 373), `N_KNOBS` 374; renumber
+on merge if needed):
+
+| id | knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|---|
+| 373 | `ART_ARC_PCT` | 100 | 10 | 10 | a stone battery's target score (BattleAI's battery scan; BattleSim `_art_think`'s fire at will) for a target its arc cannot reach (`art_arc_strike` from the first engine at the target's near face) is multiplied by this % (Easy: it shoots at the men and hits the wall) |
+
+The siege AI's batter targets are unchanged. Measured (scratch `proj/scan_probe.gd`, 4 seeds): with 60 men at the wall
+and 30 men 35 m further in, Easy hits the wall (walls 2, 80 m: 24 strikes, 53 of the 60 lost, none of the 30), Average
+shoots the 30 (0 strikes, 40 lost) at walls 2 and 3; at Rome walls 1 the near face reads as reachable and both keep the 60.

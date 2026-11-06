@@ -1922,6 +1922,10 @@ static func _art_think(sim, u: int, phase: int) -> void:
 		elif not bolt:
 			score = score * kn[AP.ART_SC_MOVING_PCT] / 100  # stones cannot lead a moving target
 		score -= sim._unit_dist(u, o) / M
+		if not bolt and kn[AP.ART_ARC_PCT] != 100 and (best < 0 or score > best_score) and sim.art_arc_strike(u, o) >= 0:
+			# Shots strike the walls they cross (docs/AI.md 73): a target the stone's arc cannot reach (it would strike
+			# a wall, tower or shut gate first) scores ART_ARC_PCT % (Easy 100: it shoots at the men and hits the wall).
+			score = score * kn[AP.ART_ARC_PCT] / 100 if score > 0 else score - 1000
 		# Safety (friends in the way; a crest for bolts) only for a target
 		# that would be chosen: the line of fire test is the dear part.
 		if best < 0 or score > best_score:
