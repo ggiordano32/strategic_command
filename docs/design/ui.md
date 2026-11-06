@@ -1585,3 +1585,33 @@ after each edit). In co-op only units this player commands (`_mine`) are kept.
 - **Known:** on a phone the Groups cluster often takes the upper row (the bar is 198 px tall with one chip row of its own);
   nine groups in the stress selection leave some chips under More; groups are not saved between battles; a card's tip does not
   list its groups; the digits' old meaning moved to Alt (a window manager may take Alt+digit).
+
+### Cover chips and hittable marks (as built, 2026-11-06)
+
+The second pass of line of fire and cover (docs/design/battle_sim.md "Cover and line of fire, second pass (as built,
+2026-11-06)"); the owner wants a Company of Heroes kind of read of cover and lines on the phone. View only
+(`game/overlay.gd`; nothing hashed: caches refreshed once a sim second).
+- **Cover chip** (`_draw_cover_chip`, `chip_state`): every ready unit's marker carries a disc at its upper left (the
+  control-group tab's pattern: a small token on the disc, drawn upright in the oblique view), green for heavy cover,
+  yellow for light, a dark empty ring for none, against the nearest enemy unit it sees within 250 m (its facing with
+  none), for what its troop type gets (`BattleSim.cover_rating_front` with `cover_who`: a musket line behind a 1.3 m
+  yard wall yellow, a rider there nothing). A dark tick on the rim points at the threat (the covered side). A held
+  building or a wall's walk reads heavy. Engines, ships and characters carry none; riders show only heavy. At least 5
+  CSS px in radius (`logical_px`: the camera's zoom times the window's stretch, the device's CSS pixel ratio from
+  `UiScale`).
+- **Hittable / blocked marks** (`_draw_hit_mark`, `hit_state`): while a missile unit of this player with shot left is
+  the primary selection, each enemy it sees within its reach (`range_vs`) gets four green ticks round its marker when
+  the unit has a line of fire to it, a struck red ring when a house, wall or crest is between (`BattleSim.lof_units`,
+  the sim's own unit-level answer); cached per pair per sim second.
+- **The range ring cut at houses** (`_house_cut`): a flat missile weapon's ring is pulled in, ray by ray (72), to the
+  face of the first house, wall, tower or shut gate in the way (`lof_works_block`), cached per unit per sim second (the
+  lob rule's ring already pulled in at a wall).
+- **The preview's text** (`_draw_blocked`, `_plate_str`): "NO LINE OF FIRE" / "NO LINE OF FIRE: MOVING AROUND" on a
+  dark plate, at least 12 CSS px; the way to the spot reads the sim's kept spot (`_fire_spot_steady`: it changes only
+  when the sim keeps another; with none kept, one search a sim second, not every frame).
+- **The destination shield** (`_draw_dest_cover`) asks with the unit's troop type too.
+- Tests: battle_screen_test `_cover_cases` (both views: the chips' ratings and tick, the marks blocked behind a house and
+  hittable beside it). Shots: session scratchpad `cover2/shots/` (order, marks, chips, wall_line; 844 x 390 and 393 x
+  851, top and oblique).
+- Known: the "none" ring is faint at a distance; the marks and the chip are not on the unit card; a chip on every
+  marker adds clutter in big battles (the owner's eye); no device check.

@@ -7357,9 +7357,9 @@ func _check_cover() -> void:
 		bad.append("cover: town: blocked %d, men to cover spots %d, ticks with spots %d, leaning shots %d" % [
 			int(tw["flat_block"]), int(tw["cs_men"]), int(tw["cvb_on"]), int(tw["lean"])])
 	var tl := _cover_run("town_line", false, 7, -1)
-	# (Two men of 33 off their places since balls end at the house faces,
-	# 2026-11-06, one before: up to a tenth.)
-	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 10 > int(tl["alive_d"]):
+	# (Up to a twentieth: the two men of 33 seen off their places on
+	# 2026-11-06 were a slide-memory hold renewed without end, _free_mem.)
+	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 20 > int(tl["alive_d"]):
 		bad.append("cover: town: the line took cover spots or scattered (%s)" % str([tl["cvb_on"], tl["cs_men"], tl["far"]]))
 	if int(tw["behind"]) * 100 < int(tw["alive_d"]) * 20 or int(tw["behind"]) * int(tl["alive_d"]) <= int(tl["behind"]) * int(tw["alive_d"]):
 		bad.append("cover: town: buccaneers behind cover %d / %d, the line %d / %d" % [int(tw["behind"]), int(tw["alive_d"]),

@@ -262,6 +262,101 @@ func _check_lof() -> void:
 	if sb.stat_shots == 0 or int(Vector2(sb.u_cx[0] - bx, sb.u_cy[0] - by).length()) / 1024 > 3:
 		_fail("lof: the bow line did not lob over the house from where it stands (%d shots)" % sb.stat_shots)
 	print("lof: checked (musket walk, fire at will, bow lob)")
+	_check_cover2()
+
+
+## Cover and line of fire, second pass (docs/design/battle_sim.md "Cover and line of fire, second pass (as built,
+## 2026-11-06)"): (1) light cover is real for a musket line: behind a 1.3 m yard wall shot from beyond it loses a
+## quarter fewer men or more in 30 s than in the open (about half, measured), from the open side nothing; (2) the fire
+## spot is scored: a tall wall before the target, a low wall on the far side of the two ways round: the spot is the
+## covered one (without the low wall, the other), and the line walks there and fires; (3) the siege AI's short step:
+## a defending musket line with no line of fire at a seen attacker in reach steps under 14 m to a spot with one.
+func _check_cover2() -> void:
+	const AP := preload("res://sim/ai_profile.gd")
+	const SiegeAI := preload("res://sim/siege_ai.gd")
+	var Probe = load("res://tests/lof_probe.gd")
+	# (1) Light cover.
+	var lost := {}
+	var line_stops := {}
+	for cs in ["open", "front", "behind"]:
+		var tot := 0
+		var stops := 0
+		for sd in [1, 2]:
+			var rk := []
+			if cs != "open":
+				for x in range(180, 221, 2):
+					rk.append([x, 163, 1, 13])
+			var sy := 233 if cs != "behind" else 90
+			var sc := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+				"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
+				"units": [Scenarios.unit(0, UT.index_of("musketeers"), 60, 200, sy, Scenarios.FACE_UP if cs != "behind" else Scenarios.FACE_DOWN, 15),
+					Scenarios.unit(1, UT.index_of("musketeers"), 40, 200, 160, Scenarios.FACE_DOWN, 10)]}
+			var sim := BattleSim.new()
+			sim.setup(sc, sd)
+			sim.queue_order(BattleSim.make_fire_order(0, 1, 0))
+			for k in 300:
+				sim.step()
+			tot += sim.u_count0[1] - sim.u_alive[1]
+			stops += sim.stat_line_stop
+		lost[cs] = tot
+		line_stops[cs] = stops
+	if lost["front"] * 4 > lost["open"] * 3 or line_stops["front"] == 0:
+		_fail("cover2: a musket line behind a yard wall lost %d in 30 s against %d in the open (%d balls stopped)" % [lost["front"], lost["open"], line_stops["front"]])
+	if line_stops["behind"] != 0:
+		_fail("cover2: the yard wall behind the line stopped %d balls from the open side" % line_stops["behind"])
+	# (2) The scored fire spot.
+	var spots := {}
+	for low in [0, -1]:
+		var rk2 := []
+		for x in range(190, 211, 2):
+			for yy in [130, 132, 134, 136]:
+				rk2.append([x, yy, 1, 50])
+		if low != 0:
+			for x in range(200 + low * 31 - 8, 200 + low * 31 + 9, 2):
+				rk2.append([x, 152, 1, 13])
+		var sc2 := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+			"terrain": {"kind": Terrain.K_FLAT, "rocks": rk2},
+			"units": [Scenarios.unit(0, UT.index_of("musketeers"), 40, 200, 165, Scenarios.FACE_UP, 10),
+				Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 200, 100, Scenarios.FACE_DOWN, 10),
+				Scenarios.unit(0, UT.index_of("musketeers"), 10, 300, 60, Scenarios.FACE_DOWN, 5)]}
+		var s2 := BattleSim.new()
+		s2.setup(sc2, 3)
+		s2.queue_order(BattleSim.make_attack_order(0, 0, 1, 0))
+		s2.step()
+		var sp: Vector3i = s2.fire_spot(0, 1)
+		var face := FM.atan2_a(s2.u_cy[1] - sp.y, s2.u_cx[1] - sp.x)
+		spots[low] = [sp, s2.cover_rating_front(sp.x, sp.y, face, 4 * 1024, s2.cover_who(0))]
+		var x0: int = s2.u_cx[0]
+		for k in 400:
+			s2.step()
+		if s2.stat_shots == 0 or absi(s2.u_cx[0] - x0) < 15 * 1024:
+			_fail("cover2: the line did not walk round the wall to its spot and fire (low %d: %d shots, %d m aside)" % [low, s2.stat_shots, absi(s2.u_cx[0] - x0) / 1024])
+	var sp0: Vector3i = spots[0][0]
+	var sp1: Vector3i = spots[-1][0]
+	if sp0.z == 0 or sp1.z == 0 or (sp0.x > 200 * 1024) == (sp1.x > 200 * 1024) or int(spots[-1][1]) < 1:
+		_fail("cover2: the fire spot did not take the side with cover (open %s, with the low wall %s cover %d)" % [str(sp0), str(sp1), int(spots[-1][1])])
+	# (3) The siege AI's step for a line.
+	var sc3: Dictionary = Probe.town("musket", 40, "atk")
+	var us: Array = sc3["units"]
+	us[1]["type"] = UT.index_of("musketeers")
+	us.append(Scenarios.unit(1, UT.index_of("musketeers"), 10, (int(us[0]["x_m"]) + int(us[1]["x_m"])) / 2 + 30,
+		(int(us[0]["y_m"]) + int(us[1]["y_m"])) / 2, 0, 5))
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 7)
+	s3.step()
+	var hx: int = s3.u_ax[1]
+	var hy: int = s3.u_ay[1]
+	var kn := AP.row(AP.AVERAGE, 1)
+	while (s3.tick + 7) % SiegeAI.S_LOF_STEP_EVERY >= kn[AP.UNIT_THINK]:
+		s3.step()
+	var lof0: bool = s3.lof_units(1, 0)
+	SiegeAI._lof_step(s3, 1, kn, hx, hy)
+	for k in 150:
+		s3.step()
+	var moved := int(Vector2(s3.u_ax[1] - hx, s3.u_ay[1] - hy).length()) / 1024
+	if lof0 or not s3.lof_units(1, 0) or moved > 14 or moved < 2:
+		_fail("cover2: the defender's step for a line (line before %s, after %s, moved %d m)" % [str(lof0), str(s3.lof_units(1, 0)), moved])
+	print("cover2: checked (light cover %d / %d lost, spot %s / %s, step %d m)" % [lost["front"], lost["open"], str(sp0), str(sp1), moved])
 
 
 ## The three play scenarios in the Tests and benchmarks menu (docs/AI.md 44.1, 44.5, 44.6; 2026-11-05): each has a

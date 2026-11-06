@@ -4675,3 +4675,34 @@ flat shot (as built, 2026-11-06)"; the sim's attack order walks round a house to
 | `COVER_DIR` | 0 (any cover, as before) | 1 | 1 |
 
 Easy shoots at the nearest and takes any cover (deliberate mistakes). Measured: battle_sim.md (as built).
+
+## 66. The siege AI reads lines and cover (2026-11-06)
+
+(Numbered 66: 64 may be taken by the movement pass.) The battle rules are docs/design/battle_sim.md "Cover and line of
+fire, second pass (as built, 2026-11-06)". Every settlement battle runs `SiegeAI.think` instead of `BattleAI.think`,
+so note 65's `LOF_PICK` and `COVER_DIR` never ran where the houses are (the evaluation: knobs on and off identical over
+4 open-town seeds), and defending musket lines held their posts with enemies in reach and no line for minutes
+(1,413 unit-seconds in its probe, 568 before the first pass).
+
+- **`S_LOF_PICK`** (360). A storming flat-weapon missile unit with shot left (`_storm`'s target pick) counts a
+  defender within its range it has no line of fire to (`sim.lof_units`) `S_LOF_PUSH` 40 m farther: the ones it can
+  hit first, a hidden one only when no other is near (then the sim's attack order walks round for a line).
+- **`S_COVER_DIR`** (361). A West skirmisher's strongpoint (`_sp_cover`) adds `SP_COVER_DIR_W` 10 per step of the
+  cover facing its street mouth (`sim.cover_rating_front` for its troop type: heavy 2, light 1) to the cover cells round
+  it.
+- **`S_LOF_STEP`** (362). A defending flat-weapon missile unit at its post (`_reserve`, `_lof_step`) with attackers it
+  sees in its reach: with a line at one of them it shoots from where it stands; with none it steps to the best fire
+  spot (`sim.fire_spot`, the scored search) within 12 m of its post, facing the nearest, looked for at most every 3 s;
+  while attackers are in reach it does not go home; once they are gone it does. Attackers inside the town (the old
+  "shoot from the post") and in the field before it both count.
+
+| Knob (`sim/ai_profile.gd`, ids 360-362; `N_KNOBS` 363, gap 352-359) | Easy | Average | Skilled |
+|---|---|---|---|
+| `S_LOF_PICK` | 0 (the nearest, as before) | 1 | 1 |
+| `S_COVER_DIR` | 0 (the cover cells only) | 1 | 1 |
+| `S_LOF_STEP` | 0 (stands) | 12 m | 12 m |
+
+Easy as before (deliberate mistakes). Measured: battle_sim.md (as built): the storming shooters' pick and the
+strongpoints' cover move no balance cell measurably (`S_LOF_PICK` off, on the build that still had the 4 m stride at
+walls: Rome walls 2-3 38 / 23 -> 42 / 23); the defenders' step finds a spot within 12 m in few street posts (the AI's
+no-line standing barely moves), and in `open_town` (8 seeds) turning it off gave 88 % as with it.

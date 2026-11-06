@@ -419,10 +419,14 @@ const RT_TOWN_PCT := 345       # ... the same in a settlement battle (the siege 
 # Buildings block a flat shot; cover facing the enemy (docs/AI.md 65, 2026-11-06): ids 350-351.
 const LOF_PICK := 350          # 1: a flat-weapon missile unit's target choice (_mis_close, focus fire) on a map with houses or walls takes the nearest target it has a line of fire to, a target behind a house only when it has none (the sim's attack order then walks round for a line); 0 the nearest (Easy)
 const COVER_DIR := 351         # 1: cover troops' spots (_cover_spot) want cover between them and the enemy (BattleSim.cover_rating against the front); 0 any cover round the man (Easy)
-const N_KNOBS := 352
+# The siege AI reads lines and cover (docs/AI.md 66, 2026-11-06): ids 360-362 (352-359 left for a parallel pass).
+const S_LOF_PICK := 360        # 1: a storming flat-weapon missile unit (SiegeAI._storm) counts a defender it has no line of fire to S_LOF_PUSH farther (those it can hit first); 0 the nearest (Easy)
+const S_COVER_DIR := 361       # 1: a West skirmisher's strongpoint (SiegeAI._sp_cover) scores the cover facing the street mouth (BattleSim.cover_rating_front for its troop type) as well as the cover cells round it; 0 the cells only (Easy)
+const S_LOF_STEP := 362        # a defending flat-weapon missile unit at its post with attackers in reach and no line of fire at any steps to the best fire spot this near (metres, sim units; BattleSim.fire_spot); 0 it stands (Easy)
+const N_KNOBS := 363
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350]]
+const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -734,6 +738,10 @@ const KNOBS: Array = [
 	# Buildings block a flat shot (docs/AI.md 65): Easy shoots at the nearest and takes any cover (a deliberate mistake).
 	[LOF_PICK, 0, 1, 1],
 	[COVER_DIR, 0, 1, 1],
+	# The siege AI reads lines and cover (docs/AI.md 66): Easy as before (a deliberate mistake).
+	[S_LOF_PICK, 0, 1, 1],
+	[S_COVER_DIR, 0, 1, 1],
+	[S_LOF_STEP, 0, 12 * M, 12 * M],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],

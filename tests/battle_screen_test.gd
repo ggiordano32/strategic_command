@@ -408,6 +408,7 @@ func _process(_d: float) -> bool:
 			_casualty_cases()
 			_ship_cases()
 			_flash_cases()
+			_cover_cases()
 			if not _oblique:
 				# Again, in the oblique battle view.
 				_oblique = true
@@ -705,6 +706,68 @@ func _flash_cases() -> void:
 				"musket line: the flashes shown equal the sim's shots on each of %d fire ticks (%d of them a front rank of 25 of the 100, not the unit), none on the ticks between" % [fired_ticks, partial])
 			_check(ov.flashes_live == 0, "musket line: no flash a second after the last shot")
 		b.queue_free()
+	CData.use_pack(was)
+
+
+## Cover and line of fire, second pass (docs/design/ui.md "Cover chips and hittable marks", 2026-11-06): the cover
+## chip on the markers reads what the troop type gets (a musket line behind a 1.3 m wall: light; behind a 2.5 m one:
+## heavy; in the open: none; riders behind the low wall: none), its tick points at the nearest enemy; while a musket
+## line is selected an enemy behind a house is marked blocked and one in the open hittable; the overlay draws them.
+func _cover_cases() -> void:
+	const Terrain := preload("res://sim/terrain.gd")
+	const Probe := preload("res://tests/lof_probe.gd")
+	var was := CData.pack
+	CData.use_pack("west")
+	var rk := []
+	for x in range(150, 191, 2):
+		rk.append([x, 163, 1, 13])
+	for x in range(96, 125, 2):
+		rk.append([x, 163, 1, 13])
+	for x in range(30, 71, 2):
+		rk.append([x, 163, 1, 25])
+	var b := Battle.new()
+	b.custom_scenario = {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 40, 170, 160, Scenarios.FACE_DOWN, 10),
+			Scenarios.unit(0, UT.index_of("musketeers"), 40, 50, 160, Scenarios.FACE_DOWN, 10),
+			Scenarios.unit(0, UT.index_of("musketeers"), 40, 300, 160, Scenarios.FACE_DOWN, 10),
+			Scenarios.unit(0, UT.index_of("lancers"), 30, 110, 160, Scenarios.FACE_DOWN, 10),
+			Scenarios.unit(1, UT.index_of("musketeers"), 60, 170, 240, Scenarios.FACE_UP, 15),
+			Scenarios.unit(1, UT.index_of("musketeers"), 30, 50, 250, Scenarios.FACE_UP, 10)]}
+	b.seed_value = 3
+	root.add_child(b)
+	b.paused = true
+	var s: BattleSim = b.sim
+	var ov = b.overlay
+	for t in 3:
+		s.step()
+	var low: Array = ov.chip_state(0)
+	var tall: Array = ov.chip_state(1)
+	var open: Array = ov.chip_state(2)
+	var rider: Array = ov.chip_state(3)
+	_check(int(low[1]) == 1 and int(tall[1]) == 2 and int(open[1]) == 0 and int(rider[1]) == 0,
+		"cover chips: a musket line behind the yard wall light (%d), behind the tall wall heavy (%d), in the open none (%d), riders by the low wall none (%d)" % [low[1], tall[1], open[1], rider[1]])
+	_check(absi(((int(low[2]) - 256 + 512) & 1023) - 512) < 64, "cover chips: the tick points at the enemy (bearing %d, down 256)" % int(low[2]))
+	b._select(0)
+	ov.queue_redraw()
+	b.queue_free()
+	# Hittable / blocked marks: the lof_probe's town case (a musket line 40 m off pikes behind a house: blocked) and the
+	# same line with pikes in the open beside it (hittable).
+	for pos in ["town", "beside"]:
+		var hb := Battle.new()
+		hb.custom_scenario = Probe.scenario("musket", pos, 40, "faw")
+		hb.seed_value = 7
+		root.add_child(hb)
+		hb.paused = true
+		hb.sim.step()
+		hb._select(0)
+		var hov = hb.overlay
+		var hs: int = hov.hit_state(0, 1)
+		var src: int = hov._hit_source()
+		_check(src == 0 and hs == (0 if pos == "town" else 1), "hittable marks: the selected musket line marks pikes %s %s (%d)" % [
+			"behind a house" if pos == "town" else "beside the house", "blocked" if pos == "town" else "hittable", hs])
+		hov.queue_redraw()
+		hb.queue_free()
 	CData.use_pack(was)
 
 

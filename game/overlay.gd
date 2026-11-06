@@ -20,6 +20,7 @@ const SiegeGearOb := preload("res://game/siege_gear_ob.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 var _siege_ob := SiegeGearOb.new()
 const Traits := preload("res://game/unit_traits.gd")
+const UiScale := preload("res://game/ui_scale.gd")
 ## The sprite atlas (loaded, not preloaded: see soldier_layer.gd). Wagons
 ## (carts, wagons, their horses) are drawn from its shade sheet (step 1d
 ## props: fixed colours, no faction mask) by a child node under the
@@ -58,6 +59,14 @@ var zoom: float = 1.0
 var show_all_orders := false   # draw every friendly unit's order footprint
 var player_side := 0
 var orders  # OrderPreview: predicted order state including not-yet-applied orders
+# Cover and line of fire, second pass (2026-11-06; docs/design/ui.md "Cover chips and hittable marks"): view caches,
+# each refreshed once a sim second (they read the sim, change nothing).
+var _chip := {}        # unit -> [sim second, cover rating 0-2, threat bearing (sim angle), troop kind]
+var _hit := {}         # source unit * 4096 + enemy -> [sim second, 1 hittable / 0 blocked]
+var _ring := {}        # unit -> [sim second, cx, cy, PackedInt32Array radii per ring step (house cut)]
+var _fsv := {}         # unit * 4096 + target -> [sim second, Vector3i]: the order preview's fire spot when the sim keeps none
+var _dpr := 1.0        # window px per CSS px (UiScale), read once a second
+var _dpr_ms := -100000
 
 # Drag preview (world pixels), active when preview_on.
 var preview_on := false
@@ -1130,6 +1139,8 @@ static func draw_char_glyph(ci: CanvasItem, kind: int, c: Vector2, s: float, col
 ## yellow when routing, plus small state signs.
 func _draw_markers(r: float, lw: float) -> void:
 	var tick: int = sim.tick
+	hit_src = _hit_source()
+	_lp = logical_px()
 	var chs: bool = sim.ch_on != 0
 	var vis: bool = sim.vis_on != 0
 	for u in sim.n_units:
@@ -1168,6 +1179,10 @@ func _draw_markers(r: float, lw: float) -> void:
 			var gat := c + Vector2(r * 0.75, -r * 1.05)
 			draw_rect(Rect2(gat + Vector2(-2, -gfs), Vector2(gtw + 5, gfs + 3)), Color(0.08, 0.07, 0.04, 0.85))
 			_dstr(gat, gtx, HORIZONTAL_ALIGNMENT_LEFT, -1, gfs, Color(1.0, 0.85, 0.35))
+		if sim.u_state[u] == BattleSim.U_READY:
+			_draw_cover_chip(u, c, r, lw)
+		if hit_src >= 0 and sim.u_side[u] != sim.u_side[hit_src]:
+			_draw_hit_mark(u, c, r, lw)
 		if sim.car_on != 0 and sim.u_car[u] != 0:
 			# The caracole's phase under the marker (Firing / Wheeling / Reloading 18 s).
 			var ctx := Traits.caracole_text(sim, u)
@@ -1406,6 +1421,166 @@ func _draw_last_seen(r: float, lw: float) -> void:
 		_dstr(c + Vector2(-r * 1.4, r * 2.0), "last seen", HORIZONTAL_ALIGNMENT_LEFT, -1, fs,
 			Color(COL_GHOST, lerpf(0.7, 0.4, f)))
 		_flat()
+
+
+## Cover and line of fire, second pass (2026-11-06): world units per logical (CSS) pixel on screen now, for labels and
+## marks that must stay readable on a phone (the canvas is stretched and zoomed).
+func logical_px() -> float:
+	var now := Time.get_ticks_msec()
+	if now - _dpr_ms > 1000:
+		_dpr_ms = now
+		_dpr = UiScale.window_px_per_css(get_window()) if is_inside_tree() else 1.0
+	# (The canvas transform has the camera's zoom; the viewport's final transform the window stretch.)
+	var k := get_global_transform_with_canvas().get_scale().x * get_viewport().get_final_transform().get_scale().x \
+		if is_inside_tree() else zoom
+	return _dpr / maxf(k, 0.0001)
+
+
+## A font size (world units) that reads at least `logical` CSS px on screen.
+func label_fs(logical: float) -> int:
+	return maxi(int(ceil(logical * logical_px())), 4)
+
+
+## A label on a dark plate (readable over the red hatch of a house), upright in the oblique view.
+func _plate_str(pos: Vector2, text: String, fs: int, col: Color) -> void:
+	var font := ThemeDB.fallback_font
+	var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	var pad := fs * 0.3
+	if BoardView.oblique and not _up_on:
+		draw_set_transform_matrix(BoardView.up_xf(pos))
+	draw_rect(Rect2(pos + Vector2(-pad, -fs - pad * 0.5), sz + Vector2(pad * 2.0, pad * 1.6)), Color(0.07, 0.06, 0.04, 0.82))
+	draw_rect(Rect2(pos + Vector2(-pad, -fs - pad * 0.5), sz + Vector2(pad * 2.0, pad * 1.6)), Color(col, 0.6), false, maxf(fs * 0.06, 0.5))
+	draw_string(font, pos, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+	if BoardView.oblique and not _up_on:
+		draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+## The cover chip (2026-11-06, docs/design/ui.md "Cover chips and hittable marks"): every ready unit's marker carries a
+## small disc at its upper left, green for heavy cover, yellow for light, a dark empty ring for none, against the nearest
+## enemy it sees (its facing with none), for what its troop type gets (BattleSim.cover_rating_front with cover_who: a
+## yellow chip only where the sim gives light cover). A tick on the disc's rim points at the covered side (the threat).
+## Held buildings and wall walks read heavy. Refreshed once a sim second.
+func _draw_cover_chip(u: int, c: Vector2, r: float, lw: float) -> void:
+	if UT.cls(sim.u_type[u]) == UT.CLS_ART or sim.is_ship(u) or (sim.ch_on != 0 and sim.u_char[u] != 0):
+		return
+	var e := chip_state(u)
+	var cr: int = e[1]
+	var cr_r := maxf(r * 0.7, 5.0 * _lp)   # (at least 5 CSS px: 10 across on a phone)
+	var at := c + Vector2(-r - cr_r * 0.85, -r * 0.55 - cr_r * 0.55)
+	if cr == 0:
+		if int(e[3]) == BattleSim.COVW_RIDER:
+			return  # (riders: heavy only; no empty ring on every squadron)
+		draw_arc(at, cr_r, 0.0, TAU, 12, Color(0, 0, 0, 0.55), lw * 1.6)
+		draw_arc(at, cr_r, 0.0, TAU, 12, Color(0.78, 0.76, 0.7, 0.7), lw * 0.8)
+		return
+	var col := Color(0.45, 0.95, 0.4) if cr == 2 else Color(1.0, 0.84, 0.3)
+	draw_circle(at, cr_r + lw * 0.8, Color(0, 0, 0, 0.7))
+	draw_circle(at, cr_r, col)
+	if int(e[2]) >= 0:
+		var b: float = int(e[2]) * TAU / 1024.0
+		var dv := Vector2(cos(b), sin(b) * (BoardView.OBLIQUE_COS if BoardView.oblique else 1.0)).normalized()
+		var tang := Vector2(-dv.y, dv.x)
+		var tip := at + dv * (cr_r + lw * 2.2)
+		draw_colored_polygon(PackedVector2Array([tip, at + dv * cr_r * 0.55 + tang * cr_r * 0.6,
+			at + dv * cr_r * 0.55 - tang * cr_r * 0.6]), Color(0.1, 0.08, 0.05, 0.95))
+
+
+## Unit u's cover chip as drawn: [sim second, rating 0-2, threat bearing, BattleSim cover_who kind] (cached a sim second).
+func chip_state(u: int) -> Array:
+	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
+	var e: Array = _chip.get(u, [])
+	if e.is_empty() or int(e[0]) != sec:
+		e = [sec, _chip_rating(u), _chip_bearing(u), sim.cover_who(u)]
+		_chip[u] = e
+	return e
+
+
+## The cover unit u has now against its threat (_chip_bearing), for its troop type: a held building or a wall's walk
+## heavy, else BattleSim.cover_rating_front along its front.
+func _chip_rating(u: int) -> int:
+	if (sim.occ_on != 0 and sim.u_occ[u] > 0) or sim.u_wall[u] > 0:
+		return 2
+	var b := _chip_bearing(u)
+	if b < 0:
+		b = sim.u_face[u]
+	var files: int = mini(sim.files_of(u), sim.u_alive[u])
+	var hw: int = maxi(files - 1, 0) * UT.stat(sim.u_type[u], "file_sp") / 2
+	return sim.cover_rating_front(sim.u_ax[u], sim.u_ay[u], b, hw, sim.cover_who(u))
+
+
+## The bearing (sim angle) from unit u to the nearest enemy unit it sees within 250 m (centroids; index order on ties), its
+## facing with none.
+func _chip_bearing(u: int) -> int:
+	var side: int = sim.u_side[u]
+	var best := -1
+	var bd := 250 * 1024
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != BattleSim.U_READY or sim.hidden_from(o, side):
+			continue
+		var d := absi(sim.u_cx[o] - sim.u_cx[u]) + absi(sim.u_cy[o] - sim.u_cy[u])
+		if d < bd:
+			bd = d
+			best = o
+	if best < 0:
+		return sim.u_face[u]
+	return int(round(atan2(float(sim.u_cy[best] - sim.u_cy[u]), float(sim.u_cx[best] - sim.u_cx[u])) * 1024.0 / TAU)) & 1023
+
+
+var _lp := 1.0      # this frame: world units per CSS px (logical_px)
+var hit_src := -1   # this frame: the selected own missile unit whose targets get hittable / blocked marks (-1 none)
+
+## The primary selection when it is this player's ready missile unit with shot left (its targets are marked), else -1.
+func _hit_source() -> int:
+	if selected_units.is_empty():
+		return -1
+	var u: int = selected_units[0]
+	if u < 0 or u >= sim.n_units or sim.u_state[u] != BattleSim.U_READY or sim.u_side[u] != player_side \
+			or UT.cls(sim.u_type[u]) != UT.CLS_MISSILE or sim.u_ammo[u] <= 0:
+		return -1
+	return u
+
+
+## While a missile unit is selected (2026-11-06, CoH's sight cone as a per-enemy mark): each enemy in its range it sees
+## gets a mark round its marker: four green ticks when it has a line of fire to it (BattleSim.lof_units: the sim's own
+## unit-level answer, its middle and its men at cover spots), a struck red ring when a house, wall or crest is between.
+## Cached per enemy per sim second.
+func _draw_hit_mark(e: int, c: Vector2, r: float, lw: float) -> void:
+	var hs := hit_state(hit_src, e)
+	if hs < 0:
+		return
+	var rr := maxf(r * 1.75, 12.0 * _lp)
+	lw = maxf(lw, 1.4 * _lp)
+	if hs == 1:
+		var gc := Color(0.5, 1.0, 0.45, 0.95)
+		for k in 4:
+			var a := PI * 0.25 + k * PI * 0.5
+			var dv := Vector2(cos(a), sin(a))
+			draw_line(c + dv * rr * 0.78, c + dv * rr * 1.22, Color(0, 0, 0, 0.75), lw * 2.6)
+			draw_line(c + dv * rr * 0.78, c + dv * rr * 1.22, gc, lw * 1.3)
+	else:
+		var bc := Color(1.0, 0.3, 0.25, 0.95)
+		draw_arc(c, rr, 0.0, TAU, 20, Color(0, 0, 0, 0.7), lw * 2.4)
+		draw_arc(c, rr, 0.0, TAU, 20, bc, lw * 1.1)
+		var dv := Vector2(cos(-PI * 0.25), sin(-PI * 0.25))
+		draw_line(c - dv * rr, c + dv * rr, Color(0, 0, 0, 0.7), lw * 2.4)
+		draw_line(c - dv * rr, c + dv * rr, bc, lw * 1.1)
+
+
+## The mark enemy e gets while missile unit u is selected: 1 hittable, 0 blocked, -1 none (not ready, out of sight, out
+## of u's range). The line from BattleSim.lof_units, cached per pair per sim second.
+func hit_state(u: int, e: int) -> int:
+	if u < 0 or e < 0 or sim.u_state[e] != BattleSim.U_READY or sim.hidden_from(e, sim.u_side[u]):
+		return -1
+	var dd := Vector2(sim.u_cx[e] - sim.u_cx[u], sim.u_cy[e] - sim.u_cy[u]).length()
+	if dd > float(sim.range_vs(u, e)):
+		return -1
+	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
+	var key := u * 4096 + e
+	var hv: Array = _hit.get(key, [])
+	if hv.is_empty() or int(hv[0]) != sec:
+		hv = [sec, 1 if sim.lof_units(u, e) else 0]
+		_hit[key] = hv
+	return int(hv[1])
 
 
 ## Own units (line of sight, docs/DESIGN.md "Cover and line of sight"): a
@@ -1659,6 +1834,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 	var steps := RANGE_STEPS if full else maxi(int(RANGE_STEPS * (a1 - a0) / TAU) + 2, 4)
 	var pts := PackedVector2Array()
 	var lob: bool = sim.lobber(u)
+	var hcut := _house_cut(u, rng) if full and not lob else PackedInt32Array()
 	for k in steps + 1:
 		var ang := a0 + (a1 - a0) * k / steps
 		var dir := Vector2(cos(ang), sin(ang))
@@ -1674,6 +1850,8 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 			var dw: int = sim.wall_cross_at(cx, cy, cx + int(dir.x * r), cy + int(dir.y * r))
 			if dw >= 0:
 				r = maxi(r * BattleSim.ARC_OVER_WALL_PCT / 100, dw)
+		elif full and hcut.size() > k:
+			r = mini(r, hcut[k])  # (a flat weapon's ring pulled in to the house, wall or tower in the way: 2026-11-06)
 		pts.append(c + dir * (r * px_per_m / M))
 	if full and not _up_on:
 		# The range ring is a brass rule (a grey one when the ammunition is gone): `col`'s alpha says how strong.
@@ -1689,6 +1867,33 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 	else:
 		_dp(pts, col, w)
 	return [pts[0], pts[pts.size() - 1]]
+
+
+## A flat missile weapon's range ring cut where houses block (2026-11-06): per ring step (RANGE_STEPS + 1 rays from the
+## unit's middle) the distance to the face of the first house, wall, tower or shut gate in the way
+## (BattleSim.lof_works_block, the sim's own line), `rng` where none; cached per unit per sim second. Empty: no cut (arcing
+## weapons, engines, a map without obstacles, a unit on a wall's walk or in a building).
+func _house_cut(u: int, rng: int) -> PackedInt32Array:
+	var ty: int = sim.u_type[u]
+	if sim.obs_on == 0 or UT.stat(ty, "m_arc") != 0 or UT.cls(ty) != UT.CLS_MISSILE or sim.u_wall[u] > 0 \
+			or (sim.occ_on != 0 and sim.u_occ[u] > 0):
+		return PackedInt32Array()
+	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
+	var cx: int = sim.u_cx[u]
+	var cy: int = sim.u_cy[u]
+	var e: Array = _ring.get(u, [])
+	if not e.is_empty() and int(e[0]) == sec and int(e[1]) == cx and int(e[2]) == cy:
+		return e[3]
+	var out := PackedInt32Array()
+	out.resize(RANGE_STEPS + 1)
+	for k in RANGE_STEPS + 1:
+		var ang := TAU * k / RANGE_STEPS
+		var ex := cx + int(cos(ang) * rng)
+		var ey := cy + int(sin(ang) * rng)
+		var b: int = sim.lof_works_block(u, cx, cy, ex, ey)
+		out[k] = b if b >= 0 else rng
+	_ring[u] = [sec, cx, cy, out]
+	return out
 
 
 ## Flat weapons on hilly ground: if the line of fire from u to t is blocked
@@ -1716,16 +1921,32 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	draw_line(crest + Vector2(-s, s), crest + Vector2(s, -s), COL_BLOCKED, w * 2.0)
 	# Buildings block a flat shot (2026-11-06): with an attack order it walks round to the spot with a line (the sim's
 	# fire_spot), drawn as its way there.
-	var sp: Vector3i = sim.fire_spot_view(u, t) if sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] == t \
-		and blk >= 0 and sim.lof_works_block(u, x0, y0, x1, y1) >= 0 else Vector3i.ZERO
+	var sp: Vector3i = _fire_spot_steady(u, t) if sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] == t \
+		and blk >= 0 and sim.lof_works_block(u, x0, y0, x1, y1, true) >= 0 else Vector3i.ZERO
 	if sp.z != 0:
 		var spx := to_px(sp.x, sp.y)
 		_dash_outlined(a, spx, Color(1.0, 0.8, 0.45, 0.9), w, 8.0 / zoom)
 		draw_arc(spx, px_per_m * 1.2, 0, TAU, 14, Color(1.0, 0.8, 0.45, 0.95), w * 1.5)
 		_dd(spx, b, Color(COL_FIRE, 0.6), w, 4.0 / zoom)
-	_dstr(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE: MOVING AROUND" if sp.z != 0 else "NO LINE OF FIRE",
-		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
+	# (Second pass, 2026-11-06: on a dark plate at a readable size, at least 12 CSS px; from the kept spot, steady.)
+	var fs := maxi(_font_size(12.0), label_fs(12.0))
+	_plate_str(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE: MOVING AROUND" if sp.z != 0 else "NO LINE OF FIRE",
+		fs, Color(1.0, 0.45, 0.38))
 	return true
+
+
+## The order preview's fire spot (2026-11-06): the sim's kept one when it has one (steady: it changes only when the sim
+## keeps another), else BattleSim.fire_spot once a sim second (not every frame).
+func _fire_spot_steady(u: int, t: int) -> Vector3i:
+	if sim.u_fst.size() > u and sim.u_fst[u] == t + 1:
+		return sim.fire_spot_view(u, t)
+	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
+	var key := u * 4096 + t
+	var e: Array = _fsv.get(key, [])
+	if e.is_empty() or int(e[0]) != sec:
+		e = [sec, sim.fire_spot_view(u, t)]
+		_fsv[key] = e
+	return e[1]
 
 
 ## "uphill 12%" / "downhill 9%" from ground height ha to hb over (dx, dy)
@@ -1881,7 +2102,7 @@ func _draw_preview(lw: float) -> void:
 func _draw_dest_cover(u: int, centre: Vector2, face: int, files: int) -> void:
 	var c := centre / px_per_m * M
 	var hw := maxi(files - 1, 0) * UT.stat(sim.u_type[u], "file_sp") / 2
-	var cr: int = sim.cover_rating_front(int(c.x), int(c.y), face, hw)
+	var cr: int = sim.cover_rating_front(int(c.x), int(c.y), face, hw, sim.cover_who(u))
 	if cr <= 0:
 		return
 	var ang := face * TAU / 1024.0

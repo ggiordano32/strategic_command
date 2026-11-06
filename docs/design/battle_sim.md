@@ -883,6 +883,123 @@ What the owner's model has that this build does not, each with its cost (agent-d
   it from its open side (`cover_rating` from the flank) instead of trading volleys at the front. Needs a flank spot
   search (fire_spot's rings with a cover test from the spot), a knob, and the open-town and siege measures.
 
+### Cover and line of fire, second pass (as built, 2026-11-06)
+
+Why: the evaluation of the first pass (session scratchpad `eval/eval.md`) graded light cover *broken* for line troops
+and the fire spot, the AI in towns and the preview *weak*; the main session chose its gaps 1-3, 5 and the cheap parts
+of 4 and 7, plus the older straggler bug (its gap 9).
+
+**1. Light cover is real for line troops** (`_flat_block`, `_line_cover_stops`, `_line_man`). A man of the line (foot
+without the cover trait, on the ground: not on a wall's walk, not at a held building's windows, not a ship's hull) is
+still traced to his head (`LOF_HEAD`) for the ball's flight; when that line is clear, the same line to his chest
+(`LOF_CHEST` 1.2 m, straight from the muzzle) is traced, and a low wall, rock or hedge it meets shelters him:
+`LINE_LOW_STOP` 60 % of those balls stop there (the cover trait's rock value; the dust at that point as any stopped
+ball). Directional by the trace itself: only from beyond the obstacle. Not within `EXPOSE_T` of his own shot (he is up
+over it, as cover men). Woods: a man of the line in dense woods with woods 2 m toward the shooter (not at the wood's
+edge facing out: the directional rule where the wood has an edge, all-round inside it) stops `LINE_WOODS_STOP` 25 % of
+flat balls on top of the trees' `VEG_STOP_JAV`; a field's hedges (field maps) `LINE_FIELD_STOP` 15 %, from every side
+as `COV_FIELD`. Arrows and stones: unchanged. Cover men keep their better numbers (traced to the body, `COVER_STOP`).
+On wherever the map has the obstacle or the wood (not only with cover troops present, `cov_on`).
+- *The shield and the chips know the troop type* (`cover_rating(x, y, face, who)`, `cover_who`): `COVW_COVER` as
+  before; `COVW_LINE` light only from what the rules above give (woods with woods toward the bearing, a rock chest high
+  `CS_H` toward it, rubble, hedges); `COVW_RIDER` heavy only. No yellow where the unit gets nothing.
+- *Take cover reaches farther and uses the yard walls*: standing with no order a Take cover unit's men take spots
+  within `CS_R_TAKE` 13 m of their places (was `CS_R` 10 m), the check for obstacles near reaching as far
+  (`_obs_within`), and line troops in cover take chest-high cover (`CS_H`, was 2 m only).
+- *The unit-level line of fire* (`lof_units`) samples every `LOF_STEP` (4 m, as each man's shot does) on maps with
+  obstacles (was 8 m: a yard wall or a thin house slipped between the samples and the unit "had a line" none of its
+  men had, stood and fired nothing).
+
+**2. The fire spot is scored** (`fire_spot`, `_spot_lit`, `_fire_spot_kept`, `_fire_spot_on`). Candidates: the
+anchor itself, then rings `LOF_SPOT_STEP` 4 m apart to `LOF_WALK` 40 m (the target's bearing first, then either side).
+A spot serves when the unit's middle (half its depth back: where `lof_units` looks from) has a line of fire, and is
+counted by `LOF_FRONT_N` 5 points (the middle and 1 m behind the front at half and the whole half-width either side,
+each on open ground: a yard wall is walked round, not stood in); `LOF_SPOT_MIN` 2 of them. Score (lower is better):
+the walk (straight; the path planner in this tree has no enemy term: the concurrent movement pass adds one) +
+`LOF_SPOT_MISS` 10 m per point without a line - `LOF_SPOT_HEAVY` 10 m for heavy cover along the front facing the target
+(light half; `cover_rating_front` for its troop type) + `LOF_SPOT_CLOSE_PCT` 50 % of the ground given toward the target
++ each metre nearer the target than `LOF_SPOT_NEAR` 30 m. Spots that cannot beat the best so far are not traced (a
+ring is cut once its radius less the cover bonus is past the best), at most `LOF_SPOT_BUDGET` 600 traces a search
+(the first pass's worst case was 570). The search is triggered by a house, wall, tower, shut gate *or a rock or yard
+wall* in the way (`lof_works_block(..., rocks)`).
+- *Stable:* the kept spot is checked once a second and kept while `LOF_SPOT_KEEP` 1 point still has a line (a new
+  search only when it no longer serves; it never drops to "none" while the spot holds). There with its men up and still
+  no line from its middle: the next rings round (from 8 m). None found: searched again after a second, then every
+  `LOF_SPOT_RETRY` 3 s (was every second).
+- *On to the spot:* a unit whose middle gets a line on its way goes on to the spot unless, checked once a second,
+  `LOF_SPOT_GOOD` 4 of the 5 points have a line where it stands with cover as good as the spot's (then it stops there).
+  A wide line with no full line anywhere within 40 m stops at the best partial; it does not narrow (not built).
+
+**3. The siege AI reads lines and cover** (docs/AI.md 66; every town battle runs `SiegeAI`, so `LOF_PICK` and
+`COVER_DIR` of note 65 were dead there): `S_LOF_PICK` (a storming flat-weapon shooter counts a defender it has no line to
+`S_LOF_PUSH` 40 m farther), `S_COVER_DIR` (a West skirmisher's strongpoint scores the cover facing the street mouth),
+`S_LOF_STEP` 12 m (a defending musket line at its post with attackers in its reach and a line at none of them steps to
+the best fire spot within 12 m of the post, and back once they are gone).
+
+**4. The view** (docs/design/ui.md "Cover chips and hittable marks (as built, 2026-11-06)"): a cover chip on every
+marker, hittable / blocked marks on the enemies in reach of the selected missile unit, the range ring cut at houses,
+the preview's text on a plate at 12 CSS px, the preview reading the sim's kept spot.
+
+**5. The straggler** (`_free_mem`, the slide memory `s_wf`): when a slide's hold ran out, the memory kept its
+direction, so a man's next step back toward his place read as "the 2-cycle a corner makes" and started a new hold
+away from it, without end while the cell that way was open: after a unit halted, one or two men walked off at about
+3.8 m/s to the map's edge (the evaluation's 8 of 497 far men over 20 seeds; seed 7 two men 165 m off). The renewed
+hold is now tagged (bit 128) and clears the memory when it runs out: once per slide. The town cover check's tolerance
+for line men off their places is back to a twentieth.
+
+**Measured** (the evaluation's probes re-run, before = a clean copy of HEAD 2f17d34; tables in the session scratchpad
+`cover2/tab/`).
+- *Light cover* (`cover_field2`, 40 musketeers 3 m behind a 20 m line of rocks, 60 musketeers at 70 m on fire at will, 3
+  seeds; lost in 30 s / per 100 shots): open 51 / 11.1; behind the 1.3 m yard wall from beyond 51 / 11.1 -> 26 / 4.7
+  (-49 % in 30 s, -58 % a shot); from the open side 77 / 13.6 both (nothing); behind a 2.5 m wall 1 / 0.8 -> 1 / 0.7;
+  in woods (sight off) 47 / 9.8 -> 43 / 7.8; buccaneers unchanged (yard wall 8 -> 9, woods 34 -> 34).
+- *Take cover* (`snap`, 40 men ordered short of a 20 m wall, men in cover after 30 s): musketeers 6 m short of the 2.5
+  m wall 30 -> 36 heavy, of the yard wall 0 -> 36 light; 11 m short 0 -> 24 (both walls); buccaneers 11 m short 0 -> 14.
+- *The walk* (`lof_grid`, 81 attack cases: 3 towns x 40 / 80 / 120 m x 0 / 30 / 60 degrees x 40 / 80 / 120 men, 120
+  s): kills 1,046 -> 1,388 (+33 %), shots 21,243 -> 23,563, balls cut at a house face 38.9 -> 36.0 %, drawn across an
+  obstacle 7.5 -> 7.3 %, the first shot later: 20 -> 29 s (40 m 7 -> 17, 80 m 11 -> 21, 120 m 43 -> 49: the line walks
+  on to a spot with a line across its front and cover instead of firing from the first partial line); spot to target 69
+  -> 71 m.
+- *The AI standing with no line* (`ai_idle_fair2`, West level-2 town, AI against AI, 4 seeds x 300 s, unit-seconds of
+  AI musket units standing with a seen enemy in reach and no line, sampled every 4 m for both trees): walls 0 1,530 ->
+  1,781, of which garrisons at windows (the unit-level line from a held building's middle, while its men shoot per
+  window) 1,220 -> 1,421, the rest 310 -> 360; walls 2 1,670 -> 1,428. The defenders' step seldom finds a spot within 12
+  m in the streets (in the debug run 2 of 38 standing samples had one): the step is built and tested (custom_battle_test)
+  but does not move this number.
+- *The straggler* (`town_line`, 20 seeds): men more than 3 m off their places 8 / 493 -> 1 / 493 (the one a man still
+  walking in, 6 m off).
+- *Balance* (tools/balance, 8 seeds unless said; before dd665f87cd, after a42dd92c7e): `open_town` 16 seeds 85 -> 85 %
+  (8 seeds 75 -> 88: noise, the second 8 seeds 96 -> 83); `west_named` 39 -> 42 % (walls 0 / 1 / 2: 59 / 36 / 23 -> 57 /
+  50 / 20; the first pass's walls-2 shift, 9 -> 23, comes back a little, to 20); `west_walls` 41 -> 43 % (58 / 35 / 29
+  -> 60 / 41 / 28); `rome_walls` 61 -> 55 % (79 / 56 / 48 -> 79 / 48 / 38); all within the 8-point gate. Cells beyond
+  their interval: west havana w1 +50, cartagena w0 -50 / w1 +38, port_royal w0 +62 / w1 -38 / w2 -38, veracruz w0 -62,
+  st_augustine w0 +38, san_juan w2 +50; rome zeugitana w3 -50, attica w1 -38, sicilia_or w2 -38. Ablations: the 4 m
+  unit-level stride at wall walks took Rome walls 2-3 to 38 / 23 (56 / 48 before), so wall fights keep the 8 m line;
+  light cover off and `S_LOF_PICK` off change nothing at Rome walls 2-3 (+0 / +4 points); in `open_town` (8 seeds,
+  88 % with all) light cover off 75 %, the step off 88 %.
+- *Cost* (tests/benchmark.gd, paired runs, mean ms a tick, before -> after): bench_2000 2.16 -> 2.13, bench_4000_city
+  5.33 -> 5.03, and the new **bench_west_muskets** (a West open town, 8 musket lines of 60 a side, both AI, 1,500
+  ticks: `-- --scen=bench_west_muskets --max-ticks=1500`) 1.90 -> 2.19, **+15 %, over the +10 % budget**. Instrumented,
+  `lof_units` and `fire_spot` together cost about 0.11 ms a tick there (44 searches, 1,447 traces in 1,500 ticks); the
+  straggler fix alone accounts for about half of the rise (reverted in a copy: 2.04: men keep retrying their places
+  instead of walking off), the rest is spread (each rule off alone stays within 2.1-2.3: the battle itself changes); the
+  path searches double (998 -> 2,048: lines walking to spots). Left for the main session's call.
+- *Pins:* campaign pins MATCH (Rome and West, 6 seeds); no flat golden moved (the rules need a map with obstacles); the
+  rules hash moves.
+
+**Tests.** custom_battle_test `_check_lof` and `_check_cover2` (the light cover stop from beyond and none from the open
+side, the scored spot taking the covered way round and the line firing from it, the siege AI's step for a line);
+battle_screen_test `_cover_cases`; determinism_test's town cover check back to a twentieth.
+
+**Gaps of the evaluation closed and open.** Closed: 1 (light cover for line troops, the shield by troop type); 2
+(scored, stable spots, yard walls, the budget and the retry); 3 (the siege AI's line pick, cover direction and the
+defenders' step); 5 (the cover chip on every marker) and of 4 the readable preview, the hittable marks and the ring cut
+at houses; 7 (the search budget, the West musket benchmark); 9 (the straggler). Open: fire at will does not prefer an
+uncovered target (gap 6); lines never fire on the move and the walk ignores exposure beyond the closing penalty (gap
+8: the movement pass's enemy term); a wide line does not narrow at a corner; the per-enemy marks and the chip are not
+on the unit card; suppression, negative cover, cursor-hover cover icons, garrison window arcs and the AI's flanking of
+cover (the plan above); no device check.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

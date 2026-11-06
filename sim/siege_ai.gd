@@ -172,6 +172,9 @@ const SP_LAT_STEP := 6 * M      # a skirmisher's strongpoint: candidates this fa
 const SP_LAT_N := 3              # ... this many each side (_sp_cover)
 const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
 const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain point
+const SP_COVER_DIR_W := 10       # ... plus this per step of cover facing the street mouth (S_COVER_DIR: heavy 2, light 1; docs/AI.md 66)
+const S_LOF_PUSH := 40 * M       # S_LOF_PICK: a storming shooter counts a defender it has no line of fire to this much farther (docs/AI.md 66)
+const S_LOF_STEP_EVERY := 30     # S_LOF_STEP: a defender with no line looks for its step at most this often (ticks)
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
 const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
 const S_BEATEN_TOWN_PCT := 25  # attackers in an open campaign town (a plan map, no outer gates) withdraw below this % of their start (and weaker; AP.S_BEATEN_PCT elsewhere)
@@ -752,7 +755,13 @@ static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vec
 	var gm: int = sim._ground_mask(u)
 	var ra: int = sim.reach_at(p0.x, p0.y)
 	var best := p0
+	# (S_COVER_DIR, docs/AI.md 66: the cover facing the street mouth as well.)
+	var cdir: bool = AP.of(sim, sim.u_side[u])[AP.S_COVER_DIR] != 0
+	var who: int = sim.cover_who(u)
+	var hw: int = BattleAI._width(sim, u) / 2
 	var bs := _cover_score(sim, p0.x, p0.y)
+	if cdir:
+		bs += SP_COVER_DIR_W * sim.cover_rating_front(p0.x, p0.y, FM.atan2_a(mo.y - p0.y, mo.x - p0.x), hw, who)
 	for q in range(-2, 5):
 		var pq := clampi(pct + q * 5, 5, 95)
 		var bx := mo.x + dx * pq / 100
@@ -765,6 +774,8 @@ static func _sp_cover(sim, u: int, mo: Vector2i, pl: Vector2i, pct: int, p0: Vec
 			if zr > 0 and _df_zone_d(sim, 1 - sim.u_side[u], x, y) <= zr:
 				continue  # (in the reach of the attackers' deployment zone: docs/AI.md 41)
 			var sc := _cover_score(sim, x, y) - SP_COVER_FAR * BattleAI._d(x - p0.x, y - p0.y) / SP_LAT_STEP
+			if cdir:
+				sc += SP_COVER_DIR_W * sim.cover_rating_front(x, y, FM.atan2_a(mo.y - y, mo.x - x), hw, who)
 			if sc > bs:
 				bs = sc
 				best = Vector2i(x, y)
@@ -1532,6 +1543,8 @@ static func _reserve(sim, u: int) -> void:
 	var t := _nearest_attacker(sim, u, hx, hy, kn[AP.S_RESERVE_R], true)
 	if t >= 0 and sim.u_cls[u] != UT.CLS_ART:
 		if sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0:
+			if kn[AP.S_LOF_STEP] > 0:
+				_lof_step(sim, u, kn, hx, hy)  # (no line of fire from the post: a short step for one; docs/AI.md 66)
 			return  # shoot from the post (fire at will)
 		if (sim.u_order[u] != O_ATTACK or sim.u_target[u] != t) \
 				and BattleAI._mistake(sim, sim.u_side[u], AP.M_LATE_FLANK, kn):
@@ -1539,6 +1552,8 @@ static func _reserve(sim, u: int) -> void:
 		var run_r := kn[AP.S_RESERVE_RUN]
 		BattleAI._attack(sim, u, t, 1 if BattleAI._dist2(sim, u, t) < run_r * run_r else 0)
 		return
+	if kn[AP.S_LOF_STEP] > 0 and sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0 and _lof_step(sim, u, kn, hx, hy):
+		return  # (attackers in reach outside the town: from its post, or a short step from it for a line; docs/AI.md 66)
 	var face: int = FM.atan2_a(sim.g_y[0] - hy, sim.g_x[0] - hx) if sim.n_outer > 0 else sim.u_dface[u]
 	if sim.n_outer == 0 and _street_row(sim, u) and BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > SP_RUN_R:
 		# (A West unit far from its street post: there at the run, before the
@@ -1547,6 +1562,57 @@ static func _reserve(sim, u: int) -> void:
 		_go_run(sim, u, hx, hy, face, 10, 1)
 		return
 	_go_home(sim, u, hx, hy, face, 10)
+
+
+## S_LOF_STEP (docs/AI.md 66): defending flat-weapon missile unit u at its
+## post (hx, hy) with attackers it sees in its reach: with a line of fire at
+## one of them it shoots from where it stands; with none it steps to the best
+## fire spot within S_LOF_STEP of the post (BattleSim.fire_spot, scored: the
+## line across its front, the cover facing the enemy, the walk), facing the
+## nearest; looked for at most every S_LOF_STEP_EVERY ticks. True while it
+## holds there (on its way, or attackers in reach and it within S_LOF_STEP +
+## 4 m of its post): no going home meanwhile; once they are gone, home.
+static func _lof_step(sim, u: int, kn: PackedInt32Array, hx: int, hy: int) -> bool:
+	if sim.obs_on == 0 or UT.stat(sim.u_type[u], "m_arc") != 0 or sim.u_wall[u] != 0 \
+			or (sim.occ_on != 0 and (sim.u_occ[u] > 0 or sim.u_ocg[u] > 0)):
+		return false
+	var step: int = kn[AP.S_LOF_STEP]
+	if BattleAI._d(sim.u_ax[u] - hx, sim.u_ay[u] - hy) > step + 4 * M and sim.u_order[u] != O_MOVE:
+		return false
+	var side: int = sim.u_side[u]
+	# (The lines are read only on its look ticks, every S_LOF_STEP_EVERY; between
+	# them it holds while an attacker is in reach.)
+	var look: bool = sim.u_order[u] != O_MOVE and (sim.tick + u * 7) % S_LOF_STEP_EVERY < kn[AP.UNIT_THINK]
+	var near := -1
+	var nd := 0
+	var lined := false
+	for o in sim.n_units:
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.hidden_from(o, side) or sim.u_wall[o] > 0:
+			continue
+		if sim.shp_on != 0 and sim.is_ship(o):
+			continue
+		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+		if d > sim.range_vs(u, o):
+			continue
+		if near < 0 or d < nd:
+			near = o
+			nd = d
+		if not look:
+			break  # (one in reach is enough between looks)
+		if sim.lof_units(u, o):
+			lined = true
+			break  # (it has a line at one: it shoots from here)
+	if near < 0:
+		return false
+	if lined or not look:
+		return true
+	var sp: Vector3i = sim.fire_spot(u, near, step)
+	if sp.z == 0 or BattleAI._d(sp.x - sim.u_ax[u], sp.y - sim.u_ay[u]) < 2 * M \
+			or BattleAI._d(sp.x - hx, sp.y - hy) > step + 2 * M:
+		return true
+	BattleAI._count(sim, side, AP.C_SIEGE)
+	BattleAI._move(sim, u, sp.x, sp.y, FM.atan2_a(sim.u_cy[near] - sp.y, sim.u_cx[near] - sp.x), BattleAI._width(sim, u), 0, 3)
+	return true
 
 
 # ------------------------------------------------ defenders: the layout ---
@@ -2672,6 +2738,12 @@ static func _storm(sim, u: int) -> void:
 	var cg: int = sim.cit_gate
 	var cit_shut: bool = cg >= 0 and sim.g_state[cg] == GATE_CLOSED and not _cit_breached(sim)
 	var fort_skip: bool = sim.fort_on != 0 and sim.ai_fort[sim.u_side[u]] != 2
+	# (S_LOF_PICK, docs/AI.md 66: a flat-weapon shooter with shot left counts a
+	# defender it has no line of fire to S_LOF_PUSH farther: those it can hit
+	# first, as BattleAI's LOF_PICK in the field.)
+	var lofk: bool = kn[AP.S_LOF_PICK] != 0 and sim.obs_on != 0 and sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0 \
+		and UT.stat(sim.u_type[u], "m_arc") == 0
+	var lrng: int = sim.mrange(u) if lofk else 0
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
 			continue
@@ -2694,6 +2766,8 @@ static func _storm(sim, u: int) -> void:
 					and sim.u_order[f] == O_ATTACK and sim.u_target[f] == o:
 				crowd += 1
 		d += crowd * spread
+		if lofk and d < best_d and d <= lrng + crowd * spread and not sim.lof_units(u, o):
+			d += S_LOF_PUSH
 		if d < best_d:
 			best = o
 			best_d = d

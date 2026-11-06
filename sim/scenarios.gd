@@ -71,7 +71,7 @@ const IDS: Array[String] = ["skirmish", "battle_2000", "battle_4000",
 	"test_bolts_crest", "test_woods", "siege_village", "siege_town", "siege_city", "siege_hill",
 	"bench_4000_city", "siege_castrum", "siege_polis", "siege_punic", "siege_oppidum",
 	"bench_4000_polis", "bench_4000_castrum", "west_village", "west_town", "west_city", "west_inland",
-	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "west_fort_storm",
+	"west_port", "west_hill_village", "bench_west_town", "bench_4000_west", "bench_west_muskets", "west_fort_storm",
 	"west_harbour_assault", "tayasal", "tutorial_native", "play_field", "salvo_field", "ambush_field"]
 
 ## Playable battles get generated terrain (random kind from the seed unless
@@ -185,6 +185,8 @@ static func title(id: String) -> String:
 			return "AI vs AI benchmark: 1,500 in a West town"
 		"bench_4000_west":
 			return "AI vs AI benchmark: 4,000 in a West city"
+		"bench_west_muskets":
+			return "AI vs AI benchmark: 8 musket lines a side in a West town"
 		"west_fort_storm":
 			return "West: storming a harbour fort (ram, ladders)"
 		"tutorial_native":
@@ -244,6 +246,8 @@ static func make(id: String) -> Dictionary:
 			return west_town(4244, 1, 1, 1, Terrain.K_ROLLING, MapGen.PAL_GREEN, MapGen.CUL_LATIN, 2)
 		"bench_4000_west":
 			return west_town(4242, 2, 1, 1, Terrain.K_FLAT, MapGen.PAL_DRY, MapGen.CUL_LATIN, 3)
+		"bench_west_muskets":
+			return bench_west_muskets()
 		"west_fort_storm":
 			return fort_storm()
 		"tutorial_native":
@@ -1761,6 +1765,23 @@ static func west_town(city_seed: int, level: int, walls: int, coast: int, kind: 
 		"founder": founder, "west": 1}
 	var r := settlement(city, terr, att, dfn, 1, [0, 1], equip)
 	return r["scenario"]
+
+
+## bench_west_muskets (docs/design/battle_sim.md "Cover and line of fire,
+## second pass (as built, 2026-11-06)"): the line-of-fire benchmark, a West
+## open town (level 1, walls 0) with 8 musket lines of 60 a side, both AI:
+## the fire spot search, the siege AI's line picks and steps, the light cover
+## traces. tests/benchmark.gd -- --scen=bench_west_muskets --max-ticks=1500.
+static func bench_west_muskets() -> Dictionary:
+	var att: Array = []
+	var dfn: Array = []
+	for k in 8:
+		att.append([UT.index_of("musketeers"), 60])
+		dfn.append([UT.index_of("musketeers"), 60])
+	var terr := {"kind": Terrain.K_FLAT, "seed": 4245, "forest": MapGen.PALETTE_FOREST[MapGen.PAL_GREEN] + 20, "ground": MapGen.PAL_GREEN}
+	var city := {"seed": 4245, "level": 1, "walls": 0, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 0,
+		"founder": MapGen.CUL_LATIN, "west": 1}
+	return settlement(city, terr, att, dfn, 1, [0, 1])["scenario"]
 
 
 ## The West harbour fort's set pieces (slice 2c; tests/determinism_test.gd
