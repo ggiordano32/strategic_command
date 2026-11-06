@@ -1728,3 +1728,15 @@ docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; 
   tapped at any yaw and tilt; the overlay (selection, previews, the placement tool's ghost and handles, range rings, cover chips,
   hittable marks, deployment zones, group badges, standards, smoke) is drawn in 2D over the 3D through the lift shader with the
   yaw (`game/board_lift3d.gdshader`); the Paths hatch is drawn by the board's own shader. The HUD is unchanged.
+- **The drag box (as built, 2026-11-06).** The owner, after turning the table: "The way the drag rectangle is drawn is also
+  different. It is cool, but the square should be drawn from the screen and projected down the same way that Rome and Company
+  of Heroes do it." In the 3D view the mouse's left-drag box (Shift adds) is now the screen's rectangle: drawn square to the
+  screen from the point pressed to the pointer (`Overlay.box_sa` / `box_sb`, viewport px, drawn upright through the lift
+  shader so neither the board's tilt nor its turn reaches it; before, the two corners' ground points made a world rectangle laid
+  on the turned board, a rotated parallelogram on screen), and it picks the player's units whose marker, centre or any living man
+  projects inside it (`Battle._box_end`: the corners' board points, the board's space being the screen's up to the camera's
+  scale and offset; each man through `BoardView.to_board`, the 3D camera's projection of the ground). Any yaw and tilt.
+  The Top and Oblique views are unchanged (their world rectangle is already nearly square to the screen there). Touch has no
+  box select (a one-finger drag pans or draws the order line, as before), so nothing changed on touch. Tests: v3d_test 4b (a box
+  round a unit's men at yaws 0 / 120 / 240 draws the dragged screen points and selects exactly the units whose men, marker or
+  centre the Camera3D projects inside), input_test's box steps (the drawn corners checked in the 3D view).

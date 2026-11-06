@@ -4,9 +4,9 @@ shader_type spatial;
 // materials times a soft ambient occlusion; the masked parts grey) recoloured by the culture's palette through the vertex's
 // mask class (UV2.x: 1.0 none / 0.7 roof / 0.4 plaster / 0.1 accent, the kit atlases' classes), lit as battlekit.gdshader
 // lights the painted sprites (an ambient with a sky term and one half-Lambert key, normalised so a face looking up reads at its
-// painted value) with the key along the 3D lamp (key_dir, set each frame from the lamp's yaw), then the battle look's saturation and
-// contrast; the lamp adds only its shadows (as the kit's cards: lit 1.0, in shadow 0.71). No texture read in the vertex stage
-// (the compatible path's rule): the ground's height is in the instance's transform.
+// painted value) with the key along the 3D lamp (key_dir, the world lamp's direction: the same faces lit from every yaw), then
+// the battle look's saturation and contrast; the lamp adds only its shadows (as the kit's cards: lit 1.0, in shadow 0.71). No
+// texture read in the vertex stage (the compatible path's rule): the ground's height is in the instance's transform.
 render_mode diffuse_lambert, specular_disabled, cull_back;
 
 uniform sampler2D kit_tex : filter_linear_mipmap, repeat_disable;

@@ -13,8 +13,11 @@
 // grid's uniforms (`#define CPU_FED`, soldiers3d_cpu.gdshader: the compatible path, the board mesh then the same grid).
 // Depth sorts men, houses, walls and trees (no per-tick order, no occluder, no ghosts behind walls): the card is moved toward the
 // camera along the view (its screen place unchanged) just enough that the sheet's part below the feet clears the ground in front.
-// Unshaded (the light is painted in), alpha-cut so it writes depth and casts a shadow; the card's axes are the camera's (cam_*)
-// also in the shadow pass. `BASES` (soldier_bases3d.gdshader): the round flocked base with the faction's rim, flat on the board.
+// Unshaded (the light is painted in), alpha-cut so it writes depth and casts a shadow. The world lamp (2026-11-06): in the shadow
+// pass (the view is not the camera's) the card stands upright at the feet facing the lamp, so a man's shadow is the same at every
+// yaw (a card in the camera's plane leans back and its shadow grew and shrank as the table turned); and the paint's highlight is
+// on the camera's left, so with the table turned the card is shaded across (side_k: the side toward the lamp lighter, the side
+// away darker, 0 at the opening yaw). `BASES` (soldier_bases3d.gdshader): the round flocked base with the faction's rim, flat on the board.
 #define V3D
 #include "res://game/board_view.gdshaderinc"
 #ifndef CPU_FED
@@ -44,6 +47,7 @@ uniform vec3 cam_r = vec3(1.0, 0.0, 0.0);
 uniform vec3 cam_u = vec3(0.0, 0.766, -0.643);
 uniform vec3 cam_b = vec3(0.0, 0.643, 0.766);
 uniform float cam_yaw = 0.0;
+uniform float side_k = 0.0;           // view3d.gd SIDE_K turned by the camera's yaw against the lamp's
 uniform float low = 0.0;
 
 const int SPRITES = 12;
@@ -59,6 +63,7 @@ varying vec4 v_ob;
 varying vec4 v_b;
 varying vec2 v_c;
 varying float v_seed;
+varying float v_side;
 
 vec4 sprite_rect(int spr) {
 	if (spr == 0) { return vec4(-0.6, 0.85, -0.6, 0.6); }
@@ -238,6 +243,7 @@ void vertex() {
 	v_b = vec4(0.0);
 	v_c = vec2(0.0);
 	v_seed = 0.0;
+	v_side = 0.0;
 	vec2 uv = vec2(UV.x, 1.0 - UV.y);   // (the card's corner: world_vertex_coords hands VERTEX in already placed)
 	vec2 pw = mix(prv, cur, alpha) * px_per_unit;   // world px
 	float gy = ob_lift_px(pw) / (ppm * OB_SIN_REF) + ext_m;
@@ -332,7 +338,16 @@ void vertex() {
 			// Toward the camera along the view: the sheet's lowest point (cell.z below the feet) clears the ground in front.
 			float cot_e = length(cam_b.xz) / max(cam_b.y, 0.2);
 			float dz = cell.z / sheet_ppm * cot_e + 0.12;
-			VERTEX = feet + (cam_r * lp.x * crk.x - cam_u * lp.y * crk.y) / sheet_ppm + cam_b * dz;
+			vec3 cr = cam_r;
+			vec3 cu = cam_u;
+			if (dot(INV_VIEW_MATRIX[2].xyz, cam_b) < 0.999) {
+				// The shadow pass: upright at the feet, facing the lamp (its view's x is level).
+				cr = normalize(vec3(INV_VIEW_MATRIX[0].x, 0.0, INV_VIEW_MATRIX[0].z));
+				cu = vec3(0.0, 1.0, 0.0);
+				dz = 0.0;
+			}
+			VERTEX = feet + (cr * lp.x * crk.x - cu * lp.y * crk.y) / sheet_ppm + cam_b * dz;
+			v_side = side_k * clamp(lp.x * crk.x / (0.32 * sheet_ppm), -1.0, 1.0);
 			v_ob = vec4(lp, ((float(act) * 8.0 + dir) * ob_maxf + fr) * 2.0, float(set));
 			vec3 add = vec3(0.0);
 			float k = 1.0;
@@ -419,7 +434,7 @@ void fragment() {
 		vec2 uvo = (fr.xy + clamp(fp, vec2(0.0), fr.zw)) / ob_sheet;
 		vec4 so = texture(ob_shade, uvo);
 		vec4 mo = texture(ob_mask, uvo);
-		outc = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb), so.a * v_color.a * inside);
+		outc = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb) * (1.0 + v_side), so.a * v_color.a * inside);
 	} else {
 		vec4 s = texture(atlas_shade, UV);
 		vec4 m = texture(atlas_mask, UV);

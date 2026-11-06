@@ -11,7 +11,9 @@ extends Node3D
 ## - one orthographic Camera3D placed every frame from the battle's Camera2D (its canvas transform: the point at the screen's centre
 ##   and the zoom) and BoardView's yaw and elevation, so the 2D overlay drawn through the board transform lies exactly on the 3D
 ##   ground (BoardView.to_board is this camera's projection of the ground);
-## - one DirectionalLight3D fixed to the camera's upper left (the painted sprites' baked light), its shadows on at Graphics High;
+## - one DirectionalLight3D standing in the room (the world lamp, 2026-11-06: fixed to the board, not the camera; at the battle's
+##   opening yaw it is where the painted sprites' key is, the screen's upper left and the far side), its shadows on at Graphics
+##   High (the camera's near and far fitted to the visible ground, which is the shadow's range for an orthographic camera);
 ##   ambient and tone mapping as the 3D spike set them (linear, lamp 1.0, ambient 0.42);
 ## - the trees as cards (the oblique kit sheet's tree sprites standing at their feet, game/trees3d.gdshader);
 ## - the kit (game/battlekit3d.gdshaderinc): the oblique view's wall rows (walls, gates, drums, stairs, the stockade, square towers
@@ -56,9 +58,18 @@ const DOOR_PIECES := ["house_gable_s", "house_gable_m", "house_gable_l", "house_
 
 const AMBIENT := 0.42
 const LAMP := 1.0
-## The lamp in the camera's yaw frame: from the screen's upper left and the far side, so shadows fall to the lower right as the
-## 2D views' baked shadows do (the sprites' key light is the camera's upper left).
+## The lamp at yaw 0 (the direction its light travels): from the screen's upper left and the far side, so shadows fall to the
+## lower right as the 2D views' baked shadows do (the sprites' key light is the camera's upper left). The world lamp is this turned
+## by the battle's opening yaw (lamp_yaw) and then stays: 50.3 degrees up, 38.7 degrees left of the opening camera's forward.
 const LAMP_DIR := Vector3(0.40, -0.77, 0.50)
+## The painted sprites' and the trees' screen-space key (x right, y down, z toward the viewer): the 2D kit's light_dir.
+const PAINT_KEY := Vector3(-0.55, -0.50, 0.67)
+## How much a figure's card is darkened on the side away from the lamp and lightened toward it when the table is turned
+## (the paint's highlight is on the camera's left; at the opening yaw the term is 0): a gradient over a man's width.
+const SIDE_K := 0.3
+## The lamp's first shadow split, a share of the camera's near-far range (the ground in view, sync_camera).
+const SHADOW_SPLIT := 0.5
+var side_amt := SIDE_K           # (--v3d-side=K: a testing aid, 0 the paint as it is)
 const SLAB_BELOW := 3.0          # metres of board under its lowest ground
 const TABLE_BELOW := 0.05        # the table just under the slab's foot
 const MESH_MAX_VERTS := 200000   # the board mesh's budget (a coarser stride past it)
@@ -76,6 +87,12 @@ var slab_mi: MeshInstance3D
 var tree_mmi: MultiMeshInstance3D
 var tree_mat: ShaderMaterial
 var shadows := true
+## The world lamp's yaw (BoardView.yaw at the first frame: the battle's opening yaw), latched once; -1000 until then.
+var lamp_yaw := -1000.0
+## The kit materials' and the trees' own light_dir as built (the kit's walls are lit by it in world space, the trees' sheet
+## normals in screen space): turned with the lamp.
+var _kit_ld: Array = []          # [ShaderMaterial, its light_dir]
+var _tree_ld := PAINT_KEY
 var ground_lo := 0.0             # the board's lowest / highest ground (3D y, metres)
 var ground_hi := 0.0
 var field_m := Vector2(100.0, 100.0)
@@ -131,6 +148,9 @@ func setup(p_battle: Node, p_sim, p_ppm: float) -> void:
 	shadows = not Quality.is_low() and not ("--v3d-shadows=0" in OS.get_cmdline_user_args())
 	if "--v3d-shadows=1" in OS.get_cmdline_user_args():
 		shadows = true
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--v3d-side="):
+			side_amt = float(a.get_slice("=", 1))
 	_build_env()
 	_build_board()
 	_build_table()
@@ -169,10 +189,21 @@ func _build_env() -> void:
 	lamp.light_energy = LAMP
 	lamp.light_color = Color(1.0, 0.95, 0.86)
 	lamp.shadow_enabled = shadows
-	lamp.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	# Two splits over the camera's near-far range (sync_camera fits it to the ground in view): the near half of the ground (the
+	# screen's lower half) gets its own map. At the phone's fit this drew the houses' shadows where one orthogonal map blurred
+	# them away, for about the same GPU time (art_pipeline.md "The 3D battle view: the world lamp").
+	lamp.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	lamp.directional_shadow_split_1 = SHADOW_SPLIT
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--v3d-splits="):   # (testing aids: 1 one orthogonal map, 2 or 4 parallel splits; the first split)
+			var n := int(a.get_slice("=", 1))
+			lamp.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if n <= 1 else (DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if n == 2 else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS)
+		elif a.begins_with("--v3d-split1="):
+			lamp.directional_shadow_split_1 = float(a.get_slice("=", 1))
 	lamp.shadow_bias = 0.05
 	lamp.shadow_normal_bias = 1.0
 	lamp.shadow_blur = 1.0
+	lamp.transform = Transform3D(_lamp_basis(), Vector3.ZERO)
 	add_child(lamp)
 
 
@@ -458,6 +489,8 @@ func _build_kits() -> void:
 		mat.set_shader_parameter("ppm", ppm)
 		mat.set_shader_parameter("kit_ppm", KitOb.ppm)
 		card_mats.append(mat)
+		var ld0 = mat.get_shader_parameter("light_dir")
+		_kit_ld.append([mat, ld0 if ld0 is Vector3 else PAINT_KEY])
 		var mi := MultiMeshInstance3D.new()
 		mi.multimesh = mm
 		mi.material_override = mat
@@ -666,6 +699,8 @@ func _build_trees() -> void:
 	if "--v3d-debug" in OS.get_cmdline_user_args():
 		print("TREES pidx ", tree_mat.get_shader_parameter("pidx"), " rects0 ", (tree_mat.get_shader_parameter("rects") as PackedVector4Array).slice(0, 4), " anch0 ", (tree_mat.get_shader_parameter("anch") as PackedVector4Array).slice(0, 4), " alb ", tree_mat.get_shader_parameter("albedo_tex"), " code0 ", buf.slice(12, 16))
 	tree_mat.set_shader_parameter("ppm", ppm)
+	var tld = tree_mat.get_shader_parameter("light_dir")
+	_tree_ld = tld if tld is Vector3 else PAINT_KEY
 	card_mats.append(tree_mat)
 	tree_mmi = MultiMeshInstance3D.new()
 	tree_mmi.multimesh = mm
@@ -719,11 +754,23 @@ func sync_camera() -> void:
 	var dist := span + (ground_hi - ground_lo) + 60.0
 	cam.transform = Transform3D(b, t3 + b.z * dist)
 	cam.size = cam_size
-	cam.near = 1.0
-	cam.far = dist * 2.0 + 200.0
-	lamp.transform = Transform3D(Basis(Vector3.UP, BoardView.yaw) * _lamp_basis(), Vector3.ZERO)
-	lamp.directional_shadow_max_distance = dist + span * 0.9
+	# Near and far hug the ground the camera sees (the screen's half height along the ground's slope in the view, the relief and
+	# the tallest pieces either way, the table under the slab): an orthographic camera's directional shadow covers its whole
+	# near-far range (Godot ignores directional_shadow_max_distance there), so a loose far spread the shadow map over empty air.
+	var e := deg_to_rad(BoardView.elev_deg)
+	var hmax := maxf(absf(ground_lo), absf(ground_hi)) + SLAB_BELOW + 30.0
+	var reach := cam_size * 0.5 * cos(e) / maxf(sin(e), 0.1) + hmax / maxf(sin(e), 0.1) + 10.0
+	cam.near = maxf(1.0, dist - reach)
+	cam.far = dist + reach
+	lamp.directional_shadow_max_distance = cam.far
 	var kd := lamp.transform.basis.z   # (toward the lamp: it shines along its -z)
+	# The lamp in the camera's frame: the painted key turned by the camera's yaw against the lamp's (0 at the opening yaw).
+	var rel := lamp_yaw - BoardView.yaw if lamp_yaw > -999.0 else 0.0
+	var sk := _turn2(Vector2(PAINT_KEY.x, PAINT_KEY.y), rel)
+	var side := side_amt * (sk.x - PAINT_KEY.x) / Vector2(PAINT_KEY.x, PAINT_KEY.y).length() * 0.5
+	if tree_mat != null:
+		var t2 := _turn2(Vector2(_tree_ld.x, _tree_ld.y), rel)
+		tree_mat.set_shader_parameter("light_dir", Vector3(t2.x, t2.y, _tree_ld.z))
 	for m in mesh_mats:
 		m.set_shader_parameter("key_dir", kd)
 	for m in card_mats:
@@ -731,6 +778,26 @@ func sync_camera() -> void:
 		m.set_shader_parameter("cam_u", b.y)
 		m.set_shader_parameter("cam_b", b.z)
 		m.set_shader_parameter("cam_yaw", BoardView.yaw)
+		m.set_shader_parameter("side_k", side)
+
+
+## Stand the lamp in the room at yaw y (the battle's opening yaw: called once, at the first camera sync after the battle set its
+## view; tests may call it again): its light, the kit's wall faces' key and the Low board's painted hill shade follow it.
+func set_lamp(y: float) -> void:
+	lamp_yaw = y
+	print("view3d: the lamp stands at yaw %.0f (from %.0f degrees, %.1f up)" % [rad_to_deg(y), fposmod(-38.7 - rad_to_deg(y), 360.0), 50.3])
+	lamp.transform = Transform3D(Basis(Vector3.UP, y) * _lamp_basis(), Vector3.ZERO)
+	for e in _kit_ld:
+		var ld: Vector3 = e[1]
+		var w := _turn2(Vector2(ld.x, ld.y), y)
+		(e[0] as ShaderMaterial).set_shader_parameter("light_dir", Vector3(w.x, w.y, ld.z))
+	if terrain_mat != null:
+		terrain_mat.set_shader_parameter("fake_ld", _turn2(Vector2(0.6154, 0.7882), y))
+
+
+## A ground direction (x, y: the 2D world's or the screen's, y toward the viewer at yaw 0) turned as Basis(UP, a) turns (x, z).
+static func _turn2(v: Vector2, a: float) -> Vector2:
+	return Vector2(v.x * cos(a) + v.y * sin(a), -v.x * sin(a) + v.y * cos(a))
 
 
 static func _lamp_basis() -> Basis:
@@ -896,6 +963,8 @@ func _process(_delta: float) -> void:
 			_probe_frames = -1
 			if DisplayServer.get_name() != "headless" and men_mmi != null:
 				_probe()
+	if lamp_yaw < -999.0:
+		set_lamp(BoardView.yaw)   # (the first frame: the battle has set its opening view)
 	sync_camera()
 	refresh_kit()
 	_paths()

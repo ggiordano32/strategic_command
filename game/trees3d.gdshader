@@ -1,9 +1,10 @@
 shader_type spatial;
 // The 3D battle view's trees (game/view3d.gd): each wood / orchard tree a card standing at its foot, facing the camera, cut from the
 // oblique kit sheet's tree sprites (as trees_kit.gdshader's oblique branch: the same table, tint and lighting from the sheet's normal
-// pass, the key from the screen's upper left: the lamp is fixed to the camera). Unshaded (the light is the sheet's), alpha-cut so it
-// writes depth and casts a shadow; the card is built from the camera's axes (cam_*) also in the shadow pass. The canopy thins over
-// men under it (the tree layer's occupancy texture).
+// pass; light_dir the key in screen space, turned by view3d.gd with the camera's yaw against the world lamp's, the screen's upper
+// left at the opening yaw). Unshaded (the light is the sheet's), alpha-cut so it writes depth and casts a shadow; the card is built
+// from the camera's axes (cam_*), in the shadow pass upright facing the lamp (its shadow the same at every yaw). The canopy thins
+// over men under it (the tree layer's occupancy texture).
 render_mode unshaded, cull_disabled, world_vertex_coords;
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
@@ -56,7 +57,12 @@ void vertex() {
 	vec2 q01 = vec2(UV.x, 1.0 - UV.y);   // (world_vertex_coords: VERTEX comes in already placed, so the corner is the UV)
 	float f = cd.z * 2.16 / max(an.x, 1.0);
 	vec2 off = (q01 * an.xy - an.zw) * f / ppm;   // metres in the camera's plane (x right, y down)
-	VERTEX = foot + cam_r * off.x - cam_u * off.y + cam_b * 0.6;
+	if (dot(INV_VIEW_MATRIX[2].xyz, cam_b) < 0.999) {
+		// The shadow pass: upright at the foot, facing the lamp.
+		VERTEX = foot + normalize(vec3(INV_VIEW_MATRIX[0].x, 0.0, INV_VIEW_MATRIX[0].z)) * off.x - vec3(0.0, off.y, 0.0);
+	} else {
+		VERTEX = foot + cam_r * off.x - cam_u * off.y + cam_b * 0.6;
+	}
 	q = q01;
 	world = cd.xy;
 	tint = sh < 0.5 ? shade0 : (sh < 1.5 ? shade1 : shade2);

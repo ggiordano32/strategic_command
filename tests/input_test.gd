@@ -277,6 +277,7 @@ func _initialize() -> void:
 		_step_bc_check_alt_orders,
 		_step_bc_box_down,
 		_step_bc_box_drag,
+		_step_bc_check_box_drawn,
 		_step_bc_box_up,
 		_step_bc_check_box,
 		# Total War: Rome mouse scheme (real mouse; touch steps above/below unchanged).
@@ -2480,6 +2481,18 @@ func _step_bc_box_drag() -> void:
 	var b := _root_from_window(_three[1])
 	for k in range(1, 6):
 		_mouse_move(a.lerp(b, k / 5.0), (b - a) / 5.0)
+
+
+## The box as it is drawn mid-drag: in the 3D view the screen's rectangle from the press to the pointer (2026-11-06), in the
+## other views the world rectangle between the two ground points.
+func _step_bc_check_box_drawn() -> void:
+	var ov = battle.overlay
+	if BoardView.v3d:
+		_check(ov.box_on and ov.box_sa.distance_to(_root_from_window(_three[0])) < 1.0 \
+			and ov.box_sb.distance_to(_root_from_window(_three[1])) < 1.0,
+			"3D view: the drag box is drawn from the screen points pressed and dragged to (%s - %s)" % [str(ov.box_sa), str(ov.box_sb)])
+	else:
+		_check(ov.box_on, "the drag box is drawn while dragging")
 
 
 func _step_bc_box_up() -> void:

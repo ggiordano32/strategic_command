@@ -4644,6 +4644,7 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 			_box = true
 			overlay.box_on = true
 			overlay.box_a = _screen_to_world(_press_pos)
+			overlay.box_sa = _press_pos
 			_count("box_select")
 		elif not selection.is_empty() and interactive:
 			overlay.preview_on = true
@@ -4657,6 +4658,7 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		_gm_update()
 	elif _box:
 		overlay.box_b = _screen_to_world(e.position)
+		overlay.box_sb = e.position
 	elif overlay.preview_on:
 		_line_preview(_press_pos, e.position)
 	else:
@@ -4694,6 +4696,18 @@ func _box_end(apply: bool) -> void:
 		# (The box as dragged on the screen: on the board.)
 		var ba := BoardView.to_board(overlay.box_a)
 		rect = Rect2(ba, BoardView.to_board(overlay.box_b) - ba).abs()
+	var man_in := {}
+	if BoardView.v3d:
+		# The 3D view (2026-11-06): the box is the screen's rectangle as dragged (the board's space is the screen's up to the
+		# camera's scale and offset), and a unit is in it when its marker, its centre or any of its men projects inside.
+		var sa := _screen_to_board(overlay.box_sa)
+		rect = Rect2(sa, _screen_to_board(overlay.box_sb) - sa).abs()
+		for i in sim.n:
+			var st: int = sim.state[i]
+			if st == BattleSim.S_DEAD or st == BattleSim.S_OFF or man_in.has(sim.unit_of[i]):
+				continue
+			if rect.has_point(BoardView.to_board(Vector2(sim.pos_x[i], sim.pos_y[i]) / M * PX_PER_M)):
+				man_in[sim.unit_of[i]] = true
 	if not _mouse_add:
 		_select(-1)
 	var any := false
@@ -4705,7 +4719,7 @@ func _box_end(apply: bool) -> void:
 		if BoardView.oblique:
 			mk = marker_board(u, maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / camera.zoom.x))
 			c = BoardView.to_board(c)
-		if (rect.has_point(c) or rect.has_point(mk)) and not selection.has(u):
+		if (rect.has_point(c) or rect.has_point(mk) or man_in.has(u)) and not selection.has(u):
 			if not any and selection.is_empty():
 				_select(u)
 			else:

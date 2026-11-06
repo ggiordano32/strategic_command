@@ -79,6 +79,8 @@ uniform bool low = false;
 // The pass-6 lamp on the hills (a soft cast shadow on the lee of a rise, a lit crest rim): on in the oblique view; the 3D view
 // (game/view3d.gd) turns it off when its real lamp casts shadows.
 uniform float fake_lamp = 1.0;
+// Its direction (the way the light travels on the ground, world x right, y down): the 3D view turns it with its world lamp.
+uniform vec2 fake_ld = vec2(0.6154, 0.7882);
 
 
 highp vec3 node(ivec2 p) {
@@ -466,7 +468,7 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 		if (ob_on > 0.5 && board && !low && sea < 0.5 && ob_in > 0.5 && fake_lamp > 0.5) {
 			// Pass 6, the lamp on the hills (the oblique view's diorama only): a soft cast shadow on the lee of a rise (lamp
 			// upper left; the ground towards it is higher, scaled by how much), and a lit rim along a crest that faces it.
-			vec2 ld = vec2(0.6154, 0.7882);   // towards the lamp (normalised (0.55, 0.7)), world x right, y down
+			vec2 ld = fake_ld;   // (0.6154, 0.7882): normalised (0.55, 0.7), world x right, y down; the lamp at -ld
 			highp float h3 = hm_at(world - ld * 3.0 * ppm);
 			highp float h8 = hm_at(world - ld * 8.0 * ppm);
 			highp float ha = hm_at(world + ld * 3.0 * ppm);

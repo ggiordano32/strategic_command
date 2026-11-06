@@ -10,6 +10,10 @@ extends SceneTree
 ## 3. A turn keeps the ground point under its pivot (within 1 px) and the clamp holds the board in view.
 ## 4. Taps land where tapped: in skirmish at yaws 0, 120 and 240 (and a tilt of 30), a tap on a unit's marker selects it and a
 ##    tap on the ground 14 m away orders it there (the drawn destination within 1 m of the tapped ground point).
+## 4b. The drag box is the screen's (2026-11-06): in skirmish at yaws 0, 120 and 240 a mouse drag draws its rectangle from the
+##    screen points pressed and dragged to, and selects exactly the player's units whose marker, centre or any man projects inside
+##    that screen rectangle (the men projected by the Camera3D itself), at least one inside and one outside.
+## 4c. The world lamp: it stands at the opening yaw and stays as the table turns (its transform the same at yaws 0 / 90 / 200).
 ## 5. The layers are fed: the men's MultiMesh carries every man (12 floats each), the missiles' follows the slots in use, a West
 ##    town's kit rows are copied (and re-picked when the camera turns a quarter), a fort storm's poles and ram are built as a mesh.
 ## 6. (a window) The 3D probe sees the men drawn.
@@ -151,6 +155,16 @@ func _run() -> void:
 		var miss := Vector2(dx, dy).distance_to(want) / 1024.0
 		_check(int(ov._v(u, "order")) == BattleSim.O_MOVE and miss < 1.0,
 			"yaw %d tilt %d: a tap on the ground 14 m off orders the unit there (%.2f m off)" % [int(cse[0]), int(cse[1]), miss])
+	await _check_box(u)
+	# --- 4c the lamp stands still
+	var v3 = battle.view3d
+	var lt0: Transform3D = v3.lamp.transform
+	var still: bool = v3.lamp_yaw > -999.0
+	for yaw in [0.0, 90.0, 200.0]:
+		BoardView.set_view(deg_to_rad(yaw), 40.0)
+		await _f(2)
+		still = still and v3.lamp.transform.is_equal_approx(lt0)
+	_check(still, "the lamp stands still as the table turns (at the opening yaw %.0f)" % rad_to_deg(v3.lamp_yaw))
 	# --- 5 a West town's kit and a siege's gear
 	await _open("west_town")
 	var kits: Array = battle.view3d.kits
@@ -191,6 +205,85 @@ func _run() -> void:
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")
 	quit(0 if ok else 1)
+
+
+## 4b: a box around unit u's men (and whatever else falls in it) dragged with the mouse at three yaws.
+func _check_box(u: int) -> void:
+	var sim = battle.sim
+	var cam: Camera3D = battle.view3d.cam
+	var ft: Transform2D = root.get_final_transform()
+	for cse in [[0.0, 40.0], [120.0, 40.0], [240.0, 30.0]]:
+		BoardView.set_view(deg_to_rad(float(cse[0])), float(cse[1]))
+		battle.camera.zoom = Vector2.ONE * 1.0
+		battle._cam_to(Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * Battle.PX_PER_M)
+		battle.camera.force_update_scroll()
+		await _f(2)
+		battle._select(-1)
+		battle._last_tap_time = -10.0
+		# Each man where the 3D camera draws his feet (viewport px).
+		var men_s := {}
+		for i in sim.n:
+			if sim.state[i] == BattleSim.S_DEAD or sim.state[i] == BattleSim.S_OFF:
+				continue
+			var w := Vector2(sim.pos_x[i], sim.pos_y[i]) / 1024.0 * Battle.PX_PER_M
+			var p := cam.unproject_position(Vector3(w.x / Battle.PX_PER_M, BoardView.ground_m(w), w.y / Battle.PX_PER_M))
+			var arr: PackedVector2Array = men_s.get(sim.unit_of[i], PackedVector2Array())
+			arr.append(p)
+			men_s[sim.unit_of[i]] = arr   # (a packed array is a value: stored back)
+		var r := Rect2((men_s[u] as PackedVector2Array)[0], Vector2.ZERO)
+		for p in men_s[u]:
+			r = r.expand(p)
+		r = r.grow(4.0)
+		var want := {}
+		var outside := 0
+		for k in sim.n_units:
+			if sim.u_side[k] != battle.player_side or sim.u_state[k] != BattleSim.U_READY:
+				continue
+			var c := Vector2(sim.u_cx[k], sim.u_cy[k]) / 1024.0 * Battle.PX_PER_M
+			var inside := r.has_point(battle.marker_screen(k)) or r.has_point(battle.world_to_screen(c))
+			for p in men_s.get(k, PackedVector2Array()):
+				inside = inside or r.has_point(p)
+			if inside:
+				want[k] = true
+			else:
+				outside += 1
+		_mouse(ft * r.position, true)
+		await _f(1)
+		for k in range(1, 6):
+			_mouse_move(ft * r.position.lerp(r.end, k / 5.0))
+			await _f(1)
+		var ov = battle.overlay
+		var drawn: bool = ov.box_on and ov.box_sa.distance_to(r.position) < 1.0 and ov.box_sb.distance_to(r.end) < 1.0
+		_mouse(ft * r.end, false)
+		await _f(2)
+		var got := {}
+		for k in battle.selection:
+			got[k] = true
+		var same := got.size() == want.size()
+		for k in want:
+			same = same and got.has(k)
+		_check(drawn, "yaw %d tilt %d: the drag box is the screen's rectangle as dragged" % [int(cse[0]), int(cse[1])])
+		_check(same and want.has(u) and outside > 0,
+			"yaw %d tilt %d: the drag box selects the units projecting inside the screen rectangle (%d selected, %d wanted, %d outside)" % [int(cse[0]), int(cse[1]), got.size(), want.size(), outside])
+	battle._select(-1)
+
+
+func _mouse(p: Vector2, pressed: bool) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = pressed
+	e.position = p
+	e.global_position = p
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+	Input.parse_input_event(e)
+
+
+func _mouse_move(p: Vector2) -> void:
+	var e := InputEventMouseMotion.new()
+	e.position = p
+	e.global_position = p
+	e.button_mask = MOUSE_BUTTON_MASK_LEFT
+	Input.parse_input_event(e)
 
 
 func _check_meshes(sc: String) -> void:

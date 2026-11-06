@@ -32,7 +32,7 @@ uniform vec3 stone_tint[8];
 uniform vec3 pal_r[8];
 uniform vec3 pal_g[8];
 uniform vec3 pal_b[8];
-uniform vec3 light_dir = vec3(-0.55, -0.50, 0.67);   // screen space (north is -y), towards the light
+uniform vec3 light_dir = vec3(-0.55, -0.50, 0.67);   // screen space (north is -y), towards the light; the 3D view turns xy with its world lamp
 uniform float amb = 0.66;
 uniform float key = 0.55;
 // Look parameters, set from game/battle_look.gd: diorama (default) amb 0.50, key 0.88, rim 0.22,
@@ -137,7 +137,12 @@ void vertex() {
 		float cot_e = length(cam_b.xz) / max(cam_b.y, 0.2);
 		float below = max(ka.y - ka.w, 0.0) * sc / kit_ppm;
 		vec3 foot = vec3(o.x / ppm, g_m(o), o.y / ppm);
-		VERTEX = foot + cam_r * lp.x - cam_u * lp.y + cam_b * (below * cot_e + 0.25);
+		if (dot(INV_VIEW_MATRIX[2].xyz, cam_b) < 0.999) {
+			// The shadow pass (the world lamp, 2026-11-06): upright at the foot, facing the lamp.
+			VERTEX = foot + normalize(vec3(INV_VIEW_MATRIX[0].x, 0.0, INV_VIEW_MATRIX[0].z)) * lp.x - vec3(0.0, lp.y, 0.0);
+		} else {
+			VERTEX = foot + cam_r * lp.x - cam_u * lp.y + cam_b * (below * cot_e + 0.25);
+		}
 		vec4 r = ob_krect[q];
 		v_uv = r.xy + uv * r.zw;
 		v_wall.x = 3.0;

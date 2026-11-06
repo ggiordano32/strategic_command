@@ -132,6 +132,10 @@ var ghost_hint := ""
 var box_on := false
 var box_a := Vector2.ZERO
 var box_b := Vector2.ZERO
+## The box's corners on the screen (viewport px): the 3D view draws and picks the screen's rectangle (Rome 2's and Company of
+## Heroes' drag box), not the world rectangle laid on the board.
+var box_sa := Vector2.ZERO
+var box_sb := Vector2.ZERO
 ## A short message at a world point (gate taps): text, where, until (ms).
 var _flash_text := ""
 var _flash_at := Vector2.ZERO
@@ -864,8 +868,17 @@ func _draw() -> void:
 		_dstr(at + Vector2(0, -fs * 1.2), ghost_hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0.7, 1, 1))
 	if box_on:
 		var rect := Rect2(box_a, box_b - box_a).abs()
+		if BoardView.v3d:
+			# Square to the screen: the corners' board points drawn upright about an anchor (the lift shader puts a vertex v
+			# drawn under up_xf(a) at board(a) + v - a), so nothing of the board's tilt or turn reaches the rectangle.
+			var it := get_canvas_transform().affine_inverse()
+			var sa: Vector2 = it * box_sa
+			var off := box_a - BoardView.to_board(box_a)
+			rect = Rect2(sa + off, it * box_sb - sa).abs()
+			_up(box_a)
 		draw_rect(rect, Color(1, 1, 1, 0.12))
 		draw_rect(rect, Color(1, 1, 1, 0.8), false, lw)
+		_flat()
 	if _flash_text != "" and Time.get_ticks_msec() < _flash_until:
 		var ffs := _font_size(14.0)
 		var tw := ThemeDB.fallback_font.get_string_size(_flash_text, HORIZONTAL_ALIGNMENT_LEFT, -1, ffs).x

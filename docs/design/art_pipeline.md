@@ -1881,3 +1881,67 @@ meshes.
 goes 1.2 m into the board, so a house on a steep step shows its skirt; Rome houses' doors face the street only where the
 plan's cells say which side is open; the landmarks are at 3.5 px/m; the trees, bushes and the men stay cards; the rubble of
 a fallen house is still the flat decal; no device check yet.
+
+### The 3D battle view: the world lamp (as built, 2026-11-06)
+
+**The ask.** The owner, after turning the table on his phone: "Shadows are rotating with the buildings, we should work on our
+single light source now." Step one fixed the lamp to the camera's yaw (the painted sprites' key is the camera's top left), so as
+the table turned the houses' shadows swung round with it and a house's lit faces changed with the yaw. View only: nothing under
+`sim/` or `campaign/` changed; the Top and Oblique views are untouched.
+
+**The lamp stands in the room.** `View3D.set_lamp(y)`: one DirectionalLight3D at the yaw-0 direction of step one (light travelling
+(0.40, -0.77, 0.50): 50.3 degrees up, 38.7 degrees left of the camera's forward, from the far side) turned by the battle's opening
+yaw (`lamp_yaw`, latched at the first frame, after `Battle` has set its view facing the player's side) and never moved again. So at
+the opening view the lamp is where it was (the screen's upper left and the far side; the board, the houses and the walls read as
+before) and from then on the shadows stay put on the board and the same faces of a house are lit from every yaw. On battle_2000
+and west_town (opening yaw 0) the lamp stands at a bearing of 321 degrees (north-west); an army opening in the north half (yaw
+180) has it in the south-east. What follows the lamp: the kit meshes' half-Lambert key (`key_dir`, the lamp's world direction);
+the kit's wall rows, whose faces were lit by a world north-west key (`light_dir.xy`), turned by `lamp_yaw`; Graphics Low's painted
+hill shade on the board (`terrain_body.gdshaderinc` `fake_ld`, default the old constant, turned by `lamp_yaw` in 3D); the trees'
+sheet-normal key (`light_dir`, screen space) turned by the camera's yaw against the lamp's each frame.
+
+**The figures (the paint's light).** The oblique sheets are painted with the key fixed in camera space from the top left, and only
+S, SW, W, NW, N are rendered (`"mirror": true`: SE, E, NE are the W side's frames flipped, so already lit from the top right and
+holding the weapon in the other hand). The three ways measured: (a) flipping the card when the lamp is on the camera's right
+helps only S and N (a flipped SW is the SE render, which does not exist: SE is itself a flipped SW), so it would fix 2 of 8
+facings and swap their weapon hand; (c) leaving the paint as it is shows, with the table half turned, men lit on their left with
+their shadows falling to the left (shot `lamp/side/cmp.png`); (b) chosen, the cheapest that reads: a gentle side term over the
+paint, `soldiers3d.gdshaderinc` `side_k` x the man's screen x (clamped to +-0.32 m about his feet), so the side toward the lamp is
+lighter and the side away darker; `side_k` = `SIDE_K` (0.3) x the change of the lamp's screen x against the paint's (the painted
+key turned by the camera's yaw against the lamp's), 0 at the opening yaw (the default view unchanged), +-0.22 at the figure's edges
+half way round (yaw 180 from the opening), +-0.21 a quarter turn with the lamp on the camera's right (shadows to the lower left),
++-0.01 the other quarter turn (the lamp still on the camera's left, behind it). Cost: one varying and a multiply (no measurable change).
+The kit's cards (only the fallback without kit3d.res) keep their paint. `--v3d-side=K` sets the strength (0 the paint alone).
+
+**The cards' shadows.** A card faces the camera and leans back with it, so with a world lamp its shadow grew and shrank as the table
+turned (the card seen edge-on from the lamp at one yaw, broadside at another). In the shadow pass (the view is not the camera's:
+`INV_VIEW_MATRIX`'s z against `cam_b`) the men's, the trees' and the kit's cards now stand upright at the feet facing the lamp,
+so a man's or a tree's shadow is the same length and width from every yaw; the drawn card is unchanged. At the opening yaw this
+lengthens the men's shadows a little (the leaning card cast a short smudge; an upright 1.8 m figure under a 50 degree lamp casts
+about 1.5 m).
+
+**The shadow map.** Godot ignores `directional_shadow_max_distance` for an orthographic camera: the directional shadow covers the
+camera's whole near-far range, and step one had near 1 m and far twice the camera's distance plus 200 m, so most of the map was
+spent on empty air and at the phone's fit the houses had no shadows to speak of. `sync_camera` now fits near and far to the ground
+in view (the screen's half height along the ground's slope in the view, the relief, the slab, 30 m for the tallest pieces and 10 m
+spare), and the lamp uses two parallel splits at half that range (`SHADOW_SPLIT` 0.5: the near half of the ground, the screen's lower
+half, gets its own map); shots `lamp/split2/` (844 x 390 fit and 0.3 zoom: one map against two; the two show the houses' shadows a
+little crisper) and `lamp/cmp_wt_fit.png` (step one against the fitted range). `--v3d-splits=1|2|4` and `--v3d-split1=F` are the
+testing aids. Cost, this desktop (RTX 3070, shared with other runs; one process switching the lamp's mode every second with the
+battle running, 40 s, the GPU time per frame; `lamp/tools/ab_bench.gd`): West town 844 x 390 at the fit, shadows off 0.95 ms, one
+map 1.44, two splits 1.24, four splits 1.55; battle_2000 844 x 390 1.09 / 1.21 / 1.30 / 1.35; at 1280 x 720 the machine was too
+loaded to read (3.6-4.4 ms in every mode, the order of the modes not stable). So the two splits cost about 0.2-0.3 ms of GPU at the
+fit on the desktop, no more than the one map.
+
+**Checked.** v3d_test 4c (the lamp stands still at yaws 0 / 90 / 200, at the opening yaw), the whole of v3d_test, battle_screen_test
+(three views), hud_fit_test, input_test (default view and 3D at yaw 0), custom_battle_test, lockstep_test, determinism_test
+--only=deploy, menu_test; scripts clean. The web export builds (index.pck 18.97 MB, oblique.pck 16.08 MB); `webcheck -v3d` sees the
+scene build with its 166 kit meshes but timed out on the men's probe at 0.1 fps in headless Chromium on a machine at load 30-50, and
+step one's own export failed the same way in the same minutes (a load problem, not this change; to run again on a quiet machine). Shots: `lamp/before/` (step one) and `lamp/after/`
+(the world lamp), battle_2000 and west_town at yaws 0 / 90 / 180 / 270, at the fit and zoom 2.5, 1280 x 720 and 844 x 390.
+
+**Known.** The side term is a gradient, not a relighting: a figure's painted highlight stays on its left, only toned; the lamp
+from behind the camera (half way round) still shows the paint's top-lit look; the cards' shadows are the figure's silhouette as
+seen from the camera, cast from the lamp's side; the board's foam steps are lit by the lamp but most of the hills' look is painted;
+the opening yaw decides where the lamp stands for the whole battle (a battle opening at 180 has it in the south-east); no device
+check of the shadows' cost on the phone.
