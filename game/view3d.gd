@@ -18,6 +18,10 @@ extends Node3D
 ##   off the axes) as real geometry on the ground, its sheet pieces (houses, towers, gates, rocks, landmarks) as cards re-picked
 ##   from the sheet's renders for the camera's yaw (in 90 degree steps: they swap as the table turns); the siege gear and the ships
 ##   off the shore as solids (game/siege_gear_ob.gd's emitter), rebuilt when they change;
+## - step two (2026-11-06): the houses, huts, the West town's buildings, the towers, the bastion, the props, the rocks and the
+##   landmarks as meshes (game/kit3d.gd: the kit's own Blender models, low poly, their painted look baked), a MultiMesh per piece
+##   kind at the pieces' places, turned with the table and casting shadows (_build_meshes); every gate and square tower as rows;
+##   their cards are hidden; without assets/battlekit_ob/kit3d.res (or with --no-kit3d) the cards as step one;
 ## - the men as painted cards (game/soldiers3d.gdshaderinc) from the soldier layer's CPU-fed buffer as it is, their round bases flat
 ##   on the board under them, the missiles in flight in real height (game/projectiles3d.gdshaderinc).
 
@@ -42,6 +46,13 @@ const CityDraw := preload("res://game/city_draw.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
+const Kit3D := preload("res://game/kit3d.gd")
+const KIT_MESH_SHADER := preload("res://game/kit_mesh3d.gdshader")
+const KitAtlas := preload("res://game/battlekit_atlas.gd")
+const MapGen := preload("res://sim/mapgen.gd")
+## Rome's houses (the kit's own frame has no street side): their door turned to the open side (_street_flip).
+const DOOR_PIECES := ["house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse",
+	"house_L", "hut_thatch", "house_flat_s", "house_flat_m"]
 
 const AMBIENT := 0.42
 const LAMP := 1.0
@@ -88,6 +99,11 @@ var _gear_tick := -1
 var _gear_sig := 0
 var _ship_sig := -2
 var _solid_mat: ShaderMaterial
+## Step two: per kit with meshes {"kit", "mat", "mmis": piece -> MultiMeshInstance3D, "rev", "inst": instance indices drawn as
+## meshes, "lm": landmark rows drawn as meshes}; the instances drawn as meshes in all (tests and the build line).
+var kit_meshes: Array = []
+var mesh_instances := 0
+var mesh_mats: Array[ShaderMaterial] = []
 ## The drawn ground decals of the 2D views (the terrain layer's tracks and flock-square fields, the sea gate's channel, the
 ## breach and fallen-house rubble) painted once into an offscreen canvas over the whole field and laid on the board by its
 ## shader; painted again when the rubble changes.
@@ -133,9 +149,9 @@ func setup(p_battle: Node, p_sim, p_ppm: float) -> void:
 	cam.make_current()
 	sync_camera()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
-	print("view3d: built in %.1f ms (board %d verts, %d trees, shadows %s)" % [build_ms,
+	print("view3d: built in %.1f ms (board %d verts, %d trees, %d kit meshes, shadows %s)" % [build_ms,
 		(terrain_mi.mesh as ArrayMesh).surface_get_array_len(0) if terrain_mi != null and terrain_mi.mesh != null else 0,
-		tree_mmi.multimesh.instance_count if tree_mmi != null else 0, "on" if shadows else "off"])
+		tree_mmi.multimesh.instance_count if tree_mmi != null else 0, mesh_instances, "on" if shadows else "off"])
 
 
 func _build_env() -> void:
@@ -448,6 +464,8 @@ func _build_kits() -> void:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
 		add_child(mi)
 		kits.append([k, mi, -1, -99])
+		if Kit3D.ok():
+			_build_meshes(k, mat)
 	_solid_mat = ShaderMaterial.new()
 	_solid_mat.shader = SOLID_SHADER
 	gear_mi = MeshInstance3D.new()
@@ -471,8 +489,12 @@ func refresh_kit(force := false) -> void:
 			var mm: MultiMesh = (e[1] as MultiMeshInstance3D).multimesh
 			mm.instance_count = k.ob_mm.instance_count
 			var buf: PackedFloat32Array = k.ob_buffer_3d(float(sector) * 90.0)
+			_hide_cards(k, buf)
 			if buf.size() == mm.instance_count * 12 and buf.size() > 0:
 				mm.buffer = buf
+	for km in kit_meshes:
+		if force or int(km["rev"]) != int((km["kit"]).ob_rev):
+			_fill_meshes(km)
 	if sim.n_eq > 0 and (force or sim.tick != _gear_tick) and battle.overlay != null:
 		_gear_tick = sim.tick
 		# (rebuilt only when a piece moved, turned or changed state: a native hash of the sim's gear arrays)
@@ -483,6 +505,125 @@ func refresh_kit(force := false) -> void:
 	if battle.ships != null and battle.ships.has_method("sig") and (force or battle.ships.sig() != _ship_sig):
 		_ship_sig = battle.ships.sig()
 		ship_mi.mesh = battle.ships.build_mesh3d()
+
+
+# --------------------------------------------------------------------------------------------- the kit's meshes (step two)
+
+## The kit's card pieces that have a mesh (game/kit3d.gd) as meshes: a MultiMeshInstance3D per piece kind (TRANSFORM_3D, the
+## culture in the custom data), one material for the kit (its palette and look copied from the oblique rows' material).
+func _build_meshes(k, kmat: ShaderMaterial) -> void:
+	var mat := ShaderMaterial.new()
+	mat.shader = KIT_MESH_SHADER
+	copy_params(kmat, mat)
+	mat.set_shader_parameter("kit_tex", Kit3D.tex)
+	var inst := PackedInt32Array()
+	var lms: Array = []
+	for i in k.i_piece.size():
+		var nm: String = KitAtlas.NAMES[k.i_piece[i]]
+		if i < k._ob_slot.size() and k._ob_slot[i] >= 0 and Kit3D.has(nm):
+			inst.append(i)
+	for lm in k._ob_lm:
+		if (lm as Array).size() >= 6 and Kit3D.has(str(lm[1])):
+			lms.append(lm)
+	if inst.is_empty() and lms.is_empty():
+		return
+	var km := {"kit": k, "mat": mat, "mmis": {}, "rev": -1, "inst": inst, "lm": lms}
+	mesh_mats.append(mat)
+	kit_meshes.append(km)
+
+
+## The pieces' rows in the MultiMeshes again (built once, then when the kit's rows change: a fallen house is left out).
+func _fill_meshes(km: Dictionary) -> void:
+	var k = km["kit"]
+	km["rev"] = k.ob_rev
+	var rows := {}    # piece -> PackedFloat32Array (16 floats an instance)
+	for i in km["inst"]:
+		if k.fallen(i):
+			continue
+		var nm: String = KitAtlas.NAMES[k.i_piece[i]]
+		var e: Vector2 = k.i_e[i]
+		if nm in DOOR_PIECES and _street_flip(k, i):
+			e = -e
+		var c := Kit3D.centre(nm)
+		var sx: float = k.i_sx[i]
+		var sy: float = k.i_sy[i]
+		# (the footprint's centre on the instance's place, as the oblique sheet anchors the card)
+		var o: Vector2 = k.i_pos[i] - e * (c.x * sx) - Vector2(e.y, -e.x) * (c.y * sy)
+		_mesh_row(rows, nm, o, e, sx, sy, sy, float(k.i_cul[i]))
+	for lm in km["lm"]:
+		var yaw: float = lm[4]
+		var sc: float = lm[5]
+		_mesh_row(rows, str(lm[1]), lm[3], Vector2(cos(yaw), sin(yaw)), sc, sc, sc, float(k.culture))
+	var mmis: Dictionary = km["mmis"]
+	for nm in rows:
+		var buf: PackedFloat32Array = rows[nm]
+		var mi: MultiMeshInstance3D = mmis.get(nm)
+		if mi == null:
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.use_custom_data = true
+			mm.mesh = Kit3D.mesh(nm)
+			mm.custom_aabb = AABB(Vector3(-60.0, ground_lo - 20.0, -60.0), Vector3(field_m.x + 120.0, ground_hi - ground_lo + 140.0, field_m.y + 120.0))
+			mi = MultiMeshInstance3D.new()
+			mi.multimesh = mm
+			mi.material_override = km["mat"]
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+			mi.name = "kit3d_" + nm
+			add_child(mi)
+			mmis[nm] = mi
+		mi.multimesh.instance_count = buf.size() / 16
+		mi.multimesh.buffer = buf
+	for nm in mmis:
+		if not rows.has(nm):
+			(mmis[nm] as MultiMeshInstance3D).multimesh.instance_count = 0
+	mesh_instances = 0
+	for e2 in kit_meshes:
+		for nm2 in e2["mmis"]:
+			mesh_instances += (e2["mmis"][nm2] as MultiMeshInstance3D).multimesh.instance_count
+
+
+## One instance: the piece's origin `o` (m, the map), its right `e` (a unit vector on the map, y down), scales along its right,
+## its depth (toward its outer side) and up; standing on the board's ground under the origin.
+func _mesh_row(rows: Dictionary, nm: String, o: Vector2, e: Vector2, sx: float, sy: float, sz: float, cul: float) -> void:
+	var g := BoardView.ground_m(o * ppm)
+	var bx := Vector3(e.x * sx, 0.0, e.y * sx)
+	var by := Vector3(0.0, sz, 0.0)
+	var bz := Vector3(-e.y * sy, 0.0, e.x * sy)
+	var buf: PackedFloat32Array = rows.get(nm, PackedFloat32Array())
+	buf.append_array(PackedFloat32Array([bx.x, by.x, bz.x, o.x, bx.y, by.y, bz.y, g, bx.z, by.z, bz.z, o.y, cul, 0.0, 0.0, 0.0]))
+	rows[nm] = buf
+
+
+## Whether a Rome house's door (its outer side, +y in the kit's frame) should turn round: its own side faces a building, a wall
+## or the water a few metres out and the other side the street (the sim's obstacle cells, read only).
+func _street_flip(k, i: int) -> bool:
+	if sim.obs_on == 0 or MapGen.west_kit(k.lay):
+		return false
+	var e: Vector2 = k.i_e[i]
+	var f := Vector2(e.y, -e.x)
+	var o: Vector2 = k.i_pos[i]
+	var d := maxf(k.i_sy[i] * 4.0, 3.0) + 2.5
+	var a := o + f * d
+	var b := o - f * d
+	var ka: int = sim.obs_kind(int(a.x * 1024.0), int(a.y * 1024.0))
+	var kb: int = sim.obs_kind(int(b.x * 1024.0), int(b.y * 1024.0))
+	return ka != MapGen.C_OPEN and ka != MapGen.C_RUBBLE and (kb == MapGen.C_OPEN or kb == MapGen.C_RUBBLE)
+
+
+## The cards of the pieces drawn as meshes left out of the kit's rows (the row's code 0: no vertex lands on the board).
+func _hide_cards(k, buf: PackedFloat32Array) -> void:
+	for km in kit_meshes:
+		if km["kit"] != k:
+			continue
+		for i in km["inst"]:
+			var sl: int = k._ob_slot[i] if i < k._ob_slot.size() else -1
+			if sl >= 0 and sl * 12 + 8 < buf.size():
+				buf[sl * 12 + 8] = 0.0
+		for lm in km["lm"]:
+			var w: int = lm[0]
+			var sl2: int = k._ob_wslot[w] if w < k._ob_wslot.size() else -1
+			if sl2 >= 0 and sl2 * 12 + 8 < buf.size():
+				buf[sl2 * 12 + 8] = 0.0
 
 
 # --------------------------------------------------------------------------------------------- trees
@@ -582,6 +723,9 @@ func sync_camera() -> void:
 	cam.far = dist * 2.0 + 200.0
 	lamp.transform = Transform3D(Basis(Vector3.UP, BoardView.yaw) * _lamp_basis(), Vector3.ZERO)
 	lamp.directional_shadow_max_distance = dist + span * 0.9
+	var kd := lamp.transform.basis.z   # (toward the lamp: it shines along its -z)
+	for m in mesh_mats:
+		m.set_shader_parameter("key_dir", kd)
 	for m in card_mats:
 		m.set_shader_parameter("cam_r", b.x)
 		m.set_shader_parameter("cam_u", b.y)
@@ -734,6 +878,8 @@ func _use_compatible() -> void:
 		((e[1] as MultiMeshInstance3D).material_override as ShaderMaterial).shader = KIT_SHADER_CPU
 	for m in [men_mat, base_mat, pr_mat]:
 		BoardView.apply(m)
+	for km in kit_meshes:
+		km["rev"] = -1   # (the meshes on the coarse grid's ground)
 
 
 func set_shadows(on: bool) -> void:

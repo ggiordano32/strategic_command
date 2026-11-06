@@ -549,8 +549,55 @@ def b_bastion(P):
         P.seg("metal", (sx * 3.0, 3.0), (sx * 3.4, 4.8), 0.5, 5.2, 0.5)
 
 
+def openings(P, cx, cy, sx, sy, wh, door=True, levels=1, back=True, ends=True, dx=0.0, zmin=0.0):
+    """The 3D view's doors, windows and shutters (tools/battlekit/export3d.py sets P.detail3d; the rendered sprites never
+    have them, so the atlases are unchanged): on the front wall (+y, the street side) a door (dx along the wall from its
+    middle) and a row of windows per level (none below zmin), on the back wall windows, on each end one; a window a dark
+    pane with two painted shutters (trim: the culture's accent colour) and a sill, standing a few cm proud of the wall."""
+    if not getattr(P, "detail3d", False):
+        return
+    lv = max(1, levels)
+    fy, by_ = cy + sy / 2, cy - sy / 2
+
+    def win(x, y, z, along_x, out):
+        if along_x:
+            P.box("black", x, y + out * 0.03, z, 0.62, 0.06, 0.82)
+            for s in (-1, 1):
+                P.box("trim", x + s * 0.56, y + out * 0.05, z - 0.02, 0.36, 0.06, 0.86)
+            P.box("stone_l", x, y + out * 0.07, z - 0.12, 0.86, 0.14, 0.1)
+        else:
+            P.box("black", x + out * 0.03, y, z, 0.06, 0.62, 0.82)
+            for s in (-1, 1):
+                P.box("trim", x + out * 0.05, y + s * 0.56, z - 0.02, 0.06, 0.36, 0.86)
+            P.box("stone_l", x + out * 0.07, y, z - 0.12, 0.14, 0.86, 0.1)
+    n = max(1, int((sx - 1.2) / 2.6))
+    step = (sx - 1.2) / n
+    xs = [cx - sx / 2 + 0.6 + step * (i + 0.5) for i in range(n)]
+    dxx = cx + dx
+    for lvl in range(lv):
+        z = (wh / lv) * lvl + min(1.3, wh / lv * 0.42)
+        if z < zmin:
+            continue
+        for x in xs:
+            if door and lvl == 0 and abs(x - dxx) < 1.3:
+                continue
+            win(x, fy, z, True, 1)
+            if back:
+                win(x, by_, z, True, -1)
+        if ends and sy > 3.5:
+            for s in (-1, 1):
+                win(cx + s * sx / 2, cy, z, False, s)
+    if door:
+        dh = min(2.1, wh * 0.68)
+        P.box("timber_d", dxx, fy + 0.04, 0, 1.15, 0.08, dh)
+        P.box("stone_l", dxx, fy + 0.08, dh, 1.45, 0.14, 0.16)
+        P.box("stone_d", dxx, fy + 0.35, 0, 1.6, 0.7, 0.16)
+
+
 def house(P, sx, sy, wh=3.2, rh=3.0, hip=0.0, thatch=False, over=0.5, chim=True, rot=0.0):
     P.box("plaster", 0, 0, 0, sx, sy, wh)
+    if sx >= sy:
+        openings(P, 0, 0, sx, sy, wh, levels=2 if wh >= 3.5 else 1)
     P.gable("thatch" if thatch else "roof", 0, 0, wh, sx, sy, rh, over=over, hip=hip,
             ridge_axis="x" if sx >= sy else "y")
     if chim:
@@ -574,6 +621,8 @@ def b_house(P, kind):
         P.gable("roof", 0, -1.5, 3.2, 12, 6, 3.0, over=0.5, ridge_axis="x")
         P.gable("roof", 3.0, 4.0, 3.2, 6, 9.0, 3.0, over=0.5, ridge_axis="y")
         P.box("stone_d", -3, -1.5, 5.0, 0.9, 0.9, 2.2)
+        openings(P, -3.0, -1.5, 6, 6, 3.2, door=False, ends=False)
+        openings(P, 3.0, 3.5, 6, 8, 3.2, back=False)
     elif kind == "hut_round":
         P.cyl("plaster", 0, 0, 0, 2.8, 2.2, 14)
         P.cyl("thatch", 0, 0, 2.2, 3.5, 3.4, 14, r2=0.1)
@@ -585,6 +634,7 @@ def flat_house(P, sx, sy, wh, upper=False):
     """Flat-roofed house (Punic / Carthaginian, Caribbean adobe could use it): plaster block, a parapet round the
     roof, an earth roof deck, a stair block and (optionally) a smaller upper room."""
     P.box("plaster", 0, 0, 0, sx, sy, wh)
+    openings(P, 0, 0, sx, sy, wh)
     pb = 0.55
     ph = 0.7
     P.box("plaster", 0, -sy / 2 + pb / 2, wh, sx, pb, ph)
@@ -605,6 +655,7 @@ def flat_house(P, sx, sy, wh, upper=False):
 
 def b_church(P):
     P.box("plaster", 0, 0, 0, 20, 8.5, 5.0)
+    openings(P, 0, 0, 18, 8.5, 5.0, door=False, ends=False)
     P.gable("roof", 0, 0, 5.0, 20, 8.5, 4.4, over=0.6)
     P.cyl("plaster", 11.2, 0, 0, 4.2, 4.2, 10, rot=0.1)
     P.cyl("roof_s", 11.2, 0, 4.2, 4.6, 3.4, 10, r2=0.2)
@@ -622,6 +673,8 @@ def b_temple(P):
     P.box("stone_l", 0, 0, 0.8, 21.4, 13.4, 0.8)
     P.box("stone_l", 0, 0, 1.6, 20, 12, 0.8)
     P.box("plaster", 0, 0, 2.4, 14, 8, 7.0)           # cella
+    if getattr(P, "detail3d", False):                  # (the 3D view: the cella's door at its front, +x)
+        P.box("timber_d", 7.04, 0, 2.4, 0.08, 1.8, 3.4)
     for i in range(9):
         for sy in (-1, 1):
             P.cyl("stone_l", -9 + i * 2.25, sy * 5.0, 2.4, 0.55, 7.4, 12)
@@ -1029,6 +1082,7 @@ def b_tavern(P):
     sx, sy = 12.0, 8.6
     by = -0.7
     P.box("plaster", 0, by, 0, sx, sy - 1.4, 5.4)
+    openings(P, 0, by, sx, sy - 1.4, 5.4, levels=2, dx=-1.5)
     P.gable("roof", 0, by, 5.4, sx, sy - 1.4, 3.0, over=0.45, ridge_axis="x")
     P.box("stone_d", -sx * 0.32, by - 1.2, 6.4, 0.9, 0.9, 2.6)                 # chimney
     # The gallery along the street: posts, a balcony floor, a lean roof.
@@ -1050,6 +1104,7 @@ def b_shop(P):
     sx, sy = 8.0, 7.6
     by = -0.9
     P.box("plaster", 0, by, 0, sx, sy - 1.8, 3.8)
+    openings(P, 0, by, sx, sy - 1.8, 3.8, dx=2.4)
     pb, ph = 0.45, 0.6                                                          # flat roof, parapet
     for x0, y0, w0, h0 in ((0, by - (sy - 1.8) / 2 + pb / 2, sx, pb), (0, by + (sy - 1.8) / 2 - pb / 2, sx, pb),
                            (-sx / 2 + pb / 2, by, pb, sy - 1.8), (sx / 2 - pb / 2, by, pb, sy - 1.8)):
@@ -1071,6 +1126,7 @@ def b_store(P):
     sx, sy = 10.0, 8.4
     by = -0.6
     P.box("plaster", 0, by, 0, sx, sy - 1.2, 4.0)
+    openings(P, 0, by, sx, sy - 1.2, 4.0)
     P.gable("roof", 0, by, 4.0, sx, sy - 1.2, 2.8, over=0.45, hip=0.6, ridge_axis="x")
     slab(P, "timber", [(-sx / 2 + 1.0, sy / 2 - 1.25, 3.0), (sx / 2 - 1.0, sy / 2 - 1.25, 3.0),
                        (sx / 2 - 1.0, sy / 2 + 0.3, 2.5), (-sx / 2 + 1.0, sy / 2 + 0.3, 2.5)], 0.1)
@@ -1084,6 +1140,7 @@ def b_warehouse(P):
     sx, sy = 18.0, 11.0
     by = -0.4
     P.box("stone", 0, by, 0, sx, sy - 0.8, 5.2)
+    openings(P, 0, by, sx, sy - 0.8, 5.2, door=False, levels=2, ends=False, zmin=3.0)
     P.gable("roof", 0, by, 5.2, sx, sy - 0.8, 2.6, over=0.4, hip=0.35, ridge_axis="x")
     for i in range(3):
         x = -sx / 3 + i * sx / 3
@@ -1100,6 +1157,7 @@ def b_chandler(P):
     sx, sy = 11.0, 8.4
     by = -0.6
     P.box("timber", 0, by, 0, sx, sy - 1.2, 3.8)
+    openings(P, 0, by, sx, sy - 1.2, 3.8, dx=0.6)
     P.gable("roof", 0, by, 3.8, sx, sy - 1.2, 3.0, over=0.5, ridge_axis="y")
     for i in range(4):
         P.box("timber_d", -sx / 2 + 0.1 + i * (sx - 0.2) / 3, by, 0, 0.25, sy - 1.15, 3.85)   # framing
@@ -1114,6 +1172,7 @@ def b_chandler(P):
 def b_shack(P):
     sx, sy = 6.0, 4.8
     P.box("timber", 0, 0, 0, sx, sy, 2.4)
+    openings(P, 0, 0, sx, sy, 2.4, ends=False)
     P.gable("thatch", 0, 0, 2.4, sx, sy, 1.7, over=0.6, ridge_axis="x")
     P.cyl("timber_d", sx / 2 - 0.3, sy / 2 + 0.6, 0, 0.1, 2.2, 6)
     P.lump("earth", -1.6, sy / 2 + 0.6, 0.2, 0.5, 0.35, 0.25, 0.2, 2, 2)
@@ -1134,6 +1193,8 @@ def b_governor(P):
     h = 7.0
     # Four wings round a patio, tiled roofs, an arcade along the front.
     P.box("plaster", 0, sy / 2 - w / 2, 0, sx, w, h)
+    openings(P, 0, sy / 2 - w / 2, sx, w, h, levels=2, back=False, ends=False)
+    openings(P, 0, -sy / 2 + w / 2, sx, w, h, door=False, levels=2, ends=False)
     P.box("plaster", 0, -sy / 2 + w / 2, 0, sx, w, h)
     P.box("plaster", -sx / 2 + w / 2, 0, 0, w, sy - 2 * w, h)
     P.box("plaster", sx / 2 - w / 2, 0, 0, w, sy - 2 * w, h)
@@ -1398,4 +1459,5 @@ def main():
         print("DONE", n)
 
 
-main()
+if __name__ == "__main__":   # (tools/battlekit/export3d.py loads this file as a module)
+    main()

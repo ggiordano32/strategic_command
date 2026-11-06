@@ -14,6 +14,7 @@ extends Node
 
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const KitOb := preload("res://game/kit_ob.gd")
+const Kit3D := preload("res://game/kit3d.gd")
 const BoardView := preload("res://game/board_view.gd")
 
 enum State { ABSENT, DOWNLOADING, LOADED, FAILED, CANCELLED }
@@ -205,6 +206,7 @@ func _on_completed(result: int, code: int, _headers: PackedStringArray, body: Pa
 	# The loaders decide once per session; make them decide again.
 	SpriteOb.reset()
 	KitOb.reset()
+	Kit3D.reset()
 	var ok: bool = present.call()
 	if ok:
 		print("oblique pack: loaded (", done_bytes, " bytes), the oblique sheets found")

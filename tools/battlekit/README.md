@@ -131,3 +131,24 @@ copy, read by `MapGen` and by `BattleKit.piece_trace`). `build.py` adds the trac
 ```
 python3 tools/battlekit/fort_trace.py
 ```
+
+## The 3D battle view's meshes (step two, 2026-11-06)
+
+The pieces the 3D view drew as cards (houses, huts, the West town's buildings, towers, the bastion, props, rocks, the
+landmarks and civic pieces) as low-poly meshes with their painted look baked; docs/design/art_pipeline.md "The 3D battle
+view, step two: houses as geometry".
+
+```
+blender -b --factory-startup -P tools/battlekit/export3d.py -- [--pieces a,b] [--out tools/battlekit/_frames3d]
+godot --headless --path . --script res://tools/battlekit/kit3d_res.gd [-- --frames=DIR]
+godot --headless --path . --import      # kit3d_albedo.png.import keeps lossy WebP + mipmaps
+```
+
+`export3d.py` loads `build.py` as a module (its `main()` runs only as the script) and builds each piece with
+`P.detail3d = True`, which adds the doors, windows and painted shutters (`openings`) the sprites never had (the atlases are
+not rendered again, so they are unchanged). Per piece: the parts joined, the bottoms dropped, the foot pushed 1.2 m into
+the ground, triangulated, collapsed to a budget only when over it (1,400 a building, 260 a rock, 3,000 a landmark),
+smart-projected UVs, the emission albedo times a soft AO (a ground plane under it) baked with Cycles at 7 px/m (3.5 for the
+landmarks), `<piece>.json` (Godot frame) and `<piece>.png`. `kit3d_res.gd` shelf-packs the textures into one 2048 atlas
+(scaled together until they fit) and writes `assets/battlekit_ob/kit3d.res` (one ArrayMesh, a surface per piece; the mask
+class in UV2.x) and `kit3d_albedo.png`; both ride in the web's oblique pack.

@@ -1113,7 +1113,7 @@ func _ob_landmarks() -> void:
 		if q < 0:
 			continue
 		var sc := float(int(a[4])) / 1000.0
-		_ob_lm.append([_ob_wall.size() / 12, nm, rad_to_deg(-yaw)])
+		_ob_lm.append([_ob_wall.size() / 12, nm, rad_to_deg(-yaw), Vector2(float(int(a[1])), float(int(a[2]))), yaw, sc])
 		var e := Vector2(cos(yaw), sin(yaw))
 		var dn := Vector2(-e.y, e.x)
 		var c := Vector2(float(int(a[1])), float(int(a[2])))
@@ -1366,7 +1366,8 @@ func _ob_drum(c: Vector2, r: float, hm: float) -> void:
 ## Whether a turn (1/1024) is off the axes by more than AXIS_TOL.
 static func _off_axis(d: int) -> bool:
 	var m := d & 255
-	return ALL_MESH or (m > AXIS_TOL and m < 256 - AXIS_TOL)
+	# (The 3D view builds every gate and square tower as rows: real geometry, which turns with the table; step two.)
+	return ALL_MESH or BoardView.v3d or (m > AXIS_TOL and m < 256 - AXIS_TOL)
 
 
 ## Whether instance i is drawn as rows in the oblique view: a gate or a square tower whose stretch is not axis-aligned.
@@ -1854,7 +1855,7 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 ## turned cam_yaw_deg (the sheet's yaws relative to the camera: a piece at world yaw Y is its render at Y - the camera's yaw);
 ## `ob_rev` counts the changes to the rows (a gate's state, a fallen house, the rubble) so the view copies them again.
 var ob_rev := 0
-var _ob_lm: Array = []     # the landmark rows: [row index in _ob_wall, piece name, yaw degrees]
+var _ob_lm: Array = []     # the landmark rows: [row index in _ob_wall, piece name, yaw degrees, the piece's origin (m), yaw (rad), scale]
 
 
 func ob_buffer_3d(cam_yaw_deg: float) -> PackedFloat32Array:

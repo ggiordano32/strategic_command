@@ -4,7 +4,7 @@ extends SceneTree
 ##     [--ticks=300] [--z=ZOOM|fit] [--yaw=DEG] [--tilt=DEG] [--size=1280x720] [--nohud] [--cu=UNIT] [--cam=x_m,y_m]
 ##     [--bench=SECONDS] (the mean / p95 frame time and the draw calls over that many seconds after a 3 s warm-up, the battle
 ##     running at 1 x; one JSON line "V3D_BENCH {...}") [--run] (the battle unpaused while shooting) [--quality=high|low]
-##     [--shore] (a port town with three ships off its shore instead of --sc)
+##     [--shore] (a port town with three ships off its shore instead of --sc) [--town[=dx,dy]] (the camera on the town)
 const Battle := preload("res://game/battle.gd")
 const BoardView := preload("res://game/board_view.gd")
 const UiScale := preload("res://game/ui_scale.gd")
@@ -27,6 +27,7 @@ var bench := 0.0
 var run := false
 var shore := false
 var siege := ""
+var town := Vector2(-1, -1)   # --town[=dx,dy]: the camera on the town's buildings' middle (+ an offset, m)
 
 
 func _initialize() -> void:
@@ -46,6 +47,8 @@ func _initialize() -> void:
 		elif a.begins_with("--size="): size = Vector2i(int(v.get_slice("x", 0)), int(v.get_slice("x", 1)))
 		elif a.begins_with("--bench="): bench = float(v)
 		elif a == "--run": run = true
+		elif a == "--town": town = Vector2.ZERO
+		elif a.begins_with("--town="): town = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1)))
 		elif a == "--shore": shore = true   # (a port town with a fleet off its shore: Scenarios.shore_battle)
 	BoardView.force = view
 	_run.call_deferred()
@@ -93,6 +96,13 @@ func _run() -> void:
 		b._zoom_at(c, zoom / b.camera.zoom.x)
 	if shore and cu < 0 and cam.x < 0.0 and b.sim.shp_on != 0:
 		b._cam_to(Vector2(b.sim.sh_x[0], b.sim.sh_y[0]) / 1024.0 * Battle.PX_PER_M)
+	elif town.x > -1.0 and b.sim.map_info is Dictionary and (b.sim.map_info as Dictionary).has("city"):
+		var bl: Array = (b.sim.map_info["city"] as Dictionary).get("buildings", [])
+		var mid := Vector2.ZERO
+		for r in bl:
+			mid += Vector2(float(int(r[0]) + int(r[2])), float(int(r[1]) + int(r[3]))) * 0.5
+		mid /= maxf(float(bl.size()), 1.0)
+		b._cam_to((mid + town) * Battle.PX_PER_M)
 	elif cu >= 0:
 		b._cam_to(Vector2(b.sim.u_cx[cu], b.sim.u_cy[cu]) / 1024.0 * Battle.PX_PER_M)
 	elif cam.x >= 0.0:

@@ -16,10 +16,10 @@ simh=$(cat sim/*.gd | sha1sum | cut -c1-8)
 rules=$(ls campaign/*.gd campaign/data/*.gd sim/*.gd | sort | xargs cat | sha1sum | cut -c1-8)
 # ob: content hash of the oblique sheets, the version in the oblique pack's URL (a new build refetches it only
 # when the sheets changed; game/oblique_pack.gd reads it from the stamp).
-ob=$(cat assets/sprites_ob/manifest.json assets/battlekit_ob/manifest.json assets/sprites_ob/*.png assets/battlekit_ob/*.png | sha1sum | cut -c1-8)
+ob=$(cat assets/sprites_ob/manifest.json assets/battlekit_ob/manifest.json assets/sprites_ob/*.png assets/battlekit_ob/*.png assets/battlekit_ob/*.res | sha1sum | cut -c1-8)
 echo "$(date -u +%Y%m%dT%H%M%SZ) src:$src sim:$simh rules:$rules ob:$ob" > build_stamp.txt
 godot --headless --export-release "Web" build/web/index.html
-# The second pack, fetched on demand by the oblique Battle view (only the oblique sheets and their imports).
+# The second pack, fetched on demand by the oblique Battle view (the oblique sheets, the 3D kit meshes and their imports).
 godot --headless --export-pack "Web oblique pack" build/web/oblique.pck
 # Install support: manifest + icons (no service worker, so never a stale build).
 godot --headless --script res://tools/make_web_icons.gd

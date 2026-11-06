@@ -13,6 +13,9 @@ extends SceneTree
 ## 5. The layers are fed: the men's MultiMesh carries every man (12 floats each), the missiles' follows the slots in use, a West
 ##    town's kit rows are copied (and re-picked when the camera turns a quarter), a fort storm's poles and ram are built as a mesh.
 ## 6. (a window) The 3D probe sees the men drawn.
+## 7. Step two (game/kit3d.gd): in a West town and a Rome city every kit piece that stood as a card is a mesh instance (as
+##    many as the plan's pieces, every building the kit places among them), its card left out of the rows, and a quarter
+##    turn leaves the meshes' transforms as they were (they turn with the table: no swap); every gate is rows.
 ## Exits 0 / 1.
 
 const Battle := preload("res://game/battle.gd")
@@ -20,6 +23,8 @@ const BoardView := preload("res://game/board_view.gd")
 const ConfirmOrders := preload("res://game/confirm_orders.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UiScale := preload("res://game/ui_scale.gd")
+const Kit3D := preload("res://game/kit3d.gd")
+const KitAtlas := preload("res://game/battlekit_atlas.gd")
 
 var ok := true
 var battle: Battle
@@ -163,7 +168,14 @@ func _run() -> void:
 		for r in kmm.instance_count:
 			if b0[r * 12 + 8] != b1[r * 12 + 8]:
 				changed += 1
-		_check(changed > 0, "west_town: a quarter turn re-picks the houses' renders (%d rows)" % changed)
+		if not Kit3D.ok():
+			_check(changed > 0, "west_town: a quarter turn re-picks the houses' renders (%d rows)" % changed)
+	if Kit3D.ok():
+		_check_meshes("west_town")
+		await _open("siege_city")
+		_check_meshes("siege_city")
+	else:
+		_check(false, "the kit's meshes are in assets/battlekit_ob (kit3d.res)")
 	await _open("west_fort_storm")
 	for t in 300:
 		battle.sim.step()
@@ -179,6 +191,81 @@ func _run() -> void:
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")
 	quit(0 if ok else 1)
+
+
+func _check_meshes(sc: String) -> void:
+	var v3 = battle.view3d
+	BoardView.set_view(0.0, 40.0)
+	v3.refresh_kit(true)
+	var want := 0
+	var blds := {}
+	var lms := 0
+	for e in v3.kits:
+		var k = e[0]
+		for i in k.i_piece.size():
+			if i < k._ob_slot.size() and k._ob_slot[i] >= 0 and not k.fallen(i):
+				want += 1
+				if k.i_bld[i] >= 0:
+					blds[k.i_bld[i]] = 1
+		for lm in k._ob_lm:
+			if (lm as Array).size() >= 6:
+				lms += 1
+	var got := 0
+	var got_b := {}
+	var hidden := true
+	for km in v3.kit_meshes:
+		var k = km["kit"]
+		for i in km["inst"]:
+			if not k.fallen(i):
+				got += 1
+				if k.i_bld[i] >= 0:
+					got_b[k.i_bld[i]] = 1
+		var mm: MultiMesh = null
+		for e in v3.kits:
+			if e[0] == k:
+				mm = (e[1] as MultiMeshInstance3D).multimesh
+		for i in km["inst"]:
+			var sl: int = k._ob_slot[i]
+			if mm != null and sl >= 0 and mm.buffer[sl * 12 + 8] != 0.0:
+				hidden = false
+		got += (km["lm"] as Array).size()
+	_check(want + lms > 20 and got == want + lms and v3.mesh_instances == want + lms,
+		"%s: every card piece is a mesh (%d meshes drawn, %d instances, the plan's %d pieces + %d landmarks)" % [sc, v3.mesh_instances, got, want, lms])
+	_check(got_b.size() == blds.size() and blds.size() > 10, "%s: every building the kit places is a mesh (%d of %d)" % [sc, got_b.size(), blds.size()])
+	_check(hidden, "%s: the meshed pieces' cards are left out of the kit's rows" % sc)
+	var gates_rows := true
+	for e in v3.kits:
+		var k = e[0]
+		for i in k.i_piece.size():
+			if k.i_gate[i] >= 0 and i < k._ob_slot.size() and k._ob_slot[i] >= 0:
+				gates_rows = false
+	_check(gates_rows, "%s: every gate is real geometry (no gate card)" % sc)
+	# a house turns with the table: its transform is the same at every yaw, its mesh the same (no swap)
+	var mi: MultiMeshInstance3D = null
+	for km in v3.kit_meshes:
+		for nm in km["mmis"]:
+			var m: MultiMeshInstance3D = km["mmis"][nm]
+			if m.multimesh.instance_count > 0 and (str(nm).begins_with("house") or str(nm) in ["tavern", "shop", "store", "warehouse"]):
+				mi = m
+				break
+		if mi != null:
+			break
+	_check(mi != null, "%s: a house kind drawn as a MultiMesh of meshes" % sc)
+	if mi == null:
+		return
+	var t0 := mi.multimesh.get_instance_transform(0)
+	var mesh0 := mi.multimesh.mesh
+	var tris := mesh0.get_faces().size() / 3
+	var same := true
+	for yaw in [37.0, 90.0, 180.0, 271.0]:
+		BoardView.set_view(deg_to_rad(yaw), 40.0)
+		v3.sync_camera()
+		v3.refresh_kit()
+		if not mi.multimesh.get_instance_transform(0).is_equal_approx(t0) or mi.multimesh.mesh != mesh0:
+			same = false
+	_check(same, "%s: %s turns with the table (its transform and mesh unchanged at yaws 37 / 90 / 180 / 271; %d triangles)" % [sc, mi.name, tris])
+	_check(tris >= 12 and tris <= 3000, "%s: %s is low poly (%d triangles)" % [sc, mi.name, tris])
+	BoardView.set_view(0.0, 40.0)
 
 
 func _tap(p: Vector2) -> void:

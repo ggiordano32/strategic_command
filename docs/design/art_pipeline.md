@@ -1806,3 +1806,78 @@ renders as the table turns); the board as a true cut slab following every hill (
 the tray fill (the standards and tokens stand, the card tray under a unit is not drawn); the terrain layer's drawn decals
 (tracks, flock-square fields) as ground decals; the rubble's heap (the third cover pass's 1.3 m: the 3D view lays it flat as a decal); the gun smoke, flashes, standards and markers as 3D billboards
 with depth (now 2D over everything); the top-down view as a steep 3D camera and the oblique view retired when the phone holds.
+
+### The 3D battle view, step two: houses as geometry (as built, 2026-11-06)
+
+**The ask.** The owner, after turning the table on his phone: "The 3D view looks great! The houses need more panels or to be
+switched to 3D models, they rotate with the camera and then snap into the next view." Every kit piece the 3D view still drew
+as a card is now a mesh: the Rome houses (house_gable_s / m / l, house_hip_s / m, longhouse, house_L, hut_round, hut_thatch,
+house_flat_s / m), the church and temple, the West town's buildings (tavern, shop, store, warehouse, chandler, shack,
+leanto, governor, magazine), the towers (tower_round, tower_sq, tower_timber), the bastion, the props (stall, well, cart,
+barrels, crates, lowwall, stakes, pier), the rocks (rock_a / b / c) and the 32 block 2 landmarks and civic pieces (lm_*,
+cv_*): 69 meshes. The gates and the square towers on the axes, which kept the sheet's sprite in step one, are built as the
+wall rows they already were off the axes (`BattleKit._off_axis` is true in the 3D view). What stays a card: the trees and
+bushes (a tree reads alike from every side; the owner did not ask) and the men (the painted sprites, as decided). View and
+art only: nothing under `sim/` or `campaign/` changed.
+
+**The pipeline.** `tools/battlekit/export3d.py` (Blender, `build.py` loaded as a module; tools/battlekit/README.md) builds
+each piece with the kit's own builders, so nothing is modelled twice. `P.detail3d` adds what the top-down renders never
+needed and the 3D camera does: per building a door (with lintel and step) on the street side (+y, the West pieces' street
+front), windows on the front, back and ends, one row per storey, each a dark pane, two shutters in the culture's accent
+colour and a sill, a few centimetres proud of the wall (`build.py openings`; the sprites are not rendered again, so the
+atlases and the top and oblique views are unchanged). Per piece the parts are joined, the bottoms dropped, the foot pushed
+1.2 m into the board (a house on a slope never floats), triangulated and collapsed to its budget only when over it; the UVs
+smart-projected; the painted albedo baked with Cycles from the kit's emission materials (the noise, courses, tiles and
+planks of the sprites; the masked roof, plaster and accent parts grey) times a soft ambient occlusion against a ground plane
+(0.62 + 0.38 x AO: the darker foot and the eaves' shade the sprites' AO gave). `tools/battlekit/kit3d_res.gd` packs the
+textures into one atlas and the meshes into one resource: `assets/battlekit_ob/kit3d.res` (one ArrayMesh, a surface per
+piece; vertex, normal, the atlas UV, the mask class in UV2.x: a vertex colour is read as sRGB and the classes came out
+wrong) and `kit3d_albedo.png` (lossy WebP, mipmaps). Both sit beside the oblique sheet, so the web's on-demand oblique pack
+carries them (`export_presets.cfg` "Web oblique pack", `tools/export_web.sh`'s version hash); `game/kit3d.gd` loads them,
+`--no-kit3d` (or no file) falls back to step one's cards.
+
+**The budgets.** Triangles: 350 for a Rome house with its windows (350 gable, 348 hip, 462-474 flat roofed, 542 the longhouse,
+1,022 house_gable_l with two storeys of windows), 92-338 the huts, 540-1,260 the West buildings (2,678 the governor's
+palace), 282-440 a stone tower, 1,308 the log tower, 260 a rock (collapsed from 900-1,500), 22-622 a landmark; 28,339 for
+all 69. A town's houses in all: West town 166 pieces, Rome city 115 (about 60k and 40k triangles drawn, against the board's
+62k / 21k vertices and the men's 2,000 cards). Texture: 7 px per metre of surface (3.5 for the landmarks, 40-90 m across),
+packed into one 2048 x 1984 atlas (the textures scaled 0.85 together to fit 2048), 16 MB in memory with mipmaps.
+
+**In the view.** `View3D._build_meshes`: per kit a MultiMeshInstance3D per piece kind (TRANSFORM_3D, the culture in the
+custom data; no node per house), filled from the kit's own instances (`i_pos`, `i_e`, `i_sx` / `i_sy`; the footprint's centre
+on the instance's place as the oblique sheet anchors the card, x scaled by i_sx, the depth and the height by i_sy so a roof
+keeps its pitch) and the landmark rows (`_ob_lm` now carries the piece's origin, yaw and scale), each on the board's ground
+under it (`BoardView.ground_m`, so the compatible path's coarse grid needs no vertex texture read either: the shader reads
+none in its vertex stage). The pieces turn with the table: a mesh's transform is world-fixed and never swaps. The cards of
+the meshed pieces are left out of the kit's rows (code 0); a fallen house's mesh is left out when the kit's rows change
+(`ob_rev`), its rubble drawn as before; the held building's outline and door mark are the overlay's, as in the other views.
+Rome's houses have no street side in the plan: the mesh's door turns to the open side when its own side faces a building
+or a wall 6 m out (`_street_flip`, the sim's obstacle cells read only). Shading (`game/kit_mesh3d.gdshader`): the baked albedo
+recoloured by the culture's palette through the mask class (battlekit.gdshader's stone tint and pal_r / g / b, the palm
+thatch), lit as the painted sprites are (an ambient with a sky term and one key, normalised so a face looking up reads at its
+painted value, the battle look's saturation and contrast) with the key along the 3D lamp (from the camera's upper left and
+the far side, as the sprites' key); half-Lambert with a floor (0.25 + 0.75 x the light), because the sprites light a wall
+turned from the key at about 0.6 of its paint and a plain N.L made those walls olive-dark; the lamp adds only its shadow
+(lit 1.0, in shadow 0.71, as the kit's cards) and only on faces it reaches, so a wall in its own shade is not darkened twice.
+Casting shadows on High.
+
+**Measured (2026-11-06; this desktop, RTX 3070, the battle running, HUD and overlay on, 8 s at the fit; meshes against step
+one's cards, `--no-kit3d`).** Frame avg / p95 / GPU ms, primitives (the lamp's shadow pass draws the meshes again):
+West town High 1280 x 720 5.48 / 9.40 / 1.32, 452k against 5.13 / 8.49 / 1.27, 291k; 844 x 390 5.17 / 8.71 / 1.27 against
+5.10 / 8.41 / 1.20; Low (no shadows, the compatible path) 1280 x 720 4.78 / 6.64 / 0.91, 146k against 4.79 / 6.64 / 0.86, 66k;
+844 x 390 4.89 / 8.20 / 1.08 against 4.80 / 6.77 / 1.01. Rome city High 1280 x 720 3.79 / 5.30 / 1.01, 218k against 3.75 / 5.29
+/ 0.99, 127k; 844 x 390 3.70 / 5.15 / 0.81 against 3.63 / 5.04 / 0.82; Low 3.64 / 5.14 / 0.85 against 3.60 / 4.89 / 0.84 and
+3.63 / 5.15 / 0.81 against 3.61 / 5.16 / 0.79. Draw calls +10 to +46 (a MultiMesh per piece kind, twice with shadows). So
+the GPU pays 0.02-0.07 ms and Low does not need the cards: it draws the meshes too (the cards stay only as the fallback when
+kit3d.res is missing). The phone is the real measure. Download: the web's main pack unchanged (index.pck 18.94 MB), the
+oblique pack 14.7 -> 16.08 MB (+1.38 MB: kit3d_albedo 0.79 MB as lossy WebP with mipmaps, kit3d.res 0.61 MB). The build:
+Blender 18 s for the 69 pieces, the packer 10 s. tests/v3d_test.gd's part 7: in west_town 166 and in siege_city 115 kit
+pieces are meshes, every building the kit places (118 / 94) among them, their cards out of the rows, no gate card, and a
+house's transform and mesh unchanged at yaws 37 / 90 / 180 / 271; `webcheck -v3d` now opens a West town and wants its kit
+meshes.
+
+**Known.** The baked textures are about 6 px per metre (the atlas scaled 0.85 to fit 2048), soft at the closest zoom
+(the sprites are 8); the roofs are smooth planes (the tiles are paint, no ridge tiles or eaves boards); the meshes' foot
+goes 1.2 m into the board, so a house on a steep step shows its skirt; Rome houses' doors face the street only where the
+plan's cells say which side is open; the landmarks are at 3.5 px/m; the trees, bushes and the men stay cards; the rubble of
+a fallen house is still the flat decal; no device check yet.

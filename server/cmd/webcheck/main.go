@@ -457,16 +457,18 @@ func idx(m []string, i int) string {
 // its soldiers (SOLDIER_PROBE) and print neither loader's fallback notice (game/sprite_ob.gd, game/kit_ob.gd).
 // checkV3d: the 3D Battle view on the web (game/view3d.gd, docs/design/art_pipeline.md "The 3D battle view, step one"). A
 // battle opened with ?battle-view=3d mounts the oblique sheets (downloading oblique.pck when absent), builds its 3D scene
-// ("view3d: built ...") and its own probe ("V3D_PROBE drawn=N men=M path=v3d-gpu|v3d-cpu") must see the men drawn.
+// ("view3d: built ...", a West town: its kit pieces as meshes, step two) and its own probe ("V3D_PROBE drawn=N men=M path=v3d-gpu|v3d-cpu") must see the men drawn.
 func checkV3d(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
 	c.reset()
 	t0 := time.Now()
-	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&battle-view=3d")); err != nil {
+	// (a West town: its houses, towers and props are meshes since step two, game/kit3d.gd from the oblique pack)
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=west_town&speed=3&battle-view=3d")); err != nil {
 		check(false, "3d: navigate: "+err.Error())
 		return
 	}
-	b := c.wait(regexp.MustCompile(`view3d: built in ([\d.]+) ms \(board (\d+) verts, (\d+) trees, shadows (\w+)\)`), 240*time.Second)
-	check(b != nil, fmt.Sprintf("the 3D scene builds: %v ms, board %v verts, shadows %v (%.1f s)", idx(b, 1), idx(b, 2), idx(b, 4), time.Since(t0).Seconds()))
+	b := c.wait(regexp.MustCompile(`view3d: built in ([\d.]+) ms \(board (\d+) verts, (\d+) trees, (\d+) kit meshes, shadows (\w+)\)`), 240*time.Second)
+	check(b != nil, fmt.Sprintf("the 3D scene builds: %v ms, board %v verts, shadows %v (%.1f s)", idx(b, 1), idx(b, 2), idx(b, 5), time.Since(t0).Seconds()))
+	check(b != nil && atoi(b[4]) > 50, fmt.Sprintf("the town's kit pieces are meshes: %v", idx(b, 4)))
 	m := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`), 120*time.Second)
 	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the 3D battle draws its men: %v pixels, %v men, %v path", idx(m, 1), idx(m, 2), idx(m, 3)))
 	time.Sleep(2 * time.Second)
