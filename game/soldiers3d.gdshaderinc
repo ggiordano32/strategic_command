@@ -224,6 +224,10 @@ void vertex() {
 	bool shoot = mod(floor(fl / 8.0), 2.0) > 0.5;
 	bool fired = mod(floor(fl / 16.0), 2.0) > 0.5;
 	bool gun = mod(floor(fl / 32.0), 2.0) > 0.5;
+	// Suppression's stand-in crouch (+ 64 x level: 1 suppressed, 2 pinned; soldiers.gdshaderinc crouch_k): the card squashed
+	// toward the feet, a little darker.
+	float crc = st == 0 ? mod(floor(fl / 64.0), 4.0) : 0.0;
+	vec2 crk = crc > 1.5 ? vec2(0.9, 0.6) : (crc > 0.5 ? vec2(0.94, 0.76) : vec2(1.0));
 	float lk = floor(MODEL_MATRIX[2].z + 0.5);    // sprite set + 64 x palette
 	int set = int(mod(lk, 64.0));
 	int pal = int(floor(lk / 64.0));
@@ -328,7 +332,7 @@ void vertex() {
 			// Toward the camera along the view: the sheet's lowest point (cell.z below the feet) clears the ground in front.
 			float cot_e = length(cam_b.xz) / max(cam_b.y, 0.2);
 			float dz = cell.z / sheet_ppm * cot_e + 0.12;
-			VERTEX = feet + (cam_r * lp.x - cam_u * lp.y) / sheet_ppm + cam_b * dz;
+			VERTEX = feet + (cam_r * lp.x * crk.x - cam_u * lp.y * crk.y) / sheet_ppm + cam_b * dz;
 			v_ob = vec4(lp, ((float(act) * 8.0 + dir) * ob_maxf + fr) * 2.0, float(set));
 			vec3 add = vec3(0.0);
 			float k = 1.0;
@@ -344,6 +348,7 @@ void vertex() {
 				else if (st == 3) { tint(add, k, vec3(0.1), 0.3); }
 				if (fire) { tint(add, k, vec3(1.0, 0.7, 0.3), 0.15); }
 				if (sel) { tint(add, k, vec3(1.0), 0.35); }
+				if (crc > 0.5) { k *= crc > 1.5 ? 0.8 : 0.9; }
 			}
 			v_color = vec4(add, a);
 			v_look = vec4(1.0, float(pal), k, 0.0);

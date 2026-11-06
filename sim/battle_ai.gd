@@ -201,6 +201,10 @@ const A_WORKS := 32    # missile troops manning their camp's rampart (FW_CAMP)
 ## theirs within CC_REACH (CC_CLOSE of its target: a charge going in).
 const CC_REACH := 140 * 1024
 const CC_CLOSE := 60 * 1024
+# Suppression (docs/AI.md 69; BattleSim's SUP_* states).
+const SUPP_PINNED := 2
+const SUPP_FLANK_GAP := 25 * 1024  # a melee unit goes round a pinned enemy (SUPP_FLANK_PCT) only while farther than this from it
+const SUPP_FALL_NEAR := 3 * 1024   # a cover spot nearer than this to a pinned unit: it stands where it is
 const CC_WORN := 60     # a musket line down to this % of its men (or wavering, CC_SHAKEN morale) is fair game ...
 const CC_SHAKEN := 500
 const CC_HOLD_T := 1800  # ... and every line, CC_HOLD_T after the lines engage (the reserve goes in)
@@ -1115,6 +1119,8 @@ static func _unit_think(sim, u: int) -> void:
 		_watch_cav(sim, u, kn[AP.SPEAR_CAV_R])
 	if Plays.unit_think(sim, u):
 		return  # (its part in a play: docs/AI.md 44)
+	if supp_fallback(sim, u, kn):
+		return  # (pinned: to cover, and stands there while suppressed: docs/AI.md 69; a play's part comes first)
 	if mode == A_RESV:
 		_resv_think(sim, u, kn)
 		return
@@ -1244,6 +1250,12 @@ static func _melee_think(sim, u: int) -> void:
 		return
 	# Formed enemy pikes: do not walk into the points if it can be helped
 	# (unless the mistake is to walk into them).
+	if kn[AP.SUPP_FLANK_PCT] > 0 and sim.supp_state(best) == SUPP_PINNED and _frontal(sim, best, u) \
+			and sim.u_fighting[u] == 0 and _bbox_gap(sim, u, best) > SUPP_FLANK_GAP and _chance(sim, kn[AP.SUPP_FLANK_PCT]):
+		# Pinned by our fire (docs/AI.md 69): round to its flank while the shooters hold it, then in.
+		_flank(sim, u, best)
+		_count(sim, side, AP.C_SUPP_FLANK)
+		return
 	if sim.u_formed[best] != 0 and sim.u_cls[u] != UT.CLS_PIKE and _frontal(sim, best, u) \
 			and not _mistake(sim, side, AP.M_SPEAR_CHARGE, kn):
 		var pinned := false
@@ -1344,6 +1356,45 @@ static func _counter_target(sim, u: int, r: int) -> int:
 			bd = d
 			best = o
 	return best
+
+
+## Suppression (docs/AI.md 69, SUPP_FALLBACK): a pinned unit of ours, not in a melee, at its post neither in a
+## building nor on a wall, walks to the nearest cover against the unit shooting it (BattleSim.supp_cover_spot: within
+## SUPP_FALL_R, not toward the shooter) and, sent there, stands (no other order: a missile unit fires at will as it was
+## set) while it is suppressed, at most SUPP_FALL_HOLD; no spot: it thinks as before. True while it does.
+static func supp_fallback(sim, u: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.SUPP_FALLBACK] == 0 or sim.sup_on == 0:
+		return false
+	var sf: int = sim.u_sfb[u]
+	if sf > 0:
+		if sim.u_sus[u] != 0 and sim.u_fighting[u] == 0 and sim.tick - (sf - 1) < sim.SUPP_FALL_HOLD:
+			return true
+		sim.u_sfb[u] = 0
+		return false
+	if sim.u_sus[u] != SUPP_PINNED or sim.u_fighting[u] > 0 or sim.u_wall[u] > 0 or (sim.occ_on != 0 and sim.u_occ[u] > 0):
+		return false
+	if (sim.n_eq > 0 and sim.u_carry[u] >= 0) or sim.u_order[u] == O_WITHDRAW:
+		return false
+	var sp: Vector3i = sim.supp_cover_spot(u)
+	if sp.z == 0 or _d(sp.x - sim.u_ax[u], sp.y - sim.u_ay[u]) < SUPP_FALL_NEAR:
+		return false
+	var s: int = sim.u_sbu0[u] - 1
+	var face: int = FM.atan2_a(sim.u_cy[s] - sp.y, sim.u_cx[s] - sp.x)
+	_move(sim, u, sp.x, sp.y, face, _width(sim, u), 0, 0)
+	sim.u_sfb[u] = sim.tick + 1
+	sim.stat_sup_fall += 1
+	_count(sim, sim.u_side[u], AP.C_SUPP_FALL)
+	return true
+
+
+## Suppression (docs/AI.md 69, SUPP_HOLD): missile unit u's attack target t is suppressed or pinned, ready, not in a
+## melee, within `rng` and in its line: it keeps shooting it (the pin held by fire superiority).
+static func _supp_held(sim, u: int, t: int, rng: int) -> bool:
+	if t < 0 or sim.supp_state(t) == 0 or sim.u_state[t] != U_READY or sim.u_fighting[t] > 0 or sim.u_ammo[u] <= 0:
+		return false
+	if sim.hidden_from(t, sim.u_side[u]) or not sim._in_range(u, t, rng):
+		return false
+	return sim.obs_on == 0 or UT.stat(sim.u_type[u], "m_arc") != 0 or sim.lof_units(u, t)
 
 
 ## Send u round to the flank of enemy unit t, then attack.
@@ -1761,6 +1812,8 @@ static func _mis_close(sim, u: int) -> bool:
 	# round for a line.)
 	var lofk := lof_pick(sim, u)
 	var keep := false
+	if sim.u_order[u] == O_ATTACK and AP.of(sim, side)[AP.SUPP_HOLD] != 0 and _supp_held(sim, u, sim.u_target[u], sim.mrange(u)):
+		return true  # (its target pinned or suppressed by its fire: kept, docs/AI.md 69)
 	if sim.u_order[u] == O_ATTACK:
 		var cur: int = sim.u_target[u]
 		if cur >= 0 and sim.u_state[cur] == U_READY and sim.u_fighting[cur] == 0 and not sim.hidden_from(cur, side):
@@ -3021,6 +3074,8 @@ static func _sk_focus(sim, u: int, kn: PackedInt32Array) -> void:
 	var ty: int = sim.u_type[u]
 	var rng := UT.stat(ty, "m_range")
 	var flat := UT.stat(ty, "m_arc") == 0
+	if kn[AP.SUPP_HOLD] != 0 and order == O_ATTACK and _supp_held(sim, u, sim.u_target[u], rng):
+		return  # (its target pinned or suppressed by its fire: kept, docs/AI.md 69)
 	var brk := kn[AP.SK_BREAK_MORALE]
 	var best := -1
 	var bs := 0

@@ -654,8 +654,13 @@ func _countermarch() -> void:
 	# The last volley: rodeleros 75 m off take the opening and the rolling fire, then charge the line.
 	var lsc := _sc([Scenarios.unit(0, mus, 100, 150, 200, UP, 25), Scenarios.unit(1, UT.index_of("rodeleros"), 200, 150, 120, DOWN, 40)],
 		[Scenarios.attack(240, 1, 0, 1)])
+	# (2026-11-06, suppression: the rodeleros charging into the rolling fire are suppressed (no running) and pinned (a
+	# crawl), so the scripted charge reaches the line at a walk and the last volley met them in the melee (0 m); the
+	# countermarch's own rule is checked as built, suppression off for this battle: BattleSim.SUPP_FORCE.)
+	(BattleSim as GDScript).set("SUPP_FORCE", 0)
 	var ls := BattleSim.new()
 	ls.setup(lsc, 41)
+	(BattleSim as GDScript).set("SUPP_FORCE", -1)
 	var last_d := -1
 	var full0 := 0
 	var walk_melee := 0

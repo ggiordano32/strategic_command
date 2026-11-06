@@ -4752,3 +4752,19 @@ was added (`N_KNOBS` stays 365); what changes for the AI:
   of, and one standing in such a front walks to a spot out of it when the scored search finds one.
 
 Measured: battle_sim.md (as built); the balance there is the AI against the AI in every row.
+
+## 69. Suppression: the AI flanks a pinned unit, falls back to cover, holds the pin (2026-11-06)
+
+The battle rules are docs/design/battle_sim.md "Suppression (as built, 2026-11-06)": a per-unit meter fed by the fire
+aimed at the unit, cut by its cover, with two states (suppressed, pinned) that slow its fire and its walk and stop its
+charge. Four knobs, ids 365-368 (`N_KNOBS` 369):
+
+| id | knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|---|
+| 365 | `SUPPRESS` | 0 | 1 | 1 | suppression on; the sim turns it on in a battle only when both sides' profiles have it (`BattleSim._supp_setup`; `SUPP_FORCE` overrides for tests), so the tutorial and Easy play exactly as before (no meter, nothing hashed) |
+| 366 | `SUPP_FALLBACK` | 0 | 1 | 1 | a pinned AI unit not in a melee, neither on a wall's walk nor in a building nor carrying gear, walks to the nearest cover against the unit shooting it within `SUPP_FALL_R` 15 m (`BattleSim.supp_cover_spot`: rings 5 m apart, 12 bearings, heavy before light, not toward the shooter, open ground) and, sent there (`u_sfb`), stands while suppressed, at most `SUPP_FALL_HOLD` 30 s, with no other order over it (a missile unit fires at will as it was set); no spot: it thinks as before (`BattleAI.supp_fallback`, called first in `_unit_think` and in `SiegeAI.think`'s unit loop) |
+| 367 | `SUPP_FLANK_PCT` | 0 | 50 | 75 | BattleAI: a melee unit whose chosen target is pinned, in front of it and more than `SUPP_FLANK_GAP` 25 m away goes round to its flank first (the existing `_flank`, then the attack) with this chance each think; SiegeAI's storm (streets leave no room to go round): a storming foot unit counts a pinned defender `SUPP_PULL` 20 m nearer, so it goes in on the unit the shooters hold |
+| 368 | `SUPP_HOLD` | 0 | 1 | 1 | a missile unit whose attack target is suppressed or pinned, ready, not in a melee, in reach and in its line keeps it (`_supp_held`: `_mis_close` and Skilled focus fire do not switch to a nearer one): fire superiority holds the pin |
+
+Counters `supp_flank` and `supp_fall` (`AP.C_SUPP_FLANK`, `C_SUPP_FALL`; `stat_sup_fall` in the sim).
+Measured: battle_sim.md (as built); the balance there is the AI against the AI in every row.

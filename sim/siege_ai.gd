@@ -174,6 +174,7 @@ const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
 const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain point
 const SP_COVER_DIR_W := 10       # ... plus this per step of cover facing the street mouth (S_COVER_DIR: heavy 2, light 1; docs/AI.md 66)
 const S_LOF_PUSH := 40 * M       # S_LOF_PICK: a storming shooter counts a defender it has no line of fire to this much farther (docs/AI.md 66)
+const SUPP_PULL := 20 * M        # suppression: storming foot count a pinned defender this much nearer (docs/AI.md 69, SUPP_FLANK_PCT on)
 const S_LOF_STEP_EVERY := 30     # S_LOF_STEP: a defender with no line looks for its step at most this often (ticks)
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
 const SP_PAL_LINE_PCT := 80     # ... and line units this far (defence in depth; balance T, measured: 44 / 38 % attacker wins)
@@ -329,6 +330,8 @@ static func think(sim) -> void:
 			continue
 		if _skirm_back(sim, u):
 			continue  # (falling back from a threat by the sim's skirmish rule: no order over it)
+		if BattleAI.supp_fallback(sim, u, kn):
+			continue  # (pinned: to cover, and stands there while suppressed: docs/AI.md 69)
 		if side == sim.city_def:
 			_defender(sim, u)
 		else:
@@ -2753,6 +2756,9 @@ static func _storm(sim, u: int) -> void:
 	var lofk: bool = kn[AP.S_LOF_PICK] != 0 and sim.obs_on != 0 and sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0 \
 		and UT.stat(sim.u_type[u], "m_arc") == 0
 	var lrng: int = sim.mrange(u) if lofk else 0
+	# (Suppression, docs/AI.md 69: storming foot count a pinned defender SUPP_PULL nearer: it cannot charge them and
+	# fires little, so they go in on it while the shooters hold it.)
+	var spull: bool = kn[AP.SUPP_FLANK_PCT] > 0 and sim.sup_on != 0 and sim.u_cls[u] != UT.CLS_MISSILE
 	for o in sim.n_units:
 		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
 			continue
@@ -2765,6 +2771,8 @@ static func _storm(sim, u: int) -> void:
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
 		if sim.occ_on != 0 and sim.u_occ[o] > 0 and sim.u_cls[u] != UT.CLS_MISSILE:
 			d = maxi(d - OCC_STORM_PULL, 0)  # (slice 2c: a held house is cleared first, at its door)
+		if spull and sim.u_sus[o] == BattleAI.SUPP_PINNED:
+			d = maxi(d - SUPP_PULL, 0)
 		if d >= best_d:
 			continue
 		# Spread out: every other unit of ours already on it counts as 25 m

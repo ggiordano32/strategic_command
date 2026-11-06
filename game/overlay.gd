@@ -1181,6 +1181,7 @@ func _draw_markers(r: float, lw: float) -> void:
 			_dstr(gat, gtx, HORIZONTAL_ALIGNMENT_LEFT, -1, gfs, Color(1.0, 0.85, 0.35))
 		if sim.u_state[u] == BattleSim.U_READY:
 			_draw_cover_chip(u, c, r, lw)
+			_draw_supp_chip(u, c, r, lw)
 		if hit_src >= 0 and sim.u_side[u] != sim.u_side[hit_src]:
 			_draw_hit_mark(u, c, r, lw)
 		if sim.car_on != 0 and sim.u_car[u] != 0:
@@ -1355,7 +1356,7 @@ func _box_hits(p: Vector2, sz: Vector2, mc: Vector2, mr: float) -> bool:
 
 
 const TOKEN_BODY := {"hold_fire": Color(0.55, 0.2, 0.16), "stance_cover": Color(0.25, 0.4, 0.3), "stance_hold": Color(0.25, 0.32, 0.5),
-	"stance_line": Color(0.3, 0.34, 0.42)}
+	"stance_line": Color(0.3, 0.34, 0.42), "suppressed": Color(0.62, 0.5, 0.08), "pinned": Color(0.66, 0.14, 0.1)}
 
 
 ## Unit u's state counters, the card strip's states first in its order (battle.gd `_card_states`: hold fire, a stance that is
@@ -1498,6 +1499,31 @@ func _draw_cover_chip(u: int, c: Vector2, r: float, lw: float) -> void:
 		var tip := at + dv * (rr + ol * 3.0)
 		draw_colored_polygon(PackedVector2Array([tip, at + dv * rr + tang * h * 0.22, at + dv * rr - tang * h * 0.22]),
 			Color(0.1, 0.08, 0.05, 0.95))
+
+
+## The suppression chip (2026-11-06, docs/design/ui.md "Suppression chips"): a suppressed unit's marker carries a small
+## plate at its upper right with one yellow chevron pressing down, a pinned unit's two red ones (CoH's grammar), at least
+## 9 CSS px tall (the cover chip 7) (BattleSim.supp_state; nothing when it is neither). Every side's units: what the enemy
+## suffers is the reward for the fire.
+func _draw_supp_chip(u: int, c: Vector2, r: float, lw: float) -> void:
+	var st: int = sim.supp_state(u)
+	if st == BattleSim.SUP_NONE:
+		return
+	var h := maxf(r * 1.1, 9.0 * _lp)   # (at least 9 CSS px: 18 across on a phone; a state that changes the orders)
+	var w := h * 0.95
+	var at := c + Vector2(r + w * 0.7, -r * 0.55 - h * 0.45)
+	var ol := maxf(lw, 1.0 * _lp)
+	var col := Color(1.0, 0.82, 0.25) if st == BattleSim.SUP_SUPP else Color(1.0, 0.3, 0.22)
+	var box := Rect2(at - Vector2(w, h) * 0.5, Vector2(w, h))
+	draw_rect(box.grow(ol * 1.4), Color(0.05, 0.04, 0.02, 0.85))
+	draw_rect(box, Color(col.darkened(0.55), 0.9))
+	var cw := maxf(ol * 1.1, 1.2)
+	var rows: Array = [0.05] if st == BattleSim.SUP_SUPP else [-0.2, 0.18]
+	for ry in rows:
+		var y0: float = at.y + h * (float(ry) - 0.18)
+		draw_polyline(PackedVector2Array([Vector2(at.x - w * 0.34, y0), Vector2(at.x, y0 + h * 0.3), Vector2(at.x + w * 0.34, y0)]),
+			col, cw, true)
+	draw_line(Vector2(at.x - w * 0.4, at.y + h * 0.36), Vector2(at.x + w * 0.4, at.y + h * 0.36), col, cw * 0.8, true)
 
 
 ## Unit u's cover chip as drawn: [sim second, rating 0-2, threat bearing, BattleSim cover_who kind, the threat unit or
@@ -1751,6 +1777,10 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 					else "TARGET OUT OF SIGHT: HOLDING FIRE", HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
 		elif not (shooter and _draw_blocked(u, t, lw)):
 			_dash_outlined(a, tp, tcol, lw, 8.0 / zoom)
+		if primary and sim.supp_state(u) == BattleSim.SUP_PIN and sim.u_fighting[u] == 0:
+			# Suppression (2026-11-06): a pinned unit holds where it is (a move or withdraw order moves it, at the walk).
+			_plate_str(a + Vector2(r, -r * 2.2), "PINNED: SHOOTING FROM HERE" if shooter else "PINNED: CANNOT CHARGE",
+				maxi(_font_size(12.0), label_fs(12.0)), Color(1.0, 0.45, 0.38))
 		if primary and not shooter:
 			_draw_slope_hint(sim.u_h[u], sim.u_h[t], sim.u_cx[t] - sim.u_cx[u],
 				sim.u_cy[t] - sim.u_cy[u], (a + tp) * 0.5, sim.u_cx[u], sim.u_cy[u])

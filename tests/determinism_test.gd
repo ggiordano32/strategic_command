@@ -215,8 +215,9 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## "Paths clear of the enemy (as built, 2026-11-06)": men of two units keep
 ## their room, moves go round the enemy; skirmish, bench_2000 and
 ## test_stone_line changed, were df69881ef708d55b, 06e22950fac353c1 and
-## e15d23e1c258332c).
-const GOLDEN := {"skirmish": "8d3e3b4bf3c14d1e", "bench_2000": "78c42d10a48ff37c",
+## e15d23e1c258332c). 2026-11-06, docs/design/battle_sim.md "Suppression (as built, 2026-11-06)": suppression on in
+## Average battles; bench_2000 changed (pinned and suppressed lines), was 78c42d10a48ff37c; the other three unchanged.
+const GOLDEN := {"skirmish": "8d3e3b4bf3c14d1e", "bench_2000": "a780489f8f1cfd55",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "c2211eed0798f1ab"}
 
 var _ok := true
@@ -9323,8 +9324,13 @@ func _check_salvo() -> void:
 				AIP._tab[k] = p
 		var kn := AIP.row(skill, AIP.BALANCED)
 		var pikec := kn[AIP.SALVO_PIKE_CHARGE] != 0
+		# (2026-11-06, suppression: the salvo lines under the target side's fire are suppressed or pinned and step back
+		# at the walk, so the Average step back never reached its post in the window; the play's rules are checked as
+		# built, suppression off for this set piece: BattleSim.SUPP_FORCE.)
+		(BattleSim as GDScript).set("SUPP_FORCE", 0)
 		var sim := BattleSim.new()
 		sim.setup(_salvo_piece(skill, 10), 7)
+		(BattleSim as GDScript).set("SUPP_FORCE", -1)
 		var lines := [2, 3]
 		var mam := {}  # soldier -> his charges (the lines' men), the tick before
 		var fire_t := -1

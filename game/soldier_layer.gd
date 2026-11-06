@@ -76,6 +76,9 @@ const C_IDX := 11    # the instance's index (the man's animation phase)
 const F_SHOOT := 8   # aiming: a fire target held
 const F_FIRED := 16  # a gun shot in the last FLASH_TICKS ticks (the muzzle flash frame)
 const F_GUN := 32    # a powder-weapon unit (its attack frame 1 is the flash)
+const F_CROUCH := 64  # suppression's stand-in crouch (2026-11-06): + F_CROUCH x level (1 suppressed, 2 pinned; the CPU flags
+                      # and the 3D view; the texture path: block 8 + CROUCH_B8 x level); soldiers.gdshaderinc crouch_k
+const CROUCH_B8 := 1048576
 const FLASH_TICKS := 3   # 0.3 s at 10 ticks a second
 ## Where the last gun shot of each unit is noted (the overlay's missile walk
 ## writes `shot_t`: the sim tick of the unit's last gun shot, view only).
@@ -791,7 +794,7 @@ func upload() -> void:
 			# per shot at the man who fired: Overlay._flash_add. A gun man aims and reloads on frames 0, 2, 3.)
 			if shot_src != null and u < shot_src.shot_t.size() and tick - shot_src.shot_t[u] < FLASH_TICKS:
 				shoot |= F_SHOOT
-		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot
+		_flags[u] = (sim.u_side[u] & 1) | (2 if selected_units.has(u) else 0) | under_fire | shoot | (F_CROUCH * sim.supp_state(u))
 		if oblique:
 			# (A unit on a wall: its walk's height; in a held building: the building's firing level, ob_z; a unit
 			# climbing a ladder or a siege tower: 0, its men's own heights are _stair_lift's.)
@@ -1171,7 +1174,7 @@ func _upload_gpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		# (bits 4-5 of the CPU-path flags, fired / gun, move up past the palette bits to 22 / 23)
 		gflags[u] = (gflags[u] & 15) | ((gflags[u] & (F_FIRED | F_GUN)) << 18)
 		gflags[u] |= (_unit_sprite[u] << 4) | (_unit_engine[u] << 8) | (_unit_look[u] << 12)
-		gelook[u] = (_unit_elook[u] & 63) + 64 * _unit_ext[u]
+		gelook[u] = (_unit_elook[u] & 63) + 64 * _unit_ext[u] + CROUCH_B8 * ((_flags[u] / F_CROUCH) & 3)
 	var block := _rows * TEX_W * 4
 	var arrays: Array = [xs, ys, pxs, pys, fs, sts, sim.unit_of + sim.e_unit if sim.n_eng > 0 else sim.unit_of, gflags, gelook]
 	if oblique:

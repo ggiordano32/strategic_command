@@ -16,7 +16,8 @@
 //     bits 12-17 sprite set (6 bits: 63 sets), bits 18-21 palette, bit 22 fired a gun shot
 //     in the last 0.3 s, bit 23 a powder-weapon unit),
 //   8 unit engine set (indexed by unit, 6 bits; its own block: the bits above
-//     24 do not survive the float decode)
+//     24 do not survive the float decode); the oblique view + 64 x the wall walk's height (dm); both + 2^20 x the
+//     suppression crouch (1 suppressed, 2 pinned; crouch_k)
 //   the oblique view: 9 the per-tick draw order, 10 a man's height on a stone
 //     stair's flight (dm, 0 else; soldier_layer.gd _stair_lift)
 //
@@ -25,7 +26,7 @@
 // soldier_layer.gd, read back through MODEL_MATRIX (layer node at identity):
 //   [3].xy current position, [0].xy previous position, [1].x facing,
 //   [1].y state; INSTANCE_CUSTOM.x sprite, .y side + 2 selected + 4 under
-//   fire + 8 shooting + 16 fired + 32 gun, .z sprite set (engines: engine set) + 64 x palette, .w the instance's
+//   fire + 8 shooting + 16 fired + 32 gun + 64 x the crouch (suppression: 1 suppressed, 2 pinned), .z sprite set (engines: engine set) + 64 x palette, .w the instance's
 //   index. No texture fetch, uniform array, int uniform or bit operator in
 //   the vertex stage. Both variants draw the same pixels.
 //
@@ -167,6 +168,7 @@ int bitfield(int v, int div, int span) {
 	int q = v / div;
 	return q - (q / span) * span;
 }
+
 #endif
 
 // One visible soldier or engine: its quad corner (from UV) placed in the
@@ -476,6 +478,27 @@ void place_ob(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r,
 }
 #endif
 
+// Suppression's stand-in crouch (2026-11-06; the sheets have no crouch pose): a formed man of a suppressed unit (level
+// 1) or a pinned one (2) is drawn squashed toward his feet (the oblique and 3D figures: narrower and lower; the top view's
+// figure smaller round his place) and a little darker. Applied to the placed quad, so the frame and its texels are the
+// same: a miniature pressed low. View only (soldier_layer.gd: CPU flags + 64 x level; the texture path's block 8 +
+// 2^20 x level).
+vec2 crouch_k(float c) {
+	return c > 1.5 ? vec2(0.9, 0.6) : vec2(0.94, 0.76);
+}
+float crouch_top(float c) {
+	return c > 1.5 ? 0.76 : 0.86;
+}
+void crouch_tint(float c, inout vec4 col, inout vec4 look) {
+	float d = c > 1.5 ? 0.8 : 0.9;
+	if (look.x > 0.5) {
+		look.z *= d;
+	} else {
+		col.rgb *= d;
+	}
+}
+
+
 void vertex() {
 #ifdef CPU_FED
 	float sbw = floor(MODEL_MATRIX[1].y + 0.5);  // state + 16 x hd
@@ -524,6 +547,7 @@ void vertex() {
 		bool shoot = mod(floor(fl / 8.0), 2.0) > 0.5;
 		bool fired = mod(floor(fl / 16.0), 2.0) > 0.5;
 		bool gun = mod(floor(fl / 32.0), 2.0) > 0.5;
+		float crc = st == 0 ? mod(floor(fl / 64.0), 4.0) : 0.0;  // the crouch: 1 suppressed, 2 pinned
 		float lk = floor(INSTANCE_CUSTOM.z + 0.5);  // sprite set + 64 x palette
 		int set = int(mod(lk, 64.0));
 		int pal = int(floor(lk / 64.0));
@@ -532,11 +556,21 @@ void vertex() {
 		float near;
 		place_ob(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
 			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, ext, uv, pos, col, look, ob, near);
+		if (crc > 0.5) {
+			vec2 an = ob_board(mix(MODEL_MATRIX[0].xy, MODEL_MATRIX[3].xy, alpha) * px_per_unit) - vec2(0.0, ext * OB_SIN);
+			pos = an + (pos - an) * crouch_k(crc);
+			crouch_tint(crc, col, look);
+		}
 		v_ob = ob;
 		v_near = near;
 #else
 		place(MODEL_MATRIX[3].xy, MODEL_MATRIX[0].xy, MODEL_MATRIX[1].x, hd, st, spr, sprite_rect(spr),
 			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, uv, pos, col, look);
+		if (crc > 0.5) {
+			vec2 pc = mix(MODEL_MATRIX[0].xy, MODEL_MATRIX[3].xy, alpha) * px_per_unit;
+			pos = pc + (pos - pc) * crouch_top(crc);
+			crouch_tint(crc, col, look);
+		}
 #endif
 		// skip_vertex_transform: pos is already in the layer's (= canvas) space.
 		VERTEX = pos;
@@ -549,21 +583,37 @@ void vertex() {
 #ifdef OBLIQUE
 		vec4 ob;
 		float near;
-		int u8 = fetch_int(8, uidx);   // engine set + 64 x the wall walk's height (dm)
+		int u8 = fetch_int(8, uidx);   // engine set + 64 x the wall walk's height (dm) + 2^20 x the crouch
+		int cri = u8 / 1048576;
+		u8 -= cri * 1048576;
+		float ext = float(u8 / 64 + fetch_int(10, i)) * 0.1 * px_per_unit * 1024.0;
 		place_ob(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
 			st >= 6 ? bitfield(u8, 1, 64) : bitfield(flags, 4096, 64),
 			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
 			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i),
-			float(u8 / 64 + fetch_int(10, i)) * 0.1 * px_per_unit * 1024.0, uv, pos, col, look, ob, near);
+			ext, uv, pos, col, look, ob, near);
+		if (cri > 0 && st == 0) {
+			vec2 an = ob_board(mix(prv, cur, alpha) * px_per_unit) - vec2(0.0, ext * OB_SIN);
+			pos = an + (pos - an) * crouch_k(float(cri));
+			crouch_tint(float(cri), col, look);
+		}
 		v_ob = ob;
 		v_near = near;
 #else
+		int u8t = fetch_int(8, uidx);   // engine set (+ 2^20 x the crouch)
+		int crt = u8t / 1048576;
+		u8t -= crt * 1048576;
 		place(cur, prv, float(fetch_int(4, i)), hd, st, spr, spr_rect[spr], bitfield(flags, 1, 2),
 			bitfield(flags, 2, 2) != 0, bitfield(flags, 4, 2) != 0,
-			st >= 6 ? bitfield(fetch_int(8, uidx), 1, 64) : bitfield(flags, 4096, 64),
+			st >= 6 ? bitfield(u8t, 1, 64) : bitfield(flags, 4096, 64),
 			bitfield(flags, 262144, 16), bitfield(flags, 8, 2) != 0,
 			bitfield(flags, 4194304, 2) != 0, bitfield(flags, 8388608, 2) != 0, float(i), uv, pos, col, look);
+		if (crt > 0 && st == 0) {
+			vec2 pc = mix(prv, cur, alpha) * px_per_unit;
+			pos = pc + (pos - pc) * crouch_top(float(crt));
+			crouch_tint(float(crt), col, look);
+		}
 #endif
 		// Instance transforms are identity; cancel whatever origin this
 		// instance has (the engine applies MODEL_MATRIX after this).

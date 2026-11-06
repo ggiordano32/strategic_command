@@ -1642,6 +1642,33 @@ enemy, and a house counted as cover from the men at its own windows.
 - Tests: battle_screen_test `_cover_cases` (the chip rated against a unit that shot at it; the opening pulls in a
   two-step spike and keeps a wide sector), custom_battle_test `_check_cover3` (the sim's shooters and the garrison's
   house). Known: the chip still is not on the unit card; still no legend; no device check.
+### Suppression chips (as built, 2026-11-06)
+
+The fifth pass of cover (docs/design/battle_sim.md "Suppression (as built, 2026-11-06)"): what a unit under fire can no
+longer do must read on the phone at a glance. View only; it reads `BattleSim.supp_state` (the sim's hashed state).
+- **The marker chip** (`Overlay._draw_supp_chip`): a suppressed unit's marker carries a small dark-rimmed plate at its
+  upper right (the cover chip sits at the upper left) with one yellow chevron pressing down onto a bar; a pinned unit's
+  plate is red with two chevrons (Company of Heroes' grammar: the chevrons say "pressed down", not a shield). At least 9
+  CSS px tall (18 device px on a phone; the cover chip 7: this state changes what the orders do). Drawn for every
+  side's ready units: the enemy's pinned line is the reward for the fire.
+- **The unit card and the tokens** (`Battle._card_states`): "Suppressed" / "Pinned" first in the card's state strip
+  (new UI icons `suppressed` and `pinned`: the chevrons), so it is the glyph a narrow card keeps; the marker's
+  tokens show the same (yellow and red bodies, `Overlay.TOKEN_BODY`).
+- **The order line's text** (`Overlay`, the attack order's branch): a pinned unit's attack order reads "PINNED: CANNOT
+  CHARGE" (melee) or "PINNED: SHOOTING FROM HERE" (missiles) on the dark plate at least 12 CSS px, beside the unit.
+- **The men's stand-in crouch** (the sheets have no crouch pose; a real one is a sprite action, about an agent-day):
+  each formed man of a suppressed unit is drawn squashed toward his feet, to 76 % of his height and 94 % of his width,
+  a pinned man's to 60 % and 90 %, and a little darker (10 %, 20 %); the top view's figure shrinks round his place to
+  86 % / 76 %. A miniature pressed low on the table. It scales the placed quad, so the frame and its texels are the
+  sheet's own. Both soldier paths and the 3D view: the CPU-fed flags + 64 x level (`SoldierLayer.F_CROUCH`; the 3D
+  view's cards read the same buffer), the texture path's block 8 + 2^20 x level (`CROUCH_B8`; `soldiers.gdshaderinc`
+  `crouch_k`, `crouch_top`, `crouch_tint`; `soldier_bases.gdshaderinc` strips it before the wall height).
+- Tests: battle_screen_test `_supp_cases` (top, oblique, 3D: the state, the crouch level in the flags and the CPU
+  buffer's column, the card strip and the tokens, suppressed then pinned). Shots: session scratchpad `sup/shots/`
+  (844 x 390, top, oblique and 3D, suppressed and pinned).
+- Known: no legend; the chip adds to the marker's clutter in big battles; the crouch is a squash, not a pose; no device
+  check.
+
 ### The 3D battle view's camera (as built, 2026-11-06, view only)
 
 docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; this is its setting and its controls.

@@ -1245,6 +1245,130 @@ shooters (`_seen` at the body), so a line in cover is soon not shot at (the CoH 
 step is the next lever); narrowing at corners; firing on the move; fire at will ignores cover; garrison arcs, negative
 cover, cursor icons, the chip on the unit card; suppression (the fifth pass); no device check.
 
+### Suppression (as built, 2026-11-06)
+
+Why: the fifth pass of line of fire and cover (the owner: a Company of Heroes kind of experience, built in passes with an
+evaluation between each). The third evaluation's one-page design (session scratchpad `eval3/eval3.md`) is the brief's
+basis: a meter fed by near misses and hits, cut by cover; suppressed and pinned states; a chip and a stand-in crouch; the
+AI flanking pinned units and falling back to cover. Not morale: a channel of its own (`sim/battle_sim.gd` "suppression"
+block, `_supp_*`).
+
+**On or off.** A profile knob, `AP.SUPPRESS` (docs/AI.md 69: Easy 0, Average and Skilled 1); the battle has suppression
+(`sup_on`) only when both sides' profiles have it (`_supp_setup`; `SUPP_FORCE` -1 / 0 / 1 for tests and probes), so the
+tutorial and Easy play exactly as before. Its arrays (`u_sup` the meter, `u_sus` the state, `u_sut` the last gain,
+`u_suc` / `u_sct` the cover class and its stamp, `u_sfb` the AI's fallback) are script variables (in every snapshot)
+and hashed from the first gain on (`sup_used`), so a battle with no suppression hashes as before.
+
+**Who.** Foot: missile foot, foot, pikes. Riders have the volley fright (`u_fright`) and are not suppressed; engines'
+crews, ships, heroes and agents, tower crews and men carrying or pushing siege gear or on their way to take it up (ladders, a ram, a siege
+tower, a mantlet: with them slowed, lockstep_test's siege tower was never planted) neither. A unit in a melee is in the melee's rules: its
+meter empties and it has no state.
+
+**The meter** (0-`SUPP_MAX` 1000, integers):
+- *Gain* (`_supp_land`, in `_land` before any cover stop; `_supp_art` at the start of `_land_bolt` / `_land_stone`): a
+  flat ball or an arrow aimed at a unit that lands within `SUPP_NEAR` 3 m of its men's box adds `SUPP_MISS` 8, a hit on
+  one of its men `SUPP_HIT` 16 (a ball that finds another unit's man suppresses that unit); an engine's ball, bolt or
+  stone aimed at it landing within `SUPP_ART_R` 6 m of the box `SUPP_ART` 60. Scaled by the shooter's weapon: powder
+  `SUPP_W_GUN` 100 %, bows `SUPP_W_BOW` 20 % (archers shoot two to three times as many missiles as a musket line: at
+  50 % a bow line pinned a musket line before muskets pinned anything), other flat missiles (slings, javelins,
+  crossbows) `SUPP_W_FLAT` 40 %; and by the unit's cover against that shooter (`_supp_cover`, rated once a second at
+  gain time: a held building or a wall's walk heavy, else `cover_rating_front` along its front toward the shooter for
+  its troop type, a house the shooter holds not counting, men on cover spots at least light): light `SUPP_COVER_L`
+  66 %, heavy `SUPP_COVER_H` 33 %. A friend's ball does not suppress.
+- *Decay* (`_supp_tick`, each tick after morale): `SUPP_DECAY_PM` 4 per mille of the meter every tick (under fire too,
+  so a steady fire holds the meter where its gain balances the decay, about 250 x the gain a tick), plus `SUPP_DECAY`
+  4 a tick once `SUPP_QUIET` 2 s pass with no gain; both doubled in heavy cover.
+- *States* with hysteresis: suppressed at `SUPP_T_SUP` 400 until below `SUPP_T_SUP_OUT` 250; pinned at `SUPP_T_PIN` 800
+  until below `SUPP_T_PIN_OUT` 500 (then suppressed).
+
+**What the states do.**
+- *Fire:* suppressed `SUPP_FIRE_SUP` 70 % of the rate, pinned `SUPP_FIRE_PIN` 35 %: the bow accumulator's shooters, a gun
+  line's reload and its rolling fire's clock (`_gun_unit`: they run on that share of the ticks, `(tick % 20) * 5 < %`),
+  each man's reload in fire at will (`_pm_unit`).
+- *Movement* (the anchor's speed): suppressed: no running and no charge (the walk, `SUPP_SPEED_SUP` 100 %); pinned: a
+  move or withdraw order at the walk, any other order (an attack's approach, a fire spot's walk) a crawl at
+  `SUPP_SPEED_PIN` 60 % of the walk. `SUPP_PIN_HOLD` 1 holds a pinned unit's approach outright (the eval's and the
+  brief's "does not move except to fall back or on a player's order"): built and measured, open_town 81 -> 62 %, and
+  left off (below).
+- *Morale:* pinned loses `SUPP_MORALE_PIN` 2 a second and recovers none (no rout from the meter by itself).
+- The player's Hold and Withdraw work as before (a pinned unit withdraws at the walk).
+
+**The AI** (docs/AI.md 69): knobs 366-368, Easy 0. `SUPP_FALLBACK`: a pinned AI unit (not on a wall, in a building or
+carrying gear) walks to the nearest cover against its shooter within `SUPP_FALL_R` 15 m (`supp_cover_spot`: rings
+5 m apart, 12 bearings, heavy before light, not toward the shooter) and stands there while suppressed, at most
+`SUPP_FALL_HOLD` 30 s. `SUPP_FLANK_PCT` (Average 50, Skilled 75): BattleAI's melee unit whose target is pinned in front
+of it and more than 25 m off goes round its flank first (`_flank`); SiegeAI's storming foot count a pinned defender
+`SUPP_PULL` 20 m nearer (the streets leave no room to go round). `SUPP_HOLD`: a missile unit keeps a suppressed or
+pinned target (`_supp_held`). Measured as a block on open_town: the AI knobs off 60 % against 62 % on (noise).
+
+**The view** (docs/design/ui.md "Suppression chips"): a chip at the marker's upper right (one yellow chevron
+suppressed, two red pinned, at least 9 CSS px), the state first on the unit card's strip and in the tokens, "PINNED:
+CANNOT CHARGE" / "PINNED: SHOOTING FROM HERE" on a pinned unit's attack line, and the men's stand-in crouch (the figure
+squashed toward its feet to 76 % / 60 % of its height, a little darker; both soldier paths and the 3D view).
+
+**The tuning round** (one, as the brief allowed). The first build (pinned held its approach, suppressed walked at 75 %,
+other flat missiles 60 %) measured open_town 81 -> 62 %, beyond the 8-point gate; ablations on open_town (16 seeds,
+48 battles each): suppression off 81 (the hashes of HEAD), no movement effects at all 85, pinned crawling at 50 %
+instead of held 73, the AI knobs off 60 (the AI's use is not what costs the storms); the walk's slowing is the
+attackers' loss (they cross open streets under fire from windows, heavy cover the garrisons barely feel). Built:
+suppressed walks at full pace (no running, no charge), pinned crawls at 60 % on anything but a move or withdraw order;
+`SUPP_W_FLAT` 60 -> 40 (the natives' slings and darts). Then two fixes the tests found: men with siege gear (and on
+their way to it) exempt (lockstep_test's tower), and the fallback after a play's part (`Plays.unit_think` first).
+
+**Measured** (before = a clean copy of HEAD 61aa44e; tables and shots in the session scratchpad `sup/`).
+- *Set pieces* (`sup/probes/sup_probe.gd`, 100 musketeers a side 60 m apart on open ground, both on fire at will, 120 s,
+  8 seeds; shots and men lost a side, HEAD -> now): muskets against muskets in the open: both suppressed by the first
+  volley (0.6-1.0 s), side 1 suppressed 42 s of its 120, pinned in 2 of 8 at the opening; shots 426 / 426 -> 428 / 383,
+  lost 67 / 68 -> 60 / 64. Side 1 behind a yard wall (1.3 m rocks 3 m before it): the open line suppressed at once and
+  pinned in 4 of 8 at about 16 s, the wall line suppressed only 5 s of 120 and never pinned; shots 397 / 559 -> 205 /
+  334, lost 73 / 35 -> 55 / 20 (the exchange for the wall 2.1 -> 2.75). Bows (100 archers) against muskets: the
+  archers suppressed by the first volley and pinned in 5 of 8 at about 28 s, the musketeers suppressed in 6 of 8 at
+  about 28 s, never pinned; shots 1,486 / 374 -> 1,254 / 398, lost 52 / 68 -> 53 / 57 (the archers' edge at 60 m
+  gone). One-sided, the target holding its fire for 40 s: muskets in the open suppress it within 0.6 s and pin it in
+  7 of 8 at about 27 s (pinned 5 s of the 40; it breaks at about 28 s with 52 lost either way); behind the yard wall
+  suppressed 21 s of 40, never pinned, clear 8.4 s after the fire stops; bows suppress at 13.6 s and pin in 4 of 8 at
+  33 s.
+- *The 81-case spot probe* (`spot_eval4`, 40-man companies at 40-120 m): unchanged within a man (own lost 892 -> 891,
+  kills 852 -> 850, exchange 0.96 -> 0.95; the covered-spot cases 1.42 -> 1.41): 40-man lines' fire never reaches the
+  suppressed threshold there (the meters peak at 30-90); suppression is a matter of mass fire.
+- *Balance* (tools/balance, 8 seeds, open_town 16; before 036ee5e010 = HEAD, after 13ae9d821d; the play-order fix after
+  it touches only BattleAI field units in a play, the town plans run SiegeAI): `open_town` 81 -> 75 % (havana 75 -> 81,
+  santo_domingo 88 -> 62, cartagena 81 -> 81; the first build 62); `west_named` 36 -> 42 % (walls 0 / 1 / 2: 55 / 36 /
+  18 -> 62 / 38 / 25); `west_walls` 41 -> 45 % (61 / 31 / 30 -> 64 / 38 / 32); `rome_walls` 56 -> 56 % (77 / 52 / 40
+  the same pooled); all within the 8-point gate. Cells beyond their interval: veracruz w0 +38 and w1 +50, campeche w1
+  +38, cumana w2 +38, puerto_principe w0 -38. The lean: in open towns to the defenders (attackers cross streets under
+  window fire; garrisons in heavy cover feel a third of the gain and lose it twice as fast), in walled West towns to
+  the attackers (probably: the defenders' street lines and wall-foot companies stand in the open or behind yard walls under the
+  storm's massed musket fire; on a wall's walk heavy). The natives' field edge (`asym_field`, 48 seeds, Spanish wins):
+  25 -> 23 (natives 22 -> 24, a draw 1 -> 1); `asym_field2` 47 -> 46: the natives' bows (20 %) and slings (40 %) barely
+  suppress a musket line, the Spanish volleys suppress the native foot but the charge only loses its run.
+- Pins: campaign pins MATCH 12 / 12 (battles settle by formula); the flat goldens: bench_2000 re-recorded
+  (78c42d10a48ff37c -> a780489f8f1cfd55: its lines suppressed and pinned), skirmish, test_cav_art and test_stone_line
+  unchanged; the rules hash moves.
+- Cost (paired, a quiet machine, ms a tick, HEAD -> now): the West musket town (`bench_wm`, 3 rounds) 2.27 -> 2.27;
+  through `tests/benchmark.gd` (2 rounds) bench_west_muskets 2.30 / 2.31 -> 2.28 / 2.27, bench_2000 2.07 -> 2.10 (+1.4 %,
+  a different battle: 4,191 ticks against 4,061), bench_4000_city 6.26 / 6.27 -> 6.05 / 6.09 (5,831 ticks against
+  6,000); all within the +5 % budget (one box test and an add per landed ball, a cover rating a second per unit shot
+  at, a pass over the units with a meter).
+- Tests: custom_battle_test `_check_suppress` (the meter: suppressed within 0.6 s in the open, its average 473 in the open
+  against 252 behind the yard wall, 5 s quiet from 800: 768 open against 550 in heavy cover, clear 7 s after the fire
+  stops; a musket line held suppressed fires 200 shots in 33 s against 275; a pinned rodelero block on an attack order
+  crawls 7 m in 10 s against 34 m, a move order 12 m (the walk); Easy: `sup_on` 0, no meter, the state hash as with
+  `SUPP_FORCE` 0); battle_screen_test `_supp_cases` (top, oblique, 3D); lockstep_test (Average battles now suppress:
+  snapshot / restore and two peers equal); roles_sim_test's countermarch last-volley check and determinism_test's
+  salvo set piece run with `SUPP_FORCE` 0 (dated notes: the charging rodeleros, suppressed, met the last volley in the
+  melee; the salvo lines stepping back at the walk never reached their posts in the window); determinism_test's
+  golden for bench_2000 re-recorded.
+
+**Still open** (for the next evaluation): the brief's "pinned does not move except to fall back or on a player's
+order" is built as a knob (`SUPP_PIN_HOLD`) and left off for balance (pinned crawls at 60 %); suppression bites only
+under mass fire (a 40-man company at 80 m never suppresses: the 81 spot cases unchanged); garrisons in heavy cover are
+nearly immune, so open towns lean to the defenders and the AI storm has no way to suppress a window (grenades,
+artillery, flanking a house: the next AI step); the field AI's flank of a pinned unit is the old `_flank` (no cover
+test from the flank spot); the siege AI only prefers pinned defenders; the crouch is a squash (a real pose is an art
+task, about an agent-day); men in cover hidden from far shooters stop being shot at, so they recover (CoH keeps
+them visible); no negative cover; no device check.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

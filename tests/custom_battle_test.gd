@@ -495,6 +495,126 @@ func _check_cover3() -> void:
 	print("cover3: checked (stop under fire %s against %s, partly seeing line %s, shooters %s, garrison houses %d / %d, rubble lost %s ratings %s)" % [
 		str(res[was_good]), str(res[4]), str(lines), str(sh), skipped, houses, str(rlost), str(rrate)])
 	_check_cover4()
+	_check_suppress()
+
+
+## Suppression's set piece (2026-11-06): 100 musketeers (side 0) at (200, 220) and a line of 100 (side 1) at (200, 160),
+## 60 m apart on open ground (sup_probe's), a yard wall (1.3 m rocks) 3 m before side 1 when `wall`; `t1` side 1's type.
+func _sup_sc(wall: bool, t1: String = "musketeers", skill: int = 1) -> Dictionary:
+	var rk := [[20, 20, 1, 13]]
+	if wall:
+		for x in range(176, 225, 2):
+			rk.append([x, 163, 1, 13])
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 900, "ai_skill": [skill, skill],
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 100, 200, 220, Scenarios.FACE_UP, 25),
+			Scenarios.unit(1, UT.index_of(t1), 100, 200, 160, Scenarios.FACE_DOWN, 25)]}
+
+
+## Suppression (2026-11-06; docs/design/battle_sim.md "Suppression (as built, 2026-11-06)"): (1) the meter rises under
+## fire (side 1 holding its fire: suppressed within 3 s, its meter averaging lower behind a yard wall than in the open)
+## and decays faster in heavy cover; (2) suppressed slows a musket line's volleys (its meter held at the suppressed
+## level: fewer shots in 33 s, before its target breaks); (3) pinned: no charge (a pinned rodelero block on an attack order crawls at
+## SUPP_SPEED_PIN % of the walk, no run; a move order moves it at the walk); (4) recovery: the fire stops and the line is clear again within 25 s;
+## (5) Easy: no suppression at all (sup_on 0, no meter) and the state hash as with SUPP_FORCE 0.
+func _check_suppress() -> void:
+	var scr: Script = BattleSim
+	# (1) The meter, open and behind a wall; (4) recovery once the fire stops.
+	var avg := {}
+	var first := -1
+	var clear_t := -1
+	var at_stop := -1
+	for wall in [false, true]:
+		var sum := 0
+		var sim := BattleSim.new()
+		sim.setup(_sup_sc(wall), 1)
+		sim.queue_order(BattleSim.make_fire_order(0, 0, 1))
+		sim.queue_order(BattleSim.make_fire_order(0, 1, 0))
+		for k in 200:
+			sim.step()
+			sum += sim.u_sup[1]
+			if not wall and first < 0 and sim.supp_state(1) >= BattleSim.SUP_SUPP:
+				first = k
+		avg[wall] = sum / 200
+		if not wall:
+			at_stop = sim.supp_state(1)
+			sim.queue_order(BattleSim.make_fire_order(sim.tick, 0, 0))
+			for k in 250:
+				sim.step()
+				if clear_t < 0 and sim.supp_state(1) == BattleSim.SUP_NONE:
+					clear_t = k
+	var dec := {}
+	for cov in [0, 2]:
+		var sd := BattleSim.new()
+		sd.setup(_sup_sc(false), 1)
+		sd.step()
+		sd.u_sup[1] = 800
+		sd.u_sut[1] = sd.tick
+		sd.u_suc[1] = cov
+		sd.u_sct[1] = sd.tick + 100000
+		for k in 50:
+			sd.step()
+		dec[cov] = sd.u_sup[1]
+	if first < 0 or first > 30 or int(avg[true]) >= int(avg[false]) or int(dec[2]) >= int(dec[0]) or at_stop < 1 or clear_t < 0 or clear_t > 250:
+		_fail("suppress: the meter (suppressed at tick %d; average open %d, behind the wall %d; after 5 s quiet open %d, heavy %d; state when the fire stopped %d, clear after %d ticks)" % [
+			first, avg[false], avg[true], dec[0], dec[2], at_stop, clear_t])
+	# (2) Suppressed: fewer volleys.
+	var shots := {}
+	for held in [false, true]:
+		var s2 := BattleSim.new()
+		s2.setup(_sup_sc(false), 2)
+		s2.queue_order(BattleSim.make_fire_order(0, 0, 1))
+		s2.queue_order(BattleSim.make_fire_order(0, 1, 0))
+		var n := 0
+		for k in 330:
+			if held:
+				s2.u_sup[0] = 600
+				s2.u_sut[0] = s2.tick
+			var a0: int = s2.u_ammo[0]
+			s2.step()
+			n += a0 - s2.u_ammo[0]
+		shots[held] = n
+	if int(shots[true]) * 100 > int(shots[false]) * 85:
+		_fail("suppress: a suppressed musket line fires %d shots in 33 s against %d" % [shots[true], shots[false]])
+	# (3) Pinned: no charge, a move order at the walk.
+	var moved := {}
+	for mode in ["free", "pinned", "pinned_move"]:
+		var s3 := BattleSim.new()
+		s3.setup(_sup_sc(false, "rodeleros"), 3)
+		s3.queue_order(BattleSim.make_fire_order(0, 0, 0))
+		if mode == "pinned_move":
+			s3.queue_order(BattleSim.make_move_order(0, 1, 200 * 1024, 120 * 1024, Scenarios.FACE_DOWN, 20 * 1024, 1))
+		else:
+			s3.queue_order(BattleSim.make_attack_order(0, 1, 0, 1))
+		var y0: int = s3.u_ay[1]
+		for k in 100:
+			if mode != "free":
+				s3.u_sup[1] = 1000
+				s3.u_sut[1] = s3.tick
+			s3.step()
+		moved[mode] = absi(s3.u_ay[1] - y0) / 1024
+	var walk_m: int = UT.stat(UT.index_of("rodeleros"), "walk") * 10 / 100  # (metres in 10 s at the walk)
+	var crawl_m: int = walk_m * BattleSim.SUPP_SPEED_PIN / 100
+	if int(moved["free"]) < 15 or int(moved["pinned"]) > crawl_m + 1 or int(moved["pinned"]) >= int(moved["free"]) \
+			or int(moved["pinned_move"]) < walk_m / 2 or int(moved["pinned_move"]) > walk_m + 2:
+		_fail("suppress: pinned (the charge moved %d m free, %d m pinned (the crawl %d m); a move order pinned %d m, the walk %d m)" % [
+			moved["free"], moved["pinned"], crawl_m, moved["pinned_move"], walk_m])
+	# (5) Easy: none at all.
+	var hs := {}
+	for v in [-1, 0]:
+		scr.set("SUPP_FORCE", v)
+		var s5 := BattleSim.new()
+		s5.setup(_sup_sc(false, "musketeers", 0), 1)
+		s5.queue_order(BattleSim.make_fire_order(0, 0, 1))
+		s5.queue_order(BattleSim.make_fire_order(0, 1, 0))
+		for k in 300:
+			s5.step()
+		hs[v] = [s5.sup_on, s5.sup_used, s5.u_sup[1], s5.state_hash()]
+	scr.set("SUPP_FORCE", -1)
+	if int(hs[-1][0]) != 0 or int(hs[-1][1]) != 0 or int(hs[-1][2]) != 0 or int(hs[-1][3]) != int(hs[0][3]):
+		_fail("suppress: Easy has suppression (%s, forced off %s)" % [str(hs[-1]), str(hs[0])])
+	print("suppress: checked (suppressed at tick %d, meter average open %d / wall %d, 5 s quiet open %d / heavy %d, clear %d ticks after; shots %d / suppressed %d; moved free %d m, pinned %d m, pinned on a move %d m; Easy %s)" % [
+		first, avg[false], avg[true], dec[0], dec[2], clear_t, shots[false], shots[true], moved["free"], moved["pinned"], moved["pinned_move"], str(hs[-1])])
 
 
 ## A field set piece of the fourth pass: 60 musketeers (side 0) at (200, 200) shooting at a line of 40 (side 1) at

@@ -2740,6 +2740,12 @@ func _card_states(u: int) -> Array:
 	if sim.u_state[u] != BattleSim.U_READY or sim.u_side[u] != player_side:
 		return out
 	var ty: int = sim.u_type[u]
+	# Suppression (2026-11-06, docs/design/ui.md "Suppression chips"): first, it changes what the unit can do.
+	var sus: int = sim.supp_state(u)
+	if sus == BattleSim.SUP_PIN:
+		out.append(["pinned", "Pinned"])
+	elif sus == BattleSim.SUP_SUPP:
+		out.append(["suppressed", "Suppressed"])
 	if UT.stat(ty, "m_ammo") > 0 and orders.value(u, "fire") == 0:
 		out.append(["hold_fire", "Fire: hold"])
 	if BattleSim.stance_ok(ty):

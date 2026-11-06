@@ -23,7 +23,7 @@ const NAMES: Array[String] = [
 	"merge", "exchange", "recruit", "raise", "disband", "split", "gift", "withdraw", "view_map",
 	"war", "peace", "trade", "trade_end", "alliance", "accept", "decline", "cancel", "close", "buy",
 	"farm", "market", "barracks", "range", "stables", "workshop", "walls", "lodge", "hunting", "canoe_yard", "trading_post", "build", "upgrade", "shipyard", "ship",
-	"fire", "hold_fire", "skirmish", "stance_line", "stance_cover", "stance_hold", "bound", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
+	"fire", "hold_fire", "skirmish", "stance_line", "stance_cover", "stance_hold", "suppressed", "pinned", "bound", "run", "deploy", "wall_up", "wall_down", "pick_up", "drop",
 	"victory", "defeat", "draw", "men", "killed", "routed", "captured",
 	"ladder", "ram", "tower", "siege_tower", "mantlet", "gate", "ammo", "forage", "wagon", "kill_beast", "general", "release", "crown", "dagger", "scroll",
 	"stakes", "caltrops", "palisade", "rotate",
@@ -638,6 +638,16 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_fill([-0.95, -0.8, -0.35, -0.8, -0.35, 0.8, -0.95, 0.8])
 			_fill([0.35, -0.8, 0.95, -0.8, 0.95, 0.8, 0.35, 0.8])
 			_l(-0.35, 0.0, 0.35, 0.0, 1.0)
+		"suppressed":  # suppression (2026-11-06): one chevron pressing down onto the ground
+			_l(-0.7, -0.45, 0.0, 0.2, 1.0)
+			_l(0.0, 0.2, 0.7, -0.45, 1.0)
+			_l(-0.85, 0.75, 0.85, 0.75, 1.0)
+		"pinned":  # ... pinned: two chevrons
+			_l(-0.7, -0.8, 0.0, -0.2, 1.0)
+			_l(0.0, -0.2, 0.7, -0.8, 1.0)
+			_l(-0.7, -0.25, 0.0, 0.35, 1.0)
+			_l(0.0, 0.35, 0.7, -0.25, 1.0)
+			_l(-0.85, 0.8, 0.85, 0.8, 1.0)
 		"bound":  # two offset arrows, one ahead of the other
 			_arrow(-0.8, 0.5, 0.1, 0.5, 0.45)
 			_arrow(-0.2, -0.45, 0.8, -0.45, 0.45)

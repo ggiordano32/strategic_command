@@ -425,7 +425,12 @@ const S_COVER_DIR := 361       # 1: a West skirmisher's strongpoint (SiegeAI._sp
 const S_LOF_STEP := 362        # a defending flat-weapon missile unit at its post with attackers in reach and no line of fire at any steps to the best fire spot this near (metres, sim units; BattleSim.fire_spot); 0 it stands (Easy)
 const S_LOF_LEASH := 363       # S_LOF_STEP's step for a line goes at most this far from the post (metres, sim units; looked for this far round where it stands); 0: S_LOF_STEP (docs/AI.md 67)
 const S_LOF_HOME := 364        # 1: a defender stepped off its post walks back to it once it has no line there and no spot within the leash, or no attacker is left in its reach; 0 it stays where it stepped (Easy)
-const N_KNOBS := 365
+# Suppression (docs/AI.md 69, 2026-11-06): ids 365-368.
+const SUPPRESS := 365          # 1: suppression on (BattleSim's meter and states; on in a battle when both sides' profiles have it); 0 none at all (Easy: the tutorial and Easy play as before)
+const SUPP_FALLBACK := 366     # 1: a pinned AI unit not in a melee walks to the nearest cover against its shooter within BattleSim.SUPP_FALL_R (supp_cover_spot) and stands there while suppressed; 0 it stays (Easy)
+const SUPP_FLANK_PCT := 367    # chance (%) at each think that a free melee unit whose target is pinned in front of it goes round to its flank first (BattleAI._flank; the siege AI's storm counts a pinned defender SUPP_PULL nearer instead); 0 never (Easy)
+const SUPP_HOLD := 368         # 1: a missile unit whose target is suppressed or pinned keeps it (no change to a nearer one: fire superiority holds the pin); 0 as before (Easy)
+const N_KNOBS := 369
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
@@ -747,6 +752,11 @@ const KNOBS: Array = [
 	# The third pass (docs/AI.md 67): the step reaches 20 m for a line and comes back when the line is lost.
 	[S_LOF_LEASH, 0, 20 * M, 20 * M],
 	[S_LOF_HOME, 0, 1, 1],
+	# Suppression (docs/AI.md 69): Easy has none at all, and its AI does not use it.
+	[SUPPRESS, 0, 1, 1],
+	[SUPP_FALLBACK, 0, 1, 1],
+	[SUPP_FLANK_PCT, 0, 50, 75],
+	[SUPP_HOLD, 0, 1, 1],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],
@@ -871,14 +881,16 @@ const C_AMB_MELT := C_CAV_STAY + 18  # ... a sprung unit not winning melted back
 const C_PLAY_SALVO := C_CAV_STAY + 19  # the Swedish salvo: a target taken (docs/AI.md 44.6; each salvo)
 const C_SALVO_VOLLEY := C_CAV_STAY + 20  # ... a line's salvo fired (every loaded man at once)
 const C_SALVO_CHARGE := C_CAV_STAY + 21  # ... the charge behind it ordered
-const N_COUNTERS := C_CAV_STAY + 22
+const C_SUPP_FLANK := C_CAV_STAY + 22  # suppression (docs/AI.md 69): a melee unit sent round a pinned enemy's flank ...
+const C_SUPP_FALL := C_CAV_STAY + 23  # ... a pinned unit sent to cover
+const N_COUNTERS := C_CAV_STAY + 24
 const COUNTER_NAMES: Array[String] = ["flank_hits", "pull_outs", "rotations", "saved", "inf_chase",
 	"spear_resp", "spear_resp_ticks", "missile_caught", "ammo_at_rout", "missile_routs", "reserve_commits",
 	"mk_late_flank", "mk_wrong_target", "mk_idle", "mk_chase", "mk_spear_charge", "mk_mis_forget",
 	"mk_commit_early", "mk_gate_open", "mk_early_wd", "cav_stay", "double_charges", "focus_orders",
 	"guard_free", "waver_pull", "siege_moves", "art_pull", "gen_rally", "gen_charge", "dog_release",
 	"works_placed", "ch_attempt", "ch_parley", "ch_sabotage", "play_tercio", "countermarch",
-	"play_ambush", "amb_spring", "amb_melt", "play_salvo", "salvo_volley", "salvo_charge"]
+	"play_ambush", "amb_spring", "amb_melt", "play_salvo", "salvo_volley", "salvo_charge", "supp_flank", "supp_fall"]
 
 # Skilled memory layout (BattleSim.ai_mem): MU_K ints per unit, then SD_K
 # per side at n_units * MU_K + side * SD_K.

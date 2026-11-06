@@ -440,6 +440,7 @@ func _process(_d: float) -> bool:
 			_ship_cases()
 			_flash_cases()
 			_cover_cases()
+			_supp_cases()
 			if not _oblique or not _v3d:
 				# Again, in the oblique battle view, then in the 3D view.
 				_v3d = _oblique
@@ -772,6 +773,55 @@ func _flash_cases() -> void:
 ## chip on the markers reads what the troop type gets (a musket line behind a 1.3 m wall: light; behind a 2.5 m one:
 ## heavy; in the open: none; riders behind the low wall: none), its tick points at the nearest enemy; while a musket
 ## line is selected an enemy behind a house is marked blocked and one in the open hittable; the overlay draws them.
+## Suppression (2026-11-06; docs/design/ui.md "Suppression chips"): a player's musket line under fire is suppressed
+## (its meter set, the sim's own state from it), then pinned; its men carry the crouch level in the soldier flags (both
+## paths, the 3D view's buffer from the same flags; on the CPU path the buffer's flags column), its card strip and its
+## tokens say Suppressed / Pinned; an enemy line's state reads the same (the marker chip is drawn for every side).
+func _supp_cases() -> void:
+	const Terrain := preload("res://sim/terrain.gd")
+	var b := Battle.new()
+	b.custom_scenario = {"width_m": 400, "height_m": 300, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 40, 170, 160, Scenarios.FACE_DOWN, 10),
+			Scenarios.unit(1, UT.index_of("musketeers"), 60, 170, 230, Scenarios.FACE_UP, 15)]}
+	b.seed_value = 3
+	root.add_child(b)
+	b.paused = true
+	var s: BattleSim = b.sim
+	var sl = b.soldiers
+	for lv in [1, 2]:
+		s.u_sup[0] = 600 if lv == 1 else 1000
+		s.u_sut[0] = s.tick
+		s.u_sup[1] = s.u_sup[0]
+		s.u_sut[1] = s.tick
+		s.step()
+		sl.upload()
+		var fl: int = sl._flags[0]
+		var cpu_ok := true
+		if sl.cpu_fed and sl._n_inst > 0:
+			var first: int = s.slot_soldier[s.u_slot_base[0]]
+			cpu_ok = false
+			for r in range(0, sl._runs.size(), 3):
+				if sl._runs[r + 2] == 0 and first >= sl._runs[r] and first < sl._runs[r] + sl._runs[r + 1]:
+					cpu_ok = int(sl._cbuf.get_pixel(SoldierLayer.C_FLAGS, first).r) == fl
+		var cs_: Array = b._card_states(0)
+		var word := "Pinned" if lv == 2 else "Suppressed"
+		var has_word := false
+		for g in cs_:
+			if str(g[1]) == word and str(g[0]) == word.to_lower():
+				has_word = true
+		var toks: Array = b.overlay._tokens(0)
+		var tok := false
+		for t in toks:
+			if str(t[0]) == word.to_lower():
+				tok = true
+		_check(s.supp_state(0) == lv and s.supp_state(1) == lv and (fl / SoldierLayer.F_CROUCH) & 3 == lv and cpu_ok and has_word and tok,
+			"suppression: %s: the sim's state %d (enemy %d), the men's crouch level %d in the flags (CPU buffer %s), the card strip %s, token %s" % [
+				word, s.supp_state(0), s.supp_state(1), (fl / SoldierLayer.F_CROUCH) & 3, str(cpu_ok), str(cs_), str(tok)])
+		b.overlay._tok_at.fill(-100)
+	b.queue_free()
+
+
 func _cover_cases() -> void:
 	const Terrain := preload("res://sim/terrain.gd")
 	const Probe := preload("res://tests/lof_probe.gd")
