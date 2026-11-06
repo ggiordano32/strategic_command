@@ -3250,3 +3250,69 @@ attackers' road at Cartagena (San Felipe on the high ground) and 105 m off at Po
   the glacis is a 24 m lane, the plaza's far corners are seen through the streets only; the named forts' own traces
   (the Morro's triangle, San Marcos's bastions, the Ulua, Fort Charles) are no longer anyone's walled fort at walls
   1-2 (their pieces stand as scenery; the walls-3 citadel keeps them).
+
+### The fort towns tuned (as built, 2026-11-06)
+
+The tuning pass the overwatch row promised (the owner wants the fort to matter without the town becoming a
+fortress; the siege rows' targets: about 40-45 % attacker wins at walls 1 and 35 % at walls 2 for equal forces, and
+the natives' poles taking a walls-2 fort town in most equal-force storms). Two rounds, AI knobs only (docs/AI.md 72);
+no stat, map or campaign change.
+
+- **Diagnosis** (session scratchpad `tune/diagnosis.md`, `tune/diag.gd`: the town_balance battles with the plaza's
+  capture, the fallback, the fort's share and the kills from its walls traced). The attackers lose the street fight,
+  not the plaza: at Portobelo, Cartagena and Havana walls 1-2, 45 of 48 battles end with the attackers withdrawing at
+  5-9 min, 13 ever reach the plaza, 4 start its capture; they lose 426 men a battle to the defenders' 287. Ablations
+  on the same battles: the fallback off 4 attacker wins (3 with it); the fort moved but no glacis 3; the old fort
+  (no overwatch rule, fallback off) 10 of 44 (walls 1 10 of 24). On four walls-2 towns (Santo Domingo, Santiago de
+  Cuba, San Juan, St Augustine) 0 of 32 now, 2 with the map alone, 15 with the old fort. So the fort's new place costs
+  the street fight: the old fort's walls killed only with its tower guns (230 m off), the new one's musket garrison
+  adds 25-65 kills a battle in the inner streets, and the defenders, whose line units stand 80 % of the way to the
+  plaza (balance T's defence in depth), lose 25-30 % fewer men under its cover. The attackers' AI never shot at the
+  fort (`_storm`, `_bound_storm` skip wall units, `_town_gun` the fort's men). The storm's edge does not enter: the
+  fort holds 11 % of the defenders (one musket company), every attacker chose the town only, and a won battle is
+  decided at the plaza; suppression near the plaza is the fallen-back shooters' (290 attacker unit-seconds
+  suppressed, 222 pinned in 48 battles), few battles get there.
+- **The levers, each alone** (the town_balance battles of the seven towns above, 8 seeds, attacker wins walls 1 /
+  walls 2 of 56 each): the attackers answer the fort (`S_FORT_ANSWER`: storming shooters and the town's guns take the
+  fort's walk as a target) 3 -> 3 of 24 / 0 -> 3; their waiting musket lines also sent at the walk 8 -> 7 / 0 -> 1
+  (dropped); the fallback at 75 % of the street line gone (`S_FB_LINE_PCT`) 8 -> 8 / 0 -> 3; the defenders' line at 60
+  % of the way in (`S_FORT_LINE_PCT`) 8 -> 11 / 0 -> 1, at 40 % 8 -> 25 / 0 -> 7. A lower press-on edge (100 % of the
+  fort's garrison for any kit; the natives with poles at walls 2) took the town 20 -> 22 of 48 (the storms that fail
+  are pressing already and time out): dropped. Not tried: the storm following the fallback through the gate (the
+  gate rarely matters: few battles reach the plaza) and poles on the fort's blind side.
+- **Round two, the three together** (Average and Skilled: answer on, fallback at 75 %, line at 40 %; Easy as
+  before). `west_walls` (8 seeds; before this tree, 7dc9d5dd4b; after 964682393e, the worktree's code checked
+  identical battle for battle): attacker wins walls 0 / 1 / 2 60 / 33 / 13 % (35) -> 60 / 48 / 24 % (44); walls 0
+  identical in every cell (no fort); per town beyond its interval Havana w1 0 -> 62, Veracruz w1 38 -> 100, St
+  Augustine w1 0 -> 50, Cumana w1 62 -> 100, Santo Domingo w2 0 -> 50, San Juan w2 0 -> 38 (up), Port Royal w1 50 ->
+  12 (down); Portobelo (its fort landward, in the attackers' road) 12 / 0 -> 0 / 0, New Orleans 0 throughout.
+  `rome_walls` and `open_town`: no fort (`fort_on` 0), every change is behind it, not re-measured.
+- **The fort storm** (`tests/fort_probe.gd`, the campaign assault on arrival as the auto-resolve fights it, 8 seeds a
+  cell, the town's own garrison; won / town taken, before -> after):
+
+| attacker | town | walls 1 before | walls 1 after | walls 2 before | walls 2 after |
+|---|---|---|---|---|---|
+| Miskito, poles | Portobelo | 8 / 8 | 8 / 8 | 8 / 4 | 7 / 1 |
+| Miskito, poles | Cartagena | 8 / 8 | 8 / 8 | 7 / 4 | 8 / 8 |
+| Miskito, poles | Havana | 8 / 8 | 8 / 8 | 6 / 1 | 8 / 8 |
+| Itza, poles | Portobelo | 8 / 8 | 8 / 8 | 5 / 5 | 7 / 7 |
+| Itza, poles | Cartagena | 8 / 5 | 8 / 8 | 4 / 4 | 8 / 8 |
+| Itza, poles | Havana | 8 / 5 | 8 / 8 | 3 / 2 | 8 / 6 |
+| English, 2 guns | Portobelo | 8 / 8 | 7 / 7 | 7 / 7 | 8 / 8 |
+| English, 2 guns | Cartagena | 8 / 4 | 7 / 7 | 8 / 7 | 8 / 7 |
+| English, 2 guns | Havana | 8 / 8 | 8 / 8 | 7 / 5 | 8 / 8 |
+
+  Pooled: the natives walls 1 won 48 -> 48, taken 42 -> 48; walls 2 won 33 -> 46, taken 20 -> 38 of 48 (the fort
+  holding 13 -> 8, 6 of them the Miskito at Portobelo); the English with guns walls 1 taken 20 -> 22 of 24, walls 2 19
+  -> 23. Where the town falls the storm now takes the fort in most battles, as the campaign formula's fort rule
+  assumes (`CBattle.fort_storm`: the edge over 35 % of the defenders), so the formula is unchanged; its fought West
+  siege reference (`FIT_FOUGHT`, 2026-10-22: 52.7 / 39.8 / 33.6 %) against the sim now 60 / 48 / 24 % is a drift for
+  a later refit, not a change of this pass.
+- **Not reached.** Walls 2 at 24 % (35 wanted) after two rounds: what is left in the walls-2 towns is the palisade
+  and the fort together; a further step would be a stat or map change (the stakes, the fort's garrison, the fort's
+  place at Portobelo), the owner's call. Walls 1 48 % is at the top of its band.
+- **Tests.** determinism_test `--only=fort` (`_check_fort_fallback`: the streets fell at 6.6 min, one shooter fell
+  back onto the walk), `town`, `deploy`, `layout`, `cover` PASS, the full run 202 PASS, 0 FAIL at its 2,400 s timeout;
+  lockstep_test, custom_battle_test, roles_sim_test, harbour_test, tutorial_native_test, shore_test,
+  battle_screen_test (three views), campaign_test, pack_test PASS (campaign/ untouched: the campaign pins cannot move); `tools/check_scripts.sh` clean. The
+  campaign formula and `campaign/` unchanged (no refit run); the rules hash moves; no VERSION bump.

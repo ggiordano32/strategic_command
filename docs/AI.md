@@ -4831,6 +4831,33 @@ yard-wall case routed 60.3 -> 53.0 s). `sup_town` (8 West AI town battles, 300 s
 lost 723 / 1,047 against 715 / 1,052, one fallback against none: the siege AI's fallback and hold still measure as
 noise in towns (a garrison is never pinned, and street defenders are pinned 22 unit-seconds in 5,679 under fire).
 
+## 72. The fort towns tuned: the attackers answer the fort, the line stands short of it (2026-11-06)
+
+The battle side: docs/design/siege_and_towns.md "The fort towns tuned (as built, 2026-11-06)". After the fort moved
+beside the plaza (note 70) the West fort towns were the defenders' (west_walls walls 1 / 2 33 / 13 %, wanted about
+40-45 / 35). The diagnosis (session scratchpad `tune/diagnosis.md`): the attackers lose the street fight, not the
+plaza (45 of 48 battles at Portobelo, Cartagena and Havana end with the attackers withdrawing, 13 ever near the
+plaza); the fort's new place, not the fallback (4 against 3 attacker wins of 48 with its knob off), the glacis (3 of
+48 without it) or the storm's edge (every attacker chose the town only: the fort's share is 11 %), costs them: the
+street line posted 80 % of the way to the plaza (defence in depth) now fights inside the fort's reach, with the
+fort's musket garrison adding 25-65 kills a battle in the streets it never reached from 230 m, and the attackers'
+AI never shoots at the fort. Three knobs, ids 372, 375-376 (`N_KNOBS` 375):
+
+| id | knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|---|
+| 372 | `S_FORT_ANSWER` | 0 | 1 | 1 | the attackers of a West fort town answer its walk: a storming flat-weapon shooter with shot left (`_storm`, `_bound_storm`) counts a fort wall unit in its reach and line of fire as a target, `FORT_ANSWER_PUSH` 20 m farther than a defender in the streets; the town's guns (`_town_gun`) may shoot the fort's walk (its men in the fort's yard are still left be); `SiegeAI._fort_answer` |
+| 375 | `S_FB_LINE_PCT` | 50 | 75 | 75 | the fallback (note 70) is triggered by the plaza's capture running or this % of the street line routing or gone (the sally's 50 % before; the sally keeps it) |
+| 376 | `S_FORT_LINE_PCT` | 0 | 40 | 40 | in a West fort town (walls 1-2, `fort_on`) the defenders' line units hold the street this % of the way from its mouth to the plaza (`_strongpoint`; 0: `SP_PAL_LINE_PCT` 80, the defence in depth of balance T, kept for Easy and for walled towns without a fort); 40 is the open town's `SP_LINE_PCT`: the line meets the storm before it is under the fort's guns, and the fort is the fallback |
+
+Each measured alone (`tune/diag.gd`, the town_balance battles of Portobelo, Cartagena, Havana, Santo Domingo,
+Santiago de Cuba, San Juan and St Augustine, 8 seeds; attacker wins before -> after, walls 1 / walls 2 of 56 each):
+`S_FORT_ANSWER` 3 -> 3 of 24 / 0 -> 3; the waiting musket lines also sent at the walk (a level 2, dropped) 8 -> 7 / 0
+-> 1; `S_FB_LINE_PCT` 75 8 -> 8 / 0 -> 3; `S_FORT_LINE_PCT` 60 8 -> 11 / 0 -> 1, 40 8 -> 25 / 0 -> 7. A lower edge for
+the press-on at the town's fall (100 % of the fort's garrison for every kit, with the answer on; fort_probe, the
+natives with poles at walls 2) took the town 20 -> 22 of 48: the storms that hold are mostly pressing already and
+time out, so it was dropped. The three together: west_walls (8 seeds) 60 / 33 / 13 -> 60 / 48 / 24 %; the numbers and
+the fort storm in siege_and_towns.md. Walls 2 stays short of 35 % after the two rounds; what is left would be a stat
+or a map change (the owner's call).
 ## 73. Shots strike the walls they cross: the artillery scan prefers what its stones can reach (2026-11-06)
 
 The battle rule is docs/design/battle_sim.md "Shots strike the walls they cross (as built, 2026-11-06)": an engine's

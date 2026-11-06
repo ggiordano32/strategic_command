@@ -174,6 +174,7 @@ const SP_COVER_R := 10 * M       # ... scored by the cover cells this near
 const SP_COVER_FAR := 2          # ... less this per SP_LAT_STEP from the plain point
 const SP_COVER_DIR_W := 10       # ... plus this per step of cover facing the street mouth (S_COVER_DIR: heavy 2, light 1; docs/AI.md 66)
 const S_LOF_PUSH := 40 * M       # S_LOF_PICK: a storming shooter counts a defender it has no line of fire to this much farther (docs/AI.md 66)
+const FORT_ANSWER_PUSH := 20 * M  # S_FORT_ANSWER: a storming shooter counts a fort wall unit in its reach and line this much farther than a street defender (docs/AI.md 72)
 const SUPP_PULL := 20 * M        # suppression: storming foot count a pinned defender this much nearer (docs/AI.md 69, SUPP_FLANK_PCT on)
 const S_LOF_STEP_EVERY := 30     # S_LOF_STEP: a defender with no line looks for its step at most this often (ticks)
 const SP_PAL_COVER_PCT := 30    # ... in a town with works (West walls 1-2: the fort, the palisade) skirmishers this far in ...
@@ -705,7 +706,11 @@ static func _strongpoint(sim, u: int) -> void:
 		# mouths (the palisade's gaps) from the corners as before, the line
 		# troops hold the inner streets toward the plaza, where the attackers
 		# come out of the lanes spent.)
-		pct = mini((SP_PAL_COVER_PCT if cover else SP_PAL_LINE_PCT) + (k / ms.size()) * SP_STEP, 95)
+		var lp := SP_PAL_LINE_PCT
+		var flp: int = AP.of(sim, side)[AP.S_FORT_LINE_PCT]
+		if sim.fort_on != 0 and flp > 0:
+			lp = flp  # (S_FORT_LINE_PCT, docs/AI.md 72: the fort overwatches the inner streets)
+		pct = mini((SP_PAL_COVER_PCT if cover else lp) + (k / ms.size()) * SP_STEP, 95)
 	var px: int = sim.plaza[0]
 	var py: int = sim.plaza[1]
 	var zr := _df_zone_reach(sim, side)
@@ -832,12 +837,19 @@ static func _bound_storm(sim, u: int) -> void:
 	var t := -1
 	var bd := rng
 	var tl := false
+	var fans: bool = _fort_answer(sim, u, AP.of(sim, side))
 	for o in sim.n_units:
-		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_wall[o] > 0 or sim.hidden_from(o, side):
+		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.hidden_from(o, side):
+			continue
+		if sim.u_wall[o] > 0 and (not fans or not sim.in_fort(o) or sim.is_tower(o)):
 			continue
 		var d := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
 		if d >= rng:
 			continue
+		if sim.u_wall[o] > 0:
+			if not sim.lof_units(u, o):
+				continue
+			d += FORT_ANSWER_PUSH  # (S_FORT_ANSWER: the fort's walk in reach and line, after the men in the open)
 		# (A defender it has a line of fire at first, nearest first; else the
 		# nearest, gone round to by the streets: fight jitter pass,
 		# 2026-10-16, skirmishers stood for minutes at a house between.)
@@ -1233,7 +1245,7 @@ static func _fort_gates(sim, side: int) -> void:
 ## fort's parade guard (A_CIT) FB_GATE_IN inside it; the rest fight on.
 static func _fort_fallback(sim, side: int, kn: PackedInt32Array) -> void:
 	if sim.ai_cit[side] == 0:
-		if not _fort_streets_lost(sim, side):
+		if not _fort_streets_lost(sim, side, false, kn[AP.S_FB_LINE_PCT]):
 			return
 		sim.ai_cit[side] = 2
 		BattleAI._count(sim, side, AP.C_SIEGE)
@@ -1424,7 +1436,7 @@ static func _fort_sally_due(sim, side: int) -> bool:
 ## `approach` (the sally's rule) also an attacking unit of CAPTURE_MEN or
 ## more within the plaza's capture box widened by CAPTURE_CLEAR +
 ## FORT_SALLY_APP.
-static func _fort_streets_lost(sim, side: int, approach: bool = false) -> bool:
+static func _fort_streets_lost(sim, side: int, approach: bool = false, line_pct: int = 50) -> bool:
 	if sim.cap_t > 0:
 		return true
 	var px: int = sim.plaza[0]
@@ -1445,7 +1457,7 @@ static func _fort_streets_lost(sim, side: int, approach: bool = false) -> bool:
 		n_line += 1
 		if sim.u_state[o] != U_READY:
 			n_gone += 1
-	return n_line > 0 and n_gone * 2 >= n_line
+	return n_line > 0 and n_gone * 100 >= n_line * line_pct
 
 
 ## Attackers bring a ram or ladders within FORT_BACK_R of the fort's gate.
@@ -2693,6 +2705,17 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
 
 
+## The fort towns tuned (docs/AI.md 72, AP.S_FORT_ANSWER): attacking unit u,
+## a ready shooter with shot left and a flat weapon, answers the West fort's
+## walk over the town (the fort overwatches the plaza since 2026-11-05):
+## its storm counts a fort wall unit in its reach and line of fire as a
+## target, FORT_ANSWER_PUSH farther than a defender in the streets.
+static func _fort_answer(sim, u: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.S_FORT_ANSWER] == 0 or sim.fort_on == 0 or sim.u_side[u] == sim.city_def:
+		return false
+	return sim.u_cls[u] == UT.CLS_MISSILE and sim.u_ammo[u] > 0 and UT.stat(sim.u_type[u], "m_arc") == 0
+
+
 ## Taking the town round a West fort (ai_fort 1; forts leftovers): attacking
 ## battery u shoots the town's defenders, not the fort's (docs/AI.md 29):
 ## the nearest ready defending unit off the fort it reaches and may shoot
@@ -2701,12 +2724,15 @@ static func _town_gun(sim, u: int) -> bool:
 	var side: int = sim.u_side[u]
 	var mn := UT.stat(sim.u_type[u], "m_min")
 	var rng: int = sim.mrange(u)
+	var fans: bool = AP.of(sim, side)[AP.S_FORT_ANSWER] != 0
 	var best := -1
 	var bd := 0
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0 or sim.hidden_from(o, side) \
-				or sim.in_fort(o) or sim.is_tower(o):
+				or sim.is_tower(o):
 			continue
+		if sim.in_fort(o) and not (fans and sim.u_wall[o] > 0):
+			continue  # (the fort's men left be; S_FORT_ANSWER: its walk is shot at)
 		if not sim._art_in_range(u, o, mn, rng):
 			continue
 		var d: int = sim._unit_dist(u, o)
@@ -2950,8 +2976,22 @@ static func _storm(sim, u: int) -> void:
 	# (Suppression, docs/AI.md 69: storming foot count a pinned defender SUPP_PULL nearer: it cannot charge them and
 	# fires little, so they go in on it while the shooters hold it.)
 	var spull: bool = kn[AP.SUPP_FLANK_PCT] > 0 and sim.sup_on != 0 and sim.u_cls[u] != UT.CLS_MISSILE
+	# (S_FORT_ANSWER, docs/AI.md 72: a shooter with shot left answers the fort's walk over the town.)
+	var fans: bool = _fort_answer(sim, u, kn)
+	var frng: int = sim.mrange(u) if fans else 0
 	for o in sim.n_units:
-		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY or sim.u_wall[o] > 0:
+		if sim.u_side[o] == sim.u_side[u] or sim.u_state[o] != U_READY:
+			continue
+		if sim.u_wall[o] > 0:
+			if not fans or not sim.in_fort(o) or sim.is_tower(o) or sim.hidden_from(o, sim.u_side[u]):
+				continue
+			var dw := BattleAI._d(sim.u_cx[o] - sim.u_cx[u], sim.u_cy[o] - sim.u_cy[u])
+			if dw > frng or not sim.lof_units(u, o):
+				continue
+			dw += FORT_ANSWER_PUSH
+			if dw < best_d:
+				best = o
+				best_d = dw
 			continue
 		if cit_shut and BattleAI._d(sim.u_cx[o] - sim.cit_x, sim.u_cy[o] - sim.cit_y) < sim.cit_r:
 			continue  # behind the citadel's shut gate
