@@ -3156,3 +3156,97 @@ stretch of Cumana's fort has a ladder foot on the attackers' ground: `ladder_ok`
 - **Known.** The poles rarely touch the fort's walls (the garrison breaks first); a human attacker's battle still ends
   at the plaza (no "storm the fort" order to say he means to go on); the fort's 35 % share is still unseen by the
   campaign.
+
+### The fort overwatches the plaza (as built, 2026-11-05)
+
+The owner: "For the forts, right they feel a bit useless, as they can be ignored in most battles where the walls have
+been upgraded. I'm not quite sure how to address this, as wrapping the entire town just makes it the same as Rome, it
+would be cool if they at least could overwatch the city center to be an effective fallback point for archers and
+musketeers." The town is not walled. At walls 1-2 (the open town round its fort) the West's walled fort stood 200-310 m
+from the plaza in most ports (the headland's harbour fort, the Morro, the Ulua out in the roads, Fort Charles), in the
+attackers' road at Cartagena (San Felipe on the high ground) and 105 m off at Portobelo (its walk out of musket reach);
+3 of the 35 fort towns had a walk within reach of the plaza.
+
+- **The number.** A musketeer's aimed range is 120 m and his fire at will stops at the volley range, 70 % of it: 84 m
+  (`t_m_volley`); bows reach 140 m; the fort's wall bonus (`WALL_RANGE_PCT`, the fort is wall level 2) adds 15 % to the
+  aimed range. So the fort overwatches the plaza when its walk (the walkway's centre line, where the men stand: the
+  trace's outer line plus the parapet and half the walk) stands within `MapGen.OVW_REACH` 84 m of the plaza's centre:
+  its musketeers then fire at will at men on the plaza's near half and centre, and reach its far edge (84 + 28 m) by
+  aimed fire.
+- **The rule** (`MapGen._tp_fort_overwatch`, walls 1-2, every West plan town with a fort; a mapgen rule, no per-town
+  data). The old pick (`tp_fort_pick`: the town's own fort, else the generic harbour fort, else the generic city fort;
+  the nearest of a rank) stays when it overwatches. Else the first of the plan's other fort landmarks in that order
+  that overwatches. Else a fort of its own by the plaza (`_tp_ovw_site`): the generic piece (the harbour fort in a
+  port, the city fort inland) tried on bearings from the plaza, as near as `_tp_fort`'s clearance from the plaza
+  allows and then moved along the bearing until its walk stands `OVW_AT` 72 m from the plaza's centre. A port: first
+  on the side of the plan's old fort, along the shore (the quay's end: `_tp_fort` sets it on the waterline, its
+  landward curtain and gate toward the plaza), then turning landward in 22.5 degree steps, then the other side, then
+  straight landward; inland: behind the plaza (away from the attackers' road), then beside it, then before it. A site
+  is taken when its walk is within 84 m, its walls and towers are on the map and its landward ditch inside the town's
+  landward edge, its outline keeps the ditch plus `OVW_LM_GAP` 6 m off the plan's other landmark bodies and the church,
+  and the church is not on its glacis. A site on one of the town's own forts takes its place (Portobelo: its town-end
+  harbour fort, the 2026-11-02 pick, now stands 35 m nearer the plaza). The generic fort it replaces is not drawn; a
+  named one (the Morro, the Fuerza, San Felipe, the Ulua, Fort Charles, the Morro of San Juan, the rock fort, San
+  Marcos) stays where the plan has it as a scenery body; the level-2 town's generic fort on its high ground is not
+  placed where the fort stands. No site fits: the old pick (none of the 35 towns).
+- **The glacis** (`_tp_glacis`, only for a fort the rule placed). Men 6 m up on the walk look over the 4-5 m houses
+  near the fort but not those near the plaza (a 5 m roof blocks the line from 7.5 m to a man 1 m up beyond its middle),
+  and the governor's house, a tavern or the church blocks anywhere; so the ground from beyond the fort's ditch to the
+  plaza, `GLACIS_HW` 12 m either side of the line from the fort to the plaza's centre, is kept open (`keep`): no
+  houses, landmarks, trees or outcrops; roads cross it. The esplanade between a citadel and its town.
+- **Towns changed.** A headless probe over the 49 West plan towns at walls 1 / 2 / 3 (the map hash, the fort, the walk's
+  nearest point to the plaza's centre with a clear line): 33 towns' layouts change at walls 1 and 2 (every fort town
+  but Orizaba and Puerto Principe, whose generic city fort already stood 63-66 m off with a clear line); walls 3
+  hashes the same in all 49 (the walled plan: its citadel keeps `tp_fort_pick`, the whole town is walled there) and
+  walls 0 has no fort (the rule does not run). The fort's walk after: 65-77 m from the plaza's centre in all 35 (was 82-123 m for the five nearest, out of
+  140 m for the rest), with a clear line in all. Ports (22 of the 24 changed): on the waterline at the quay's end,
+  beside the plaza (three of them turned 22.5 degrees landward: Coro, Port of Spain, St. Augustine); Trujillo and
+  Portobelo landward of it (Portobelo's town-end fort 35 m nearer, 77 m walk to plaza); the 9 inland towns (Apalachee,
+  Barquisimeto, Calabozo, Comayagua, Granada, Merida, Mompox, Santiago de los Caballeros, Sevilla la Nueva) behind the
+  plaza, away from the attackers' road. Havana's walled fort is now a harbour fort on the waterline west of the plaza
+  (the Morro and the Fuerza scenery), Cartagena's a harbour fort on the shore west of it (San Felipe scenery on its
+  hill, out of the attackers' road).
+- **The fallback** (siege AI, docs/AI.md 70): when the streets fall the defenders' shooters fall back onto the fort's
+  walls nearest the plaza and fire over it, two melee units hold the gate; a human defender does the same with the
+  existing orders (select the shooters, tap the fort's near wall: they go up its stairs, as the AI's do).
+- **Not changed.** The fort-holds rule and the storm (2026-11-05), the deployment zones (the town box and the fort's
+  zone, 2026-11-02), the guns' own-tower rule, the corner drums, the overworld (the campaign's landmarks: the overworld
+  still draws the harbour fort on its headland), walls 0 and 3, every Rome plan.
+- **Measured** (`tools/balance`, 8 seeds, before a clean copy of HEAD, the map and the fallback together):
+  `west_walls` attacker wins walls 0 / 1 / 2 52 / 34 / 27 % (38) -> 52 / 30 / 16 % (33); walls 0 identical in every
+  cell; walls 2 beyond its interval (-11), toward the defenders; per town beyond its interval Havana walls 1 50 -> 12,
+  Santo Domingo 62 -> 0 and 50 -> 12, Cumana 88 -> 25 and 100 -> 38, Maracaibo walls 2 62 -> 12 (down), Merida walls 1
+  38 -> 88 and Santiago de Cuba walls 1 0 -> 62 (up; Cartagena 0 -> 25 at walls 1, out of its fort's shadow); Portobelo
+  and Puerto Principe identical. The fort's part (`fb_probe`, Portobelo, Cartagena, Havana at walls 1-2, 8 seeds each,
+  WEST_ATT both sides; before / the map alone (fallback knob off) / both): attacker wins 5 / 9 / 4 of 48; the fallback
+  ordered in 22 of 48 battles (the plaza's capture running or the street line half gone), 51 shooter units fell back,
+  38 reached the walk; the defenders' kills from the fort's walls 74 / 72 / 80 a battle (12 a battle after the
+  fallback, whose fire mostly resets the capture: of the 22 battles with a fallback the defenders won 15, the attackers 4,
+  3 undecided at the time limit); the fort still
+  held men at the end in 3 of the 4 attackers' wins (before: 0 of 5; the battles ended at the plaza, no AI pressed on). The fort storm (`tests/fort_probe.gd`, the natives with poles on arrival, Cumana,
+  Portobelo, Cartagena; before: the 2026-11-05 table's after columns, the same code): walls 1 battles won 48 -> 48, the
+  town taken 48 -> 47; walls 2 won 36 -> 31, taken 44 -> 8 (the fort holds: the falling-back shooters make its garrison
+  too strong for the poles' edge, `fort_press` declines). `rome_walls` 75 / 52 / 42 % (56) before and after (no Rome
+  town has a fort). Campaign pins: battles settle by formula, `campaign/` is untouched: pack_test MATCH.
+  Re-measured on main after the cover passes and suppression (2026-11-06, before a clean copy of 4efb39b, no tuning):
+  `west_walls` 64 / 38 / 32 % (45) -> 64 / 25 / 14 % (34), walls 1 and 2 beyond their intervals (Havana w1 38 -> 0,
+  Santo Domingo 75 / 100 -> 25 / 12, St Augustine w1 50 -> 0, San Juan w1 38 -> 0, Cumana w2 100 -> 62, Santiago de
+  Cuba w2 62 -> 0); the fort's part (Portobelo, Cartagena, Havana x walls 1-2, 48 battles, after): attacker wins 1,
+  the fallback ordered in 11 (the defenders won 10), 17 of 23 falling units on the walk, the defenders' kills from the
+  fort's walls 73 a battle; the natives' poles (Cumana, Portobelo, Cartagena, after): walls 1 won 48, town taken 48 of
+  48; walls 2 won 38, taken 19 of 48 (the fort holding in 19).
+- **Tests.** determinism_test `--only=fort`: `_check_fort_overwatch` (every West fort town at walls 1 and three at walls
+  2: a walk point within 84 m sees the plaza's centre; 65-77 m in all), `_check_fort_fallback` (Havana walls 1, twice
+  WEST_ATT against WEST_ATT since the cover passes, under which the equal storm no longer takes the streets: the
+  streets fall, only shooters fall back, they reach the walk and shoot, the gate's holders are melee foot; Easy never
+  falls back); `--only=deploy` `_check_tower_gun_lof` takes another tower on the gun's own ground (a waterline fort's
+  seaward drum stands on the sea's ground height); `--only=town` (`_check_town`) now wants Havana's and St Augustine's
+  walled fort to be the harbour fort beside the plaza on its own trace (4 salients, the gate to the plaza), the Morro
+  and San Marcos scenery. Probes: `ovw_probe.gd`, `fb_probe.gd` (session scratchpad ovw2/).
+- **Known.** Walls 1-2 are now the defenders' (25 / 14 % on main after the cover passes) and the natives' poles take a walls-2 fort town 19 of 48:
+  the campaign formula's native weights (refit 2026-11-05 on the old fought tables) now overrate them there; the
+  overworld still shows the fort on its headland; a waterline fort's seaward corner drums stand on the sea's ground
+  height in the sim (low obstacles); Port of Spain is a port whose plan has no shore (its map errors out, at HEAD too);
+  the glacis is a 24 m lane, the plaza's far corners are seen through the streets only; the named forts' own traces
+  (the Morro's triangle, San Marcos's bastions, the Ulua, Fort Charles) are no longer anyone's walled fort at walls
+  1-2 (their pieces stand as scenery; the walls-3 citadel keeps them).

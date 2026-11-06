@@ -430,7 +430,10 @@ const SUPPRESS := 365          # 1: suppression on (BattleSim's meter and states
 const SUPP_FALLBACK := 366     # 1: a pinned AI unit not in a melee walks to the nearest cover against its shooter within BattleSim.SUPP_FALL_R (supp_cover_spot) and stands there while suppressed; 0 it stays (Easy)
 const SUPP_FLANK_PCT := 367    # chance (%) at each think that a free melee unit whose target is pinned in front of it goes round to its flank first (BattleAI._flank; the siege AI's storm counts a pinned defender SUPP_PULL nearer instead); 0 never (Easy)
 const SUPP_HOLD := 368         # 1: a missile unit whose target is suppressed or pinned keeps it (no change to a nearer one: fire superiority holds the pin); 0 as before (Easy)
-const N_KNOBS := 369
+# The fort overwatches the plaza (docs/AI.md 70, 2026-11-06).
+const S_FORT_FALLBACK := 369   # 1: when a West fort town's streets fall (SiegeAI._fort_streets_lost: the plaza's capture running or half the street line gone) the defenders' shooters fall back onto the fort's walls nearest the plaza and fire over it, S_FB_GATE melee units hold its gate from inside; 0 they fight on in the streets
+const S_FB_GATE := 370         # ... this many melee units (nearest the gate) hold the fort's gate
+const N_KNOBS := 371
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
@@ -720,6 +723,9 @@ const KNOBS: Array = [
 	[S_FORT_GUN_PCT, 250, 120, 120],
 	[S_FORT_PRESS, 0, 1, 1],
 	[S_FORT_BATTER, 0, 1, 1],
+	# The fort overwatches the plaza (docs/AI.md 70): Easy fights on in the streets (a deliberate mistake).
+	[S_FORT_FALLBACK, 0, 1, 1],
+	[S_FB_GATE, 0, 2, 2],
 	[PLAYS_ON, 0, 1, 1],
 	[TERCIO, 0, 1, 1],
 	[TERCIO_FILES, 8, 14, 14],

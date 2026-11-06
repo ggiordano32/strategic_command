@@ -3776,6 +3776,13 @@ const W_TOP := 48                            # canonical y of the town's top (ab
 const W_APPROACH := 95                       # landward edge to the attackers' front
 const W_PAL_GAP := 2                         # a plan town's palisade (walls 2): its gap at a road this many 2 m cells wide
 const W_LANE_CLEAR := 60                     # a plan town's fort this near the attackers' road (beyond its reach): the road goes round it
+# The fort overwatches the plaza (docs/design/siege_and_towns.md "The fort overwatches the plaza (as built,
+# 2026-11-05)"): a plan town's walled fort (walls 1-2) has its walk within OVW_REACH of the plaza's centre, the
+# musketeers' fire-at-will reach (their volley range, 70 % of the musket's 120 m: battle_sim t_m_volley).
+const OVW_REACH := 84
+const OVW_AT := 72                           # a fort of its own by the plaza: its walk this far from the plaza's centre
+const OVW_LM_GAP := 6                        # ... its ditch this far off another landmark's body or the church
+const GLACIS_HW := 12                        # the glacis: houses kept this far either side of the line fort - plaza
 const W_MAIN: Array[int] = [8, 10, 12]       # high street width
 const W_QUAY: Array[int] = [12, 14, 16]      # quay width
 const W_BACK := 7                            # an inland town's back street
@@ -4510,6 +4517,8 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 	if not fort.is_empty():
 		fw = _w_fort(wc, fort, coast)
 		wc["fort_w"] = fw
+		if tpm and int(o.get("glacis", 0)) != 0:
+			_tp_glacis(wc, fort)
 	var tp_roads: Array = []
 	if tpm:
 		tp_roads = _tp_west_marks(wc, p)
@@ -4524,6 +4533,10 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 			var pa: Array = pc
 			var pr0 := int(pa[5]) + 8
 			avoid.append([int(pa[1]) - pr0, int(pa[2]) - pr0, int(pa[1]) + pr0, int(pa[2]) + pr0])
+		var gl0: PackedInt32Array = wc.get("glacis", PackedInt32Array())
+		if gl0.size() == 4:
+			avoid.append([mini(gl0[0], gl0[2]) - GLACIS_HW, mini(gl0[1], gl0[3]) - GLACIS_HW,
+				maxi(gl0[0], gl0[2]) + GLACIS_HW, maxi(gl0[1], gl0[3]) + GLACIS_HW])
 		var lctx := {"w_m": w_m, "h_m": h_m, "kind": kind, "pal": pal, "seed": int(p["seed"]) * 7 + 5,
 			"hgt": hg, "obs": obs, "avoid": avoid, "ref": Vector2i(att_x, mini(att_y + 30, h_m - 8)),
 			"excl": [[cx - hw - 20, 0, cx + hw + 20, top + W_QUAY[level] + 8], [att_x - 45, int(o["bot"]), att_x + 45, att_y + 120],
@@ -4550,6 +4563,10 @@ static func _city_west(p: Dictionary, kind: int, w_m: int, h_m: int, out: Dictio
 		var c := (ty / 2) * ow + tx / 2
 		if inside[c] == 0 or (absi(tx - px) < hs + 14 and absi(ty - py) < hs + 14) or not _w_free(blk, ow, oh, tx, ty, 6):
 			continue
+		var gl1: PackedInt32Array = wc.get("glacis", PackedInt32Array())
+		if gl1.size() == 4 and _seg_dist_cm(tx * 100, ty * 100, gl1[0] * 100, gl1[1] * 100, gl1[2] * 100, gl1[3] * 100) \
+				<= (GLACIS_HW + 4) * 100:
+			continue  # (none on the fort's glacis)
 		if not tpm and absi(ty - _w_rail(o, tx)) < 12:
 			continue
 		post.append([tx - 3, ty - 3, tx + 3, ty + 3, 2])
@@ -6437,6 +6454,207 @@ static func _w_outline_tp(p: Dictionary, w_m: int, o: Dictionary) -> void:
 			var hy: int = int(hi[1]) if hi.size() == 2 else -int(g["up"]) + fhh
 			lm = {"p": "harbour_fort" if coast else "fort", "bx": hx, "by": hy, "off": 0}
 		o["fort"] = _tp_fort(o, lm, level, w_m)
+		_tp_fort_overwatch(o, g, fi, level, w_m)
+
+
+## The fort overwatches the plaza (docs/design/siege_and_towns.md "The fort overwatches the plaza (as built,
+## 2026-11-05)"; walls 1-2, the open town round its fort): the walled fort is the one whose walk stands within
+## OVW_REACH of the plaza's centre (musketeers on it reach the plaza at fire at will). Of the plan's fort
+## landmarks that do, the first by tp_fort_pick's order (the town's own, the generic harbour fort, the generic
+## city fort; the nearest of a rank); none does: a fort of its own by the plaza (_tp_ovw_site), the generic
+## landmark it replaces not drawn, a named one (the Morro, San Felipe, the Ulua...) left standing as scenery; no
+## site fits: the old pick, as before. Sets o["fort"], o["tp_fort_i"] and, for a fort it moved, o["glacis"] (1:
+## the open ground from the fort's ditch to the plaza is kept clear of houses, _tp_glacis).
+static func _tp_fort_overwatch(o: Dictionary, g: Dictionary, fi: int, level: int, w_m: int) -> void:
+	var lms: Array = g["landmarks"]
+	if _tp_ovw_d(o, o["fort"]) <= OVW_REACH:
+		return  # (the old pick overwatches: kept, its town as before)
+	o["glacis"] = 1
+	for i in _tp_fort_order(lms):
+		if i == fi:
+			continue
+		var f := _tp_fort(o, lms[i], level, w_m)
+		if _tp_ovw_d(o, f) <= OVW_REACH:
+			o["fort"] = f
+			o["tp_fort_i"] = i
+			return
+	var rep := -1
+	if fi >= 0:
+		var d0: Dictionary = lms[fi]
+		if int(d0.get("gen", 0)) != 0 or int(d0.get("hf", 0)) == 2:
+			rep = fi  # (a generic fort: it moves; a named one stays as scenery)
+	var site := _tp_ovw_site(o, g, rep, level, w_m)
+	if site.is_empty():
+		o["glacis"] = 0
+		return
+	o["fort"] = site[0]
+	o["tp_fort_i"] = rep if int(site[1]) < 0 else int(site[1])
+
+
+## The plan's fort landmarks in tp_fort_pick's order (rank, then metres from the plaza, then table order).
+static func _tp_fort_order(lms: Array) -> Array:
+	var out: Array = []
+	var keys: Array = []
+	for i in lms.size():
+		var d: Dictionary = lms[i]
+		if str(d["kind"]) != "fort" or str(d["p"]) == "alcazar":
+			continue
+		var rk := 0 if int(d.get("gen", 0)) == 0 and int(d.get("hf", 0)) != 2 else (1 if int(d.get("hf", 0)) == 2 else 2)
+		var dx := int(d.get("bx", 0))
+		var dy := int(d.get("by", 0))
+		var key := rk * (1 << 24) + mini(dx * dx + dy * dy, (1 << 24) - 1)
+		var at := 0
+		while at < keys.size() and int(keys[at]) <= key:
+			at += 1
+		keys.insert(at, key)
+		out.insert(at, i)
+	return out
+
+
+## Metres from the plaza's centre to the nearest point of the fort's walk (its trace's outer line plus the
+## parapet and half the walk: the walkway's centre line, where the men stand); 1 << 20 for no fort.
+static func _tp_ovw_d(o: Dictionary, f: Dictionary) -> int:
+	if f.is_empty() or not f.has("tr"):
+		return 1 << 20
+	var tw := _tr_world(f)
+	var vx: PackedInt32Array = tw[0]
+	var vy: PackedInt32Array = tw[1]
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var best := 1 << 30
+	var n := vx.size()
+	for k in n:
+		var dcm := _seg_dist_cm(px * 100, py * 100, vx[k] * 100, vy[k] * 100, vx[(k + 1) % n] * 100, vy[(k + 1) % n] * 100)
+		best = mini(best, dcm)
+	return best / 100 + F_PP + WALK_W / 2
+
+
+## A fort of its own by the plaza (_tp_fort_overwatch): the generic piece (the harbour fort in a port, the city
+## fort inland) tried at each bearing from the plaza in turn, as near as _tp_fort's clearance from the plaza
+## allows, then moved along its bearing so its walk stands OVW_AT from the plaza's centre. A port: on the side of
+## the plan's old fort first, along the shore (the quay's end: the fort on the waterline, its landward curtain to
+## the plaza), then turning landward in 22.5 degree steps, then the other side the same, then straight landward;
+## inland: behind the plaza (away from the attackers' road), then beside it, then before it. A site is taken when its walk is within OVW_REACH, it stands on the map and
+## inside the town's landward edge, its ditch keeps OVW_LM_GAP off the plan's other landmarks (`rep`, the one it
+## replaces, and the generic forts' bodies aside) and the church, and the church is not on its glacis; a site on
+## one of the town's own forts (Portobelo's at the town's end) takes its place: that fort stands there (its body
+## not drawn at its own spot). [fort, the landmark it takes or -1]; [] when none fits.
+static func _tp_ovw_site(o: Dictionary, g: Dictionary, rep: int, level: int, w_m: int) -> Array:
+	var coast := int(o["coast"]) != 0
+	var pn := "harbour_fort" if coast else "fort"
+	var lms: Array = g["landmarks"]
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var cx: int = o["cx"]
+	var cy: int = o["cy"]
+	var angs: Array = []
+	if coast:
+		var east := true
+		if rep >= 0:
+			east = int((lms[rep] as Dictionary)["bx"]) >= px - cx
+		else:
+			var fo: Dictionary = o["fort"]
+			east = fo.is_empty() or int(fo["x"]) >= px
+		angs = [0, 64, 128, 192, 512, 448, 384, 320, 256] if east else [512, 448, 384, 320, 0, 64, 128, 192, 256]
+	else:
+		angs = [768, 704, 832, 640, 896, 0, 512, 128, 384, 256]
+	# (The obstacles: the other landmarks' bodies (drawn at TP_PIECE_PM) and the church, [x, y, radius m, the
+	# landmark if it is one of the town's own forts else -1].)
+	var obst: Array = []
+	for i in lms.size():
+		var d: Dictionary = lms[i]
+		if i == rep or str(d["kind"]) == "wall":
+			continue
+		var own_f := -1
+		if str(d["kind"]) == "fort" and str(d["p"]) != "alcazar":
+			if int(d.get("gen", 0)) != 0 or int(d.get("hf", 0)) == 2:
+				continue  # (a generic fort's body (the level-2 town's on its high ground) is scenery: not placed where the fort stands)
+			own_f = i
+		var ft := tp_foot(str(d["p"]))
+		obst.append([cx + int(d["bx"]), cy + int(d["by"]), maxi(int(ft[0]), int(ft[1])) * TP_PIECE_PM / 2000, own_f])
+	var cv: Dictionary = g["civic"]
+	var cft := tp_foot(str(cv["p"]))
+	var ch := [cx + int(cv["bx"]), cy + int(cv["by"]), maxi(int(cft[0]), int(cft[1])) * TP_PIECE_PM / 2000, -1]
+	obst.append(ch)
+	for a in angs:
+		var ux := FM.cos_a(int(a))
+		var uy := FM.sin_a(int(a))
+		var f: Dictionary = {}
+		var dist := 8
+		for it in 3:
+			# (First as near as the clearance allows (_tp_fort pushes it out from 8 m), then along the bearing by
+			# the walk's miss of OVW_AT: on the shore _tp_fort sets it on the waterline, so its walk moves too.)
+			var lm := {"p": pn, "bx": px - cx + ux * dist / FM.TRIG_ONE, "by": py - cy + uy * dist / FM.TRIG_ONE, "off": 0}
+			f = _tp_fort(o, lm, level, w_m)
+			var wd := _tp_ovw_d(o, f)
+			if absi(wd - OVW_AT) <= 4:
+				break
+			dist = maxi(FM.approx_len(int(f["x"]) - px, int(f["y"]) - py) + OVW_AT - wd, 8)
+		if _tp_ovw_d(o, f) > OVW_REACH:
+			continue
+		var fx := int(f["x"])
+		var fy := int(f["y"])
+		# (On the map and inside the town's landward edge: its walls and towers, and its ditch landward.)
+		var tw := _tr_world(f)
+		var twy: PackedInt32Array = tw[1]
+		var twr: PackedInt32Array = f["tw"]
+		var y0 := 1 << 20
+		var y1 := -(1 << 20)
+		for q in twy.size():
+			y0 = mini(y0, twy[q] - twr[q])
+			y1 = maxi(y1, twy[q] + twr[q])
+		if y0 < 2 or y1 + F_T / 2 + F_DITCH_GAP + F_DITCH > int(o["bot"]):
+			continue
+		var ok := true
+		var take := -1
+		for ob in obst:
+			if _tp_fort_gap(f, int(ob[0]), int(ob[1])) < int(ob[2]) + F_DITCH_GAP + F_DITCH + OVW_LM_GAP:
+				if int(ob[3]) >= 0 and take < 0:
+					take = int(ob[3])  # (on one of the town's own forts: it stands here instead)
+					continue
+				ok = false
+				break
+		if ok and _seg_dist_cm(int(ch[0]) * 100, int(ch[1]) * 100, px * 100, py * 100, fx * 100, fy * 100) \
+				< (GLACIS_HW + int(ch[2])) * 100:
+			ok = false  # (the church on the glacis)
+		if ok:
+			return [f, take]
+	return []
+
+
+## Metres from (x, y) to a trace fort's outer line or its corner towers' rims; -1 inside the line.
+static func _tp_fort_gap(f: Dictionary, x: int, y: int) -> int:
+	var tw := _tr_world(f)
+	var vx: PackedInt32Array = tw[0]
+	var vy: PackedInt32Array = tw[1]
+	var twr: PackedInt32Array = f["tw"]
+	var n := vx.size()
+	var best := 1 << 30
+	var inside := false
+	for k in n:
+		var k1 := (k + 1) % n
+		best = mini(best, _seg_dist_cm(x * 100, y * 100, vx[k] * 100, vy[k] * 100, vx[k1] * 100, vy[k1] * 100) / 100)
+		best = mini(best, maxi(FM.approx_len(vx[k] - x, vy[k] - y) - twr[k], 0))
+		if (vy[k] > y) != (vy[k1] > y) and x < vx[k] + (vx[k1] - vx[k]) * (y - vy[k]) / (vy[k1] - vy[k]):
+			inside = not inside
+	return -1 if inside else best
+
+
+## The fort's glacis (_tp_fort_overwatch): open ground from beyond the fort's ditch toward the plaza, GLACIS_HW
+## either side of the line between them, kept (no houses, landmarks, trees or outcrops: the walk's line of fire
+## to the plaza clear of roofs; roads may cross it). wc["glacis"] = [x0, y0, x1, y1] (m), the kept line.
+static func _tp_glacis(wc: Dictionary, fort: Dictionary) -> void:
+	var o: Dictionary = wc["o"]
+	var px: int = o["px"]
+	var py: int = o["py"]
+	var fx := int(fort["x"])
+	var fy := int(fort["y"])
+	var l := maxi(FM.approx_len(fx - px, fy - py), 1)
+	var a := maxi(_tp_ovw_d(o, fort) - F_PP - WALK_W / 2 - F_DITCH_GAP - F_DITCH - 2, 0)
+	var sx := px + (fx - px) * a / l
+	var sy := py + (fy - py) * a / l
+	_keep_seg(wc["keep"], wc["ow"], wc["oh"], sx, sy, px, py, GLACIS_HW)
+	wc["glacis"] = PackedInt32Array([sx, sy, px, py])
 
 
 ## A landmark's solid body (a West plan town): a quad w x d m centred at (x, y) with its front toward `face`,

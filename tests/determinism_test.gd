@@ -362,6 +362,8 @@ func _init() -> void:
 		return
 	if "--only=fort" in OS.get_cmdline_user_args():
 		_check_fort()
+		_check_fort_overwatch()
+		_check_fort_fallback()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -469,6 +471,8 @@ func _init() -> void:
 	_check_plays()
 	_check_fort()
 	_check_shore()
+	_check_fort_overwatch()
+	_check_fort_fallback()
 	_check_occupy()
 	_check_destr()
 	_check_destr_ai()
@@ -5046,8 +5050,13 @@ func _check_rout() -> void:
 ## walls 2 (the harbour fort and the stake palisade), AI against AI, the
 ## West sets' armies; deploy_time 60 when `dep`.
 func _portobelo(walls: int, dep: bool) -> Dictionary:
+	return _west_town("portobelo", walls, dep)
+
+
+## A West campaign town's settlement battle on its plan (WEST_ATT both sides, three ladder sets and a ram), as
+## tools/balance's town_balance builds it; `dep` gives it a deployment phase.
+func _west_town(key: String, walls: int, dep: bool, att_mult: int = 1) -> Dictionary:
 	CData.use_pack("west")
-	var key := "portobelo"
 	var r := CData.region_index(key)
 	var st := CState.new_campaign("bal", 5, [], {}, [], "west")
 	var level := maxi(1, int(st["regions"][r]["level"]))
@@ -5068,9 +5077,12 @@ func _portobelo(walls: int, dep: bool) -> Dictionary:
 		att.append([UT.index_of(str(e[0])), int(e[1])])
 	var cul := CData.region_culture(r)
 	var terr := {"kind": int(rd["terrain"]), "seed": cseed * 7 + 3, "forest": int(rd["forest"]), "ground": int(rd["ground"])}
-	var city := {"seed": cseed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": cul, "coast": 1, "founder": cul,
-		"west": 1, "tp": CTown.battle_plan(st, r)}
-	var sc: Dictionary = Scenarios.settlement(city, terr, att, att.duplicate(true), 1, [0, 1],
+	var city := {"seed": cseed, "level": level, "walls": walls, "bld": [1, 2, 4], "plan": cul,
+		"coast": 1 if CData.is_port(r) else 0, "founder": cul, "west": 1, "tp": CTown.battle_plan(st, r)}
+	var atk: Array = []
+	for k in att_mult:
+		atk.append_array(att.duplicate(true))  # (att_mult copies of the attackers' army; the defenders one)
+	var sc: Dictionary = Scenarios.settlement(city, terr, atk, att.duplicate(true), 1, [0, 1],
 		{"ladders": 3, "ram": 1})["scenario"]
 	if dep:
 		sc["deploy_time"] = 60
@@ -5201,15 +5213,19 @@ func _check_tower_gun_lof() -> void:
 				own_ok += 1  # (beyond the fort: the field's ground, not the tower)
 			else:
 				bad.append("gun %d: blocked %d m out by its own works toward the field" % [g, b / M])
-		# Another tower: the nearest C_TOWER cell 30 m or more away, the line on 40 m past it.
+		# Another tower: the nearest C_TOWER cell 30 m or more away on the gun's own ground (within 2 m of its
+		# height: a waterline fort's seaward drum stands on the sea's ground, 2026-11-05), the line on 40 m past it.
 		var best := -1
 		var bd := 1 << 40
+		var g0: int = sim.height_at(gx, gy)
 		for j in sim.ob_h:
 			for i in sim.ob_w:
 				if sim.obs[j * sim.ob_w + i] != MapGen.C_TOWER:
 					continue
 				var cx := i * 2 * M + M
 				var cy := j * 2 * M + M
+				if absi(sim.height_at(cx, cy) - g0) > 2 * M:
+					continue
 				var d2 := FM.approx_len(cx - gx, cy - gy)
 				if d2 >= 30 * M and d2 < bd:
 					bd = d2
@@ -7706,6 +7722,124 @@ func _check_street() -> void:
 ## ticks) and across snapshot / restore (at 1,000 and 2,600, 120 ticks
 ## each). (3) west_city AI against AI to the end: when the town falls with
 ## the fort holding, the battle is the attackers' and the result says so.
+## The fort overwatches the plaza (2026-11-05; "--only=fort", also in the full
+## run): on every West plan town with a fort at walls 1 (and Portobelo,
+## Cartagena, Havana at walls 2) a man on the fort's walk sees a man at the
+## plaza's centre (lof_block: 1.5 m over the walk, 1 m over the ground there)
+## from within MapGen.OVW_REACH, the musketeers' fire-at-will reach.
+func _check_fort_overwatch() -> void:
+	CData.use_pack("west")
+	var bad: Array = []
+	var n := 0
+	var worst := 0
+	var cases: Array = []
+	for r in CData.REGIONS.size():
+		# (Port of Spain: a port whose plan has no shore; its map errors out at HEAD as well, an open of its own.)
+		if not CTown.site(r).is_empty() and str(CData.REGIONS[r]["key"]) != "port_of_spain":
+			cases.append([str(CData.REGIONS[r]["key"]), 1])
+	for k in ["portobelo", "cartagena", "havana"]:
+		cases.append([k, 2])
+	for cs in cases:
+		var sim := BattleSim.new()
+		sim.setup(_west_town(str(cs[0]), int(cs[1]), false), 4711)
+		if sim.fort_on == 0:
+			continue
+		n += 1
+		var px: int = sim.plaza[0]
+		var py: int = sim.plaza[1]
+		var pz: int = sim.gh_at(px, py) + BattleSim.LOF_BODY
+		var best := -1
+		for sg in sim.ws_x0.size():
+			var l: int = BattleSim.seg_len(sim, sg)
+			var t := 0
+			while t <= l:
+				var p: Vector2i = BattleSim.seg_pt(sim, sg, t)
+				t += 2 * M
+				var d := FM.approx_len(p.x - px, p.y - py)
+				if d > MapGen.OVW_REACH * M or (best >= 0 and d >= best):
+					continue
+				if sim.lof_block(p.x, p.y, sim.gh_at(p.x, p.y) + sim.wall_h + BattleSim.LOF_EYE, px, py, pz, 0, 0) < 0:
+					best = d
+		if best < 0:
+			bad.append("%s walls %d: no walk point within %d m sees the plaza's centre" % [cs[0], cs[1], MapGen.OVW_REACH])
+		else:
+			worst = maxi(worst, best / M)
+	if n < 30:
+		bad.append("only %d West fort towns" % n)
+	if bad.is_empty():
+		print("PASS fort overwatch: %d West fort towns (walls 1, three at walls 2): the walk sees the plaza's centre from %d m at most (reach %d m)" % [n, worst, MapGen.OVW_REACH])
+	else:
+		for x in bad:
+			_fail("fort overwatch: " + str(x))
+
+
+const FB_ATT_MULT := 2  # (twice the attackers: since the cover passes and suppression the equal WEST_ATT storm of Havana no longer takes the streets; the check is of the fallback, not the balance)
+
+
+## The shooters fall back into the fort (docs/AI.md 70; "--only=fort", also
+## in the full run): Havana at walls 1, both sides AI (Average), twice WEST_ATT
+## against WEST_ATT: when the streets fall (ai_cit 2) the defenders' shooters, and only
+## shooters, fall back (A_FFALL) and at least one reaches the fort's walk and
+## shoots from it; the gate's holders are melee foot on the fort's parade
+## (A_CIT); Easy defenders never fall back.
+
+func _check_fort_fallback() -> void:
+	var bad: Array = []
+	var sim := BattleSim.new()
+	sim.setup(_west_town("havana", 1, false, FB_ATT_MULT), 53000)
+	var dside: int = sim.city_def
+	var fell := {}
+	var holders := {}
+	var fb_t := -1
+	var wall_k := 0
+	var cit0 := {}
+	while sim.winner < 0 and sim.tick < sim.time_limit:
+		if fb_t < 0:
+			for u in sim.n_units:
+				if sim.u_side[u] == dside and sim.u_ai[u] == SiegeAI.A_CIT:
+					cit0[u] = 1
+		sim.step()
+		if fb_t < 0 and sim.ai_cit[dside] == 2:
+			fb_t = sim.tick
+			for u in sim.n_units:
+				if sim.u_side[u] == dside and sim.u_ai[u] == SiegeAI.A_CIT and not cit0.has(u):
+					holders[u] = 1
+		if fb_t >= 0:
+			for u in sim.n_units:
+				if sim.u_side[u] == dside and sim.u_ai[u] == SiegeAI.A_FFALL:
+					fell[u] = 1
+	if fb_t < 0:
+		bad.append("the streets never fell (no fallback) in %d ticks, winner %d" % [sim.tick, sim.winner])
+	var up := 0
+	for u in fell:
+		if sim.u_cls[u] != UT.CLS_MISSILE:
+			bad.append("unit %d (%s) fell back and is not a shooter" % [u, UT.stat(sim.u_type[u], "key")])
+		if sim.u_wall[u] > 0 or sim.u_ai[u] == SiegeAI.A_WALLU:
+			up += 1
+			wall_k += sim.u_kills[u]
+	if fb_t >= 0 and up == 0:
+		bad.append("%d shooters fell back, none reached the fort's walk" % fell.size())
+	for u in holders:
+		if sim.u_cls[u] != UT.CLS_INF and sim.u_cls[u] != UT.CLS_PIKE:
+			bad.append("gate holder %d is not melee foot" % u)
+	# Easy: no fallback.
+	var sc := _west_town("havana", 1, false, FB_ATT_MULT)
+	sc["ai_skill"] = [AIP.EASY, AIP.EASY]
+	var e := BattleSim.new()
+	e.setup(sc, 53000)
+	while e.winner < 0 and e.tick < e.time_limit:
+		e.step()
+		if e.ai_cit[e.city_def] != 0:
+			bad.append("Easy defenders fell back (ai_cit %d at %d)" % [e.ai_cit[e.city_def], e.tick])
+			break
+	if bad.is_empty():
+		print("PASS fort fallback: Havana walls 1, the streets fell at %.1f min: %d shooters fell back, %d on the fort's walk (%d kills), %d gate holders; winner %d at %.1f min, fort held %d; Easy never falls back" % [
+			fb_t / 600.0, fell.size(), up, wall_k, holders.size(), sim.winner, sim.tick / 600.0, sim.fort_held])
+	else:
+		for x in bad:
+			_fail("fort fallback: " + str(x))
+
+
 func _check_fort() -> void:
 	var bad: Array = []
 	var sim := BattleSim.new()
@@ -8874,7 +9008,9 @@ func _check_town() -> void:
 	var m1: Array = tp.get("mouth1", [])
 	var side_ok := m0.size() == 2 and m1.size() == 2 and pcs.has("lm_morro") and pcs.has("lm_fuerza") \
 		and signi(int(pcs["lm_morro"][1]) - px) == signi(int(m0[0])) and signi(int(pcs["lm_fuerza"][1]) - px) == signi(int(m1[0]))
-	if int(lay.get("tp", 0)) != 1 or not side_ok or int(pcs["lm_morro"][6]) != 1 or MapGen.tp_name(int(fort.get("piece", -1))) != "morro":
+	# (The fort overwatches the plaza, 2026-11-05: the walled fort is a harbour fort beside the plaza; the Morro and
+	# the Fuerza stand at their mouths as scenery bodies.)
+	if int(lay.get("tp", 0)) != 1 or not side_ok or int(pcs["lm_morro"][6]) != 0 or MapGen.tp_name(int(fort.get("piece", -1))) != "harbour_fort":
 		bad.append("Havana walls 1: plan map %d, pieces %s, fort %s, mouths %s / %s" % [int(lay.get("tp", 0)), str(pcs.keys()),
 			MapGen.tp_name(int(fort.get("piece", -1))), str(m0), str(m1)])
 	var garr := 0
@@ -8884,13 +9020,13 @@ func _check_town() -> void:
 	var plaza_c: int = sim.cmp[(sim.plaza[1] >> 11) * sim.ob_w + (sim.plaza[0] >> 11)]
 	if sim.fort_on != 1 or sim.n_outer != 0 or sim.n_gates != 2 or sim.ws_x0.size() < 5 or garr < 1 or sim.fort_cmp < 0 \
 			or sim.fort_cmp == plaza_c:
-		bad.append("Havana walls 1: the Morro's fort: fort_on %d, outer gates %d, gates %d, stretches %d, garrison units %d, parade piece %d (plaza %d)" % [
+		bad.append("Havana walls 1: the harbour fort: fort_on %d, outer gates %d, gates %d, stretches %d, garrison units %d, parade piece %d (plaza %d)" % [
 			sim.fort_on, sim.n_outer, sim.n_gates, sim.ws_x0.size(), garr, sim.fort_cmp, plaza_c])
-	# The fort's own trace (the Morro piece's outline, sim/fort_traces.gd): a triangle, three salients, its gate
-	# to the town; the walls on it (the citadel's poly is the trace), every stretch end but the gates' joined.
+	# The fort's own trace (the harbour fort piece's outline, sim/fort_traces.gd): a rectangle, four salients, its
+	# gate to the town; the walls on it (the citadel's poly is the trace), every stretch end but the gates' joined.
 	var mfacts := _trace_facts(sim, lay)
-	if int(mfacts["n"]) != 3 or int(mfacts["sal"]) != 3 or int(mfacts["gate_off"]) > 128 or int(mfacts["loose"]) > 4:
-		bad.append("Havana walls 1: the Morro's trace %s (want 3 vertices, 3 salients, its gate within 45 degrees of the plaza, loose ends <= 4)" % str(mfacts))
+	if int(mfacts["n"]) != 4 or int(mfacts["sal"]) != 4 or int(mfacts["gate_off"]) > 128 or int(mfacts["loose"]) > 4:
+		bad.append("Havana walls 1: the harbour fort's trace %s (want 4 vertices, 4 salients, its gate within 45 degrees of the plaza, loose ends <= 4)" % str(mfacts))
 	# A traced shot through the cathedral (a stone block of the piece's size) is stopped; one across the plaza is not.
 	var cat: Array = pcs.get("cv_cathedral", [])
 	var blocked := -2
@@ -8919,15 +9055,16 @@ func _check_town() -> void:
 	var res := ws.result()
 	if ws.fort_on != 1 or not res.has("fort"):
 		bad.append("Havana storm: fort_on %d, result fort %s" % [ws.fort_on, str(res.get("fort", "-"))])
-	# St Augustine (San Marcos) at walls 2: the square with four bastions, its gate to the town, its parade one
-	# piece of ground (no bastion pocket), the storm identical on repeat and across snapshot / restore.
+	# St Augustine at walls 2: the walled fort is the harbour fort beside the plaza (San Marcos scenery since the
+	# overwatch rule): four salients, its gate to the town, its parade one piece of ground (no pocket), the storm
+	# identical on repeat and across snapshot / restore.
 	var sa := _town_scenario("west", "st_augustine", 2, 2)
 	var ssim := BattleSim.new()
 	ssim.setup(sa["scenario"], 4242)
 	var sfacts := _trace_facts(ssim, ssim.map_info["city"])
-	if MapGen.tp_name(int((ssim.map_info["city"]["fort"] as Dictionary).get("piece", -1))) != "san_marcos" or int(sfacts["sal"]) != 4 \
+	if MapGen.tp_name(int((ssim.map_info["city"]["fort"] as Dictionary).get("piece", -1))) != "harbour_fort" or int(sfacts["sal"]) != 4 \
 			or int(sfacts["gate_off"]) > 128 or int(sfacts["pockets"]) != 0 or int(sfacts["loose"]) > 4 or ssim.fort_cmp < 0:
-		bad.append("St Augustine walls 2: San Marcos's trace %s (want 4 salients, the gate to the plaza, no pockets, loose ends <= 4)" % str(sfacts))
+		bad.append("St Augustine walls 2: the harbour fort's trace %s (want 4 salients, the gate to the plaza, no pockets, loose ends <= 4)" % str(sfacts))
 	var sa1 := _town_run(sa["scenario"], 53197, [1000, 2600], 3200)
 	var sa2 := _town_run(sa["scenario"], 53197, [], 3200)
 	if sa1["hashes"] != sa2["hashes"]:
@@ -8947,7 +9084,7 @@ func _check_town() -> void:
 		bad.append("Carthage walls 2: plan map %d, citadel %s, Byrsa piece %s" % [int(cl.get("tp", 0)), str(not (cl["cit"] as Dictionary).is_empty()), str(byrsa)])
 	CData.use_pack("rome")
 	if bad.is_empty():
-		print("PASS town plan: Havana walls 1 from the plan (Morro at mouth0, the fort with an inside on the Morro's own trace: %s, %d stretches, %d garrison units, its parade its own ground; Fuerza at mouth1; no town wall); a shot through the cathedral stopped at %d, across the plaza clear; the storm to tick %d (winner %d) identical on repeat and across snapshot / restore, result fort %s; St Augustine walls 2: San Marcos's trace %s, its storm to tick %d identical on repeat and across snapshot / restore; Carthage walls 2: the Byrsa's citadel" % [
+		print("PASS town plan: Havana walls 1 from the plan (Morro at mouth0 as scenery, the fort with an inside a harbour fort beside the plaza on its own trace: %s, %d stretches, %d garrison units, its parade its own ground; Fuerza at mouth1; no town wall); a shot through the cathedral stopped at %d, across the plaza clear; the storm to tick %d (winner %d) identical on repeat and across snapshot / restore, result fort %s; St Augustine walls 2: the harbour fort's trace %s, its storm to tick %d identical on repeat and across snapshot / restore; Carthage walls 2: the Byrsa's citadel" % [
 			str(mfacts), sim.ws_x0.size(), garr, blocked / M, ws.tick, ws.winner, str(res.get("fort", {})), str(sfacts), (sa1["sim"] as BattleSim).tick])
 	else:
 		for x in bad:

@@ -358,14 +358,16 @@ static func _army(sim, side: int) -> void:
 		if sim.sg_on != 0 and kn[AP.S_ESC_REPLY] != 0:
 			_esc_reply(sim, side)
 		if sim.fort_on != 0:
+			if kn[AP.S_FORT_FALLBACK] != 0:
+				_fort_fallback(sim, side, kn)
 			_fort_gates(sim, side)
 		elif sim.cit_r > 0:
 			_citadel(sim, side)
-		if kn[AP.S_MOUTH] != 0 and sim.ai_cit[side] == 0:
+		if kn[AP.S_MOUTH] != 0 and sim.ai_cit[side] != 1:
 			_layout(sim, side, kn)  # (in the citadel: the town is lost)
 		if kn[AP.SK_MEM] != 0:
 			_sk_defend(sim, side, kn)
-		if sim.ai_cit[side] == 0:
+		if sim.ai_cit[side] != 1:
 			_plug_breaches(sim, side, kn)
 		if sim.amph_on != 0 and kn[AP.R_HARBOUR] != 0:
 			_harbour_def(sim, side)
@@ -1004,6 +1006,9 @@ static func _defender(sim, u: int) -> void:
 	if mode == A_HSORTIE:
 		_hsortie_unit(sim, u)
 		return
+	if mode == A_FFALL:
+		_ffall_unit(sim, u)
+		return
 	# Not yet classified (the army thinks first on the same tick).
 
 
@@ -1185,12 +1190,24 @@ static func _fort_gates(sim, side: int) -> void:
 	var s := _fort_sally_of(sim, side)
 	var st: int = sim.u_ai_x[s] if s >= 0 else 0
 	var out: bool = s >= 0 and not sim.in_fort(s)
+	var fb_out := false   # (docs/AI.md 70: a shooter falling back still outside the fort ...)
+	var fb_near := false  # (... and one at the gate)
+	if sim.ai_cit[side] == 2:
+		for o2 in sim.n_units:
+			if sim.u_side[o2] != side or sim.u_state[o2] != U_READY or sim.u_ai[o2] != A_FFALL or sim.u_wall[o2] > 0:
+				continue
+			if sim.u_stair[o2] == 0 and not _fort_parade(sim, o2):
+				fb_out = true
+				if BattleAI._d(sim.u_cx[o2] - sim.g_x[g], sim.u_cy[o2] - sim.g_y[g]) < FB_GATE_HOLD_R:
+					fb_near = true
 	if sim.g_state[g] == GATE_CLOSED:
-		if s >= 0 and ((st == 1 and not out) or (st == 2 and out)) and not _fort_threat(sim, side) \
+		if ((s >= 0 and ((st == 1 and not out) or (st == 2 and out))) or fb_out) and not _fort_threat(sim, side) \
 				and _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], FORT_SHUT_R) == 0:
 			sim.queue_order({"tick": sim.tick, "type": ORDER_GATE, "unit": any, "gate": g, "on": 0,
 				"player": BattleAI.AI_PLAYER_BASE + side, "seq": 8000 + g})
 		return
+	if fb_near and _attackers_near(sim, side, sim.g_x[g], sim.g_y[g], FB_GATE_HOLD_R) == 0:
+		return  # (held open for the shooters coming in)
 	var away: bool = s >= 0 and (st == 1 or (st == 2 and out))
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY:
@@ -1201,6 +1218,170 @@ static func _fort_gates(sim, side: int) -> void:
 				and (not away or d < FORT_BACK_R)):
 			_shut(sim, side, any, g)  # (attackers near, or bringing a ram or ladders)
 			return
+
+
+## The fort overwatches the plaza (docs/AI.md 70, AP.S_FORT_FALLBACK; army
+## level, defenders of a West fort town): once the streets fall
+## (_fort_streets_lost: the plaza's capture running or half the street line
+## routing or gone; ai_cit 2 from then on, hashed) every ready
+## shooter of the side's (missile foot that may man walls, missiles left)
+## off the walls and out of the fort, not in a melee (out of the building it
+## holds too), falls back onto the fort's walls (_ffall_unit): the stretch nearest the
+## plaza with room on its walk (its men in two ranks, a man a metre a rank),
+## within FB_STRETCH_R of the plaza's centre (else the nearest), and AP.S_FB_GATE
+## melee foot units nearest the gate (not in a melee) go in to hold it, as the
+## fort's parade guard (A_CIT) FB_GATE_IN inside it; the rest fight on.
+static func _fort_fallback(sim, side: int, kn: PackedInt32Array) -> void:
+	if sim.ai_cit[side] == 0:
+		if not _fort_streets_lost(sim, side):
+			return
+		sim.ai_cit[side] = 2
+		BattleAI._count(sim, side, AP.C_SIEGE)
+		# The gate's holders: the melee foot nearest the gate, once.
+		var g: int = sim.cit_gate
+		if g >= 0:
+			for k in kn[AP.S_FB_GATE]:
+				var best := -1
+				var bd := 0
+				for u in sim.n_units:
+					if not _fb_free(sim, u, side) or (sim.u_cls[u] != UT.CLS_INF and sim.u_cls[u] != UT.CLS_PIKE):
+						continue
+					var d := BattleAI._d(sim.u_cx[u] - sim.g_ox[g], sim.u_cy[u] - sim.g_oy[g])
+					if best < 0 or d < bd:
+						best = u
+						bd = d
+				if best < 0:
+					break
+				var gx: int = sim.g_ix[g]
+				var gy: int = sim.g_iy[g]
+				var l := maxi(BattleAI._d(sim.cit_x - gx, sim.cit_y - gy), 1)
+				var hx: int = gx + (sim.cit_x - gx) * FB_GATE_IN / l + (k * 2 - 1) * (sim.cit_y - gy) * 6 * M / l
+				var hy: int = gy + (sim.cit_y - gy) * FB_GATE_IN / l - (k * 2 - 1) * (sim.cit_x - gx) * 6 * M / l
+				BattleAI._set_mode(sim, best, A_CIT)
+				sim.u_ai_x[best] = hx
+				sim.u_ai_y[best] = hy
+				_go_run(sim, best, hx, hy, FM.atan2_a(gy - hy, gx - hx), 2, 1)
+	if sim.ai_cit[side] != 2:
+		return
+	# The shooters (every think: one that was in a melee goes when it is free).
+	for u in sim.n_units:
+		if not _fb_free(sim, u, side) or sim.u_cls[u] != UT.CLS_MISSILE or sim.u_ammo[u] <= 0 \
+				or not sim.can_man_walls(sim, u):
+			continue
+		var sg := _fb_stretch(sim, u)
+		if sg < 0:
+			continue
+		BattleAI._set_mode(sim, u, A_FFALL)
+		sim.u_ai_x[u] = sg + 1
+		if sim.u_fire[u] == 0:
+			BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		_ffall_unit(sim, u)
+
+
+## Unit u of side may be sent into the fort (_fort_fallback): ready, not a
+## character, engine or tower, off the walls and out of the fort, in the
+## streets' modes (not the gate's holders, a sally, a plug or a harbour
+## role), not in a melee.
+static func _fb_free(sim, u: int, side: int) -> bool:
+	if sim.u_side[u] != side or sim.u_state[u] != U_READY or sim.u_wall[u] > 0 or sim.u_fighting[u] != 0:
+		return false
+	if BattleAI.is_char(sim, u) or sim.is_tower(u) or sim.t_crew[sim.u_type[u]] != 0 or sim.u_cls[u] == UT.CLS_ART \
+			or sim.u_cls[u] == UT.CLS_CAV or sim.carrying(sim, u) != 0:
+		return false
+	var m: int = sim.u_ai[u]
+	if m != A_RESERVE and m != A_PLAZA and m != A_MOUTH and m != A_GATE and m != A_DCHARGE:
+		return false
+	return not sim.in_fort(u)
+
+
+## A stretch of the fort's walls for falling-back shooter u: of those whose
+## walk's middle is within FB_STRETCH_R of the plaza's centre, nearest it
+## first, the first with room for u (its men / 2 m of walk beside the wall
+## units and the fallers already there), else the one of those with the most
+## room; none so near: the stretch nearest the plaza. -1 none standing.
+static func _fb_stretch(sim, u: int) -> int:
+	var px: int = sim.plaza[0]
+	var py: int = sim.plaza[1]
+	var n: int = sim.ws_x0.size()
+	var used := PackedInt32Array()
+	used.resize(n)
+	used.fill(0)
+	for o in sim.n_units:
+		if sim.u_side[o] != sim.u_side[u] or sim.u_state[o] != U_READY:
+			continue
+		var so := -1
+		if sim.u_wall[o] > 0:
+			so = sim.u_wall[o] - 1
+		elif sim.u_ai[o] == A_FFALL:
+			so = sim.u_ai_x[o] - 1
+		if so >= 0 and so < n:
+			used[so] += (sim.u_alive[o] + 1) / 2 * M
+	var need: int = (sim.u_alive[u] + 1) / 2 * M
+	var best := -1
+	var bd := 0
+	var room_best := -1
+	var room_v := -(1 << 30)
+	var near_best := -1
+	var near_d := 0
+	for sg in n:
+		if sg < sim.ws_state.size() and sim.ws_state[sg] != WS_STANDING:
+			continue
+		var l: int = sim.seg_len(sim, sg)
+		var mp: Vector2i = sim.seg_pt(sim, sg, l / 2)
+		var d := BattleAI._d(mp.x - px, mp.y - py)
+		if near_best < 0 or d < near_d:
+			near_best = sg
+			near_d = d
+		if d > FB_STRETCH_R:
+			continue
+		var room := l - used[sg]
+		if room >= need and (best < 0 or d < bd):
+			best = sg
+			bd = d
+		if room > room_v:
+			room_v = room
+			room_best = sg
+	if best >= 0:
+		return best
+	return room_best if room_best >= 0 else near_best
+
+
+## A shooter falling back into the fort (A_FFALL, docs/AI.md 70): on its
+## stretch's walk it is a wall unit (A_WALLU: it stands and shoots at will);
+## on its way it goes at the run to the walk's middle; shut out (the gate
+## shut, attackers by it) it fights on in the town where it stands.
+static func _ffall_unit(sim, u: int) -> void:
+	if sim.u_wall[u] > 0:
+		BattleAI._set_mode(sim, u, A_WALLU)
+		if sim.u_fire[u] == 0 and sim.u_ammo[u] > 0:
+			BattleAI._order(sim, u, {"type": ORDER_FIRE, "on": 1}, 21)
+		return
+	if sim.u_stair[u] != 0 or sim.u_fighting[u] != 0:
+		return
+	var g: int = sim.cit_gate
+	if g >= 0 and sim.g_state[g] == GATE_CLOSED and not _fort_parade(sim, u) \
+			and _attackers_near(sim, sim.u_side[u], sim.g_x[g], sim.g_y[g], FORT_SHUT_R) > 0:
+		BattleAI._set_mode(sim, u, A_RESERVE)  # (shut out: it fights on where it is)
+		sim.u_ai_x[u] = sim.u_ax[u]
+		sim.u_ai_y[u] = sim.u_ay[u]
+		return
+	var sg: int = sim.u_ai_x[u] - 1
+	if sg < 0 or sg >= sim.ws_x0.size():
+		return
+	var p: Vector2i = sim.seg_pt(sim, sg, sim.seg_len(sim, sg) / 2)
+	_go_run(sim, u, p.x, p.y, sim.ws_dir[sg], 4, 1)
+
+
+## Unit u's middle stands on the fort's parade (its own cells, not where
+## it is going: in_fort reads the anchor).
+static func _fort_parade(sim, u: int) -> bool:
+	if sim.fort_cmp < 0:
+		return false
+	var i: int = sim.u_cx[u] >> 11
+	var j: int = sim.u_cy[u] >> 11
+	if i < 0 or j < 0 or i >= sim.ob_w or j >= sim.ob_h:
+		return false
+	return sim.cmp[j * sim.ob_w + i] == sim.fort_cmp
 
 
 ## The fort's sally company (forts leftovers, docs/AI.md 29): the biggest
@@ -1234,6 +1415,16 @@ static func _fort_sally_of(sim, side: int) -> int:
 ## line is broken (half or more of the defenders' West line units holding
 ## the streets routing or gone).
 static func _fort_sally_due(sim, side: int) -> bool:
+	return _fort_streets_lost(sim, side, true)
+
+
+## The town's streets are lost (docs/AI.md 70, the fallback's trigger): the
+## attackers hold the plaza (its capture running) or half or more of the
+## defenders' West line units holding the streets are routing or gone; with
+## `approach` (the sally's rule) also an attacking unit of CAPTURE_MEN or
+## more within the plaza's capture box widened by CAPTURE_CLEAR +
+## FORT_SALLY_APP.
+static func _fort_streets_lost(sim, side: int, approach: bool = false) -> bool:
 	if sim.cap_t > 0:
 		return true
 	var px: int = sim.plaza[0]
@@ -1243,12 +1434,12 @@ static func _fort_sally_due(sim, side: int) -> bool:
 	var n_gone := 0
 	for o in sim.n_units:
 		if sim.u_side[o] != side:
-			if sim.u_state[o] == U_READY and sim.u_alive[o] >= sim.CAPTURE_MEN and sim.u_wall[o] == 0 \
+			if approach and sim.u_state[o] == U_READY and sim.u_alive[o] >= sim.CAPTURE_MEN and sim.u_wall[o] == 0 \
 					and not BattleAI.is_char(sim, o) and absi(sim.u_cx[o] - px) <= r and absi(sim.u_cy[o] - py) <= r:
 				return true
 			continue
 		var m: int = sim.u_ai[o]
-		if m == A_FSALLY or m == A_WALLU or m == A_CIT or not _street_row(sim, o) or sim.t_cover[sim.u_otype[o]] != 0 \
+		if m == A_FSALLY or m == A_WALLU or m == A_CIT or m == A_FFALL or not _street_row(sim, o) or sim.t_cover[sim.u_otype[o]] != 0 \
 				or sim.u_cls[o] == UT.CLS_ART:
 			continue
 		n_line += 1
@@ -5060,6 +5251,10 @@ static func placed_at_post(sim, u: int) -> bool:
 ##              lands there and attacks them (A_HSORTIE), then comes back in.
 const A_HARB := 40       # attacking amphibious unit by water (u_ai_x: 1 to the staging point, 2 in through the sea gate, 3 landed: the storming party; u_ai_y 1 once staged)
 const A_HQUAY := 41      # defender holding the quay against amphibious attackers
+const A_FFALL := 43      # a West fort town's shooter falling back onto the fort's walls (docs/AI.md 70; u_ai_x = the stretch + 1)
+const FB_STRETCH_R := 100 * M   # ... onto a stretch whose walk's middle is this near the plaza's centre (else the nearest)
+const FB_GATE_HOLD_R := 20 * M  # ... the fort's gate is not shut while one is this near it and no attacker is
+const FB_GATE_IN := 8 * M       # the gate's holders stand this far inside it
 const A_HSORTIE := 42    # defending amphibious unit's sortie (u_ai_x: 1 out to the landing, 2 landed and attacking, 3 done; u_ai_y the landing's 2 m cell)
 const HARB_STAGE := 45 * M     # the staging point this far out beyond the sea gate's outside point
 const HARB_WAIT := 600         # ... waited at for the storm at most this long (ticks), then in

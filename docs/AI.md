@@ -4768,3 +4768,42 @@ charge. Four knobs, ids 365-368 (`N_KNOBS` 369):
 
 Counters `supp_flank` and `supp_fall` (`AP.C_SUPP_FLANK`, `C_SUPP_FALL`; `stat_sup_fall` in the sim).
 Measured: battle_sim.md (as built); the balance there is the AI against the AI in every row.
+## 70. The shooters fall back into the fort (2026-11-05)
+
+The owner: "it would be cool if they at least could overwatch the city center to be an effective fallback point for
+archers and musketeers." The map half (the fort's walk within 84 m of the plaza, its glacis): docs/design/siege_and_towns.md
+"The fort overwatches the plaza (as built, 2026-11-05)". The defenders of a West fort town (walls 1-2, `fort_on`):
+
+- **When** (`SiegeAI._fort_streets_lost`, army think): the attackers hold the plaza (its capture running, `cap_t`) or
+  half or more of the defenders' West line units holding the streets are routing or gone (the sally's rule without its
+  approach box: the sally still goes out on that, earlier). From then on `ai_cit` is 2 for the side (a fort town never
+  used `ai_cit`; hashed and snapshotted already; the walled towns' 1 is unchanged, `_layout` and the plugs run on at 2).
+- **The shooters** (`_fort_fallback`, every army think from then on): every ready missile foot unit of the side's that
+  may man walls, with missiles left, off the walls and out of the fort, in a street mode (reserve, plaza, mouth, gate,
+  defensive charge; out of a held building too), not in a melee (one that is goes when it is free), not a character,
+  engine or cavalry, falls back (`A_FFALL`, 43): to the middle of the fort stretch nearest the plaza that has room on
+  its walk (its men / 2 m beside the wall units and the other fallers), of those whose walk's middle is within
+  `FB_STRETCH_R` 100 m of the plaza's centre (none with room: the roomiest; none so near: the nearest), at the run, fire
+  at will on. On the walk it is a wall unit (`A_WALLU`: it stands and shoots at men on the plaza and in the streets).
+  Shut out (the gate shut with attackers within `FORT_SHUT_R` of it) it fights on in the town where it stands.
+- **The gate**: `AP.S_FB_GATE` (2) melee foot units nearest the gate, not in a melee, go in to hold it from inside,
+  `FB_GATE_IN` 8 m in, 6 m either side of its axis, as the parade's guard (`A_CIT`, `_cit_guard`). `_fort_gates` opens
+  the shut gate for shooters still outside when no attacker is within `FORT_SHUT_R` and no ram or ladders near (the
+  sally's rule), and does not shut it while one is within `FB_GATE_HOLD_R` 20 m of it and no attacker is that near.
+- **What it changes.** Men on the walk do not contest the plaza (`_update_capture` counts defenders off the walls
+  within its box + 12 m), but their fire thins the capturing units below `CAPTURE_MEN` and resets the capture; the men
+  in the fort (their anchor on the parade or the walk) do not rout when the town falls; `fort_press` weighs the storm
+  against a bigger garrison, so more battles end with the fort holding.
+- **Knobs** `S_FORT_FALLBACK` (340) Easy 0, Average and Skilled 1 (Easy's shooters fight on in the streets, a
+  deliberate mistake), `S_FB_GATE` (341) 0 / 2 / 2; `N_KNOBS` 342.
+- **A player** has the same with the existing orders: select the shooters and tap the fort's near wall (`_wall_click`:
+  up its stairs onto the walk), the melee foot to its gate; no new chip (the chip bar is already a double stack on a
+  phone, a fifth Move-cluster chip would push others into More).
+- **Measured** (siege_and_towns.md "The fort overwatches the plaza", with the map change): `west_walls` 52 / 34 / 27 ->
+  52 / 30 / 16 %; on Portobelo, Cartagena and Havana (48 battles) attacker wins 5 before, 9 with the map alone, 4 with
+  the fallback; the fallback ordered in 22, 38 of 51 falling units reached the walk; the natives' poles take a walls-2
+  fort town 8 of 48 times (44 before). Before the trigger was narrowed to the capture or the broken line (it first
+  took the sally's approach box too), the shooters left the streets early and the attackers won 16 of 48.
+  On main after the cover passes and suppression (4efb39b, no tuning): `west_walls` 64 / 38 / 32 -> 64 / 25 / 14 %; the
+  three towns 1 attacker win of 48, the fallback in 11; the poles take a walls-2 fort town 19 of 48. The determinism
+  check `_check_fort_fallback` storms Havana with twice WEST_ATT (the equal storm no longer takes the streets there).
