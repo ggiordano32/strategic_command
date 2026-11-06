@@ -1669,6 +1669,36 @@ longer do must read on the phone at a glance. View only; it reads `BattleSim.sup
 - Known: no legend; the chip adds to the marker's clutter in big battles; the crouch is a squash, not a pose; no device
   check.
 
+### Suppression chips, second pass (as built, 2026-11-06)
+
+The fourth evaluation (session scratchpad `eval4/eval4.md`, legibility at 844 x 390) found the marker chip and the order
+plate readable, but the squash read as pale mushrooms in the oblique view and lumps in the top view, the card strip's
+10 px pinned glyph read as a red square with a cross, and the word "Pinned" never showed at the strip's width. View
+only, with the sim's second pass (docs/design/battle_sim.md "Suppression, second pass (as built, 2026-11-06)").
+- **The crouch** (`soldiers.gdshaderinc` `crouch_ob`, `crouch_top`, `crouch_tint`; the sheets still have no kneeling or
+  crouching frame, so it is still the placed quad, not a pose). Oblique: the figure keeps its full width (the
+  narrowing made the round shields and hats into discs) and is lowered, a suppressed man to 90 % of his height and a
+  pinned one to 80 %, and leaned toward the way he faces (the card's top sheared by 14 % / 28 % of its height: a man
+  hunched over his piece); darker by 14 % / 28 %, the state tint's colour darkened with the shade, so a selected or
+  under-fire unit no longer washes pale. Top: the figure shrinks round his place to 88 % / 78 % and darkens the same,
+  so a pinned line reads as small dark heads beside the dead lying full size. 3D: the squat card of the first pass
+  kept (it read best there). Shots: session scratchpad `sup2/shots/` (`crop_line_oblique.png`: a musket line pinned
+  side-on, leaning toward its enemy; `crop_line_top.png`; `pinned_3d.png`).
+- **The card** (`Hud.CardFace`): the strip's suppression glyph is drawn as the marker's chip (`_supp_glyph`: a dark-rimmed
+  plate, one yellow chevron on a bar or two red ones, thicker strokes) instead of the 11 px line icon; and the count line
+  says the state where the card is wide: "58 Pinned" in red, "45 Suppressed" in yellow (beside the shot count, where
+  the whole word does not fit, "Supp."), on a dark plate so the colour reads over the side's bar. The state comes
+  before the morale word (which stays in the tip and the summary); a narrow card keeps the glyph alone.
+- **The marker chip** (`Overlay._draw_supp_chip`): the pinned pair of chevrons flatter and further apart, so at 9 px they
+  no longer close into a cross.
+- **The legend** (the battle menu's Chips page, `Hud.legend_entries`, `chip_legend.gd`): a new heading, "Marks on the
+  units", with three rows: Suppressed (one yellow chevron: fires at 70 %, cannot run or charge, clears a few seconds
+  after the fire stops), Pinned (two red chevrons and the men crouch: fires at 35 %, crawls, cannot charge, morale drains;
+  holds while the fire goes on; charge it now, or move out; one company does not pin a line behind a wall, two do; men
+  in a building can be suppressed, never pinned) and Cover (the green / half-filled yellow shield at the upper left).
+- Known: the crouch pose proper is a sprite action per set (pose functions, a re-pack, the oblique sheets and the 3D
+  cards taking the same frames: about an agent-day of art, eval4's estimate 8 hours); no device check.
+
 ### The 3D battle view's camera (as built, 2026-11-06, view only)
 
 docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; this is its setting and its controls.

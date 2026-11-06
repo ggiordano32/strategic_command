@@ -3809,6 +3809,18 @@ static var SUPP_MORALE_PIN := 2    # pinned: morale lost each second (none recov
 static var SUPP_FALL_R := 15 * M   # the AI's pinned unit looks for cover this near (supp_cover_spot) ...
 const SUPP_FALL_STEP := 5 * M      # ... on rings this far apart ...
 const SUPP_FALL_HOLD := 300        # ... and, sent there, stands at most this long (30 s) while suppressed
+# The second pass (2026-11-06, battle_sim.md "Suppression, second pass (as built, 2026-11-06)"; the fourth evaluation's
+# gaps 1-3): a pin is a state held by the fire, the pin-then-charge loop pays, garrisons can be suppressed (never pinned).
+static var SUPP_QUIET_RELOAD := 1  # 1: the quiet (SUPP_DECAY) starts only once the shooters that fed the meter have had
+                                   # their reload's time since (+ SUPP_QUIET; u_suh): a line between volleys is still under
+                                   # fire; 0 as the first pass (2 s after the last gain)
+static var SUPP_HOLD_MAX := 90   # ... the hold at most this long past the gain (ticks; a musket's reload is 120) ...
+static var SUPP_HOLD_COVER := 2    # ... and only for a unit whose cover against its shooter is at most this (2 any; 1 not in heavy cover)
+static var SUPP_SHARE := 1         # 1: a suppressed or pinned shooter's balls feed suppression at its fire share (70 / 35 %)
+static var SUPP_CHARGE_FREE := 1   # 1: a unit on an attack order whose target is pinned gains nothing from that target and
+                                   # is not slowed by its own suppression (the charge into a pinned unit keeps its run)
+static var SUPP_GARRISON := 1      # 1: a held building's men decay at the open rate (not doubled) and are capped below the
+                                   # pinned threshold (a window can be suppressed, never pinned); 0 as the first pass
 const SUP_NONE := 0
 const SUP_SUPP := 1
 const SUP_PIN := 2
@@ -3820,6 +3832,9 @@ var u_sut := PackedInt32Array()      # the tick it last gained
 var u_suc := PackedInt32Array()      # its cover against its latest shooter, 0 open, 1 light, 2 heavy (_supp_cover) ...
 var u_sct := PackedInt32Array()      # ... rated at this tick (again after a second)
 var u_sfb := PackedInt32Array()      # the AI sent it, pinned, to cover at this tick + 1 (BattleAI.supp_fallback; 0 none)
+var u_suh := PackedInt32Array()      # second pass: under fire until this tick (the latest gain + its shooter's reload)
+var u_spv := PackedInt32Array()      # ... its state before the latest change ...
+var u_sst := PackedInt32Array()      # ... made at the end of this tick (a ball shot by then flies with the old state's share)
 var stat_sup_gain: int = 0           # balls and stones that fed a meter
 var stat_sup_ticks: int = 0          # unit-ticks suppressed ...
 var stat_pin_ticks: int = 0          # ... and pinned
@@ -3833,11 +3848,13 @@ func _supp_setup() -> void:
 			on = 0
 	sup_on = on if SUPP_FORCE < 0 else SUPP_FORCE
 	sup_used = 0
-	for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb]:
+	for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb, u_suh, u_spv, u_sst]:
 		arr.resize(n_units)
 		arr.fill(0)
 	u_sut.fill(-1000)
 	u_sct.fill(-1000)
+	u_suh.fill(-1000)
+	u_sst.fill(-1000)
 
 
 ## Unit u can be suppressed: foot (missile foot, foot, pikes), not an engine's crew, a ship, a hero or agent, a tower's crew,
@@ -3861,6 +3878,27 @@ func supp_state(u: int) -> int:
 	return u_sus[u]
 
 
+## Second pass (2026-11-06; the AI's SUPP_FLANK_TIME): how many ticks unit u's pin lasts with no further gain (the meter's
+## decay run forward: the per-mille decay, the quiet decay once u_suh passes, doubled in heavy cover); 0 not pinned.
+func supp_pin_left(u: int) -> int:
+	if supp_state(u) != SUP_PIN:
+		return 0
+	var m := u_sup[u]
+	var tk := tick
+	var dbl := u_suc[u] == 2 and not (SUPP_GARRISON != 0 and occ_on != 0 and u_occ[u] > 0)
+	var left := 0
+	while m >= SUPP_T_PIN_OUT and left < 600:
+		tk += 1
+		var dk := m * SUPP_DECAY_PM / 1000
+		if tk - u_sut[u] > SUPP_QUIET and (SUPP_QUIET_RELOAD == 0 or tk > u_suh[u]):
+			dk += SUPP_DECAY
+		if dbl:
+			dk *= 2
+		m -= maxi(dk, 1)
+		left += 1
+	return left
+
+
 ## Unit u's cover against shooter s (0 open, 1 light, 2 heavy): a held building or a wall's walk heavy; else
 ## cover_rating_front along its front toward s for its troop type (a house s holds not counting); men on cover spots at
 ## least light.
@@ -3876,12 +3914,25 @@ func _supp_cover(u: int, s: int) -> int:
 	return cr
 
 
-## Unit u gains `base` from a missile of shooter unit s (its type ty; `art` an engine's: no weapon scaling).
-func _supp_add(u: int, base: int, s: int, ty: int, art: bool) -> void:
+## Second pass: the share (%) of suppression a missile of shooter s fired at tick t0 carries: its fire share in the state
+## it was in when it shot (SUPP_SHARE; 100 off, no shooter or an engine).
+func _supp_share(s: int, t0: int) -> int:
+	if SUPP_SHARE == 0 or s < 0 or s >= n_units:
+		return 100
+	var st := u_spv[s] if t0 <= u_sst[s] else u_sus[s]
+	return SUPP_FIRE_PIN if st == SUP_PIN else (SUPP_FIRE_SUP if st == SUP_SUPP else 100)
+
+
+## Unit u gains `base` from a missile of shooter unit s (its type ty; `art` an engine's: no weapon scaling; `sh` the
+## shooter's fire share when it shot, _supp_share).
+func _supp_add(u: int, base: int, s: int, ty: int, art: bool, sh: int = 100) -> void:
 	if u_state[u] != U_READY or u_alive[u] <= 0 or u_fighting[u] > 0 or not _supp_ok(u):
 		return
 	if s >= 0 and u_side[s] == u_side[u]:
 		return  # (a friend's ball: no suppression)
+	if s >= 0 and SUPP_CHARGE_FREE != 0 and u_sus[s] == SUP_PIN and u_order[u] == O_ATTACK and u_target[u] == s \
+			and t_m_ammo[u_type[u]] <= 0:
+		return  # (second pass: a melee unit charging a pinned unit: its sporadic fire does not hold the charge)
 	var w := 100
 	if not art:
 		if t_m_gun[ty] != 0:
@@ -3899,10 +3950,19 @@ func _supp_add(u: int, base: int, s: int, ty: int, art: bool) -> void:
 	elif u_suc[u] == 1:
 		cp = SUPP_COVER_L
 	var g := base * w * cp / 10000
+	if sh < 100:
+		g = g * sh / 100  # (second pass: a suppressed or pinned shooter's balls suppress at its fire share)
 	if g <= 0:
 		return
-	u_sup[u] = mini(u_sup[u] + g, SUPP_MAX)
+	var cap := SUPP_MAX
+	if SUPP_GARRISON != 0 and occ_on != 0 and u_occ[u] > 0:
+		cap = SUPP_T_PIN - 1  # (second pass: a window can be suppressed, never pinned)
+	u_sup[u] = mini(u_sup[u] + g, maxi(cap, u_sup[u]))
 	u_sut[u] = tick
+	if SUPP_QUIET_RELOAD != 0 and s >= 0:
+		# Second pass: under fire while the shooter reloads (a musket line's 12 s between volleys is not quiet).
+		if u_suc[u] <= SUPP_HOLD_COVER:
+			u_suh[u] = maxi(u_suh[u], tick + mini(t_m_reload[ty] if not art else 0, SUPP_HOLD_MAX) + SUPP_QUIET)
 	sup_used = 1
 	stat_sup_gain += 1
 
@@ -3914,17 +3974,18 @@ func _supp_land(p: int, best: int) -> void:
 	var s := pr_unit[p]
 	var ty := pr_ty[p]
 	var hu := unit_of[best] if best >= 0 else -1
+	var sh := _supp_share(s, pr_t0[p])
 	if tu >= 0 and tu < n_units:
 		if hu == tu:
-			_supp_add(tu, SUPP_HIT, s, ty, false)
+			_supp_add(tu, SUPP_HIT, s, ty, false, sh)
 		else:
 			var x := pr_x[p]
 			var y := pr_y[p]
 			if x >= u_minx[tu] - SUPP_NEAR and x <= u_maxx[tu] + SUPP_NEAR \
 					and y >= u_miny[tu] - SUPP_NEAR and y <= u_maxy[tu] + SUPP_NEAR:
-				_supp_add(tu, SUPP_MISS, s, ty, false)
+				_supp_add(tu, SUPP_MISS, s, ty, false, sh)
 	if hu >= 0 and hu != tu:
-		_supp_add(hu, SUPP_HIT, s, ty, false)  # (a ball that found another unit's man)
+		_supp_add(hu, SUPP_HIT, s, ty, false, sh)  # (a ball that found another unit's man)
 
 
 ## An engine's ball, bolt or stone of projectile p lands (_land_bolt, _land_stone): the unit it was aimed at, its box
@@ -3949,12 +4010,15 @@ func _supp_tick() -> void:
 			continue
 		if u_state[u] != U_READY or u_alive[u] <= 0 or u_fighting[u] > 0 or (sg_on != 0 and (u_carry[u] >= 0 or u_pick[u] >= 0)):
 			u_sup[u] = 0
+			if u_sus[u] != SUP_NONE:
+				u_spv[u] = u_sus[u]
+				u_sst[u] = tick
 			u_sus[u] = SUP_NONE
 			continue
 		var dk := m * SUPP_DECAY_PM / 1000
-		if tick - u_sut[u] > SUPP_QUIET:
+		if tick - u_sut[u] > SUPP_QUIET and (SUPP_QUIET_RELOAD == 0 or tick > u_suh[u]):
 			dk += SUPP_DECAY
-		if u_suc[u] == 2:
+		if u_suc[u] == 2 and not (SUPP_GARRISON != 0 and occ_on != 0 and u_occ[u] > 0):
 			dk *= 2
 		m = maxi(m - maxi(dk, 1), 0)
 		u_sup[u] = m
@@ -3968,6 +4032,8 @@ func _supp_tick() -> void:
 		elif st == SUP_SUPP and m < SUPP_T_SUP_OUT:
 			st = SUP_NONE
 		if st != u_sus[u]:
+			u_spv[u] = u_sus[u]
+			u_sst[u] = tick
 			u_sus[u] = st
 			u_dirty[u] = 1
 		if st == SUP_PIN:
@@ -12294,6 +12360,9 @@ func _update_units() -> void:
 			else:
 				speed = carry_pace(t_walk[ty], q_kind[cq], u_alive[u])
 		var sus := u_sus[u] if sup_on != 0 and u_fighting[u] == 0 else SUP_NONE
+		if sus != SUP_NONE and SUPP_CHARGE_FREE != 0 and u_order[u] == O_ATTACK and u_target[u] >= 0 \
+				and u_sus[u_target[u]] == SUP_PIN and t_m_ammo[ty] <= 0:
+			sus = SUP_NONE  # (second pass: a melee unit going in on a pinned unit keeps its run)
 		if sus != SUP_NONE:
 			# Suppressed: no running, the walk at SUPP_SPEED_SUP %; pinned: a move or withdraw order at the walk, any
 			# other at SUPP_SPEED_PIN % of it (SUPP_PIN_HOLD: held, as an artillery hit's pin holds it).
@@ -21634,7 +21703,7 @@ func state_hash() -> int:
 		ctx.update(ai_plays.to_byte_array())
 	if sup_used != 0:
 		# Suppression (2026-11-06): only once a unit gained some.
-		for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb]:
+		for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb, u_suh, u_spv, u_sst]:
 			ctx.update((arr as PackedInt32Array).to_byte_array())
 	if rt_used != 0:
 		# Paths clear of the enemy (2026-11-06): only once a unit planned round the enemy.

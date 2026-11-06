@@ -1369,6 +1369,99 @@ test from the flank spot); the siege AI only prefers pinned defenders; the crouc
 task, about an agent-day); men in cover hidden from far shooters stop being shot at, so they recover (CoH keeps
 them visible); no negative cover; no device check.
 
+### Suppression, second pass (as built, 2026-11-06)
+
+Why: the fourth evaluation (session scratchpad `eval4/eval4.md`) found suppressed common and pinned a flash: the quiet
+decay emptied the meter inside a musket's 12 s reload (763 after a volley, 226 by 12 s), so a pin lasted about 5 s; the
+pinned target still suppressed the men charging it, so waiting for the pin never paid; garrisons were immune (peak
+269-325 against the 400 threshold) and the AI's pin tools made no measurable difference. The sixth and last planned pass
+of line of fire, cover and suppression (the owner: a Company of Heroes kind of experience): its gaps 1-3 and the
+legibility (docs/design/ui.md "Suppression chips, second pass"). Sim statics in the "suppression" block of
+`sim/battle_sim.gd`; one AI knob (docs/AI.md 71).
+
+**A pin is a state** (`SUPP_QUIET_RELOAD` 1, `SUPP_HOLD_MAX` 90). Each gain also stamps `u_suh` = the tick + the
+shooter's reload (`t_m_reload` of the ball's type, at most `SUPP_HOLD_MAX` 9 s; an engine 0) + `SUPP_QUIET`; the quiet
+decay (`SUPP_DECAY` 4 a tick) starts only once the tick passes it, so a line between volleys is still under fire; the
+per-mille decay runs as before. The two candidates measured on sup_grid and sup_loop (8 seeds): eval4's "no quiet decay
+at all" (`SUPP_DECAY` 0) and the reload hold pinned alike (a silent line at 60 m 8 / 8 at 17.1 s), but with no quiet
+decay one company kept a yard-wall line suppressed 82 % of 60 s (35 % with the hold, 10 % before) and a meter took
+about 12 s longer to clear; the hold was kept. The full reload (12 s) took open_town 75 -> 88 % (beyond the gate; the
+ablations: the garrison rule off 88, the hold not given to units in heavy cover, `SUPP_HOLD_COVER` 1, 88, the hold off
+75: the defenders' street lines staying pinned), so the hold is capped: 6 s 75 %, 9 s 81 % (kept; `SUPP_HOLD_COVER`
+stays 2, no effect measured).
+
+**The loop pays** (`SUPP_SHARE` 1, `SUPP_CHARGE_FREE` 1).
+- A suppressed or pinned shooter's balls feed suppression at its fire share (70 / 35 %, `_supp_share`), in the state it
+  was in when it shot (`u_spv` / `u_sst`: the state before the latest change and its tick; a ball in flight when its
+  shooter is pinned still counts in full, so two lines firing on the same tick do not depend on the unit order).
+- A melee unit (no missiles) on an attack order whose target is pinned gains nothing from that target's fire, and its
+  own suppression does not slow it (it may run and charge): the charge into a pinned unit keeps its run.
+
+**Garrisons can be suppressed, never pinned** (`SUPP_GARRISON` 1): a held building's men keep the 33 % gain, but their
+decay is no longer doubled and their meter stops at `SUPP_T_PIN` - 1 (a wall's walk and men behind a house keep the
+doubled decay and can be pinned).
+
+**The AI** (docs/AI.md 71): `SUPP_FLANK_TIME` (371; Easy 0): the field flank of a pinned unit only when the melee unit
+can run 150 % of the gap before the pin lapses with no further fire (`supp_pin_left`: the decay run forward).
+
+**Measured** (before = a clean copy of 4efb39b; 8 seeds; tables in the session scratchpad `sup2/out/`).
+- *Set pieces* (`sup_grid`, 100 or 40 musketeers, 60 s; target's time pinned / suppressed, before -> after): a silent
+  line at 60 m pinned 6 / 8 at 26.5 s -> 8 / 8 at 17.9 s, pinned 6 -> 19 % (it breaks at about 28 s either way); a
+  duel at 40 m pinned 12 -> 23 % / suppressed 7 -> 8 %; a duel at 60 m suppressed 33 -> 80 %, pinned 2 -> 5 % (the
+  suppressed line's fire suppresses at 70 %, so both stay suppressed rather than pinned); one company on a yard-wall
+  line never pins it (40 m suppressed 14 -> 25 %, 60 m 10 -> 22 %, lost 16 -> 16); two companies pin it 8 / 8 at
+  60 m, pinned 42 -> 49 % of the time; a 40-man company suppresses a silent 40-man line at 60 m in 0 -> 6 of 8 (peak
+  342 -> 547; still never pinned) and pins a 100-man block at 40 m in 8 / 8 (never before); 100 bows against 100
+  muskets: the musketeers suppressed in 3 / 8 -> never (the archers, suppressed by the first volleys, suppress at 70 %);
+  at 100 m nothing, as before (the matchlock volley range).
+- *The loop* (`sup_loop`, 2 x 60 musketeers against 100 behind a yard wall at 60 m, 120 pikes; before -> after):
+  charge at once: contact 39.7 -> 42.3 s, the target pinned at contact 3 of 7 -> 7 of 7, pikes lost before contact
+  23.4 -> 23.4; charge when pinned: the pin at 22.8 -> 18.0 s, contact 57.6 -> 48.8 s, pinned at contact 3 of 6 ->
+  4 of 4 (the rest broke first: routed 64.8 -> 49.4 s), lost before contact 24.3 -> 24.8. The charge after the pin
+  takes 30.8 s from the order against 34.8 (the pikes run, 2.2 m/s; before they walked once suppressed), and the
+  target stays pinned until they arrive. Waiting still does not beat going at once on contact time: the charge at once
+  also arrives on a pinned target now (the target is pinned at about 18 s, the pikes' crawl turns into a run then),
+  and the pikes' losses are the opening volley at the standing block (from 90 m, out of range, they lose none either
+  way; `sup_loop2`: waiting at 90 m, contact at 62.2 s with the target pinned 5 of 5, against 40.8 s at once).
+- *Garrisons* (`sup_town`, 8 West AI town battles): the peak meter at walls 0 269 -> 603 (suppressed, below the cap),
+  walls 2 325 -> 271; garrison unit-seconds under fire suppressed 0 -> 77 (their losses then 0.5 per 100 balls);
+  foot outside buildings under fire with a suppression chip 5.6 -> 10.4 % (pinned 15 -> 22 unit-seconds); men lost
+  attackers / defenders 920 / 1,252 -> 723 / 1,047. The AI knobs 366-369 off: 715 / 1,052, one fallback fewer: the
+  siege AI's fallback and hold still make no measurable difference in towns (the hold's targets are seldom pinned
+  there, and a garrison never is).
+- *The field flank* (`sup_flank`, 8 cases, 180 s): flank orders 108 -> 17 (166 with `SUPP_FLANK_TIME` off), contacts
+  4 -> 0 (1 off): the orders that could not arrive are gone, and two companies now break the pinned target by fire
+  before any melee unit gets there (the rodeleros' 70 m yard-wall case routed 60.3 -> 53.0 s).
+- *Balance* (tools/balance, 8 seeds, open_town 16; before f7c585b9d9 = 4efb39b, after fd979a6bbc): `open_town` 75 ->
+  81 % (cartagena 81 -> 100, havana 81 -> 69, santo_domingo 62 -> 75); `west_named` 42 -> 41 (walls 0 / 1 / 2: 62 / 38 /
+  25 -> 57 / 50 / 16); `west_walls` 45 -> 45 (64 / 38 / 32 -> 60 / 48 / 26); `rome_walls` 56 -> 56 (77 / 52 / 40 ->
+  75 / 50 / 42); every plan within the 8-point gate, the walls-1 rows of the West beyond it (+11, +12) and walls 2 -6,
+  -9. Cells beyond their interval: veracruz w0 -62 and w2 -38, port_royal w1 +62, new_orleans w1 +38, campeche w1 -50,
+  cumana w2 -38. The natives' field edge (`asym_field`, 48 seeds, Spanish wins) 23 -> 22 (natives 24 -> 25), `asym_field2` 46 -> 47.
+- Pins: campaign pins MATCH 12 / 12; the flat goldens: bench_2000 re-recorded (a780489f8f1cfd55 -> a98576372a5d8e8d),
+  skirmish, test_cav_art and test_stone_line unchanged; the rules hash moves.
+- Cost: paired rounds on a loaded machine (load 10), ms a tick, before -> after: the West musket town (`bench_wm`, 3
+  rounds) 2.42 -> 2.39; through `tests/benchmark.gd` (2 rounds; the first round's "before" for the last two
+  benchmarks an outlier, 7.14 / 3.11) bench_2000 2.26 / 2.27 -> 2.23 / 2.22, bench_4000_city 6.62 -> 6.44 / 6.71,
+  bench_west_muskets 2.46 -> 2.45 / 2.51; all within the +5 % budget (a stamp per gain, a lookup per landed ball,
+  `supp_pin_left` only when the AI considers a flank).
+- Tests: custom_battle_test `_check_suppress2` (the pin held 300 of 300 ticks in 3 seeds against 147 with the first
+  pass's quiet; a charge into a pinned line 34 m in 10 s against the crawl's 7 m, a pinned line's hit feeds it nothing;
+  a garrison peaks at 796, suppressed, a heavy-cover line outside 992, pinned; 2 s quiet from 700: 580 against 466);
+  roles_sim_test's countermarch set pieces (Auto, Hold, Use now and `_cm_walk`) and determinism_test's town line
+  (`LINE_COVER_ON` 0) run with `SUPP_FORCE` 0 (dated notes: the pike block, pinned through the reloads, broke at 48.6 s
+  and Hold fired six volleys, not seven; the town line was pinned 18 s and routed, its runners "off their places").
+
+**Still open:** waiting for the pin does not beat charging at once in contact time (both arrive on a
+pinned target now; the measure that would show the loop is a charge across the target's fire before the pin, which
+the set pieces do not separate from the opening volley); the AI's town tools (fallback, hold, the siege pull) still
+measure as noise; a garrison is suppressed only under massed fire (two companies) and the AI has no way to aim at
+windows on purpose; the field flank rarely reaches a target because fire breaks it first; the duel tends to mutual
+suppression rather than one side pinned (the share rule); the crouch is the placed quad, not a pose (a kneel / crouch
+action in the sheets: pose functions, a re-pack, the oblique sheets and the 3D cards, about an agent-day of art);
+negative cover, garrison fire arcs, cursor icons, narrowing at corners, the +22 % step cost of the cover passes; no
+device check. The evaluation loop stops here: what remains is feel, for the owner's phone.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

@@ -615,6 +615,117 @@ func _check_suppress() -> void:
 		_fail("suppress: Easy has suppression (%s, forced off %s)" % [str(hs[-1]), str(hs[0])])
 	print("suppress: checked (suppressed at tick %d, meter average open %d / wall %d, 5 s quiet open %d / heavy %d, clear %d ticks after; shots %d / suppressed %d; moved free %d m, pinned %d m, pinned on a move %d m; Easy %s)" % [
 		first, avg[false], avg[true], dec[0], dec[2], clear_t, shots[false], shots[true], moved["free"], moved["pinned"], moved["pinned_move"], str(hs[-1])])
+	_check_suppress2()
+
+
+## Suppression, second pass (2026-11-06; docs/design/battle_sim.md "Suppression, second pass (as built, 2026-11-06)"):
+## (6) the pin holds through the shooters' reload: a silent line 60 m from a musket company on fire at will, once
+## pinned, stays pinned the next 10 s (the musket's reload is 12 s) in 3 seeds; with SUPP_QUIET_RELOAD 0 (the first
+## pass's 2 s quiet) it is pinned later or for less; (7) the charge into a pinned unit keeps its run: a pinned rodelero
+## block charging a pinned musket line moves at least twice as far in 10 s as one charging an unpinned line (the crawl),
+## and the pinned line's balls feed nothing into its meter (its balls into another unit at its 35 % share);
+## (8) a garrison can be suppressed, never pinned: a held building's meter stops below SUPP_T_PIN under any fire and
+## decays at the open rate (not doubled), while a line in heavy cover outside a building is still pinned and doubled.
+func _check_suppress2() -> void:
+	var scr: Script = BattleSim
+	# (6) The pin holds through the reload.
+	var held := {}
+	var firsts := {}
+	for qr in [1, 0]:
+		scr.set("SUPP_QUIET_RELOAD", qr)
+		var h := 0
+		var fs: Array = []
+		for sd in [1, 2, 3]:
+			var sim := BattleSim.new()
+			sim.setup(_sup_sc(false), sd)
+			sim.queue_order(BattleSim.make_fire_order(0, 0, 1))
+			sim.queue_order(BattleSim.make_fire_order(0, 1, 0))
+			var fp := -1
+			for k in 400:
+				sim.step()
+				if fp < 0 and sim.supp_state(1) == BattleSim.SUP_PIN:
+					fp = k
+				elif fp >= 0 and k <= fp + 100 and sim.supp_state(1) == BattleSim.SUP_PIN:
+					h += 1
+			fs.append(fp)
+		held[qr] = h
+		firsts[qr] = fs
+	scr.set("SUPP_QUIET_RELOAD", 1)
+	if int(held[1]) < 290 or int(held[0]) >= int(held[1]) or (firsts[1] as Array).has(-1):
+		_fail("suppress2: the pin through the reload (pinned at %s, held %d of 300 ticks; the first pass's quiet: at %s, %d)" % [
+			str(firsts[1]), held[1], str(firsts[0]), held[0]])
+		return
+	# (7) The charge into a pinned unit keeps its run.
+	var ran := {}
+	for tp in [0, 1]:
+		var s3 := BattleSim.new()
+		s3.setup(_sup_sc(false, "rodeleros"), 3)
+		s3.queue_order(BattleSim.make_fire_order(0, 0, 1))
+		s3.queue_order(BattleSim.make_attack_order(0, 1, 0, 1))
+		var y0: int = s3.u_ay[1]
+		for k in 100:
+			if k < 5:
+				s3.u_sup[1] = 1000
+				s3.u_sut[1] = s3.tick
+			if tp == 1:
+				s3.u_sup[0] = 1000
+				s3.u_sut[0] = s3.tick
+			s3.step()
+		ran[tp] = absi(s3.u_ay[1] - y0) / 1024
+	var s7 := BattleSim.new()
+	s7.setup(_sup_sc(false, "rodeleros"), 3)
+	s7.queue_order(BattleSim.make_attack_order(0, 1, 0, 1))
+	s7.step()
+	s7.step()
+	var mty: int = s7.u_type[0]
+	var g := [0, 0]
+	for tp in [0, 1]:
+		s7.u_sus[0] = BattleSim.SUP_PIN if tp == 1 else BattleSim.SUP_NONE
+		s7.u_sup[1] = 0
+		s7._supp_add(1, BattleSim.SUPP_HIT, 0, mty, false, s7._supp_share(0, s7.tick))
+		g[tp] = s7.u_sup[1]
+	var share_pin: int = s7._supp_share(0, s7.tick)
+	if int(ran[1]) < 2 * int(ran[0]) or int(ran[1]) < 20 or g[0] <= 0 or g[1] != 0 or share_pin != BattleSim.SUPP_FIRE_PIN:
+		_fail("suppress2: the charge into a pinned unit (moved %d m against %d m at an unpinned one; a hit gains %d, from the pinned target %d; its share %d %%)" % [
+			ran[1], ran[0], g[0], g[1], share_pin])
+		return
+	# (8) A garrison: suppressed, never pinned; its decay not doubled.
+	var res := {}
+	for garr in [true, false]:
+		var s8 := BattleSim.new()
+		s8.setup(_sup_sc(false), 1)
+		s8.step()
+		if s8.u_occ.size() < s8.n_units:
+			s8.u_occ.resize(s8.n_units)
+		s8.occ_on = 1
+		s8.u_occ[1] = 1 if garr else 0
+		s8.u_suc[1] = 2
+		s8.u_sct[1] = s8.tick + 100000
+		var top := 0
+		var st := 0
+		for k in 200:
+			s8._supp_add(1, BattleSim.SUPP_HIT, 0, s8.u_type[0], false)
+			s8._supp_add(1, BattleSim.SUPP_HIT, 0, s8.u_type[0], false)
+			s8._supp_add(1, BattleSim.SUPP_HIT, 0, s8.u_type[0], false)
+			s8._supp_tick()
+			s8.tick += 1
+			top = maxi(top, s8.u_sup[1])
+			st = maxi(st, s8.u_sus[1])
+		s8.u_sup[1] = 700
+		s8.u_suh[1] = -1000
+		s8.u_sut[1] = -1000
+		for k in 20:
+			s8._supp_tick()
+			s8.tick += 1
+		res[garr] = [top, st, s8.u_sup[1]]
+	if int(res[true][0]) >= BattleSim.SUPP_T_PIN or int(res[true][1]) != BattleSim.SUP_SUPP or int(res[false][1]) != BattleSim.SUP_PIN \
+			or int(res[true][2]) <= int(res[false][2]):
+		_fail("suppress2: a garrison (peak %d, state %d, after 2 s quiet %d) against a line in heavy cover (peak %d, state %d, %d)" % [
+			res[true][0], res[true][1], res[true][2], res[false][0], res[false][1], res[false][2]])
+		return
+	print("PASS suppress2: the pin held %d of 300 ticks after it began (pinned at %s; the first pass's quiet %d, at %s); the charge into a pinned line %d m in 10 s against %d m (the crawl), a pinned line's hit gains 0 against %d; a garrison peaks at %d (suppressed), a heavy-cover line %d (pinned); 2 s quiet from 700: %d against %d" % [
+		held[1], str(firsts[1]), held[0], str(firsts[0]), ran[1], ran[0], g[0], res[true][0], res[false][0], res[true][2], res[false][2]])
+
 
 
 ## A field set piece of the fourth pass: 60 musketeers (side 0) at (200, 200) shooting at a line of 40 (side 1) at

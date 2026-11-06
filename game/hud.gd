@@ -2228,6 +2228,17 @@ func legend_entries() -> Array:
 				states.append(str(r[0]))
 			out.append({"cluster": cl, "key": ch.key, "name": ch.label_name, "icon": ch.icon, "title": ch.tip_title,
 				"tip": ch.tip_body, "states": states})
+	# Suppression, second pass (2026-11-06; docs/design/ui.md "Suppression chips"): the marks the markers carry.
+	var mk := "Marks on the units"
+	out.append({"cluster": mk, "key": "mark_suppressed", "name": "Suppressed", "icon": Kit.UiIcons.tex("suppressed"), "title": "Suppressed",
+		"tip": "A yellow plate with one chevron at the marker's upper right: the unit is under heavy fire. It shoots at 70 %, cannot run or charge. It clears a few seconds after the fire stops.",
+		"states": []})
+	out.append({"cluster": mk, "key": "mark_pinned", "name": "Pinned", "icon": Kit.UiIcons.tex("pinned"), "title": "Pinned",
+		"tip": "A red plate with two chevrons, and the men crouch: the unit is pinned by sustained fire. It shoots at 35 %, crawls, cannot charge and its morale drains. It stays pinned while the fire goes on: charge it now (a charge into a pinned unit keeps its run), or move it out of the fire. Cover resists: one company does not pin a line behind a wall, two do. Men in a building can be suppressed, never pinned.",
+		"states": []})
+	out.append({"cluster": mk, "key": "mark_cover", "name": "Cover", "icon": Kit.UiIcons.tex("stance_cover"), "title": "Cover",
+		"tip": "A shield at the marker's upper left, against whoever shot at the unit last: green heavy cover (a house or a wall), half-filled yellow light cover (a yard wall, rubble, woods). Nothing: open ground.",
+		"states": ["Heavy", "Light"]})
 	return out
 
 
@@ -2626,6 +2637,12 @@ func update_cards(sim) -> void:
 			word = car   # (the caracole's phase: the owner took the 30 s pistol reload for a bug)
 			summary += " " + car
 		f.car_phase = car != ""
+		# Suppression (second pass): the word on the card where it has room (a state that changes the orders comes
+		# before the morale word, which stays in the tip and the summary).
+		var sus: int = sim.supp_state(u) if sim.u_state[u] == BattleSim.U_READY else 0
+		f.supp = sus
+		if sus != 0 and car == "":
+			word = "Pinned" if sus == BattleSim.SUP_PIN else "Suppressed"
 		f.state_text = word
 		f.summary = summary + " " + mstate
 		if f.char_icon != "":
@@ -3037,6 +3054,9 @@ class CardFace extends Control:
 	var ammo_text := ""
 	var state_text := ""
 	var car_phase := false   # state_text is the caracole's phase (F / W / R on a narrow card)
+	## Suppression (second pass, 2026-11-06): 1 suppressed, 2 pinned (BattleSim.supp_state): state_text is the word
+	## ("Suppressed" yellow, "Pinned" red) and its glyph in the strip is drawn as the marker's chip (a plate, chevrons).
+	var supp := 0
 	var summary := ""
 	var alive := 0
 	var count0 := 1
@@ -3069,6 +3089,25 @@ class CardFace extends Control:
 	var ak_rc := Rect2()   # where the glyph was last drawn (empty: none)
 	## The control groups the unit is in ("2", "1 3", "1 2+"): a small tab at the card's top left.
 	var group_text := ""
+
+	const SUPP_RED := Color(1.0, 0.42, 0.34)
+	const SUPP_YELLOW := Color(1.0, 0.84, 0.3)
+
+	## The strip's suppression glyph as the marker's chip (Overlay._draw_supp_chip): a dark-rimmed plate, one yellow
+	## chevron pressing onto a bar (suppressed) or two red ones (pinned), thick enough to read at 11 px.
+	func _supp_glyph(r: Rect2, pinned: bool) -> void:
+		var col := SUPP_RED if pinned else SUPP_YELLOW
+		draw_rect(r.grow(0.5), Color(0.05, 0.04, 0.02, 0.9))
+		draw_rect(r.grow(-0.5), Color(col.darkened(0.6), 0.95))
+		var c := r.get_center()
+		var w := r.size.x
+		var h := r.size.y
+		var rows: Array = [-0.2, 0.12] if pinned else [-0.05]
+		for ry in rows:
+			var y0: float = c.y + h * float(ry) - h * 0.12
+			draw_polyline(PackedVector2Array([Vector2(c.x - w * 0.32, y0), Vector2(c.x, y0 + h * 0.24), Vector2(c.x + w * 0.32, y0)]),
+				col, 1.6, true)
+		draw_line(Vector2(c.x - w * 0.36, c.y + h * 0.36), Vector2(c.x + w * 0.36, c.y + h * 0.36), col, 1.2, true)
 
 	func _draw() -> void:
 		var sz := size
@@ -3125,6 +3164,9 @@ class CardFace extends Control:
 				gname = gname.trim_suffix("*")
 				gcol = Kit.COL_GOLD
 			var grect := Rect2(strip_r - 11.0 * (gi + 1), 3, 11, 11)
+			if gname == "pinned" or gname == "suppressed":
+				_supp_glyph(grect, gname == "pinned")
+				continue
 			Kit.UiIcons.draw_icon(self, gname, grect, gcol)
 			if gcross:
 				draw_line(grect.position + Vector2(1, 10), grect.position + Vector2(10, 1), Color(0.95, 0.35, 0.3), 1.4)
@@ -3182,9 +3224,25 @@ class CardFace extends Control:
 			if ak_use == 2:
 				draw_line(krc.position + Vector2(0, 11), krc.position + Vector2(11, 0), Color(0.95, 0.35, 0.3), 1.4)
 		var line := str(alive)
-		if state_text != "" and not narrow:
+		if supp != 0 and state_text != "" and not narrow and state != ST_GONE:
+			# Suppressed / Pinned: the count, then the word in the chip's colour.
+			draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - kw - 4, 8), 11, txt)
+			var lw2 := font.get_string_size(line + " ", HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			var room := bw - aw - kw - 4 - lw2
+			var word := state_text
+			var ww := font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			if ww > room and supp == 1:
+				word = "Supp."   # (beside the shot count "Suppressed" does not fit)
+				ww = font.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			# A dark plate under the word, so red and yellow read over the side's colour bar.
+			draw_rect(Rect2(bx + lw2, by, minf(ww + 4, maxf(room + 2, 8)), 12), Color(0.06, 0.05, 0.03, 0.85))
+			draw_string(font, Vector2(bx + 2 + lw2, by + 10), word, HORIZONTAL_ALIGNMENT_LEFT, maxf(room, 8), 11,
+				SUPP_RED if supp == 2 else SUPP_YELLOW)
+			line = ""
+		elif state_text != "" and not narrow:
 			line += " " + state_text
-		draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - kw - 4, 8), 11, txt)
+		if line != "":
+			draw_string(font, Vector2(bx + 2, by + 10), line, HORIZONTAL_ALIGNMENT_LEFT, maxf(bw - aw - kw - 4, 8), 11, txt)
 		if narrow and state_text != "" and state != ST_OK:
 			draw_rect(Rect2(sz.x - 6, 3, 3, 8), txt)
 		if narrow and car_phase:

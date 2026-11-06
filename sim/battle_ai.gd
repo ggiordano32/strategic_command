@@ -204,6 +204,7 @@ const CC_CLOSE := 60 * 1024
 # Suppression (docs/AI.md 69; BattleSim's SUP_* states).
 const SUPP_PINNED := 2
 const SUPP_FLANK_GAP := 25 * 1024  # a melee unit goes round a pinned enemy (SUPP_FLANK_PCT) only while farther than this from it
+const SUPP_FLANK_DETOUR := 150     # second pass (docs/AI.md 71): the way round a pinned unit's flank, % of the gap to it
 const SUPP_FALL_NEAR := 3 * 1024   # a cover spot nearer than this to a pinned unit: it stands where it is
 const CC_WORN := 60     # a musket line down to this % of its men (or wavering, CC_SHAKEN morale) is fair game ...
 const CC_SHAKEN := 500
@@ -1251,7 +1252,8 @@ static func _melee_think(sim, u: int) -> void:
 	# Formed enemy pikes: do not walk into the points if it can be helped
 	# (unless the mistake is to walk into them).
 	if kn[AP.SUPP_FLANK_PCT] > 0 and sim.supp_state(best) == SUPP_PINNED and _frontal(sim, best, u) \
-			and sim.u_fighting[u] == 0 and _bbox_gap(sim, u, best) > SUPP_FLANK_GAP and _chance(sim, kn[AP.SUPP_FLANK_PCT]):
+			and sim.u_fighting[u] == 0 and _bbox_gap(sim, u, best) > SUPP_FLANK_GAP and _supp_flank_time(sim, u, best, kn) \
+			and _chance(sim, kn[AP.SUPP_FLANK_PCT]):
 		# Pinned by our fire (docs/AI.md 69): round to its flank while the shooters hold it, then in.
 		_flank(sim, u, best)
 		_count(sim, side, AP.C_SUPP_FLANK)
@@ -1385,6 +1387,15 @@ static func supp_fallback(sim, u: int, kn: PackedInt32Array) -> bool:
 	sim.stat_sup_fall += 1
 	_count(sim, sim.u_side[u], AP.C_SUPP_FALL)
 	return true
+
+
+## Suppression, second pass (docs/AI.md 71, SUPP_FLANK_TIME): melee unit u can run round to pinned unit t's flank
+## (SUPP_FLANK_DETOUR % of the gap between them) before t's pin lapses with no further fire (BattleSim.supp_pin_left).
+static func _supp_flank_time(sim, u: int, t: int, kn: PackedInt32Array) -> bool:
+	if kn[AP.SUPP_FLANK_TIME] == 0:
+		return true
+	var run: int = maxi(sim.t_run[sim.u_type[u]], 1)
+	return _bbox_gap(sim, u, t) * SUPP_FLANK_DETOUR / 100 / run <= sim.supp_pin_left(t)
 
 
 ## Suppression (docs/AI.md 69, SUPP_HOLD): missile unit u's attack target t is suppressed or pinned, ready, not in a

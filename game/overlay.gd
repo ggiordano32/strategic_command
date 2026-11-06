@@ -1518,10 +1518,11 @@ func _draw_supp_chip(u: int, c: Vector2, r: float, lw: float) -> void:
 	draw_rect(box.grow(ol * 1.4), Color(0.05, 0.04, 0.02, 0.85))
 	draw_rect(box, Color(col.darkened(0.55), 0.9))
 	var cw := maxf(ol * 1.1, 1.2)
-	var rows: Array = [0.05] if st == BattleSim.SUP_SUPP else [-0.2, 0.18]
+	# (Second pass: flatter chevrons further apart, so the pinned pair no longer reads as a cross when small.)
+	var rows: Array = [-0.02] if st == BattleSim.SUP_SUPP else [-0.24, 0.1]
 	for ry in rows:
-		var y0: float = at.y + h * (float(ry) - 0.18)
-		draw_polyline(PackedVector2Array([Vector2(at.x - w * 0.34, y0), Vector2(at.x, y0 + h * 0.3), Vector2(at.x + w * 0.34, y0)]),
+		var y0: float = at.y + h * (float(ry) - 0.1)
+		draw_polyline(PackedVector2Array([Vector2(at.x - w * 0.36, y0), Vector2(at.x, y0 + h * 0.22), Vector2(at.x + w * 0.36, y0)]),
 			col, cw, true)
 	draw_line(Vector2(at.x - w * 0.4, at.y + h * 0.36), Vector2(at.x + w * 0.4, at.y + h * 0.36), col, cw * 0.8, true)
 

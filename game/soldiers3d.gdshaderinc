@@ -224,7 +224,7 @@ void vertex() {
 	bool shoot = mod(floor(fl / 8.0), 2.0) > 0.5;
 	bool fired = mod(floor(fl / 16.0), 2.0) > 0.5;
 	bool gun = mod(floor(fl / 32.0), 2.0) > 0.5;
-	// Suppression's stand-in crouch (+ 64 x level: 1 suppressed, 2 pinned; soldiers.gdshaderinc crouch_k): the card squashed
+	// Suppression's stand-in crouch (+ 64 x level: 1 suppressed, 2 pinned; soldiers.gdshaderinc crouch_ob): the card squashed
 	// toward the feet, a little darker.
 	float crc = st == 0 ? mod(floor(fl / 64.0), 4.0) : 0.0;
 	vec2 crk = crc > 1.5 ? vec2(0.9, 0.6) : (crc > 0.5 ? vec2(0.94, 0.76) : vec2(1.0));

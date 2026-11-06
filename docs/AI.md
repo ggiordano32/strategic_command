@@ -4807,3 +4807,26 @@ archers and musketeers." The map half (the fort's walk within 84 m of the plaza,
   On main after the cover passes and suppression (4efb39b, no tuning): `west_walls` 64 / 38 / 32 -> 64 / 25 / 14 %; the
   three towns 1 attacker win of 48, the fallback in 11; the poles take a walls-2 fort town 19 of 48. The determinism
   check `_check_fort_fallback` storms Havana with twice WEST_ATT (the equal storm no longer takes the streets there).
+
+## 71. Suppression, second pass: the field flank only when it can arrive inside the pin (2026-11-06)
+
+The battle rules are docs/design/battle_sim.md "Suppression, second pass (as built, 2026-11-06)" (the fourth
+evaluation's gaps 1-3): a pin now lasts while its shooters reload (`SUPP_QUIET_RELOAD`, at most `SUPP_HOLD_MAX` 9 s), a suppressed or pinned unit's
+fire suppresses only at its fire share, a melee unit charging a pinned unit keeps its run and takes no suppression from
+it, and a held building can be suppressed but never pinned (its decay no longer doubled). One knob, id 371
+(`N_KNOBS` 370; if note 70's work also added knobs, renumber on merge):
+
+| id | knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|---|
+| 371 | `SUPP_FLANK_TIME` | 0 | 1 | 1 | BattleAI's flank of a pinned unit (`SUPP_FLANK_PCT`, note 69) only when the melee unit can run the way round (`SUPP_FLANK_DETOUR` 150 % of the gap between the boxes, at its run) before the pin lapses with no further fire (`BattleSim.supp_pin_left`: the meter's decay run forward, the reload hold counted); otherwise it thinks on as before (the attack goes straight in, where it keeps its run against the pinned front) |
+
+What changes for the AI without a new knob: `SUPP_HOLD`'s shooters now keep a pin as a state (the target stays pinned
+through their reload, at most 9 s past a gain), the siege AI's `SUPP_PULL` never applies to a garrison (a window is
+suppressed at most, never pinned), and `SUPP_FALLBACK` fires for pinned units that stay pinned longer.
+
+Measured (eval4's probes, 8 seeds; session scratchpad `sup2/out/`): `sup_flank` (8 field cases, 180 s) flank orders
+108 -> 17 (166 with the knob off), contacts made 4 -> 0 (1 with the knob off): the orders that could not arrive are
+gone, but no more flanks land, because two companies now break the pinned target by fire first (the rodeleros' 70 m
+yard-wall case routed 60.3 -> 53.0 s). `sup_town` (8 West AI town battles, 300 s): knobs 366-369 on against off, men
+lost 723 / 1,047 against 715 / 1,052, one fallback against none: the siege AI's fallback and hold still measure as
+noise in towns (a garrison is never pinned, and street defenders are pinned 22 unit-seconds in 5,679 under fire).

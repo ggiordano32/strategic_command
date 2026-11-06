@@ -596,6 +596,10 @@ func _countermarch() -> void:
 			_check(false, "countermarch: Rome row %d has it" % ty)
 	var reload := UT.stat(mus, "m_reload")
 	var step := (reload + 3) / 4
+	# (2026-11-06, suppression's second pass: the pin now lasts while the line reloads, so the pike block, pinned and
+	# losing morale, broke before 900 ticks with Hold and the line fired six volleys instead of seven; the countermarch's
+	# own rule is checked as built, suppression off for these battles and _cm_walk's: BattleSim.SUPP_FORCE.)
+	(BattleSim as GDScript).set("SUPP_FORCE", 0)
 	var auto := _cm_run(_cm_sc([]), 900)
 	var sa: BattleSim = auto["sim"]
 	var hold := _cm_run(_cm_sc([BattleSim.make_ability_order(0, 0, UT.AB_ROLL, UT.AB_HOLD)]), 900)
@@ -650,7 +654,8 @@ func _countermarch() -> void:
 	_check(sa.stat_cm_fright >= sa.stat_cm_rank - 2 and sa.stat_cm_fright > 0, "countermarch: every rank volley frightened (%d of %d)" % [sa.stat_cm_fright, sa.stat_cm_rank])
 	_check(int(hold["jump"]) == fear, "countermarch: a volley frightens at m_fear (%d)" % int(hold["jump"]))
 	_check(sn.stat_cm_rank >= 16, "countermarch: Use now rolls (%d)" % sn.stat_cm_rank)
-	_cm_walk(auto, hold)
+	_cm_walk(auto, hold)  # (its own battle is the Auto one again: suppression off there too)
+	(BattleSim as GDScript).set("SUPP_FORCE", -1)
 	# The last volley: rodeleros 75 m off take the opening and the rolling fire, then charge the line.
 	var lsc := _sc([Scenarios.unit(0, mus, 100, 150, 200, UP, 25), Scenarios.unit(1, UT.index_of("rodeleros"), 200, 150, 120, DOWN, 40)],
 		[Scenarios.attack(240, 1, 0, 1)])

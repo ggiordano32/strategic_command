@@ -121,7 +121,7 @@ void vertex() {
 	int pal = bitfield(flags, 262144, 16);
 #ifdef OBLIQUE
 	int b8 = fetch_int(8, uidx);
-	b8 -= (b8 / 1048576) * 1048576;   // (the suppression crouch above: soldiers.gdshaderinc crouch_k)
+	b8 -= (b8 / 1048576) * 1048576;   // (the suppression crouch above: soldiers.gdshaderinc crouch_ob)
 	float ext = float(b8 / 64 + fetch_int(10, i)) * 0.1 * px_per_unit * 1024.0;   // (block 10: on a stair)
 #endif
 #endif

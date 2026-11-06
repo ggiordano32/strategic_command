@@ -77,7 +77,7 @@ const F_SHOOT := 8   # aiming: a fire target held
 const F_FIRED := 16  # a gun shot in the last FLASH_TICKS ticks (the muzzle flash frame)
 const F_GUN := 32    # a powder-weapon unit (its attack frame 1 is the flash)
 const F_CROUCH := 64  # suppression's stand-in crouch (2026-11-06): + F_CROUCH x level (1 suppressed, 2 pinned; the CPU flags
-                      # and the 3D view; the texture path: block 8 + CROUCH_B8 x level); soldiers.gdshaderinc crouch_k
+                      # and the 3D view; the texture path: block 8 + CROUCH_B8 x level); soldiers.gdshaderinc crouch_ob
 const CROUCH_B8 := 1048576
 const FLASH_TICKS := 3   # 0.3 s at 10 ticks a second
 ## Where the last gun shot of each unit is noted (the overlay's missile walk

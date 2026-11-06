@@ -217,7 +217,9 @@ const RUNS := {"skirmish@0": 1500, "battle_2000@0": 1800, "bench_2000": 2500, "t
 ## test_stone_line changed, were df69881ef708d55b, 06e22950fac353c1 and
 ## e15d23e1c258332c). 2026-11-06, docs/design/battle_sim.md "Suppression (as built, 2026-11-06)": suppression on in
 ## Average battles; bench_2000 changed (pinned and suppressed lines), was 78c42d10a48ff37c; the other three unchanged.
-const GOLDEN := {"skirmish": "8d3e3b4bf3c14d1e", "bench_2000": "a780489f8f1cfd55",
+## 2026-11-06, docs/design/battle_sim.md "Suppression, second pass (as built, 2026-11-06)": the pin held through the
+## reload, a suppressed shooter's fire at its share; bench_2000 changed, was a780489f8f1cfd55; the other three unchanged.
+const GOLDEN := {"skirmish": "8d3e3b4bf3c14d1e", "bench_2000": "a98576372a5d8e8d",
 	"test_cav_art": "2614adc80bd29eb4", "test_stone_line": "c2211eed0798f1ab"}
 
 var _ok := true
@@ -7379,7 +7381,12 @@ func _check_cover() -> void:
 	if int(tw["flat_block"]) <= 0 or int(tw["cs_men"]) <= 0 or int(tw["cvb_on"]) <= 0 or int(tw["lean"]) <= 0:
 		bad.append("cover: town: blocked %d, men to cover spots %d, ticks with spots %d, leaning shots %d" % [
 			int(tw["flat_block"]), int(tw["cs_men"]), int(tw["cvb_on"]), int(tw["lean"])])
+	# (2026-11-06, suppression's second pass: with the pin held through the musket reload this line, out of its
+	# cover spots by LINE_COVER_ON 0, is pinned 18 s and routs, its runners "off their places"; the rule here is about
+	# cover spots, so this one battle runs with suppression off: BattleSim.SUPP_FORCE.)
+	scr.set("SUPP_FORCE", 0)
 	var tl := _cover_run("town_line", false, 7, -1)
+	scr.set("SUPP_FORCE", -1)
 	# (Up to a twentieth: the two men of 33 seen off their places on
 	# 2026-11-06 were a slide-memory hold renewed without end, _free_mem.)
 	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 20 > int(tl["alive_d"]):

@@ -17,7 +17,7 @@
 //     in the last 0.3 s, bit 23 a powder-weapon unit),
 //   8 unit engine set (indexed by unit, 6 bits; its own block: the bits above
 //     24 do not survive the float decode); the oblique view + 64 x the wall walk's height (dm); both + 2^20 x the
-//     suppression crouch (1 suppressed, 2 pinned; crouch_k)
+//     suppression crouch (1 suppressed, 2 pinned; crouch_ob)
 //   the oblique view: 9 the per-tick draw order, 10 a man's height on a stone
 //     stair's flight (dm, 0 else; soldier_layer.gd _stair_lift)
 //
@@ -478,26 +478,29 @@ void place_ob(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r,
 }
 #endif
 
-// Suppression's stand-in crouch (2026-11-06; the sheets have no crouch pose): a formed man of a suppressed unit (level
-// 1) or a pinned one (2) is drawn squashed toward his feet (the oblique and 3D figures: narrower and lower; the top view's
-// figure smaller round his place) and a little darker. Applied to the placed quad, so the frame and its texels are the
-// same: a miniature pressed low. View only (soldier_layer.gd: CPU flags + 64 x level; the texture path's block 8 +
-// 2^20 x level).
-vec2 crouch_k(float c) {
-	return c > 1.5 ? vec2(0.9, 0.6) : vec2(0.94, 0.76);
+// Suppression's stand-in crouch (2026-11-06; the sheets have no crouch pose). Second pass (the fourth evaluation: the
+// squash read as pale mushrooms): the oblique figure keeps its width and is lowered (a suppressed man to 90 % of his
+// height, a pinned one to 80 %) and leaned toward the way he faces (the top of the card sheared 14 % / 28 % of its
+// height: a man hunched forward over his piece), and darker (both the shade and the state tint's colour, so it does
+// not wash pale); the top view's figure smaller round his place (88 % / 78 %) and darker still. Applied to the placed
+// quad, so the frame and its texels are the sheet's own. View only (soldier_layer.gd: CPU flags + 64 x level; the
+// texture path's block 8 + 2^20 x level).
+vec2 crouch_ob(vec2 pos, vec2 an, float c, float facing) {
+	float hk = c > 1.5 ? 0.8 : 0.9;
+	float lean = c > 1.5 ? 0.28 : 0.14;
+	float h = (an.y - pos.y) * hk;   // (above the feet, screen px, lowered)
+	return vec2(pos.x + h * lean * cos(facing * (6.2831853 / 1024.0)), an.y - h);
 }
 float crouch_top(float c) {
-	return c > 1.5 ? 0.76 : 0.86;
+	return c > 1.5 ? 0.78 : 0.88;
 }
 void crouch_tint(float c, inout vec4 col, inout vec4 look) {
-	float d = c > 1.5 ? 0.8 : 0.9;
+	float d = c > 1.5 ? 0.72 : 0.86;
 	if (look.x > 0.5) {
 		look.z *= d;
-	} else {
-		col.rgb *= d;
 	}
+	col.rgb *= d;
 }
-
 
 void vertex() {
 #ifdef CPU_FED
@@ -558,7 +561,7 @@ void vertex() {
 			side, sel, fire, set, pal, shoot, fired, gun, INSTANCE_CUSTOM.w, ext, uv, pos, col, look, ob, near);
 		if (crc > 0.5) {
 			vec2 an = ob_board(mix(MODEL_MATRIX[0].xy, MODEL_MATRIX[3].xy, alpha) * px_per_unit) - vec2(0.0, ext * OB_SIN);
-			pos = an + (pos - an) * crouch_k(crc);
+			pos = crouch_ob(pos, an, crc, MODEL_MATRIX[1].x);
 			crouch_tint(crc, col, look);
 		}
 		v_ob = ob;
@@ -595,7 +598,7 @@ void vertex() {
 			ext, uv, pos, col, look, ob, near);
 		if (cri > 0 && st == 0) {
 			vec2 an = ob_board(mix(prv, cur, alpha) * px_per_unit) - vec2(0.0, ext * OB_SIN);
-			pos = an + (pos - an) * crouch_k(float(cri));
+			pos = crouch_ob(pos, an, float(cri), float(fetch_int(4, i)));
 			crouch_tint(float(cri), col, look);
 		}
 		v_ob = ob;

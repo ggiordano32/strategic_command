@@ -433,7 +433,9 @@ const SUPP_HOLD := 368         # 1: a missile unit whose target is suppressed or
 # The fort overwatches the plaza (docs/AI.md 70, 2026-11-06).
 const S_FORT_FALLBACK := 369   # 1: when a West fort town's streets fall (SiegeAI._fort_streets_lost: the plaza's capture running or half the street line gone) the defenders' shooters fall back onto the fort's walls nearest the plaza and fire over it, S_FB_GATE melee units hold its gate from inside; 0 they fight on in the streets
 const S_FB_GATE := 370         # ... this many melee units (nearest the gate) hold the fort's gate
-const N_KNOBS := 371
+# Suppression, second pass (docs/AI.md 71, 2026-11-06): id 371.
+const SUPP_FLANK_TIME := 371   # 1: BattleAI's flank of a pinned unit (SUPP_FLANK_PCT) only when the melee unit can run the way round (1.5 x the gap) before the pin lapses with no further fire (BattleSim.supp_pin_left); else it goes straight in on the pinned front; 0 as the first pass (Easy)
+const N_KNOBS := 372
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360]]
@@ -763,6 +765,7 @@ const KNOBS: Array = [
 	[SUPP_FALLBACK, 0, 1, 1],
 	[SUPP_FLANK_PCT, 0, 50, 75],
 	[SUPP_HOLD, 0, 1, 1],
+	[SUPP_FLANK_TIME, 0, 1, 1],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],
