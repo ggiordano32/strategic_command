@@ -135,6 +135,7 @@ void vertex() {
 		v_near = 0.0;
 #endif
 	} else {
+		if (st == 4) { prv = cur; }
 		float r = base_radius(spr);
 		vec2 c = (UV * 2.0 - 1.0) * 1.7;
 		float fade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;

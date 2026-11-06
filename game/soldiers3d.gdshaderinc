@@ -246,10 +246,13 @@ void vertex() {
 	v_seed = 0.0;
 	v_side = 0.0;
 	vec2 uv = vec2(UV.x, 1.0 - UV.y);   // (the card's corner: world_vertex_coords hands VERTEX in already placed)
+	if (st == 4) { prv = cur; }   // (a body lies where he fell)
 	vec2 pw = mix(prv, cur, alpha) * px_per_unit;   // world px
-	float gy = ob_lift_px(pw) / (ppm * OB_SIN_REF) + ext_m;
+	float deadfade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;   // (hd: the sink of the oldest body of a full table, 32 -> 1 over 10 s)
+	// The body sinks into the ground (the card goes under the board's surface) as its code runs down: the alpha cut would
+	// only drop it at half.
+	float gy = ob_lift_px(pw) / (ppm * OB_SIN_REF) + ext_m - (1.0 - deadfade) * 0.4;
 	vec3 feet = vec3(pw.x / ppm, gy, pw.y / ppm);
-	float deadfade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;
 #ifdef BASES
 	if (st == 5 || st >= 6) {
 		VERTEX = vec3(0.0, -10000.0, 0.0);

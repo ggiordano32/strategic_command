@@ -165,11 +165,12 @@ var viewer_side := -1
 var alpha := 1.0
 ## Tabletop pass 1: Graphics Low draws the bases as plain dark ellipses (set before setup).
 var base_low := false
-## Casualties stay on the table (tabletop pass 1): a dead man keeps his last frame and base for CAS_LIFE ticks,
-## at most CAS_UNIT per unit and CAS_TOTAL in all (the oldest go first). View only: the sim keeps its dead.
-const CAS_LIFE := 600
-const CAS_UNIT := 40
-const CAS_TOTAL := 2000
+## Bodies lie where they fell for the whole battle (2026-11-06, replacing tabletop pass 1's 60 s fade and 40 a unit): a man the
+## sim lists dead keeps his last frame and base at his death point, at most CAS_TOTAL on the field; past that the oldest sink
+## into the ground over CAS_SINK ticks (10 s) and are sent off the field. View only: the sim keeps its dead.
+const CAS_TOTAL := 4000
+const CAS_SINK := 100
+var cas_cap := CAS_TOTAL                # (a test lowers it)
 ## Campaign faction index per unit (CBattle "unit_faction", sim unit order;
 ## set before setup; -1 or missing: from its side, see _palette_rows).
 var unit_faction: Array = []
@@ -897,20 +898,26 @@ func _stair_lift() -> void:
 				_man_ext_on.append(i)
 
 
-# --- Casualties on the table (tabletop pass 1) -------------------------------------------------
-# A man the sim lists dead (state 4) stays drawn with his last frame and base for CAS_LIFE ticks, his fade riding in the state
-# word's heading code (1..32, soldiers.gdshaderinc); a unit keeps at most CAS_UNIT of them and the field CAS_TOTAL (oldest first);
-# those past a limit or their time are sent off the field (state 5) for the shaders. A routed unit is lifted off, casualties and all.
+# --- Bodies on the table (tabletop pass 1, rewritten 2026-11-06) ----------------------------------------------------------
+# The first tick a man is seen dead (state 4) the view records him: where he fell (the sim's position and facing for that man
+# at that tick), his side and the tick. The shaders draw a state-4 man at his own position with his previous place set to
+# it, as the top-down sprite lying on the board (his last death frame), under the living (layer 0; in 3D by depth); the
+# sim never moves or turns a dead man and the unit's slots (removed from them at his death) never reach him. No fade, no
+# per-unit cap: when more than CAS_TOTAL lie on the field the oldest go into the ground, their sink riding in the state
+# word's heading code (4 + 16 x 32..1, soldiers.gdshaderinc), and are then sent off the field (state 5).
 var _cas_dt := PackedInt32Array()       # per man: tick he was first seen dead, -1 alive, -2 gone from the table
+var _cas_x := PackedInt32Array()        # per man: where he fell (sim units), from the tick he was first seen dead
+var _cas_y := PackedInt32Array()
+var _cas_f := PackedInt32Array()        # per man: his facing then (1024 = a turn)
+var _cas_s := PackedInt32Array()        # per man: his side
+var _cas_sink := PackedInt32Array()     # per man: tick his sink began (-1 not sinking)
 var _cas_first := PackedInt32Array()    # per unit: its first man
 var _cas_n := PackedInt32Array()        # per unit: its men
 var _cas_seen := PackedInt32Array()     # per unit: alive count at the last look (-1 none yet)
-var _cas_kept := PackedInt32Array()     # per unit: casualties kept
-var _cas_uq: Array = []                 # per unit: PackedInt32Array of kept men, oldest first
-var _cas_uh := PackedInt32Array()       # per unit: head of its queue
-var _cas_q := PackedInt32Array()        # all kept men, oldest first
-var _cas_h := 0
-var _cas_total := 0
+var _cas_q := PackedInt32Array()        # bodies, oldest first (from _cas_gh: still on the table)
+var _cas_h := 0                         # first body not sinking
+var _cas_gh := 0                        # first body not gone (_cas_gh .. _cas_h: sinking)
+var _cas_total := 0                     # bodies on the table (sinking ones included)
 var _cas_gone := PackedInt32Array()     # men sent off the table
 var _cas_tick := -1
 var cas_us := 0                         # microseconds the last pass cost (benchmarks)
@@ -920,19 +927,18 @@ func _cas_init() -> void:
 	var nu: int = sim.n_units
 	_cas_dt.resize(sim.n)
 	_cas_dt.fill(-1)
+	_cas_x.resize(sim.n)
+	_cas_y.resize(sim.n)
+	_cas_f.resize(sim.n)
+	_cas_s.resize(sim.n)
+	_cas_sink.resize(sim.n)
+	_cas_sink.fill(-1)
 	_cas_first.resize(nu)
 	_cas_first.fill(0)
 	_cas_n.resize(nu)
 	_cas_n.fill(0)
 	_cas_seen.resize(nu)
 	_cas_seen.fill(-1)
-	_cas_kept.resize(nu)
-	_cas_kept.fill(0)
-	_cas_uh.resize(nu)
-	_cas_uh.fill(0)
-	_cas_uq.clear()
-	for u in nu:
-		_cas_uq.append(PackedInt32Array())
 	for i in sim.n:
 		var u: int = sim.unit_of[i]
 		if _cas_n[u] == 0:
@@ -941,20 +947,18 @@ func _cas_init() -> void:
 	_cas_q.clear()
 	_cas_gone.clear()
 	_cas_h = 0
+	_cas_gh = 0
 	_cas_total = 0
 
 
-func _cas_drop(i: int) -> void:
-	if _cas_dt[i] < 0:
-		return
-	_cas_dt[i] = -2
-	_cas_gone.append(i)
-	var u: int = sim.unit_of[i]
-	_cas_kept[u] -= 1
-	_cas_total -= 1
+## Where man i lies (sim units; Vector3i x, y, facing) if he is a body on the table, else (0, 0, -1).
+func body_record(i: int) -> Vector3i:
+	if i < 0 or i >= _cas_dt.size() or _cas_dt[i] < 0:
+		return Vector3i(0, 0, -1)
+	return Vector3i(_cas_x[i], _cas_y[i], _cas_f[i])
 
 
-## The state words with the casualties applied (a copy when anything changes).
+## The state words with the bodies applied (a copy only while some sink or are gone).
 func _casualties(sts: PackedInt32Array) -> PackedInt32Array:
 	var t0 := Time.get_ticks_usec()
 	var tick: int = sim.tick
@@ -964,49 +968,41 @@ func _casualties(sts: PackedInt32Array) -> PackedInt32Array:
 	var nu: int = sim.n_units
 	for u in nu:
 		var alive: int = sim.u_alive[u]
-		var seen: int = _cas_seen[u]
-		if alive == seen:
+		if alive == _cas_seen[u]:
 			continue
 		_cas_seen[u] = alive
 		var f: int = _cas_first[u]
 		for i in range(f, f + _cas_n[u]):
 			if _cas_dt[i] == -1 and sim.state[i] == 4:
 				_cas_dt[i] = tick
+				_cas_x[i] = sim.pos_x[i]
+				_cas_y[i] = sim.pos_y[i]
+				_cas_f[i] = sim.facing[i]
+				_cas_s[i] = sim.u_side[u]
 				_cas_q.append(i)
-				_cas_uq[u].append(i)
-				_cas_kept[u] += 1
 				_cas_total += 1
-		var q: PackedInt32Array = _cas_uq[u]
-		while _cas_kept[u] > CAS_UNIT:
-			var h: int = _cas_uh[u]
-			_cas_uh[u] = h + 1
-			_cas_drop(q[h])
-		if _cas_uh[u] > 64:
-			_cas_uq[u] = q.slice(_cas_uh[u])
-			_cas_uh[u] = 0
-	while _cas_h < _cas_q.size() and (_cas_total > CAS_TOTAL or _cas_dt[_cas_q[_cas_h]] < 0 \
-			or tick - _cas_dt[_cas_q[_cas_h]] >= CAS_LIFE):
-		_cas_drop(_cas_q[_cas_h])
+	while _cas_q.size() - _cas_h > cas_cap:
+		_cas_sink[_cas_q[_cas_h]] = tick
 		_cas_h += 1
-	if _cas_h > 2048:
-		_cas_q = _cas_q.slice(_cas_h)
-		_cas_h = 0
-	if _cas_h >= _cas_q.size() and _cas_gone.is_empty():
+	while _cas_gh < _cas_h and tick - _cas_sink[_cas_q[_cas_gh]] >= CAS_SINK:
+		var gi: int = _cas_q[_cas_gh]
+		_cas_dt[gi] = -2
+		_cas_gone.append(gi)
+		_cas_total -= 1
+		_cas_gh += 1
+	if _cas_gh > 2048:
+		_cas_q = _cas_q.slice(_cas_gh)
+		_cas_h -= _cas_gh
+		_cas_gh = 0
+	if _cas_gh >= _cas_h and _cas_gone.is_empty():
 		cas_us = Time.get_ticks_usec() - t0
 		return sts
 	sts = sts.duplicate()
 	for i in _cas_gone:
 		sts[i] = 5
-	var ustate: PackedInt32Array = sim.u_state
-	for k in range(_cas_h, _cas_q.size()):
+	for k in range(_cas_gh, _cas_h):
 		var i: int = _cas_q[k]
-		var dt: int = _cas_dt[i]
-		if dt < 0:
-			continue
-		if ustate[sim.unit_of[i]] == 1:   # routing: lifted off the tray, its dead with it
-			sts[i] = 5
-		else:
-			sts[i] = 4 + 16 * maxi(1, 32 - (tick - dt) * 32 / CAS_LIFE)
+		sts[i] = 4 + 16 * maxi(1, 32 - (tick - _cas_sink[i]) * 32 / CAS_SINK)
 	cas_us = Time.get_ticks_usec() - t0
 	return sts
 

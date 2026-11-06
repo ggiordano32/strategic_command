@@ -636,61 +636,142 @@ func _facing_run(move_m: Vector2, ticks: int, probe: Callable, settle := 0) -> D
 ## Tabletop pass 1: casualties stay on the table (the dead man's last frame and base), fading over 60 s, at most 40 a unit and
 ## 2000 in all, the oldest first; a routed unit's are lifted off with it.
 func _casualty_cases() -> void:
+	# (2026-11-06, docs/design/art_pipeline.md "Bodies lie where they fell") A line loses half its men, marches 50 m on, then
+	# routs: every body is drawn (state 4, no fade) at the point where its man fell, to 0.3 m, from the layer's CPU buffer.
+	var sc := {"width_m": 300, "height_m": 240, "ai_sides": [], "units": [
+		Scenarios.unit(0, UT.index_of("heavy"), 100, 150, 150, 768),
+		Scenarios.unit(1, UT.index_of("heavy"), 20, 280, 20, 256)], "orders": []}
 	var sim := BattleSim.new()
-	sim.setup(Scenarios.make("bench_2000"), 42)
+	sim.setup(sc, 3)
 	var lay := SoldierLayer.new()
 	root.add_child(lay)
 	lay.setup(sim, 24.0)
-	var peak_total := 0
-	var peak_unit := 0
-	var seen_fade := false
-	for t in 1800:
+	lay.set_cpu_fed(true)
+	for t in 30:
 		sim.step()
 		lay.upload()
-		peak_total = maxi(peak_total, lay._cas_total)
-		for u in sim.n_units:
-			peak_unit = maxi(peak_unit, lay._cas_kept[u])
-	var dead := 0
-	var shown := 0
-	var gone := 0
-	var sts: PackedInt32Array = lay._casualties(sim.state)
-	for i in sim.n:
-		if sim.state[i] != 4:
-			continue
-		dead += 1
-		if sts[i] == 5:
-			gone += 1
-		elif sts[i] >= 20 and sts[i] / 16 <= 32:
-			shown += 1
-			seen_fade = true
-	_check(dead > 200, "the battle has casualties to keep (%d dead)" % dead)
-	_check(peak_unit <= SoldierLayer.CAS_UNIT and peak_total <= SoldierLayer.CAS_TOTAL,
-		"casualties kept: at most %d a unit (peak %d) and %d in all (peak %d)" % [SoldierLayer.CAS_UNIT, peak_unit, SoldierLayer.CAS_TOTAL, peak_total])
-	_check(shown + gone == dead and seen_fade and gone > 0, "every dead man is on the table fading (%d) or gone (%d) of %d" % [shown, gone, dead])
-	# A unit that routs lifts its casualties off with it.
-	var ru := -1
-	for u in sim.n_units:
-		if lay._cas_kept[u] > 0:
-			ru = u
+	var mor: int = sim.u_morale[0]
+	var base: int = sim.u_slot_base[0]
+	var ids: Array = []
+	for k in sim.u_alive[0]:
+		ids.append(sim.slot_soldier[base + k])
+	var fell := {}
+	for k in ids.size():
+		if k % 2 == 0:
+			fell[ids[k]] = Vector3i(sim.pos_x[ids[k]], sim.pos_y[ids[k]], sim.facing[ids[k]])
+			sim._remove(ids[k], 0)
+	sim.u_morale[0] = mor
+	sim.u_state[0] = 0
+	sim.step()
+	lay.upload()
+	var worst := _body_drift(lay, fell)
+	_check(fell.size() == 50 and worst < 0.3, "bodies: %d men fell and each lies within 0.3 m of his death point (worst %.2f m)" % [fell.size(), worst])
+	var rec_ok := true
+	for i in fell:
+		if lay.body_record(i) != fell[i]:
+			rec_ok = false
+	_check(rec_ok, "the record holds each man's position and facing at his death tick")
+	var mx: int = sim.u_cx[0] - 50 * 1024
+	var x0: int = sim.u_cx[0]
+	sim.queue_order(BattleSim.make_move_order(sim.tick, 0, mx, sim.u_cy[0], sim.u_face[0], 25 * 1024, 0))
+	for t in 900:
+		sim.u_morale[0] = mor
+		sim.step()
+		lay.upload()
+		if t > 20 and absi(sim.u_cx[0] - mx) < 3 * 1024:
 			break
-	if ru >= 0:
-		sim.u_state[ru] = BattleSim.U_ROUTING
-		sts = lay._casualties(sim.state)
-		var lifted := true
-		for i in range(lay._cas_first[ru], lay._cas_first[ru] + lay._cas_n[ru]):
-			if sim.state[i] == 4 and sts[i] != 5:
-				lifted = false
-		_check(lifted, "a routed unit's casualties are not drawn")
-	# Sixty seconds on, a casualty is gone.
-	for t in 620:
+	worst = _body_drift(lay, fell)
+	_check(x0 - sim.u_cx[0] > 45 * 1024 and worst < 0.3,
+		"after the unit marched %d m on the bodies lie where they fell (worst %.2f m)" % [(x0 - sim.u_cx[0]) / 1024, worst])
+	for t in 160:
+		sim.u_morale[0] = 0
+		sim.u_state[0] = BattleSim.U_ROUTING
 		sim.step()
 		lay.upload()
-	var old := 0
-	for i in sim.n:
-		if lay._cas_dt[i] >= 0 and sim.tick - lay._cas_dt[i] >= SoldierLayer.CAS_LIFE:
-			old += 1
-	_check(old == 0, "no casualty stays past %d s (%d older ones kept)" % [SoldierLayer.CAS_LIFE / 10, old])
+	var sts: PackedInt32Array = lay._casualties(sim.state)
+	var drawn := 0
+	for i in fell:
+		if sts[i] == 4:
+			drawn += 1
+	worst = _body_drift(lay, fell)
+	_check(sim.u_state[0] == BattleSim.U_ROUTING and drawn == fell.size() and worst < 0.3,
+		"after it routed all %d bodies are still drawn where they fell (worst %.2f m)" % [drawn, worst])
 	lay.queue_free()
+	# A long battle: none vanishes before the cap, and with a low cap the oldest sink into the ground, then go.
+	var sim2 := BattleSim.new()
+	sim2.setup(Scenarios.make("bench_2000"), 42)
+	var lay2 := SoldierLayer.new()
+	root.add_child(lay2)
+	lay2.setup(sim2, 24.0)
+	lay2.cas_cap = 150
+	var seen := {}
+	var order: Array = []
+	var peak := 0
+	for t in 1800:
+		sim2.step()
+		lay2.upload()
+		for i in sim2.n:
+			if sim2.state[i] == 4 and not seen.has(i):
+				seen[i] = true
+				order.append(i)
+		peak = maxi(peak, lay2._cas_total)
+	var sts2: PackedInt32Array = lay2._casualties(sim2.state)
+	var live := 0
+	var sink := 0
+	var gone := 0
+	for i in order:
+		if sts2[i] == 4:
+			live += 1
+		elif sts2[i] == 5:
+			gone += 1
+		elif sts2[i] % 16 == 4:
+			sink += 1
+	var newest_ok := true
+	for k in range(order.size() - 150, order.size()):
+		if sts2[order[k]] != 4:
+			newest_ok = false
+	var oldest_ok: bool = sts2[order[0]] == 5
+	_check(order.size() > 400 and live == 150 and newest_ok and oldest_ok and live + sink + gone == order.size(),
+		"a cap of 150: of %d dead %d lie, %d sink, %d are gone (the newest 150 all lie, the oldest is gone; peak %d)" % [order.size(), live, sink, gone, peak])
+	lay2.cas_cap = SoldierLayer.CAS_TOTAL
+	lay2.queue_free()
+	var sim3 := BattleSim.new()
+	sim3.setup(Scenarios.make("bench_2000"), 42)
+	var lay3 := SoldierLayer.new()
+	root.add_child(lay3)
+	lay3.setup(sim3, 24.0)
+	var dead3 := 0
+	var shown3 := 0
+	var oldest := -1
+	for t in 2400:
+		sim3.step()
+		lay3.upload()
+	var sts3: PackedInt32Array = lay3._casualties(sim3.state)
+	for i in sim3.n:
+		if sim3.state[i] == 4:
+			dead3 += 1
+			if sts3[i] == 4:
+				shown3 += 1
+			if oldest < 0 or lay3._cas_dt[i] < lay3._cas_dt[oldest]:
+				oldest = i
+	_check(dead3 > 300 and shown3 == dead3 and sim3.tick - lay3._cas_dt[oldest] > 1200,
+		"under the cap none vanishes: %d of %d dead lie after 240 s (the oldest %d s old)" % [shown3, dead3, (sim3.tick - lay3._cas_dt[oldest]) / 10])
+	lay3.queue_free()
+
+
+## The worst distance (m) between a man's drawn place (the layer's CPU buffer: current position) and where he fell, over `fell`
+## (man -> Vector3i), 1000 if one is not a body in the buffer (state 4, no fade).
+func _body_drift(lay, fell: Dictionary) -> float:
+	var worst := 0.0
+	for i in fell:
+		var r: Vector3i = fell[i]
+		var px: float = lay._cbuf.get_pixel(SoldierLayer.C_CUR_X, i).r
+		var py: float = lay._cbuf.get_pixel(SoldierLayer.C_CUR_Y, i).r
+		var st: float = lay._cbuf.get_pixel(SoldierLayer.C_B, i).r
+		if st != 4.0:
+			return 1000.0
+		worst = maxf(worst, Vector2(px - r.x, py - r.y).length() / 1024.0)
+	return worst
 
 
 func _facing_cases() -> void:

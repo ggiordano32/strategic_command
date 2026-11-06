@@ -644,7 +644,7 @@ Pass 1 of the tabletop plan above. View only: nothing under `sim/` changed, no h
   for 600 ticks (60 s), at most 40 a unit and 2000 in all, the oldest first; the remaining life rides in the state word's heading
   code (`4 + 16 x fade`, fade 1..32; the shader fades the sprite and the base, and greys the dead a little more), men past a limit
   or their time are sent off the field (state 5), and a routed unit's casualties are not drawn while it routs. Cost 50 us a tick. The
-  sim keeps its dead; before this pass every corpse stayed for the whole battle.
+  sim keeps its dead; before this pass every corpse stayed for the whole battle. **Superseded 2026-11-06: bodies now stay for the battle, see "Bodies lie where they fell".**
 - **Baked draws.** The vector drawing is cheap to look at and dear to run (a standard 36 us, a UI icon 280 us, a counter with its
   icon 280 us), so `glyph_bake.gd` renders a standard (per colour, number, rim, crest) or a token (per glyph and colour) once in a
   SubViewport and the overlay draws the texture (one call). While a bake is pending (two frames) and in headless runs a plain
@@ -2103,3 +2103,49 @@ flash per gun missile at the man's muzzle (0.12 s a musket, 0.06 s a pistol), `t
   discs; a wind that changes does not exist (a fixed battle wind); the flash light on the men is a uniform, not a shadowed light; a
   flash's glow in the top and oblique views has no depth (it lights a man behind a wall); sea battles keep the plain-blend flash; no
   device check; the lights cost the terrain's fragment shader up to eight lights for 0.1 s at a time (not measured on a phone).
+
+### Bodies lie where they fell (as built, 2026-11-06, view only)
+
+The owner: "the dead bodies seem to need a pass as well. They disappear or are never shown on the map. They should spawn below
+the soldier that actually dies, not just randomly under the unit." and, from the phone, "it is most noticeable on the 3D
+battlefield". **This supersedes the casualty paragraph of tabletop pass 1 (the 60 s life, the fade, 40 a unit, 2,000 in all, a
+routed unit's dead lifted off).**
+
+- **Diagnosis** (the probe: `bench_2000` for 2,400 ticks, 693 men dead; the shots: a 100-man line that loses 50 men at once,
+  marches 50 m on, then routs, 844 x 390). The sim keeps a dead man exactly where and as he fell: 0 of 693 moved or turned in
+  any later tick, and a death removes him from his unit's slots, so the unit's march never reaches him. The body was never
+  drawn "under the unit" by position. What made the bodies vanish: (1) **the 3D view's alpha cut** (the cards write depth, so
+  `ALPHA_SCISSOR_THRESHOLD` 0.5) turned the 60 s fade into a drop at about 27 s: after the line marched 46 s no body was left at
+  all in 3D (top and oblique, alpha-blended, showed them fading); the bases dropped at the same moment (`v_b.y < 0.5`); (2) a
+  routing unit's casualties were sent off the field with it (the screen showed nothing at all where 50 had fallen); (3) 60 s and
+  40 a unit (a 100-man unit losing 80 showed 40) and 2,000 in all; (4) 13 % of the dead (90 of 693: cavalry and runners hit
+  mid-stride) carried a stale previous place from their last tick, and the shaders' interpolation between it and the position
+  made the body wobble by up to one tick's travel each tick.
+- **As built.** `SoldierLayer._casualties` (once a tick, inside `upload`) records a man the first tick he is seen dead (state 4):
+  his position and facing from the sim's arrays at that tick, his side, the tick (`_cas_x`, `_cas_y`, `_cas_f`, `_cas_s`,
+  `_cas_dt`; `body_record(i)`). The record is the view's own; nothing afterwards (the unit's slots, a rout, a march) writes it.
+  The body keeps its last death frame (the shaders' state 4: the top-down sprite lying on the board, the base under it dim) for
+  **the whole battle**: no fade, no per-unit cap, the routed unit's dead stay. The field holds `CAS_TOTAL` 4,000 bodies; past
+  that the oldest sink into the ground over `CAS_SINK` 10 s (the sink rides in the state word's heading code, 4 + 16 x 32..1: the
+  2D views fade the sprite, the 3D view lowers the card under the board's surface by 0.4 m, so the alpha cut never shows) and are
+  sent off the field. A state-4 man's previous place is set to his current one in the shaders (soldiers.gdshaderinc `place`,
+  `place_ob`; soldier_bases.gdshaderinc; soldiers3d.gdshaderinc), so no body wobbles. Order: top and oblique draw the corpses
+  layer first (layer pass 0, already so), the 3D cards by depth (a body is a flat card 5 cm over the board, the bases 3 cm, the
+  standing cards pushed toward the camera), so a body under a marching unit is under the men in all three views; both soldier
+  paths (texture and CPU-fed) read the same state words.
+- **Cost** (this desktop, load 15-35, 1280 x 720, 6,000 men of which 3,960 dead and 2,040 alive, bodies drawn against the same
+  field with the bodies sent off, avg frame ms of four 3 s blocks, vsync off): top 4.74 / 4.84, oblique 4.98 / 4.97, 3D 5.10 /
+  4.95 (the 3D bodies +0.15 ms; GPU render time within 0.1 ms in all three, 0.2-0.7 ms). The casualty pass averaged 5 us a tick,
+  worst 34 us on `bench_2000` (it was 50 us: the per-unit queues are gone), and 0 us in a tick where nothing died. **The phone**
+  (3 to 4 times this CPU, the texture path or the CPU path alike): the pass is under 0.1 ms; 4,000 bodies +0.5 ms of vertex and
+  fill at most on a phone GPU (a body is the same instance the living cost, a quad; none of them has a new draw call).
+- **Tests.** `battle_screen_test` `_casualty_cases` (three views): a line loses 50 of 100 men, each body within 0.3 m of the
+  death point from the layer's CPU buffer, the same after the unit marched 47 m and after it routed (all 50 still state 4), the
+  record equal to the sim's position and facing at the death tick, none lost under the cap in 2,400 ticks (693 of 693), and a cap
+  of 150 sinks and removes the oldest (the newest 150 all lie). Shots (844 x 390) before and after in the session scratchpad
+  `dead/shots/{before,after}_{top,oblique,3d}_{a_stand,b_marched,c_routed}.png`.
+- **Known.** A death in the same tick as a unit gains a man (reinforcement) is not recorded by the alive-count watch (the body
+  is still drawn, only the cap's order misses it); the oblique view's ghost pass (a man behind a wall piece) still draws no
+  corpse; a body is the death frame's sprite, not a pose of the man's own weapon; the dead of a unit hidden by fog are drawn
+  (the battlefield's memory); 4,000 bodies not measured on a phone; the 3D sink hides the card by depth, so a body sinks
+  through its own base too.

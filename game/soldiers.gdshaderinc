@@ -269,9 +269,10 @@ void atlas_frame(int set, int st, vec2 vel, float ang, bool shoot, bool fired, b
 
 void place(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, int side, bool sel, bool fire,
 		int set, int pal, bool shoot, bool fired, bool gun, float idx, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look) {
+	if (st == 4) { prv = cur; }   // (a body lies where he fell: the sim never moves a dead man, his stale previous place is not drawn)
 	bool engine = st >= 6;
 	bool dead = st == 4 || st == 7 || st == 8;
-	// A dead man's heading code is his fade (1..32 over the 60 s he stays on the table, 0: not fading).
+	// A dead man's heading code is his sink (1..32 over the 10 s the oldest body of a full table goes into the ground, 0: not sinking).
 	float deadfade = (st == 4 && hd > 0) ? float(hd) / 32.0 : 1.0;
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
 	float yaw = facing;
@@ -369,6 +370,7 @@ float ob_count(float packed, int a) {
 void place_ob(vec2 cur, vec2 prv, float facing, int hd, int st, int spr, vec4 r, int side, bool sel, bool fire,
 		int set, int pal, bool shoot, bool fired, bool gun, float idx, float ext, inout vec2 uv, out vec2 pos, out vec4 col, out vec4 look,
 		out vec4 ob, out float near) {
+	if (st == 4) { prv = cur; }   // (a body lies where he fell: the sim never moves a dead man, his stale previous place is not drawn)
 	vec2 p = mix(prv, cur, alpha) * px_per_unit;
 	vec2 anchor = ob_board(p) - vec2(0.0, ext * OB_SIN);
 	near = ob_near(p, ext);
