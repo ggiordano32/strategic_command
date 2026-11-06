@@ -100,6 +100,8 @@ static func pref() -> String:
 				return v
 	if OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("window.location.search", true)
+		if q is String and (q as String).contains("battle-view=top"):
+			return "top"   # (a testing aid, like the other two)
 		if q is String and (q as String).contains("battle-view=oblique"):
 			return "oblique"
 		if q is String and (q as String).contains("battle-view=3d"):

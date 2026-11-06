@@ -10,6 +10,7 @@ const SoldierLayer := preload("res://game/soldier_layer.gd")
 const SETTINGS := "user://settings.cfg"
 const AUTO_FPS := 40.0
 const MEASURE_S := 3.0
+static var _web_q := "?"   # the URL query's quality ("?" not read yet)
 static var session_low := false   # the auto downgrade, for this run only
 
 
@@ -19,6 +20,16 @@ static func _launch_override() -> String:
 			var v := str(a).get_slice("=", 1).to_lower()
 			if v == "high" or v == "low" or v == "auto":
 				return v
+	if OS.has_feature("web"):
+		# (the web: "?quality=low", a testing aid like the command line's; read once)
+		if _web_q == "?":
+			_web_q = ""
+			var q = JavaScriptBridge.eval("window.location.search", true)
+			if q is String:
+				for kv in (q as String).trim_prefix("?").split("&"):
+					if kv.begins_with("quality=") and kv.get_slice("=", 1) in ["high", "low", "auto"]:
+						_web_q = kv.get_slice("=", 1)
+		return _web_q
 	return ""
 
 

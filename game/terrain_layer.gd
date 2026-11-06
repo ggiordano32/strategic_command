@@ -139,6 +139,12 @@ func apply_quality() -> void:
 			tl.apply_quality()
 
 
+## The auto check's window starts again (the battle is playable: the setup's own slow frames never count against the device).
+func restart_measure() -> void:
+	_measure_from = Time.get_ticks_msec()
+	_measure_frames = 0
+
+
 ## First MEASURE_S of a battle: under AUTO_FPS on average turns Low on for the
 ## session (the setting stays Auto) and says so.
 func _process(_delta: float) -> void:

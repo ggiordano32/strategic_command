@@ -16,6 +16,7 @@ const Overlay := preload("res://game/overlay.gd")
 const Hud := preload("res://game/hud.gd")
 const BTheme := preload("res://game/battle_theme.gd")
 const BattleMenu := preload("res://game/battle_menu.gd")
+const BattleLoading := preload("res://game/battle_loading.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
 const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
@@ -319,51 +320,202 @@ func _ready() -> void:
 	# The web's oblique sheets are a separate pack (game/oblique_pack.gd): start the fetch if the menu has not (or ask
 	# once more after a cancel), and hold the battle's start while it runs so the first oblique battle already draws the
 	# real sheets. Cancelled or failed: this battle is drawn from the top (BoardView.web_top).
+	if tap_msec < 0:
+		tap_msec = Time.get_ticks_msec()
+	if staged:
+		loading = BattleLoading.new()
+		add_child(loading)
+		loading.setup(_loading_title(), _loading_pack())
 	var obp := ObliquePack.ensure(false, true)
 	if obp != null:
+		# (the pack's own bar, with its Cancel, rides above the plate; the plate's bar follows the download, then starts again)
+		var on_progress := func(done: int, total: int):
+			if loading != null and total > 0:
+				loading.set_phase("Fetching the battle sheets", float(done) / float(total))
+		if loading != null:
+			loading.set_phase("Fetching the battle sheets", 0.0)
+			obp.progress.connect(on_progress)
 		await obp.wait()
+		if obp.progress.is_connected(on_progress):
+			obp.progress.disconnect(on_progress)
 	BoardView.web_top = OS.has_feature("web") and not ObliquePack.sheets_present()
+	await _load_run()
+
+
+## The setup's steps, in order: [phase text, method, weight]. The weights are each step's share of the bar (about their measured
+## shares, docs/design/ui.md "The battle's loading bar"; a step that does nothing in this battle, the buildings of a field or
+## the 3D table of another view, weighs 0). The sim is built whole in `_ld_sim` (its construction is one deterministic piece); the view's layers
+## are built around it, one step a frame while the loading plate is up.
+const LOAD_STEPS := [
+	["Drawing up the armies", &"_ld_scenario", 8],
+	["Laying out the ground", &"_ld_sim", 10],
+	["Painting the board", &"_ld_board_terrain", 14],
+	["Raising the buildings", &"_ld_city", 14],
+	["Setting out the works", &"_ld_works", 1],
+	["Placing the figures", &"_ld_soldiers", 22],
+	["Planting the trees", &"_ld_trees", 5],
+	["Marking the orders", &"_ld_overlay", 1],
+	["Building the table", &"_ld_v3d", 8],
+	["Setting the controls", &"_ld_hud", 6],
+	["Last touches", &"_ld_connect", 1],
+	["Opening the battle", &"_ld_finish", 1],
+]
+
+## The loading plate (game/battle_loading.gd) while `staged` (set by the menu and the campaign: the setup yields to the frame loop
+## between steps so the bar moves); tests and tools build a Battle unstaged, whose _ready runs every step at once as before.
+var staged := false
+var loaded := false             # every step done: the battle runs and takes input
+var loading: Node = null
+var tap_msec := -1              # when the Start tap happened (the menu sets it; else _ready's own time)
+var load_timings: Array = []    # [[step method, ms]] of this battle's setup
+var load_held := false          # (--load-hold: the setup waits here for good, for shots)
+var load_total_ms := 0.0        # tap to first drawn frame
+var _ld_scn: Dictionary = {}
+var _ld_board: Node2D = null
+var _ld_dio := false
+signal load_done
+
+
+func _load_weight(st: Array) -> float:
+	if st[1] == &"_ld_v3d" and BoardView.pref() != "3d":
+		return 0.0
+	if st[1] == &"_ld_city" and not (_ld_scn.get("terrain", {}) as Dictionary).has("city") and not _ld_scn.is_empty():
+		return 0.0
+	return float(st[2])
+
+
+func _load_run() -> void:
+	var total := 0.0
+	for st in LOAD_STEPS:
+		total += _load_weight(st)
+	var done_w := 0.0
+	var last_yield := Time.get_ticks_usec()
+	var hold := -1      # testing aids: --load-hold=K stops before step K for good (shots of the plate), --load-slow=MS adds MS to each step
+	var slow := 0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--load-hold="):
+			hold = int(a.get_slice("=", 1))
+		elif a.begins_with("--load-slow="):
+			slow = int(a.get_slice("=", 1))
+	var waited := 0.0   # ms spent in the frames awaited between steps (the plate's draws and whatever the engine did in them)
+	load_timings.append(["lead", float(Time.get_ticks_msec() - tap_msec)])   # (the tap to this setup's start)
+	for k in LOAD_STEPS.size():
+		var st: Array = LOAD_STEPS[k]
+		var label: String = st[0]
+		if st[1] == &"_ld_sim" and (_ld_scn.get("terrain", {}) as Dictionary).has("city"):
+			label = "Laying out the town"
+		if loading != null:
+			loading.set_phase(label, done_w / total)
+			# a frame to draw the phase before its work (the first always: the cover goes up), unless the last one was quick
+			var t_w := Time.get_ticks_usec()
+			if k == 0 or t_w - last_yield > 20000:
+				await get_tree().process_frame
+				last_yield = Time.get_ticks_usec()
+				waited += (last_yield - t_w) / 1000.0
+		if k == hold and loading != null:
+			loading.shown_for_test = true
+			load_held = true
+			while true:
+				await get_tree().process_frame
+		var t0 := Time.get_ticks_usec()
+		if slow > 0:
+			OS.delay_msec(slow)
+		call(st[1])
+		var ms := (Time.get_ticks_usec() - t0) / 1000.0
+		load_timings.append([String(st[1]).trim_prefix("_ld_"), ms])
+		done_w += _load_weight(st)
+		if k == 0:
+			total = 0.0   # (the scenario is known now: the weights again)
+			for st2 in LOAD_STEPS:
+				total += _load_weight(st2)
+			done_w = _load_weight(LOAD_STEPS[0])
+	loaded = true
+	if loading != null:
+		loading.set_phase("", 1.0)
+	# the first frame is drawn (the atlases uploaded, the view's first draw) before the plate lifts
+	var t_f := Time.get_ticks_usec()
+	if loading != null:
+		await get_tree().process_frame
+	load_timings.append(["frames", waited])
+	load_timings.append(["first", (Time.get_ticks_usec() - t_f) / 1000.0])
+	load_total_ms = float(Time.get_ticks_msec() - tap_msec)
+	var parts := PackedStringArray()
+	for t in load_timings:
+		parts.append("%s %.0f" % [t[0], t[1]])
+	print("battle load: %.0f ms tap to frame (%s)" % [load_total_ms, ", ".join(parts)])
+	if loading != null:
+		loading.finish()
+		loading = null
+	load_done.emit()
+	if "--quit-after-load" in OS.get_cmdline_user_args():
+		get_tree().quit()   # (a testing aid: the timing runs)
+
+
+func _loading_title() -> String:
+	match scenario_id:
+		"campaign", "campaign_live":
+			return "Campaign battle"
+		"custom":
+			return "Custom battle"
+	var t := Scenarios.title(scenario_id)
+	return t if t != "" else "The battle"
+
+
+func _loading_pack() -> String:
+	return "west" if CData.pack == "west" else "rome"
+
+
+func _ld_scenario() -> void:
 	sim = BattleSim.new()
-	var scn := custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
-	if unit_faction.is_empty() and scn.get("unit_faction") is Array:
-		unit_faction = scn["unit_faction"]  # (the West scenarios' factions: Scenarios.west_factions; view only)
-	if terrain_kind >= 0 and scn.has("terrain"):
-		scn["terrain"]["kind"] = terrain_kind
+	_ld_scn = custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
+	if unit_faction.is_empty() and _ld_scn.get("unit_faction") is Array:
+		unit_faction = _ld_scn["unit_faction"]  # (the West scenarios' factions: Scenarios.west_factions; view only)
+	if terrain_kind >= 0 and _ld_scn.has("terrain"):
+		_ld_scn["terrain"]["kind"] = terrain_kind
 	var gr := ground
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--force-terrain="):
 			# Testing aid: generated terrain of this kind on any scenario.
-			scn["terrain"] = {"kind": int(a.get_slice("=", 1))}
+			_ld_scn["terrain"] = {"kind": int(a.get_slice("=", 1))}
 		elif a.begins_with("--ground="):
 			gr = int(a.get_slice("=", 1))  # testing aid: ground palette (and its woods)
-	if gr >= 0 and scn.has("terrain") and not (scn["terrain"] as Dictionary).has("city"):
-		scn["terrain"]["ground"] = gr
-		scn["terrain"]["forest"] = MapGen.PALETTE_FOREST[clampi(gr, 0, MapGen.PALETTE_FOREST.size() - 1)]
+	if gr >= 0 and _ld_scn.has("terrain") and not (_ld_scn["terrain"] as Dictionary).has("city"):
+		_ld_scn["terrain"]["ground"] = gr
+		_ld_scn["terrain"]["forest"] = MapGen.PALETTE_FOREST[clampi(gr, 0, MapGen.PALETTE_FOREST.size() - 1)]
 	if ai_skill >= 0 and not campaign_mode:
-		scn["ai_skill"] = [ai_skill, ai_skill]
-	sim.setup(scn, seed_value)
+		_ld_scn["ai_skill"] = [ai_skill, ai_skill]
+
+
+func _ld_sim() -> void:
+	sim.setup(_ld_scn, seed_value)
 	bench_mode = sim.is_ai_side(0) and sim.is_ai_side(1)
 	interactive = not sim.is_ai_side(player_side)
 	# The board transform (tabletop pass 3): top view, or the oblique table (game/board_view.gd); every layer reads it.
 	BoardView.begin(sim, PX_PER_M)
 
+
+func _ld_board_terrain() -> void:
 	# Ground: height shading, contours and the faint 50 m grid in one shader.
-	var look_dio := BattleLook.is_diorama()
-	var board: Node2D = null
-	if look_dio and not ("--no-board" in OS.get_cmdline_user_args()):
-		board = BoardLayer.new()
-		add_child(board)
-		board.setup(sim, PX_PER_M)
-		BoardView.lift_node(board)
+	_ld_dio = BattleLook.is_diorama()
+	_ld_board = null
+	if _ld_dio and not ("--no-board" in OS.get_cmdline_user_args()):
+		_ld_board = BoardLayer.new()
+		add_child(_ld_board)
+		_ld_board.setup(sim, PX_PER_M)
+		BoardView.lift_node(_ld_board)
 	terrain = TerrainLayer.new()
 	add_child(terrain)
 	terrain.setup(sim, PX_PER_M)
 
+
+func _ld_city() -> void:
 	# Settlement: buildings, walls, towers (static) and the gates.
 	city = CityLayer.new()
 	add_child(city)
 	city.setup(sim, PX_PER_M)
 
+
+func _ld_works() -> void:
 	# Field works (stakes, caltrops, a camp's ditch and palisade): under the men.
 	works = WorksLayer.new()
 	works.viewer_side = player_side
@@ -374,14 +526,14 @@ func _ready() -> void:
 	# Ships lying off the shore (a fleet supporting it): under the men, so their gun crews stand on the decks.
 	ships = ShipLayer.new()
 	add_child(ships)
-	ships.setup(sim, PX_PER_M, scn.get("ships", []))
+	ships.setup(sim, PX_PER_M, _ld_scn.get("ships", []))
 	BoardView.lift_node(ships)
 	if sim.shp_on != 0 and not unit_faction.is_empty():
 		# The ships' hulls and parties (units the sim adds): their fleet's faction (the scenario's "f"), else -1.
 		var uf2: Array = unit_faction.duplicate()
 		while uf2.size() < sim.n_units:
 			uf2.append(-1)
-		var shs: Array = scn.get("ships", [])
+		var shs: Array = _ld_scn.get("ships", [])
 		for u in sim.n_units:
 			if sim.u_ship[u] >= 0:
 				var src: int = sim.sh_src[sim.u_ship[u]]
@@ -395,6 +547,8 @@ func _ready() -> void:
 	add_child(trays)
 	trays.setup(sim, PX_PER_M)
 
+
+func _ld_soldiers() -> void:
 	soldiers = SoldierLayer.new()
 	soldiers.viewer_side = player_side
 	soldiers.base_low = Quality.is_low()
@@ -412,6 +566,8 @@ func _ready() -> void:
 	trays.soldiers = soldiers
 	soldiers.probed.connect(_on_soldier_probe)
 
+
+func _ld_trees() -> void:
 	# Trees above the soldiers; their canopies fade over men under them.
 	trees = TreeLayer.new()
 	trees.viewer_side = player_side
@@ -431,6 +587,8 @@ func _ready() -> void:
 	print("map view: terrain %.1f ms, city %.1f ms, %d trees %.1f ms" % [terrain.build_ms, city.build_ms,
 		trees.count, trees.build_ms])
 
+
+func _ld_overlay() -> void:
 	orders = OrderPreview.new()
 	orders.sim = sim
 	overlay = Overlay.new()
@@ -447,10 +605,15 @@ func _ready() -> void:
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
-	if BoardView.v3d:
-		_v3d_build(board)
 
-	if look_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" and not BoardView.v3d \
+
+func _ld_v3d() -> void:
+	if BoardView.v3d:
+		_v3d_build(_ld_board)
+
+
+func _ld_hud() -> void:
+	if _ld_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" and not BoardView.v3d \
 			and not ("--no-dof" in OS.get_cmdline_user_args()):
 		add_child(BattleDof.new())
 	hud = Hud.new()
@@ -464,7 +627,7 @@ func _ready() -> void:
 		hud.unit_faction = nf
 	hud.build(sim, player_side, interactive)
 	hud.set_title(_hud_title(), hud.book.pack)
-	var su: Array = scn.get("units", [])
+	var su: Array = _ld_scn.get("units", [])
 	for k in mini(su.size(), sim.n_units):
 		if str((su[k] as Dictionary).get("label", "")) != "":
 			hud.unit_labels[k] = str(su[k]["label"])  # (reinforcements: their army's name)
@@ -494,6 +657,9 @@ func _ready() -> void:
 					break
 		AudioFx.set_battle_kind(kind)
 		AudioFx.enter_battle()
+
+
+func _ld_connect() -> void:
 	hud.card_pressed.connect(_on_card)
 	hud.pause_pressed.connect(_toggle_pause)
 	hud.speed_pressed.connect(func(): _count("speed_open"))
@@ -556,6 +722,10 @@ func _ready() -> void:
 	hud.controls.closed.connect(func(): _set_paused(_paused_before_controls))
 	if coop != null:
 		_coop_ready()
+
+
+func _ld_finish() -> void:
+	terrain.restart_measure()   # (Graphics Auto's first seconds are counted from here, not from the layer's build)
 	hud.orders_button.set_pressed_no_signal(show_all_orders)
 	if sim.city_on != 0 and sim.obs_on != 0:
 		# Town maps: the Paths toggle (remembered; on by default).
@@ -1158,6 +1328,8 @@ func dive_finish() -> void:
 # ------------------------------------------------------------- stepping ---
 
 func _process(delta: float) -> void:
+	if not loaded:
+		return   # (the setup is still running, step by step)
 	if dive_t >= 0.0:
 		dive_t = _dive_hold if _dive_hold >= 0.0 else dive_t + delta
 		if dive_t >= DIVE_SEC:
@@ -4126,6 +4298,8 @@ func _cam_to(w: Vector2) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if not loaded:
+		return
 	if dive_t >= 0.0 and ((event is InputEventKey and event.pressed and not event.echo) \
 			or (event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed)):
 		dive_finish()   # a tap or a key skips the dive (and is not an order)
@@ -4154,6 +4328,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not loaded:
+		return
 	if hud.book.visible or hud.controls.visible or (menu != null and menu.visible):
 		return  # the book, the controls page and the Menu are modal; they handle their own keys
 	if event is InputEventScreenTouch:

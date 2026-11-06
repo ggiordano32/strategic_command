@@ -1,9 +1,10 @@
 extends CanvasLayer
 ## The "Preparing the campaign" panel (Kit style): a modal dimmed layer with a
 ## title, a progress bar and the step in hand. Opened at once on the tap that
-## starts a new campaign, loads a save, joins an online campaign or enters a
-## battle, then each step is announced before its work starts and a frame is
-## left in between, so the bar moves and the tap never feels lost:
+## starts a new campaign, loads a save or joins an online campaign, then each
+## step is announced before its work starts and a frame is left in between, so
+## the bar moves and the tap never feels lost (a battle's start has its own
+## plate: game/battle_loading.gd):
 ##
 ##   var lp := LoadingPanel.open(get_tree().root, "Preparing the campaign", 5)
 ##   await lp.step("Creating the campaign")
@@ -14,7 +15,7 @@ extends CanvasLayer
 ##
 ## The panel sits over the setting's placeholder gradient (MenuPrefs.PLACEHOLDER: dark wood for the West, cool stone
 ## for Rome; darkened 40 %; no picture file) with a trim panel holding the title in the display face, a one-line tip and the
-## progress bar. Used by the campaign start, the battle build and the turn resolve.
+## progress bar. Used by the campaign start and the turn resolve.
 ##
 ## Each step's time is kept in `timings` ([[label, ms], ...]) and printed
 ## ("loading: <label> <ms> ms") for measuring.
@@ -22,10 +23,6 @@ extends CanvasLayer
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CData := preload("res://campaign/cdata.gd")
 
-## The last battle build's time (ms; -1 not measured): the panel for entering
-## a battle is shown only when the build was slow (see slow_battle()).
-static var last_battle_ms := -1.0
-const SLOW_MS := 300.0
 ## The last turn resolve's time (ms; -1 not measured): the turn resolves behind this panel when it took more than
 ## RESOLVE_SLOW_MS (see slow_resolve()), else behind the small "Resolving the turn" dialog.
 static var last_resolve_ms := -1.0
@@ -68,12 +65,6 @@ static func open(host: Node, title: String, n_steps: int, p_pack: String = "") -
 	host.add_child(lp)
 	lp._build(title)
 	return lp
-
-
-## Whether entering a battle should show the panel: the first time (unknown
-## cost) and whenever the last build took more than SLOW_MS.
-static func slow_battle() -> bool:
-	return last_battle_ms < 0.0 or last_battle_ms > SLOW_MS
 
 
 ## Whether the turn resolve should show this panel: only when the last one was slow.

@@ -3282,6 +3282,8 @@ func fight(bid: int) -> void:
 	_battle_id = bid
 	battle = Battle.new()
 	battle.dive = true
+	battle.staged = true   # the loading plate over the setup (game/battle_loading.gd)
+	battle.tap_msec = Time.get_ticks_msec()
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
@@ -3334,22 +3336,10 @@ func _fight_sea(b: Dictionary, hf: int) -> void:
 ## "Preparing the battlefield" panel when the build is slow: always the first
 ## time (unknown), later only when the last build took more than 300 ms.
 func _enter_battle() -> void:
-	var lp = null
-	if LoadingPanel.slow_battle():
-		lp = LoadingPanel.open(get_tree().root, "Preparing the battlefield", 1)
-		await lp.step("Building the battlefield")
 	if battle == null or not is_instance_valid(battle):
-		if lp != null:
-			lp.close()
 		return
-	var t0 := Time.get_ticks_usec()
+	# The battle shows its own loading plate over its setup, a step a frame (Battle.staged, game/battle_loading.gd).
 	get_tree().root.add_child(battle)
-	LoadingPanel.last_battle_ms = (Time.get_ticks_usec() - t0) / 1000.0
-	print("loading: battle build %.0f ms" % LoadingPanel.last_battle_ms)
-	if lp != null:
-		await lp.done()
-		await get_tree().process_frame
-		lp.close()
 
 
 ## Server changes that arrived during a battle are shown afterwards.
@@ -3412,6 +3402,8 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	coop.failed.connect(func(code: String, text: String): _coop_failed(code, text))
 	battle = Battle.new()
 	battle.dive = true
+	battle.staged = true   # the loading plate over the setup (game/battle_loading.gd)
+	battle.tap_msec = Time.get_ticks_msec()
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])

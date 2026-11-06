@@ -4,6 +4,7 @@ extends Control
 const AudioFx := preload("res://game/audio.gd")
 const Quality := preload("res://game/quality.gd")
 const ObliquePack := preload("res://game/oblique_pack.gd")
+const BattleWarm := preload("res://game/battle_warm.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -45,6 +46,7 @@ const TERRAIN_CHOICES := [-1, Terrain.K_FLAT, Terrain.K_ROLLING, Terrain.K_RIDGE
 
 var _menu: Control
 var _battle: Node = null
+var _scenario_wait := 0.0   # (the --scenario-wait testing aid)
 var _speed_idx := 1
 var _seed := -1
 var _terrain_idx := 0
@@ -167,6 +169,7 @@ func _ready() -> void:
 	_activate_bg.call_deferred()
 	_first_launch_offer.call_deferred()
 	ObliquePack.ensure.call_deferred()  # web, Battle view Oblique, sheets absent: fetch oblique.pck now
+	BattleWarm.start(self, func(): return _battle != null)   # the battle's once-per-session caches, built while the menu idles
 	book = UnitBook.new()
 	add_child(book)
 	controls = Controls.new()
@@ -215,7 +218,9 @@ func _ready() -> void:
 			for kv in (q as String).substr(1).split("&"):
 				args.append("--" + kv)
 	for a in args:
-		if a.begins_with("--speed="):
+		if a.begins_with("--scenario-wait="):
+			_scenario_wait = float(a.get_slice("=", 1))
+		elif a.begins_with("--speed="):
 			_speed_idx = int(a.get_slice("=", 1))
 		elif a.begins_with("--seed="):
 			_seed = int(a.get_slice("=", 1))  # testing aid: fixed seed
@@ -241,7 +246,11 @@ func _ready() -> void:
 			book.entry.set_deferred("scroll_vertical", int(a.get_slice("=", 1)))
 	for a in args:
 		if a.begins_with("--scenario="):
-			_start(a.get_slice("=", 1))
+			if _scenario_wait > 0.0:
+				# testing aid: --scenario-wait=SEC starts it after SEC s in the menu (the warm-up has run: a first Start as a player has it)
+				get_tree().create_timer(_scenario_wait).timeout.connect(_start.bind(a.get_slice("=", 1)))
+			else:
+				_start(a.get_slice("=", 1))
 		elif a.begins_with("--siege="):
 			# Testing aid: --siege=seed:level:walls[:ground[:kind[:defend[:plan[:coast[:equip[:time]]]]]]]
 			# (plan: MapGen.PLAN_* 0 castrum, 1 polis, 2 punic, 3 oppidum, 4 ring;
@@ -1938,6 +1947,8 @@ func _start_siege(params: Array) -> void:
 	_menu.visible = false
 	var b := Battle.new()
 	b.dive = true
+	b.staged = true   # the loading plate, the setup a step a frame (game/battle_loading.gd)
+	b.tap_msec = Time.get_ticks_msec()
 	b.scenario_id = "settlement"
 	var eq := int(params[8]) if params.size() > 8 else 0
 	var equip := {}
@@ -2032,6 +2043,8 @@ func _process(_delta: float) -> void:
 	var sz := get_viewport().get_visible_rect().size
 	_rotate_hint.visible = sz.y > sz.x
 	if _shot_path != "":
+		if _battle != null and _battle.get("loaded") == false and _battle.get("load_held") == false:
+			return   # (a battle's staged setup: the shot's frames count from the first playable one)
 		_shot_frames -= 1
 		if _shot_frames <= 0:
 			var img := get_viewport().get_texture().get_image()
@@ -2057,6 +2070,8 @@ func _start_with(id: String, sd: int, terrain_kind: int) -> void:
 	_menu.visible = false
 	var b := Battle.new()
 	b.dive = true
+	b.staged = true   # the loading plate, the setup a step a frame (game/battle_loading.gd)
+	b.tap_msec = Time.get_ticks_msec()
 	b.scenario_id = id
 	b.seed_value = sd
 	b.terrain_kind = terrain_kind
@@ -2134,6 +2149,8 @@ func _open_custom() -> void:
 func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	var b := Battle.new()
 	b.dive = true
+	b.staged = true   # the loading plate, the setup a step a frame (game/battle_loading.gd)
+	b.tap_msec = Time.get_ticks_msec()
 	b.scenario_id = "custom"
 	b.custom_scenario = built["scenario"]
 	b.seed_value = int(built["seed"])

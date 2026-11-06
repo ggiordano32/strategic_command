@@ -1740,3 +1740,135 @@ docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; 
   box select (a one-finger drag pans or draws the order line, as before), so nothing changed on touch. Tests: v3d_test 4b (a box
   round a unit's men at yaws 0 / 120 / 240 draws the dragged screen points and selects exactly the units whose men, marker or
   centre the Camera3D projects inside), input_test's box steps (the drawn corners checked in the 3D view).
+
+### The battle's loading bar (as built, 2026-11-06, view only)
+
+The owner: "we should add a loading bar to the battle sandbox, sometimes it can take a minute for the battle to load once you hit
+start." View only: nothing under `sim/` or `campaign/` changed; the sim is still built whole, in one step (`BattleSim.setup`), and
+the view's layers are built around it, so both peers' setup order is what it was.
+
+- **The plate** (`game/battle_loading.gd`, a CanvasLayer under the oblique pack's own download bar): over the battle from the
+  Start tap (the sandbox's scenarios and settlement sieges, a custom battle solo or online, a campaign battle, the tutorial's)
+  until the first playable frame. The wood of the table (`LoadingPanel.keyart`) covers whatever has been built so far and
+  takes the taps; on it a rule-box plate (`Kit.panel`) with the battle's name in the display face, a brass bar in a rule-box
+  trough and the phase in hand on one line. The plate itself fades in only after `SHOW_SEC` (0.4 s), so a load that is quick
+  shows nothing but the cover; the cover and plate fade out in 0.18 s once the first frame is drawn. Fits both phone windows
+  (the project's logical size is at least 800 x 400, the plate 360 x 124 at most). The campaign battle's old one-step
+  `LoadingPanel` ("Preparing the battlefield", shown only after a slow build) is gone: it is the same setup, so it gets the same
+  plate (`CampaignScreen._enter_battle` just adds the battle).
+- **The setup as steps** (`Battle.LOAD_STEPS`, `_load_run`): `_ready` is the old body cut at its natural seams into 12 methods
+  (`_ld_scenario`, `_ld_sim`, `_ld_board_terrain`, `_ld_city`, `_ld_works`, `_ld_soldiers`, `_ld_trees`, `_ld_overlay`, `_ld_v3d`,
+  `_ld_hud`, `_ld_connect`, `_ld_finish`), in the same order. A staged battle (`Battle.staged`, set by `main.gd`'s four starts
+  and the campaign's two) awaits a frame before a step when the last one took over 20 ms (and before the first), names the
+  phase on the plate ("Drawing up the armies", "Laying out the town / ground", "Painting the board", "Raising the buildings",
+  "Setting out the works", "Placing the figures", "Planting the trees", "Marking the orders", "Building the table" (3D only),
+  "Setting the controls", "Last touches"), and the bar is the share of the step weights done (`LOAD_STEPS`, about the measured
+  shares; a step that does nothing in this battle, the town of a field or the 3D table of another view, weighs 0). On the web,
+  while the oblique pack downloads the plate says "Fetching the battle sheets" and its bar follows the download, then starts again.
+  Nothing is playable until `loaded`: `_process`, `_input` and `_unhandled_input` return early, the cover swallows taps, and the
+  plate is released one drawn frame after the last step. No threads (the web build is single-threaded; this is frames, not
+  workers). An unstaged Battle (every test and tool that builds one) runs all steps inside `_ready` as before, `loaded` true when
+  `add_child` returns. `tests/battle_loading_test.gd` checks both, and that the staged sim hash equals the unstaged one.
+- **Waiting for a staged battle:** `Battle.loaded` / `Battle.loading` and the signal `load_done`. `tests/input_test.gd` and
+  `campaign_input_test.gd` hold their step runner while any node of the root has `loaded == false` or a plate; `main.gd`'s `--shot`
+  counts its frames from the first playable one. Testing aids: `--load-hold=K` (stop before step K for good: shots of the plate),
+  `--load-slow=MS` (MS more in each step), `--quit-after-load`, `--scenario-wait=SEC` (start the `--scenario` after SEC s in the
+  menu), `--no-warm`, `--warm-now`; on the web `?quality=low|high`, `?battle-view=top`, `?no-warm=1`, `?warm-now=1`;
+  `server/cmd/webprobe` gained `waitlog:TEXT:MS` (wait for a console line).
+- **Timing** (`Battle.load_timings`, printed as "battle load: N ms tap to frame (lead, steps, frames, first)"; `tests/load_timing.gd`
+  builds a scenario twice in one process, cold then warm, one machine load for both). lead = tap to the setup's start (the web's
+  oblique pack download); frames = the frames awaited between steps (the plate's draws, plus whatever the engine did in them:
+  shader compiles on a cold cache); first = the last frame, the first one the player sees. This desktop (RTX 3070, 1280 x 720)
+  was shared with other jobs the whole time (load average 18-37 on 16 cores), so absolute numbers are 1.5-3 x a quiet machine's;
+  the cold row and the warm row of a case were taken seconds apart. Warm: the warm-up below done (`--warm-now`), the mapgen
+  column taken from the cold row (the second build of one seed found it cached) and the total adjusted for that.
+
+Desktop, a first Start in a fresh process (cold) against one after the menu's warm-up (warm), ms:
+
+| scenario | view | q | start | total ms | mapgen | sim | board+terrain | city | soldiers | trees | 3D | HUD | other | frames | first frame |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| battle_2000 | top | high | cold | 6361 | 1 | 249 | 668 | 0 | 648 | 0 | 0 | 209 | 19 | 3341 | 1227 |
+| battle_2000 | top | high | warm | 735 | 1 | 150 | 344 | 0 | 72 | 1 | 0 | 71 | 4 | 69 | 20 |
+| battle_2000 | top | low | cold | 1275 | 1 | 214 | 297 | 0 | 357 | 0 | 0 | 105 | 16 | 180 | 104 |
+| battle_2000 | top | low | warm | 757 | 1 | 247 | 309 | 0 | 63 | 0 | 0 | 68 | 4 | 48 | 16 |
+| battle_2000 | oblique | high | cold | 2334 | 1 | 233 | 574 | 0 | 980 | 4 | 0 | 78 | 14 | 292 | 157 |
+| battle_2000 | oblique | high | warm | 1137 | 1 | 250 | 557 | 0 | 129 | 2 | 0 | 71 | 6 | 98 | 23 |
+| battle_2000 | oblique | low | cold | 1904 | 1 | 226 | 406 | 0 | 792 | 0 | 0 | 86 | 13 | 221 | 155 |
+| battle_2000 | oblique | low | warm | 785 | 1 | 168 | 282 | 0 | 121 | 0 | 0 | 97 | 5 | 57 | 55 |
+| battle_2000 | 3d | high | cold | 2413 | 0 | 215 | 432 | 0 | 802 | 0 | 231 | 71 | 18 | 577 | 67 |
+| battle_2000 | 3d | high | warm | 673 | 0 | 149 | 269 | 0 | 62 | 0 | 59 | 69 | 4 | 45 | 16 |
+| battle_2000 | 3d | low | cold | 2434 | 0 | 234 | 436 | 0 | 828 | 0 | 256 | 84 | 14 | 493 | 85 |
+| battle_2000 | 3d | low | warm | 586 | 0 | 122 | 215 | 0 | 71 | 0 | 52 | 66 | 4 | 40 | 15 |
+| west_town | top | high | cold | 2600 | 330 | 291 | 442 | 634 | 329 | 165 | 0 | 69 | 12 | 238 | 89 |
+| west_town | top | high | warm | 2009 | 330 | 359 | 409 | 619 | 64 | 66 | 0 | 65 | 4 | 73 | 20 |
+| west_town | top | low | cold | 2332 | 333 | 342 | 362 | 411 | 334 | 163 | 0 | 67 | 14 | 207 | 98 |
+| west_town | top | low | warm | 1711 | 333 | 345 | 352 | 416 | 57 | 66 | 0 | 63 | 4 | 56 | 18 |
+| west_town | oblique | high | cold | 2884 | 330 | 359 | 610 | 562 | 627 | 102 | 0 | 48 | 11 | 172 | 61 |
+| west_town | oblique | high | warm | 1722 | 330 | 328 | 323 | 471 | 64 | 68 | 0 | 65 | 4 | 51 | 17 |
+| west_town | oblique | low | cold | 2942 | 327 | 357 | 505 | 458 | 752 | 160 | 0 | 65 | 13 | 219 | 86 |
+| west_town | oblique | low | warm | 1773 | 327 | 357 | 349 | 454 | 62 | 66 | 0 | 63 | 4 | 73 | 17 |
+| west_town | 3d | high | cold | 3570 | 333 | 345 | 526 | 432 | 770 | 167 | 241 | 68 | 13 | 567 | 107 |
+| west_town | 3d | high | warm | 1764 | 333 | 368 | 364 | 432 | 72 | 41 | 32 | 46 | 3 | 60 | 12 |
+| siege_city | top | high | cold | 1511 | 60 | 208 | 34 | 364 | 331 | 136 | 0 | 76 | 11 | 214 | 76 |
+| siege_city | top | high | warm | 1037 | 60 | 311 | 35 | 371 | 53 | 38 | 0 | 69 | 4 | 74 | 21 |
+| siege_city | top | low | cold | 1584 | 163 | 319 | 59 | 185 | 355 | 134 | 0 | 69 | 16 | 196 | 86 |
+| siege_city | top | low | warm | 995 | 163 | 365 | 36 | 181 | 56 | 41 | 0 | 76 | 5 | 50 | 21 |
+| siege_city | oblique | high | cold | 2388 | 88 | 309 | 81 | 598 | 771 | 140 | 0 | 74 | 16 | 243 | 69 |
+| siege_city | oblique | high | warm | 1125 | 88 | 348 | 41 | 384 | 59 | 40 | 0 | 72 | 6 | 68 | 19 |
+| siege_city | oblique | low | cold | 2267 | 92 | 318 | 49 | 386 | 834 | 172 | 0 | 71 | 15 | 240 | 89 |
+| siege_city | oblique | low | warm | 941 | 92 | 315 | 40 | 228 | 64 | 39 | 0 | 66 | 4 | 75 | 19 |
+| siege_city | 3d | high | cold | 2178 | 71 | 221 | 51 | 321 | 620 | 85 | 180 | 70 | 16 | 476 | 66 |
+| siege_city | 3d | high | warm | 990 | 71 | 316 | 39 | 243 | 56 | 38 | 60 | 65 | 4 | 82 | 15 |
+| siege_city | 3d | low | cold | 2626 | 90 | 307 | 53 | 414 | 771 | 136 | 246 | 77 | 15 | 458 | 57 |
+| siege_city | 3d | low | warm | 956 | 90 | 314 | 37 | 209 | 53 | 26 | 62 | 64 | 4 | 68 | 29 |
+
+Web export in headless Chromium (software GL, the same load): the best of the runs per case and phase (13 of the 18 cases; the top
+runs of the first pass were oblique, the page had no `?battle-view=top`). download = the oblique pack (16 MB, localhost, 4-40 s
+under the load: on a phone it is the first minute); steps = the sum of the phase columns (the phone's CPU time); frames and first
+frame are software-GL render time and say little about a GPU. Not measured warm (every warm run timed out at 240 s under the
+load); expected from the desktop pair: the soldiers column ~1.2 s -> 0.2 s, trees 0.4 -> 0.1 s, board+terrain -0.2 s.
+
+| scenario | view | q | steps ms | download | mapgen | sim | board+terrain | city | soldiers | trees | 3D | HUD | other | frames | first frame |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| battle_2000 | top | high | 3856 | 54 | 2 | 349 | 1772 | 0 | 1475 | 1 | 0 | 235 | 22 | 4080 | 4452 |
+| battle_2000 | oblique | high | 2565 | 4305 | 1 | 266 | 754 | 0 | 1027 | 411 | 0 | 94 | 12 | 1114 | 746 |
+| battle_2000 | oblique | low | 1648 | 4299 | 1 | 196 | 476 | 0 | 845 | 0 | 0 | 119 | 11 | 1019 | 435 |
+| battle_2000 | 3d | high | 4268 | 4280 | 0 | 258 | 494 | 0 | 970 | 0 | 2468 | 69 | 9 | 7460 | 1896 |
+| battle_2000 | 3d | low | 4026 | 4298 | 1 | 196 | 523 | 0 | 873 | 0 | 2361 | 63 | 9 | 6236 | 1100 |
+| west_town | top | high | 5524 | 43 | 480 | 594 | 1302 | 1521 | 891 | 336 | 0 | 378 | 22 | 3559 | 4253 |
+| west_town | oblique | high | 6118 | 6844 | 423 | 560 | 1023 | 1094 | 1572 | 1291 | 0 | 145 | 10 | 2693 | 1770 |
+| west_town | oblique | low | 4101 | 8830 | 450 | 482 | 742 | 661 | 1279 | 313 | 0 | 160 | 14 | 2555 | 1206 |
+| west_town | 3d | high | 7933 | 13456 | 476 | 599 | 1193 | 741 | 2135 | 690 | 1917 | 164 | 18 | 27160 | 572 |
+| siege_city | top | high | 2047 | 21 | 105 | 276 | 114 | 775 | 428 | 199 | 0 | 139 | 11 | 1700 | 565 |
+| siege_city | oblique | high | 3708 | 6597 | 119 | 400 | 120 | 1154 | 1309 | 437 | 0 | 158 | 11 | 2059 | 675 |
+| siege_city | oblique | low | 3721 | 12860 | 180 | 447 | 241 | 879 | 1481 | 318 | 0 | 155 | 20 | 2832 | 1012 |
+| siege_city | 3d | high | 11585 | 40099 | 265 | 933 | 431 | 2167 | 3402 | 432 | 3690 | 222 | 43 | 40966 | 16090 |
+
+- **Where the time goes.** (1) Five static caches the first battle of a process builds on the Start tap, desktop ms each in
+  isolation: the soldiers' procedural atlas 266 (`SoldierLayer._make_atlas`, a per-pixel loop), the tree atlas 145, the oblique figure
+  sheets `SpriteOb.ensure` 689, the kit sheet `KitOb` 210, the 3D kit meshes `Kit3D` 159: 1.47 s of 2.3-3.6 s, about 5 x that on
+  the web. (2) Per battle, the sim's own construction (mapgen 330 on a West town, 60-160 on a Rome city, 0 on a field; `sim.setup`
+  210-360), the ground (the veg texture's loops 135, the height texture 140, a town's rock and land kit about 300), the town (the
+  streets' raster 370, the kit's shadow bake 85 for the land kit and 185 for a West town's, none in 3D), the trees 85-170, the
+  3D table 180-250, the HUD 50-80. (3) The first frames: 60-110 ms on a warm shader cache, 1-5 s on a cold one (the web's
+  every launch). Not found: a bake that runs twice (the city's kit and the land kit are two bakes, none in 3D), `kit3d.res`
+  reloaded per battle (static; so are the sheets), a kit rows build that grows badly (houses 1 ms, instances 0.2 ms), a
+  decode on the main thread that repeats (the ground tiles load from the importer's cache in 13 ms; `_raw` of the kit atlases 5 ms).
+- **What was fixed.** (a) The warm-up (`game/battle_warm.gd`, started by `main.gd`): from 4 s after the menu is up, one of the five
+  caches every 1.2 s (only what the Battle view in use needs, on the web only once the oblique pack is mounted, never headless,
+  never once a battle is open or starting), so a first Start finds them built: desktop warm against cold, the same minute: west
+  town oblique 2.9 -> 1.7 s, 3D 3.6 -> 1.8 s, siege city 2.4 -> 1.1 s, a field 2.3 -> 1.1 s. The price is one 0.15-0.7 s hitch (desktop) a
+  second apart in the menu, about 5 x that on the web, none after the fifth. (b) Graphics Auto's first-3-seconds fps check
+  (`TerrainLayer._process`) counted from the terrain layer's build, so a load of more than 3 s ended Auto on Low for the session
+  with the fps of the load; it counts from the first playable frame now (`restart_measure`): a phone that loads slowly but runs
+  well keeps High, one that runs under 40 fps still drops. (c) Testing: the web's `?quality=` and `?battle-view=top`.
+- **Tests.** `tests/battle_loading_test.gd` (new: unstaged ready at once, staged not ready on its first frame, the plate, the
+  cover, the plate clear for a quick load, the bar only rises, the phases named, the same sim hash, the plate released, its fit),
+  battle_screen_test (three views), custom_battle_test, hud_fit_test, input_test, menu_test, campaign_input_test, theme_test,
+  lockstep_test, determinism_test --only=deploy, v3d_test, `check_scripts.sh` and the web export with `webcheck -v3d`: see STATUS.
+- **Known.** The plate shows the setup's steps, not time: a step of several seconds (the sim's construction on a slow phone) leaves
+  the bar standing, the phase text says what it is on; the bar's weights are the desktop's shares; the plate has no Cancel (the
+  oblique pack's own bar does, while it downloads); a sea battle (`game/sea_battle.gd`) has no plate; a step's frame is
+  awaited only when the last took over 20 ms, so a phone that runs steps in 30 ms gets a frame per step; the warm-up is a hitch
+  in the menu and was not tried on a phone; the web cold shader compile on the first frames is not touched; the cold-vs-warm
+  mapgen saving of a repeated seed is the engine's cache, not the warm-up.

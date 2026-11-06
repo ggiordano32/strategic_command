@@ -558,6 +558,8 @@ func _process(_delta: float) -> bool:
 	frame += 1
 	if frame < 5:
 		return false
+	if _battle_loading():
+		return false   # (a battle started from the menu sets itself up a step a frame under its loading plate)
 	if wait > 0:
 		wait -= 1
 		return false
@@ -566,6 +568,14 @@ func _process(_delta: float) -> bool:
 	var s: Callable = steps.pop_front()
 	s.call()
 	wait = 2
+	return false
+
+
+## A Battle node of the tree is still setting itself up (or its plate is still lifting): the steps wait.
+func _battle_loading() -> bool:
+	for n in root.get_children():
+		if n.get("loaded") == false or n.get("loading") != null:
+			return true
 	return false
 
 
