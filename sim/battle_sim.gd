@@ -501,6 +501,16 @@ const CS_R_TAKE := 13 * M    # Take cover standing with no order: men take spots
 const CS_DEEP := 2           # cover spots: rows behind each spot in the same lee for the men with none (C2) ...
 const CS_ROW := 1229         # ... this far apart (1.2 m)
 const CS_RELAY := 50         # a unit holding cover spots lays them out again this often (5 s): face men to the edges the fallen left
+# Lines fight from cover (fourth pass of cover, 2026-11-06; the third evaluation's gap 1: 0 of 81 walks ended in
+# cover, 12 of 2,538 serving spots had any): a line of missile foot (the Line stance) standing under fire (at its
+# fire spot or where its walk stopped with a line, or halted) lays its men out on the cover spots within CS_R_TAKE
+# (the per-man machinery of Take cover: the covered side of a yard wall, fence, heap or house corner toward its
+# shooter), the rest keep their places; back to the formation when it moves off or the fire stops.
+static var LINE_COVER_ON := 1    # 0: line troops never take cover spots standing (the third pass)
+const LINE_COVER_IN := 30        # ... under fire: shot at or wounded by a missile within 3 s ...
+const LINE_COVER_HOLD := 100     # ... and kept while shot at within 10 s (a musket reloads in about 12 s: no flapping),
+                                 # or while the unit that last shot at it still has shot and it in its reach (men behind a
+                                 # yard wall are soon hidden from far shooters, _seen, who then hold their fire)
 const BOUND_LEN := 25 * M    # bounding advance: a bound's anchor goes at most this far ...
 const BOUND_MIN := 10 * M    # ... and stops at cover once past this far ...
 const BOUND_T := 120         # ... or after this long (12 s); the other team comes up as long at most
@@ -561,6 +571,13 @@ const RUBBLE_SPEED := 600        # per mille of the pace with the anchor in rubb
 # not in his way), arcing weapons as before; rubble within LAND_NEAR of either man is cover, not a wall between.
 static var RUBBLE_H := 1331      # 1.3 m (0: flat, as before)
 const RUBBLE_SKIP := 1536        # ... rubble this near either end of a trace is the man's footing, not his cover
+# Fourth pass (2026-11-06; the third evaluation's gap 2): a West breach's rubble is 10-13 m deep, beyond LAND_NEAR of
+# both lines, and its heap blocked the aim (lof_block, to the body at 1.0 m: the unit-level line, each man's shot,
+# the spot search, the AI's lines): nobody across a breach shot while the chip said "light". Now a heap blocks the
+# aim only where it would stop a ball at the man's head (lof_block's line raised to LOF_HEAD at its end: a man
+# below a town's bank with the heap on its edge stays hidden); below that it is the ball's (_flat_block's traces:
+# LINE_LOW_STOP at a line man's chest, a cover man's body).
+static var RUBBLE_AIM_BLOCK := 0 # 1: rubble cells block lof_block at the aimed height as in the third pass; 0: at the head's
 const RUBBLE_COVER_PCT := 35     # men without the cover trait in rubble: this % of the cover trait's stop (COVER_STOP[COV_RUBBLE]); riders none
 const WS_AIM_OUT := 2 * M        # a flat gun battering a stretch aims this far outside its outer face (ws_aim)
 const WS_STANDING := 0           # ws_state / ob_state
@@ -1842,6 +1859,7 @@ var mx_head := PackedInt32Array()    # the men of mixing units per 2 m grid cell
 var mx_w: int = 0                    # ... its width and height in cells
 var mx_h: int = 0
 var mx_next := PackedInt32Array()
+var mx_cu := PackedInt32Array()      # fourth pass of cover (2026-11-06): per grid cell holding men, its men's unit + 1 when all are of one unit, else -1 (the separation skips a cell of its own men)
 var mx_mv := PackedByteArray()       # per man of a mixing unit: 1 on the move (further than PASS_MOVING from his place)
 var stat_mix_men: int = 0            # man-steps that threaded or gave way (not hashed)
 # Filtering always on (docs/design/battle_sim.md "Filtering always on (as built, 2026-11-06)"; scratch, rebuilt
@@ -2783,6 +2801,8 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	mx_h = (field_h >> MX_SHIFT) + 1
 	mx_head.resize(mx_w * mx_h)
 	mx_head.fill(-1)
+	mx_cu.resize(mx_w * mx_h)
+	mx_cu.fill(0)
 	mx_next.resize(n)
 	mx_mv.resize(n)
 	mx_mv.fill(0)
@@ -3467,6 +3487,8 @@ func lof_block(x0: int, y0: int, z0: int, x1: int, y1: int, z1: int, apex: int, 
 			var ok := obg[cj * obw + ci] if ci < obw and cj < obh else MapGen.C_OPEN
 			if ok != MapGen.C_OPEN:
 				var ot := _obs_top(px, py)
+				if ok == MapGen.C_RUBBLE and RUBBLE_AIM_BLOCK == 0:
+					ot -= (LOF_HEAD - LOF_BODY) * a / d  # (fourth pass: the heap against the line to his head)
 				if ot > 0 and gz + ot > z and (a >= LAND_NEAR and a <= d - LAND_NEAR or not (MapGen.is_land(ok) or ok == MapGen.C_RUBBLE)):
 					# (A rock or cliff within LAND_NEAR of either man is his
 					# cover, not a wall between them: he shoots over it and can
@@ -3548,10 +3570,70 @@ static func _works_cell(k: int) -> bool:
 ## to centroid), or true for weapons that arc over everything.
 const LOF_MEN := 4  # lof_units: men of a unit tried when its middle has no line of fire (at cover spots; third pass: every unit)
 static var LOF_MEN_ALL := 1    # third pass (2026-11-06): 1 every unit's men tried (its front rank, a garrison's windows), 0 only cover spots (before)
-static var LOF_CACHE_ON := 1   # lof_units answered once per unit pair between soldier moves (0: every call traced; the same answers)
-var _lofc := PackedInt32Array()  # (derived: lof_units' answers, (epoch << 1) | line; not in snapshots)
-var _lofc_n: int = 0
-var _lofc_ep: int = 1            # (bumped at each step's start, after the soldiers move and on restore)
+static var LOF_CACHE_ON := 1   # lof_units' answers kept per unit pair (0: every call traced)
+# Fourth pass (2026-11-06; the cost lever the third evaluation named): an answer is kept across ticks until either
+# unit changes (_lof_age, at each step's start, after the cover passes and after the soldiers move): its anchor moved
+# this tick, its centre moved more than LOFC_MOVE or it turned more than LOFC_TURN since its stamp, a man fell, its
+# cover spots, building or wall changed, or LOFC_LIFE passed; or the obstacles changed (a breach, a fallen house, a
+# gate). So a unit on the move is traced afresh as before; two standing units keep their answer. (Kept across 2 m of
+# the centre's drift for moving units too, the 81 walks of the evaluation lost 872 men against 775: stale answers
+# on the way.) The third pass kept them only between soldier moves. Only the sim's own calls (inside step) write it: the view's and
+# the probes' calls read it or trace. It is part of the snapshot (the answers a restored copy goes on with).
+const LOFC_MOVE := M
+const LOFC_TURN := 32            # (11 degrees)
+const LOFC_LIFE := 20            # (2 s)
+const LOFR_K := 6                # _lofr ints a unit: centre x, y, facing, men alive, flags, tick of its stamp
+var _lofc := PackedInt64Array()  # lof_units' answers, a unit pair each: (stamp << 1) | line, the stamp the larger of the two units'
+var _lofc_n: int = 0             # the unit count the arrays are laid out for
+var _lofv := PackedInt64Array()  # a unit's stamp (a fresh one each time it changes) ...
+var _lofr := PackedInt32Array()  # ... and what it was then (LOFR_K ints)
+var _lofv_n: int = 0             # the last stamp given
+var _lof_sig: int = 0            # the obstacles' signature then (rub_n, the gates)
+var _lofc_w: int = 0             # (1 inside step: the sim's calls write the cache; not in snapshots)
+
+## lof_units' cache (fourth pass): units that changed get a fresh stamp (their pairs' answers then traced again).
+func _lof_age() -> void:
+	if obs_on == 0 or LOF_CACHE_ON == 0:
+		return
+	var nn := n_units
+	var sig := rub_n
+	for g in n_gates:
+		sig = (sig * 7 + g_state[g] + 1) & 0x3FFFFFFF
+	var all := false
+	if _lofc_n != nn:
+		_lofc_n = nn
+		_lofc.resize(nn * nn)
+		_lofc.fill(0)
+		_lofv.resize(nn)
+		_lofr.resize(nn * LOFR_K)
+		all = true
+	if sig != _lof_sig:
+		_lof_sig = sig
+		all = true
+	var r := _lofr
+	var cx := u_cx
+	var cy := u_cy
+	var al := u_alive
+	var mv := u_moved
+	var tk := tick
+	var vn := _lofv_n
+	for u in nn:
+		var o := u * LOFR_K
+		if not all and mv[u] == 0 and al[u] == r[o + 3] and tk - r[o + 5] < LOFC_LIFE \
+				and absi(cx[u] - r[o]) <= LOFC_MOVE and absi(cy[u] - r[o + 1]) <= LOFC_MOVE:
+			var fl0 := (1 if u_cvb[u] >= 0 else 0) | (2 if u_occ[u] > 0 else 0) | (4 if u_wall[u] != 0 else 0)
+			if fl0 == r[o + 4] and absi(FM.angle_diff(u_face[u], r[o + 2])) <= LOFC_TURN:
+				continue
+		vn += 1
+		_lofv[u] = vn
+		r[o] = cx[u]
+		r[o + 1] = cy[u]
+		r[o + 2] = u_face[u]
+		r[o + 3] = al[u]
+		r[o + 4] = (1 if u_cvb[u] >= 0 else 0) | (2 if u_occ[u] > 0 else 0) | (4 if u_wall[u] != 0 else 0)
+		r[o + 5] = tk
+	_lofv_n = vn
+	_lofr = r
 
 func lof_units(u: int, t: int) -> bool:
 	if ter_on == 0 and map_on == 0:
@@ -3571,17 +3653,17 @@ func lof_units(u: int, t: int) -> bool:
 	# siege fits were made with the 8 m line there, measured: Rome walls 2-3
 	# attackers 56 / 48 -> 38 / 23 % with it.)
 	var stride := LOF_STEP if obs_on != 0 and u_wall[u] == 0 and u_wall[t] == 0 else 2 * LOF_STEP
-	# (Third pass, 2026-11-06: answered once per unit pair between soldier moves, _lofc.)
+	# (Third pass, 2026-11-06: answered once per unit pair between soldier moves; fourth pass: kept until either
+	# unit changes, _lof_age.)
 	var ck := -1
-	if obs_on != 0 and LOF_CACHE_ON != 0:
-		if _lofc_n != n_units:
-			_lofc_n = n_units
-			_lofc.resize(n_units * n_units)
-			_lofc.fill(0)
-		ck = u * n_units + t
-		var cv := _lofc[ck]
-		if (cv >> 1) == _lofc_ep:
+	var stamp := 0
+	if obs_on != 0 and LOF_CACHE_ON != 0 and _lofc_n == n_units:
+		stamp = maxi(_lofv[u], _lofv[t])
+		var cv := _lofc[u * n_units + t]
+		if stamp > 0 and (cv >> 1) == stamp:
 			return (cv & 1) != 0
+		if _lofc_w != 0 and stamp > 0:
+			ck = u * n_units + t
 	var blk := lof_block(x0, y0, u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
 		d * t_m_apex[ty] / 100, 0, stride, maxi(_skip0(u), pk.y), _skip1(t), pk.x)
 	var ok := blk < 0
@@ -3606,7 +3688,15 @@ func lof_units(u: int, t: int) -> bool:
 				sn = nal - s0
 			else:
 				sn = mini(maxi(files_of(u), 1), nal)
-		for k in LOF_MEN:
+		if u_cvb[u] >= 0 and u_stance[u] == STANCE_LINE:
+			# (A line fighting from cover, fourth pass: its anchor, where its fire spot was judged, first; its men
+			# at the corners lean out to shoot.)
+			stat_lofu_tr += 1
+			var da := FM.approx_len(x1 - u_ax[u], y1 - u_ay[u])
+			if lof_block(u_ax[u], u_ay[u], u_h[u] + LOF_EYE, x1, y1, u_h[t] + LOF_BODY,
+					da * t_m_apex[ty] / 100, 0, stride, maxi(_skip0(u), pk.y), _skip1(t), pk.x) < 0:
+				ok = true
+		for k in (0 if ok else LOF_MEN):
 			var i := slot_soldier[base + s0 + (sn - 1) * k / maxi(LOF_MEN - 1, 1)]
 			var sx := pos_x[i]
 			var sy := pos_y[i]
@@ -3617,7 +3707,7 @@ func lof_units(u: int, t: int) -> bool:
 				ok = true
 				break
 	if ck >= 0:
-		_lofc[ck] = (_lofc_ep << 1) | (1 if ok else 0)
+		_lofc[ck] = (stamp << 1) | (1 if ok else 0)
 	return ok
 
 
@@ -3659,7 +3749,7 @@ static var HOUSE_LOB_NEAR := 12 * M  # an arcing weapon's line crossing a buildi
 var u_sbu0 := PackedInt32Array()     # third pass (2026-11-06): the last unit that shot at this one + 1 (0 none) ...
 var u_sbt0 := PackedInt32Array()     # ... the tick it last did ...
 var u_sbu1 := PackedInt32Array()     # ... and the one before it (another unit) + 1 ...
-var u_sbt1 := PackedInt32Array()     # ... its tick (the cover chip's threat: cover_shooters; hashed on maps, read by nothing in the rules)
+var u_sbt1 := PackedInt32Array()     # ... its tick (the cover chip's threat: cover_shooters; hashed on maps; fourth pass: read by the rules too, lines in cover, return fire)
 var u_fsx := PackedInt32Array()      # a unit's fire spot (-1: none within LOF_WALK; hashed on maps)
 var u_fsy := PackedInt32Array()
 var u_fst := PackedInt32Array()      # ... the target it was found for + 1 (0: none)
@@ -3671,6 +3761,9 @@ var stat_fs_short: int = 0           # ... of them searches nearer than LOF_WALK
 var stat_fs_short_tr: int = 0        # ... and their traces
 var stat_step_go: int = 0            # the siege AI's defenders stepping to a fire spot (S_LOF_STEP) ...
 var stat_step_home: int = 0          # ... and back to the post (S_LOF_HOME)
+var stat_stand_move: int = 0         # fourth pass: units that walked out of a third enemy's front (_stand_move) ...
+var stat_stand_refuse: int = 0       # ... stops refused there (_fire_spot_on) ...
+var stat_return_fire: int = 0        # ... and fire thinks that answered a non-target shooter (_return_shooter)
 var stat_lofu: int = 0               # lof_units answers traced (not from its cache) ...
 var stat_lofu_tr: int = 0            # ... and their traces
 
@@ -3870,6 +3963,95 @@ func _lof_under_fire(u: int, t: int) -> bool:
 		and FM.approx_len(u_cx[u] - u_cx[t], u_cy[u] - u_cy[t]) <= range_vs(t, u)
 
 
+# A line stands inside a third enemy's front (fourth pass of cover, 2026-11-06; the third evaluation's gap 3: two
+# Rome cases of walk_exposure85 stood at 85-90 % of range trading with pikes that could not shoot back while a musket
+# line on the side shot them for 30-40 s). The stand-here check: a unit with a line does not stop where the fronts of
+# shooters other than its target (_third_fronts) cost more than at its kept spot, and a unit standing with a line
+# that a non-target shoots at looks (every LOF_SPOT_RETRY) for a fire spot out of those fronts. Return fire: a unit
+# shot at by a non-target while its own target cannot shoot back (or it has no line to it) answers that shooter (its
+# order's target comes back once the shooter stops); fire at will prefers the unit shooting at it the same way.
+# Maps with houses (obs_on) only.
+static var STAND_CHECK_ON := 1   # 0: the third pass (a line stands wherever it has a line)
+static var RETURN_FIRE_ON := 1   # 0: the third pass (an attack order shoots only its target; fire at will the nearest)
+const RF_HOLD := 60              # return fire kept on its shooter while that one shot at it within 6 s (a volley every 3 s or so)
+
+## The fronts (RT_FIRE_PCT each, as the path planner's zones) of the enemy shooters other than t whose arc and range
+## (and RT_MARGIN) hold (x, y) and that have a line of fire there (a flat weapon: lof_block from its middle; houses
+## between hide it): seen by u's side, formed, shot left; a garrison all round.
+func _third_fronts(u: int, t: int, x: int, y: int) -> int:
+	var sd := u_side[u]
+	var c := 0
+	for e in n_units:
+		if e == t or u_side[e] == sd or u_alive[e] <= 0 or u_state[e] != U_READY or u_ammo[e] <= 0:
+			continue
+		var ty := u_type[e]
+		if t_m_range[ty] <= 0 or u_cls[e] != UT.CLS_MISSILE or (shp_on != 0 and is_ship(e)):
+			continue
+		var rng := t_m_range[ty] + RT_MARGIN
+		var dx := x - u_cx[e]
+		var dy := y - u_cy[e]
+		if absi(dx) > rng or absi(dy) > rng or hidden_from(e, sd):
+			continue
+		var d := FM.approx_len(dx, dy)
+		if d > rng:
+			continue
+		if not (occ_on != 0 and u_occ[e] > 0):
+			var fwd := (dx * FM.cos_a(u_face[e]) + dy * FM.sin_a(u_face[e])) / FM.TRIG_ONE
+			if fwd <= 0 or fwd * FM.TRIG_ONE < d * FM.cos_a(maxi(RT_ARC, t_arc[ty])):
+				continue
+		if t_m_arc[ty] == 0 and lof_block(u_cx[e], u_cy[e], u_h[e] + LOF_EYE, x, y, elev_at(x, y) + LOF_BODY,
+				d * t_m_apex[ty] / 100, 0, LOF_STEP, _skip0(e)) >= 0:
+			continue
+		c += RT_FIRE_PCT
+	return c
+
+
+## Unit t shoots at unit u where they stand: missile troops with shot left, u within its reach.
+func _shoots_at(t: int, u: int) -> bool:
+	return t >= 0 and t_m_range[u_type[t]] > 0 and u_ammo[t] > 0 and u_cls[t] == UT.CLS_MISSILE \
+		and FM.approx_len(u_cx[u] - u_cx[t], u_cy[u] - u_cy[t]) <= range_vs(t, u)
+
+
+## Return fire (RETURN_FIRE_ON): the enemy unit other than t that shot at unit u within LOF_FIRE_T (the newest of its
+## two latest shooters first) that u can hit now (in range `rng`, seen, a clear line and a line of fire; not a
+## garrison at its windows: answering a house's windows wasted a storm's volleys), -1 none. It changes only what u
+## shoots, never where it goes (standing to answer stalled the storms: open_town 88 -> 75 % with both).
+func _return_shooter(u: int, t: int, rng: int) -> int:
+	if RETURN_FIRE_ON == 0 or obs_on == 0 or u >= u_sbu0.size():
+		return -1
+	for k in 2:
+		var sh := (u_sbu0[u] if k == 0 else u_sbu1[u]) - 1
+		var t0 := u_sbt0[u] if k == 0 else u_sbt1[u]
+		if sh < 0 or sh == t or sh >= n_units or tick - t0 > (RF_HOLD if u_ftarget[u] == sh else LOF_FIRE_T) or u_side[sh] == u_side[u] \
+				or u_state[sh] >= U_DESTROYED or u_alive[sh] <= 0 or _unseen(sh) or not _in_range(u, sh, rng) \
+				or (occ_on != 0 and u_occ[sh] > 0):
+			continue
+		if t_m_arc[u_type[u]] == 0 and not (_clear_line(u, sh) and lof_units(u, sh)):
+			continue
+		return sh
+	return -1
+
+
+## The stand-here check's walk (STAND_CHECK_ON): unit u with a line at t and no kept spot, shot at by another unit
+## within LOF_FIRE_T, standing in the fronts of shooters other than t: every LOF_SPOT_RETRY a fire spot is searched
+## (scored with the enemy's fronts) and kept when those fronts cost less there (the spot, z 1), else none.
+func _stand_move(u: int, t: int) -> Vector3i:
+	if STAND_CHECK_ON == 0 or (tick + u) % LOF_SPOT_RETRY != 0 or u_sbu0[u] <= 0 or u_sbu0[u] == t + 1 \
+			or tick - u_sbt0[u] > LOF_FIRE_T:
+		return Vector3i.ZERO
+	var here := _third_fronts(u, t, u_ax[u], u_ay[u])
+	if here <= 0:
+		return Vector3i.ZERO
+	var sp := fire_spot(u, t)
+	if sp.z == 0 or _third_fronts(u, t, sp.x, sp.y) >= here:
+		return Vector3i.ZERO
+	stat_stand_move += 1
+	u_fst[u] = t + 1
+	u_fsx[u] = sp.x
+	u_fsy[u] = sp.y
+	return Vector3i(sp.x, sp.y, 1)
+
+
 ## fire_spot kept per unit (u_fsx, u_fsy, u_fst): searched when the target
 ## changes; once a second the kept spot is checked and kept while
 ## LOF_SPOT_KEEP of its front men still have a line (hysteresis: a new search
@@ -3931,6 +4113,9 @@ func _fire_spot_on(u: int, t: int) -> Vector3i:
 			var who := cover_who(u)
 			good = cover_rating_front(u_ax[u], u_ay[u], FM.atan2_a(u_cy[t] - u_ay[u], u_cx[t] - u_ax[u]), hw, who) \
 				>= cover_rating_front(sx, sy, FM.atan2_a(u_cy[t] - sy, u_cx[t] - sx), hw, who)
+			if good and STAND_CHECK_ON != 0 and obs_on != 0 and _third_fronts(u, t, u_ax[u], u_ay[u]) > _third_fronts(u, t, sx, sy):
+				good = false  # (fourth pass: not inside a third enemy's front its kept spot is out of)
+				stat_stand_refuse += 1
 		if good or _spot_lit(u, t, sx, sy, reach, gm, ntr, LOF_SPOT_KEEP) < LOF_SPOT_KEEP:
 			u_fsx[u] = -1
 			return Vector3i.ZERO
@@ -4035,7 +4220,8 @@ func _ob_cell_at(x: int, y: int) -> int:
 
 
 ## A unit shot at unit t (third pass, 2026-11-06): t's two latest shooters, the newest first (u_sbu0 / u_sbt0, then
-## another unit in u_sbu1 / u_sbt1). Read only by cover_shooters (the view's cover chip).
+## another unit in u_sbu1 / u_sbt1). Read by cover_shooters (the view's cover chip) and, fourth pass, _line_cover, _cs_threat,
+## _return_shooter and _stand_move.
 func _shot_note(t: int, u: int) -> void:
 	if t >= u_sbu0.size():
 		return
@@ -10840,7 +11026,8 @@ func step() -> void:
 		_deploy_step()
 		return
 	_dist_new = 0
-	_lofc_ep += 1
+	_lofc_w = 1
+	_lof_age()
 	_apply_orders()
 	if rsv_on != 0:
 		_update_reserves()
@@ -10866,7 +11053,7 @@ func step() -> void:
 				_cover_seek(u)
 				if u_cvb[u] >= 0:
 					_cover_snap(u)
-			elif (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2):
+			elif (u + tick) % VIS_T == 0 and (u_stance[u] != STANCE_LINE or u_cvb[u] >= 0 or u_bnd[u] >= 2 or _line_cover(u)):
 				_cover_seek(u)  # (men into cover: phases C0, C2)
 	if skd_on != 0:
 		for u in n_units:
@@ -10875,8 +11062,8 @@ func step() -> void:
 				if kd != u_skc[u]:
 					u_skc[u] = kd  # (roles step 2: into the trees, or back to its places)
 					u_dirty[u] = 1
-	if cs_on != 0 or skd_on != 0 or ch_on != 0 or wp_on != 0:
-		_lofc_ep += 1  # (cover men may have taken their spots: lof_units' answers again)
+	# (Fourth pass: lof_units' cache is aged at the step's start and after the soldiers move, _lof_age; the third
+	# pass bumped its epoch here too, after the cover men may have taken their spots.)
 	prev_x = pos_x.duplicate()
 	prev_y = pos_y.duplicate()
 	if n_eng > 0:
@@ -10891,7 +11078,7 @@ func step() -> void:
 	_sep_build()
 	_mx_grid()
 	_update_soldiers()
-	_lofc_ep += 1
+	_lof_age()
 	if fw_on != 0:
 		_update_works()
 	if riv_on != 0:
@@ -10924,6 +11111,7 @@ func step() -> void:
 		_update_capture()
 	_check_winner()
 	tick += 1
+	_lofc_w = 0
 
 
 ## Turn unit u's formation toward `want`, limited by the type's turn rate.
@@ -11453,6 +11641,8 @@ func _mx_grid() -> void:
 		var nx := mx_next
 		var hd := mx_head
 		var cl := mx_cells
+		var cu := mx_cu
+		var u1 := u + 1
 		if not mxu:
 			# (Keeping their distance only: the men where the boxes meet.)
 			for s in u_alive[u]:
@@ -11469,8 +11659,12 @@ func _mx_grid() -> void:
 				if hc < 0:
 					cl[used] = c
 					used += 1
+					cu[c] = u1
+				elif cu[c] != u1:
+					cu[c] = -1
 				nx[i] = hc
 				hd[c] = i
+			mx_cu = cu
 			continue
 		var ax := u_ax[u]
 		var ay := u_ay[u]
@@ -11492,8 +11686,12 @@ func _mx_grid() -> void:
 			if hc < 0:
 				cl[used] = c
 				used += 1
+				cu[c] = u1
+			elif cu[c] != u1:
+				cu[c] = -1
 			nx[i] = hc
 			hd[c] = i
+		mx_cu = cu
 	mx_used = used
 
 
@@ -11751,62 +11949,6 @@ func _sep_rect(w: int, rx0: int, ry0: int, rx1: int, ry1: int) -> void:
 		u_spr[k + 1] = mini(u_spr[k + 1], ry0)
 		u_spr[k + 2] = maxi(u_spr[k + 2], rx1)
 		u_spr[k + 3] = maxi(u_spr[k + 3], ry1)
-
-
-## Man i of unit u (room rm) at (x, y) after his step: out of every man of another unit in the grid within their
-## joint room, by the whole overlap (the other, stepping after him or settled, leaves it so), at most SEP_NUDGE in
-## all. Two men on one spot part across u's facing, the lower index to the left.
-func _sep_push(u: int, i: int, x: int, y: int, rm: int) -> Vector2i:
-	var reach := rm + sep_rmax
-	var gs := MX_SHIFT
-	var cx0 := maxi((x - reach) >> gs, 0)
-	var cx1 := mini((x + reach) >> gs, mx_w - 1)
-	var cy0 := maxi((y - reach) >> gs, 0)
-	var cy1 := mini((y + reach) >> gs, mx_h - 1)
-	var gx := 0
-	var gy := 0
-	var seen := 0
-	# (Third pass, 2026-11-06: the arrays in locals; the same pushes.)
-	var mh := mx_head
-	var mn := mx_next
-	var uo := unit_of
-	var stt := state
-	var ppx := pos_x
-	var ppy := pos_y
-	var spq := u_spq
-	var mw := mx_w
-	for cy in range(cy0, cy1 + 1):
-		for cx in range(cx0, cx1 + 1):
-			var j := mh[cy * mw + cx]
-			while j >= 0 and seen < SEP_SEEN:
-				var uj := uo[j]
-				if uj != u and stt[j] < S_DEAD:
-					var rr := rm + spq[uj]
-					var rx := x - ppx[j]
-					var ry := y - ppy[j]
-					if absi(rx) < rr and absi(ry) < rr:
-						var dd := FM.approx_len(rx, ry)
-						if dd < rr:
-							seen += 1
-							if dd == 0:
-								var sg := -1 if i < j else 1
-								rx = -FM.sin_a(u_face[u]) * sg
-								ry = FM.cos_a(u_face[u]) * sg
-								dd = FM.TRIG_ONE
-								gx += rx * rr / dd
-								gy += ry * rr / dd
-							else:
-								gx += rx * (rr - dd) / dd
-								gy += ry * (rr - dd) / dd
-				j = mn[j]
-	if gx == 0 and gy == 0:
-		return Vector2i(x, y)
-	var gl := FM.approx_len(gx, gy)
-	if gl > SEP_NUDGE:
-		gx = gx * SEP_NUDGE / gl
-		gy = gy * SEP_NUDGE / gl
-	stat_sep_men += 1
-	return Vector2i(x + gx, y + gy)
 
 
 func _update_units() -> void:
@@ -12165,6 +12307,8 @@ func _update_units() -> void:
 						fsp = _fire_spot_kept(u, t)
 					elif mlof:
 						fsp = _fire_spot_on(u, t)
+						if fsp.z == 0 and STAND_CHECK_ON != 0:
+							fsp = _stand_move(u, t)  # (fourth pass: out of a third enemy's front)
 				# (u_inreach, not u_fighting: men holding to their places
 				# leave the closing to the anchor, which goes by the streets.)
 				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_inreach[u] == 0 \
@@ -12930,6 +13074,15 @@ func _missile_think(u: int) -> void:
 			# otherwise the nearest enemy in range, preferring units that are
 			# not locked in melee with our own side.
 			var cur := u_ftarget[u]
+			if RETURN_FIRE_ON != 0 and obs_on != 0 and gab != UT.AB_AUTO:
+				# (Fourth pass: the unit shooting at it first, while its current target cannot shoot back.)
+				var curv := cur >= 0 and u_state[cur] < U_DESTROYED and u_alive[cur] > 0
+				if not curv or not _shoots_at(cur, u):
+					var rs := _return_shooter(u, cur if curv else -1, rng)
+					if rs >= 0:
+						u_ftarget[u] = rs
+						stat_return_fire += 1
+						return
 			if cur >= 0 and u_state[cur] < U_DESTROYED and u_side[cur] != u_side[u] and not _unseen(cur) \
 					and _in_range(u, cur, rng) and (u_fighting[cur] == 0 or not _any_clean_target(u, rng)) \
 					and (gab != UT.AB_AUTO or _gren_ok(u, cur)):
@@ -12964,6 +13117,17 @@ func _missile_think(u: int) -> void:
 		if ft >= 0 and not lof_units(u, ft):
 			stat_lof_blocked += 1
 			ft = -1
+		if order == O_ATTACK and RETURN_FIRE_ON != 0 and obs_on != 0 and u_moved[u] == 0:
+			# (Fourth pass: standing, shot at by another unit while its own target cannot shoot back, or it has no
+			# line to it: it answers that shooter (where it goes is the order's as before); its order's target comes
+			# back once the shooter stops. Also on its way once wounded, measured: the walks past a musket line on
+			# the side lost 152 men against 112, the lines stopping to trade inside that line's front.)
+			var ot := u_target[u]
+			if ot >= 0 and (ft < 0 or not _shoots_at(ot, u)):
+				var rs := _return_shooter(u, ot, rng)
+				if rs >= 0:
+					ft = rs
+					stat_return_fire += 1
 	if ft < 0 and gab == UT.AB_AUTO and city_on != 0 and n_gates > 0 and order == O_NONE and u_gtarget[u] < 0 \
 			and u_ammo[u] > 0 and u_side[u] != city_def:
 		var gg := _gren_gate(u)
@@ -13545,6 +13709,21 @@ func _update_soldiers() -> void:
 				var still_u := u_moved[u] == 0
 				var pvx := prev_x
 				var pvy := prev_y
+				# (The search, _sep_push's until the fourth pass of cover, inlined here with its arrays hoisted: the same
+				# pushes at a fraction of the calls' cost; a grid cell of its own men only is skipped, mx_cu.)
+				var sep_reach := srm + sep_rmax
+				var sep_gs := MX_SHIFT
+				var sep_mh := mx_head
+				var sep_mn := mx_next
+				var sep_uo := unit_of
+				var sep_spq := u_spq
+				var sep_mw := mx_w
+				var sep_mxw1 := mx_w - 1
+				var sep_mxh1 := mx_h - 1
+				var sep_cu := mx_cu
+				var sep_u1 := u + 1
+				var sep_fcs := FM.cos_a(u_face[u])
+				var sep_fsn := FM.sin_a(u_face[u])
 				for s in alive:
 					var k := base + s
 					var i := ss[k]
@@ -13557,10 +13736,52 @@ func _update_soldiers() -> void:
 					var nx := x
 					var ny := y
 					if ((i + tick) & 1) == 0:
-						var sq := _sep_push(u, i, x, y, srm)
-						if sq.x != x or sq.y != y:
-							nx = clampi(sq.x, 0, fw)
-							ny = clampi(sq.y, 0, fh)
+						# Out of every man of another unit in the grid within their joint room, by the whole overlap
+						# (the other, stepping after him or settled, leaves it so), at most SEP_NUDGE in all; two men
+						# on one spot part across u's facing, the lower index to the left.
+						var sep_cx0 := maxi((x - sep_reach) >> sep_gs, 0)
+						var sep_cx1 := mini((x + sep_reach) >> sep_gs, sep_mxw1)
+						var sep_cy0 := maxi((y - sep_reach) >> sep_gs, 0)
+						var sep_cy1 := mini((y + sep_reach) >> sep_gs, sep_mxh1)
+						var sep_gx := 0
+						var sep_gy := 0
+						var sep_n := 0
+						for sep_cyy in range(sep_cy0, sep_cy1 + 1):
+							for sep_cxx in range(sep_cx0, sep_cx1 + 1):
+								var sep_c := sep_cyy * sep_mw + sep_cxx
+								if sep_cu[sep_c] == sep_u1:
+									continue
+								var sep_j := sep_mh[sep_c]
+								while sep_j >= 0 and sep_n < SEP_SEEN:
+									var sep_uj := sep_uo[sep_j]
+									if sep_uj != u and st[sep_j] < S_DEAD:
+										var sep_rr := srm + sep_spq[sep_uj]
+										var sep_rx := x - px[sep_j]
+										var sep_ry := y - py[sep_j]
+										if absi(sep_rx) < sep_rr and absi(sep_ry) < sep_rr:
+											var sep_dd := FM.approx_len(sep_rx, sep_ry)
+											if sep_dd < sep_rr:
+												sep_n += 1
+												if sep_dd == 0:
+													var sep_sg := -1 if i < sep_j else 1
+													sep_rx = -sep_fsn * sep_sg
+													sep_ry = sep_fcs * sep_sg
+													sep_dd = tone
+													sep_gx += sep_rx * sep_rr / sep_dd
+													sep_gy += sep_ry * sep_rr / sep_dd
+												else:
+													sep_gx += sep_rx * (sep_rr - sep_dd) / sep_dd
+													sep_gy += sep_ry * (sep_rr - sep_dd) / sep_dd
+									sep_j = sep_mn[sep_j]
+						if sep_gx != 0 or sep_gy != 0:
+							var sep_gl := FM.approx_len(sep_gx, sep_gy)
+							if sep_gl > SEP_NUDGE:
+								sep_gx = sep_gx * SEP_NUDGE / sep_gl
+								sep_gy = sep_gy * SEP_NUDGE / sep_gl
+							stat_sep_men += 1
+						if sep_gx != 0 or sep_gy != 0:
+							nx = clampi(x + sep_gx, 0, fw)
+							ny = clampi(y + sep_gy, 0, fh)
 							if ob and (navg[mini(ny >> 11, obh1) * obw + mini(nx >> 11, obw1)] & mask) == 0:
 								nx = x
 								ny = y
@@ -15342,7 +15563,8 @@ func _gun_unit(u: int) -> void:
 		return
 	if acc < reload or (u_moved[u] != 0 and t_rider[ty] == 0 and still < 0):
 		return
-	if (u_order[u] != O_ATTACK or u_target[u] != ft) and _unit_dist(u, ft) > t_m_volley[ty] and not _closing(ft, u):
+	if (u_order[u] != O_ATTACK or u_target[u] != ft) and _unit_dist(u, ft) > t_m_volley[ty] and not _closing(ft, u) \
+			and not (RETURN_FIRE_ON != 0 and obs_on != 0 and u_sbu0[u] == ft + 1 and tick - u_sbt0[u] <= LOF_FIRE_T):
 		stat_volley_held += 1
 		return
 	var ks := u_sk[u]
@@ -20003,6 +20225,33 @@ func _cover_seek(u: int) -> void:
 		u_dirty[u] = 1
 
 
+## Unit u is a line fighting from cover (LINE_COVER_ON): missile foot in the Line stance with shot left, standing
+## (no order, or an attack order and its anchor still: at its fire spot, or stopped with a line), shot at or wounded
+## by a missile within LINE_COVER_IN; its men hold their cover spots while shot at within LINE_COVER_HOLD or while
+## the unit that last shot at it can still shoot it (_shoots_at).
+func _line_cover(u: int) -> bool:
+	if LINE_COVER_ON == 0 or u_stance[u] != STANCE_LINE or u_cls[u] != UT.CLS_MISSILE or u_ammo[u] <= 0:
+		return false
+	var ty := u_type[u]
+	if t_mount[ty] != UT.MOUNT_FOOT or t_char[ty] != 0 or t_fixed[ty] != 0 or t_crew_sh[ty] > 1:
+		return false
+	var o := u_order[u]
+	if o == O_ATTACK:
+		if u_moved[u] != 0:
+			return false
+	elif o != O_NONE:
+		return false
+	var last := u_hit_t[u]
+	if u_sbu0[u] > 0:
+		last = maxi(last, u_sbt0[u])
+	if tick - last <= (LINE_COVER_HOLD if u_cvb[u] >= 0 else LINE_COVER_IN):
+		return true
+	if u_cvb[u] < 0 or u_sbu0[u] <= 0:
+		return false
+	var sh := u_sbu0[u] - 1
+	return sh < n_units and u_state[sh] == U_READY and u_alive[sh] > 0 and u_side[sh] != u_side[u] and _shoots_at(sh, u)
+
+
 ## Unit u may take cover man by man: in the Take cover stance (cover troops'
 ## default; Hold street: cover troops), not fighting, on the ground (not on
 ## a wall, a stair, working engines or carrying), near obstacles, and
@@ -20015,12 +20264,14 @@ func _cs_ok(u: int) -> bool:
 			or u_neng[u] != 0 or u_carry[u] >= 0 or u >= _u_obs.size():
 		return false
 	var o := u_order[u]
+	var sn := u_stance[u]
+	if sn == STANCE_LINE and o != O_MOVE:
+		return _line_cover(u) and (_u_obs[u] != 0 or _obs_within(u, CS_R_TAKE))  # (fourth pass: lines fight from cover)
 	if _u_obs[u] == 0 and not (o == O_NONE and u_stance[u] == STANCE_COVER and _obs_within(u, CS_R_TAKE)):
 		return false
 	var cover := t_cover[u_otype[u]] != 0
 	if o == O_MOVE:
 		return u_bnd[u] >= 2 and (cover or u_stance[u] == STANCE_COVER)
-	var sn := u_stance[u]
 	if sn != STANCE_COVER and not (sn == STANCE_HOLD and cover):
 		return false
 	if o == O_NONE:
@@ -20035,6 +20286,11 @@ func _cs_threat(u: int) -> int:
 	var t := u_ftarget[u]
 	if u_order[u] == O_ATTACK:
 		t = u_target[u]
+	if u_stance[u] == STANCE_LINE and u_sbu0[u] > 0 and tick - u_sbt0[u] <= LINE_COVER_HOLD:
+		# (A line fighting from cover: the cover toward the unit shooting at it, fourth pass.)
+		var sh := u_sbu0[u] - 1
+		if sh < n_units and u_state[sh] == U_READY and u_alive[sh] > 0 and u_side[sh] != u_side[u]:
+			t = sh
 	if t < 0 or u_state[t] >= U_DESTROYED or u_alive[t] <= 0:
 		t = -1
 		var bd := CS_THREAT
@@ -20085,6 +20341,11 @@ func _cover_places(u: int) -> void:
 			csr = CS_R_HOLD
 		elif u_stance[u] == STANCE_COVER:
 			csr = CS_R_TAKE
+	# (A line fighting from cover, fourth pass: spots within CS_R_TAKE; only where a man still shoots: a corner's
+	# edge, or the lee of what he fires over (lower than CS_H_LINE); no rows behind; the rest keep their places.)
+	var line := u_stance[u] == STANCE_LINE
+	if line:
+		csr = CS_R_TAKE
 	var csh := CS_H
 	var minx := ax
 	var maxx := ax
@@ -20136,12 +20397,14 @@ func _cover_places(u: int) -> void:
 						continue
 					lt = 1 if sd == 0 else -1
 					edge += 1
-				elif edge > 0:
+				elif edge > 0 or (line and _cell_top(row + i, k) >= CS_H_LINE):
 					continue
 				var px := cx + lx * lt
 				var py := cy + ly * lt
 				if (nav_at(px, py) & gm) == 0 or (city and reach_at(px, py) != ra):
 					continue
+				if line and k == MapGen.C_RUBBLE and obs_kind(px, py) == MapGen.C_RUBBLE:
+					continue  # (fourth pass: in the heap itself it is his footing, not his cover: its back edge only)
 				if cl_on != 0:
 					var q := 0
 					while q < 4 and not _clr_ok(px, py, CLR_MIN):
@@ -20153,6 +20416,8 @@ func _cover_places(u: int) -> void:
 				sp.append(px)
 				sp.append(py)
 				sp_t.append(0 if sd < 2 else CS_LEE)  # (in a face's lee he cannot shoot: after the edges)
+				if line:
+					continue
 				# Men with no spot of their own fill in behind (C2): CS_DEEP
 				# rows further back in the same lee, taken after the faces (he
 				# steps up when the man ahead falls; re-laid every CS_RELAY).
@@ -20476,7 +20741,7 @@ func _press_n(u: int, o: int) -> int:
 ## Left out of snapshots: rebuilt identically by setup() from the same
 ## scenario and seed (the unit type tables t_*, the terrain grid) or
 ## view-only diagnostics that are large.
-const _SNAP_SKIP := {"_lofc": true, "_lofc_n": true, "_lofc_ep": true, "_nn_key": true, "_nn_head": true, "_nn_list": true, "_nn_x0": true, "_nn_y0": true, "_nn_w": true, "_nn_h": true, "ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
+const _SNAP_SKIP := {"_lofc_w": true, "_nn_key": true, "_nn_head": true, "_nn_list": true, "_nn_x0": true, "_nn_y0": true, "_nn_w": true, "_nn_h": true, "ter_h": true, "ter_gx": true, "ter_gy": true, "ter_info": true, "_xf_tight": true, "_xf_tdone": true,
 	"ob_ok": true, "ob_z": true, "ob_flat": true, "ob_dx": true, "ob_dy": true, "ob_ix": true, "ob_iy": true, "ob_face": true,
 	"ob_s0": true, "ob_sn": true, "sp_x": true, "sp_y": true, "sp_f": true, "sp_k": true, "occ_bg": true,
 	"dbg_impacted": true, "veg": true, "obs": true, "obs_c": true, "obs_cd": true, "obs_sat": true, "land_sat": true, "map_info": true,
@@ -21036,7 +21301,7 @@ func restore(blob: PackedByteArray) -> bool:
 		for dst in _dist_have:
 			_dist_cache[dst] = _dijkstra(dst)
 	_xf_restore()
-	_lofc_ep += 1
+	_lofc_w = 0
 	return true
 
 

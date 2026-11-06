@@ -15,6 +15,7 @@ extends SceneTree
 ##   godot --headless --script res://tests/lof_probe.gd [-- --secs=60 --only=musket]
 
 const BattleSim := preload("res://sim/battle_sim.gd")
+const FM := preload("res://sim/fixed_math.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Terrain := preload("res://sim/terrain.gd")
@@ -102,6 +103,59 @@ static func town(weapon: String, dist: int, mode: String) -> Dictionary:
 	sc["los"] = los
 	sc["time_limit"] = 600
 	sc.erase("deploy_zones")
+	return sc
+
+
+## A West walled town's breach (fourth pass of cover, 2026-11-06; the third evaluation's breach_rub): the town of
+## seed 12 at walls 1, the longest wall stretch of 30 m or more with open ground 40 m out and in; a musket line of 40
+## (side 1) 5 m `side` ("inside" or "outside") of its middle facing across it, 60 musketeers (side 0) 40 m on the
+## other side facing back. The stretch's index is "_breach" (the caller breaches it after setup:
+## BattleSim._breach(sg, -1)). (The town stands on ground about 2 m higher than outside the wall.)
+static func breach_scenario(side: String) -> Dictionary:
+	var city := {"seed": 12, "level": 2, "walls": 1, "bld": [1, 2, 4], "plan": MapGen.CUL_LATIN, "coast": 0,
+		"founder": MapGen.CUL_LATIN, "west": 1}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 44, "forest": 0, "ground": MapGen.PAL_GREEN}
+	var sc: Dictionary = Scenarios.settlement(city, terr, [[UT.index_of("musketeers"), 40]],
+		[[UT.index_of("musketeers"), 40]], 1, [])["scenario"]
+	sc["ai_sides"] = []
+	sc["orders"] = []
+	sc["time_limit"] = 600
+	sc.erase("deploy_zones")
+	var g := BattleSim.new()
+	g.setup(sc, 1)
+	var best := -1
+	var bl := 0
+	for sg in g.ws_x0.size():
+		var l := FM.approx_len(g.ws_x1[sg] - g.ws_x0[sg], g.ws_y1[sg] - g.ws_y0[sg])
+		var mx := (g.ws_x0[sg] + g.ws_x1[sg]) / 2
+		var my := (g.ws_y0[sg] + g.ws_y1[sg]) / 2
+		var dc := FM.cos_a(g.ws_dir[sg])
+		var ds := FM.sin_a(g.ws_dir[sg])
+		var ok := true
+		for dd in [-40, -3, 3, 40]:
+			var qx: int = mx + dc * dd * 1024 / FM.TRIG_ONE
+			var qy: int = my + ds * dd * 1024 / FM.TRIG_ONE
+			if qx < 20 * 1024 or qy < 20 * 1024 or qx > g.field_w - 20 * 1024 or qy > g.field_h - 20 * 1024 \
+					or (absi(dd) == 40 and (g.obs_kind(qx, qy) != 0 or (g.nav_at(qx, qy) & 1) == 0)):
+				ok = false
+				break
+		if ok and l > bl and l >= 30 * 1024:
+			bl = l
+			best = sg
+	if best < 0:
+		return {}
+	var mx2: int = (g.ws_x0[best] + g.ws_x1[best]) / 2
+	var my2: int = (g.ws_y0[best] + g.ws_y1[best]) / 2
+	var dir: int = g.ws_dir[best]
+	var c := FM.cos_a(dir)
+	var sn := FM.sin_a(dir)
+	var sg := 1 if side == "outside" else -1
+	var face_line := (dir + (512 if side == "outside" else 0)) & 1023
+	sc["units"] = [Scenarios.unit(0, UT.index_of("musketeers"), 60, (mx2 - sg * c * 40 * 1024 / FM.TRIG_ONE) / 1024,
+			(my2 - sg * sn * 40 * 1024 / FM.TRIG_ONE) / 1024, (face_line + 512) & 1023, 15),
+		Scenarios.unit(1, UT.index_of("musketeers"), 40, (mx2 + sg * c * 5 * 1024 / FM.TRIG_ONE) / 1024,
+			(my2 + sg * sn * 5 * 1024 / FM.TRIG_ONE) / 1024, face_line, 10)]
+	sc["_breach"] = best
 	return sc
 
 

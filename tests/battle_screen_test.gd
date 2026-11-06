@@ -57,6 +57,24 @@ var _snap: Dictionary = {}
 var _hero: Dictionary = {}
 var _oblique := false   # the second run: the oblique battle view
 var _v3d := false       # the third run: the 3D battle view (game/view3d.gd; oblique true as well: the same board transform)
+var _rub: _RubNode = null  # (the top view's rubble mark, drawn on a frame after _cover_cases)
+
+
+## Cover and line of fire, fourth pass (2026-11-06): draws a breached West stretch's rubble as the top view does (up
+## 0) and as the oblique view's kit does (up > 0), counting the top view's heap marks (CityDraw.heap_marks).
+class _RubNode extends Node2D:
+	const CityDraw := preload("res://game/city_draw.gd")
+	var sim
+	var cells := PackedInt32Array()
+	var marks := -1
+	var marks_ob := -1
+	func _draw() -> void:
+		var m0: int = CityDraw.heap_marks
+		CityDraw.draw_rubble(self, sim, cells, 4.0, Vector2.ZERO, false, 0.0)
+		marks = CityDraw.heap_marks - m0
+		var m1: int = CityDraw.heap_marks
+		CityDraw.draw_rubble(self, sim, cells, 4.0, Vector2.ZERO, false, 2.0)
+		marks_ob = CityDraw.heap_marks - m1
 
 
 func _check(c: bool, what: String) -> void:
@@ -269,6 +287,12 @@ func _process(_d: float) -> bool:
 	_frame += 1
 	if _frame < 5:
 		return false
+	if _rub != null and _rub.marks >= 0:
+		_check(_rub.marks > 0 and _rub.marks_ob == 0 and _rub.cells.size() > 0,
+			"rubble (drawn on the frame after the top view's run): the top view draws the heap's mark on a breach (%d of %d cells), the oblique view its heaped stones instead (%d)" % [
+				_rub.marks, _rub.cells.size(), _rub.marks_ob])
+		_rub.queue_free()
+		_rub = null
 	if _wait > 0:
 		_wait -= 1
 		return false
@@ -827,6 +851,16 @@ func _cover_cases() -> void:
 		hov.queue_redraw()
 		hb.queue_free()
 	CData.use_pack(was)
+	if not _oblique:
+		# (Fourth pass: the top view's rubble reads as a heap; checked on the next frame, _process.)
+		var bsc: Dictionary = Probe.breach_scenario("inside")
+		var rs := BattleSim.new()
+		rs.setup(bsc, 1)
+		rs._breach(int(bsc["_breach"]), -1)
+		_rub = _RubNode.new()
+		_rub.sim = rs
+		_rub.cells = preload("res://game/city_draw.gd").rubble_cells(rs)
+		root.add_child(_rub)
 
 
 func _ship_cases() -> void:

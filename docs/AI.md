@@ -4731,3 +4731,24 @@ second pass's middle-or-cover-spot read, so a unit that now shoots past a corner
 defenders standing with no line 268 -> 38 unit-seconds at walls 0, 247 -> 128 at walls 2 (most of the drop is the sim's
 front-men read, the rest the longer step); of those left at walls 2 a third shot in the next second (4 % before). In
 the West musket benchmark the step moved 5 times and walked home 3 times in 150 s. Balance: battle_sim.md (as built).
+
+## 68. Lines fight from cover and return fire: sim rules, no new knob (2026-11-06)
+
+The battle rules are docs/design/battle_sim.md "Cover and line of fire, fourth pass (as built, 2026-11-06)". They are
+the sim's, the same for a player's units and an AI's, as the walk to a fire spot (note 65) is, so no profile knob
+was added (`N_KNOBS` stays 365); what changes for the AI:
+
+- **Its lines take cover.** A missile line in the Line stance standing under fire (`_line_cover`) lays its men on
+  the cover spots within 13 m facing the unit that shot at it: the siege AI's street defenders at their posts
+  (`_reserve`, `_lof_step`'s spot), BattleAI's musket lines halted in a field with landforms, any AI unit standing at
+  its fire spot on an attack order. Nothing in `BattleAI` or `SiegeAI` reads it; their orders are given as before.
+- **Return fire.** An AI unit standing on an attack order (the storm's `_storm` pick, `_mis_close`, focus fire)
+  answers a non-target that shoots it (not a garrison at its windows) while its own target cannot shoot back, and
+  the order's target comes back once that shooter stops; where the unit goes stays the order's (a storm that stood
+  to answer every shooter stalled: open_town 88 -> 75 % with lines from cover). On fire at will (the defenders'
+  default) it prefers the unit shooting at it. The AI's target picks (`LOF_PICK`, `S_LOF_PICK`) are unchanged; this
+  is the sim's fire target under them.
+- **The stand-here check.** A unit with a line does not stop inside a third shooter's front its kept spot is out
+  of, and one standing in such a front walks to a spot out of it when the scored search finds one.
+
+Measured: battle_sim.md (as built); the balance there is the AI against the AI in every row.

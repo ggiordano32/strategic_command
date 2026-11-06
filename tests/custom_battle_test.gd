@@ -494,6 +494,146 @@ func _check_cover3() -> void:
 			rlost["heap"], rlost["flat"], rlost["behind"], str(rrate)])
 	print("cover3: checked (stop under fire %s against %s, partly seeing line %s, shooters %s, garrison houses %d / %d, rubble lost %s ratings %s)" % [
 		str(res[was_good]), str(res[4]), str(lines), str(sh), skipped, houses, str(rlost), str(rrate)])
+	_check_cover4()
+
+
+## A field set piece of the fourth pass: 60 musketeers (side 0) at (200, 200) shooting at a line of 40 (side 1) at
+## (200, 158); a yard wall (1.3 m rocks, 2 m apart) across x 186-214 at y 168, 10 m before the line (too far for
+## the formed line's chests to be behind it at 42 m: the chest line clears it beyond about 7 m); a far rock so the
+## obstacle grid is on.
+func _c4_sc() -> Dictionary:
+	var rk := [[20, 20, 1, 13]]
+	for x in range(186, 215, 2):
+		rk.append([x, 168, 1, 13])
+	return {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": rk},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 60, 200, 200, Scenarios.FACE_UP, 15),
+			Scenarios.unit(1, UT.index_of("musketeers"), 40, 200, 158, Scenarios.FACE_DOWN, 10)]}
+
+
+## Cover and line of fire, fourth pass (2026-11-06; docs/design/battle_sim.md "Cover and line of fire, fourth pass"):
+## (1) lines fight from cover: a musket line halted under fire (and one standing on an attack order) 10 m behind a
+## yard wall sends men to its lee (none with LINE_COVER_ON 0), loses fewer, and its men go back to their places once the
+## shooters are out of shot; (2) a West breach's heap blinds neither side (breach_rub's set piece: the line 5 m inside the breached
+## stretch, 60 musketeers 40 m outside, 2 m lower; each has a line of fire at the other and shoots; the third pass's
+## RUBBLE_AIM_BLOCK printed for reference) and still shelters (fewer lost than over flat rubble); (3) the stand-here
+## check's fronts (_third_fronts: in a shooter's arc and range, not behind it, not the target's own); (4) return fire:
+## a musket line on an attack order at a pike block, shot at from the side by a musket line, answers it
+## (RETURN_FIRE_ON 0: it keeps its target and the side line loses none).
+func _check_cover4() -> void:
+	var scr: Script = BattleSim
+	# (1) Lines fight from cover.
+	var lost := {}
+	var lee := {}
+	var back := -2
+	for on in [1, 0]:
+		scr.set("LINE_COVER_ON", on)
+		var tot := 0
+		var men := 0
+		for mode in ["halt", "atk"]:
+			for sd in [1, 2]:
+				var sim := BattleSim.new()
+				sim.setup(_c4_sc(), sd)
+				if mode == "atk":
+					sim.queue_order(BattleSim.make_attack_order(0, 1, 0, 0))
+				for k in 300:
+					sim.step()
+					if k == 119:
+						# (12 s in, under fire: the men in the wall's lee.)
+						var bs: int = sim.u_slot_base[1]
+						for s_ in sim.u_alive[1]:
+							var i: int = sim.slot_soldier[bs + s_]
+							if sim.pos_y[i] >= 164 * 1024 and sim.pos_y[i] < 168 * 1024 and sim.pos_x[i] >= 184 * 1024 and sim.pos_x[i] <= 216 * 1024:
+								men += 1
+				tot += sim.u_count0[1] - sim.u_alive[1]
+				if on == 1 and mode == "halt" and sd == 1:
+					# The threat ends (the shooters out of shot): back to its places.
+					sim.u_ammo[0] = 0
+					for k in 200:
+						sim.step()
+					back = sim.u_cvb[1]
+		lost[on] = tot
+		lee[on] = men
+	scr.set("LINE_COVER_ON", 1)
+	if int(lee[1]) < 8 or int(lee[0]) > 2 or int(lost[1]) >= int(lost[0]) or back != -1:
+		_fail("cover4: lines from cover (men in the wall's lee %d, off %d; lost %d, off %d; spots after the fire stopped %d)" % [
+			lee[1], lee[0], lost[1], lost[0], back])
+	# (2) A West breach's heap.
+	var BR = load("res://tests/lof_probe.gd")
+	var bsc: Dictionary = BR.breach_scenario("inside")
+	var was_ab: int = BattleSim.RUBBLE_AIM_BLOCK
+	var was_h: int = BattleSim.RUBBLE_H
+	var see := {}
+	for ab in [0, 1]:
+		scr.set("RUBBLE_AIM_BLOCK", ab)
+		var sb := BattleSim.new()
+		sb.setup(bsc, 1)
+		sb._breach(int(bsc["_breach"]), -1)
+		sb.step()
+		see[ab] = [sb.lof_units(0, 1), sb.lof_units(1, 0)]
+	scr.set("RUBBLE_AIM_BLOCK", was_ab)
+	var blost := {}
+	var bshots := 0
+	for cs in ["heap", "flat"]:
+		scr.set("RUBBLE_H", was_h if cs == "heap" else 0)
+		var tot := 0
+		for sd in [1, 2]:
+			var sb2 := BattleSim.new()
+			sb2.setup(bsc, sd)
+			sb2._breach(int(bsc["_breach"]), -1)
+			sb2.queue_order(BattleSim.make_fire_order(0, 1, 1))
+			for k in 300:
+				var n0: int = sb2.stat_shots
+				sb2.step()
+				if sb2.stat_shots > n0 and cs == "heap":
+					for p in sb2.pr_t0.size():
+						if sb2.pr_t0[p] == sb2.tick - 1 and sb2.pr_unit[p] == 1 and sb2.pr_t1[p] >= sb2.tick:
+							bshots += 1
+			tot += sb2.u_count0[1] - sb2.u_alive[1]
+		blost[cs] = tot
+	scr.set("RUBBLE_H", was_h)
+	if not bool(see[0][0]) or not bool(see[0][1]) or bshots == 0 \
+			or int(blost["heap"]) == 0 or int(blost["heap"]) >= int(blost["flat"]):
+		_fail("cover4: the breach heap (lines across it %s, with the third pass's aim block %s; the line's shots %d; lost behind the heap %d, flat %d)" % [
+			str(see[0]), str(see[1]), bshots, blost["heap"], blost["flat"]])
+	# (3) The stand-here check's fronts: a musket line at (300, 100) facing west.
+	var sc3 := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+		"terrain": {"kind": Terrain.K_FLAT, "rocks": [[20, 20, 1, 13]]},
+		"units": [Scenarios.unit(0, UT.index_of("musketeers"), 40, 200, 200, Scenarios.FACE_UP, 10),
+			Scenarios.unit(1, UT.index_of("musketeers"), 40, 300, 100, 512, 10),
+			Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 200, 120, Scenarios.FACE_DOWN, 10)]}
+	var s3 := BattleSim.new()
+	s3.setup(sc3, 1)
+	s3.step()
+	var f_in: int = s3._third_fronts(0, 2, 230 * 1024, 100 * 1024)
+	var f_back: int = s3._third_fronts(0, 2, 350 * 1024, 100 * 1024)
+	var f_tgt: int = s3._third_fronts(0, 1, 230 * 1024, 100 * 1024)
+	if f_in <= 0 or f_back != 0 or f_tgt != 0:
+		_fail("cover4: the fronts of other shooters (in front %d, behind %d, its own target's %d)" % [f_in, f_back, f_tgt])
+	# (4) Return fire (the stand-here walk off: it would walk out of the side line's front).
+	var rf := {}
+	scr.set("STAND_CHECK_ON", 0)
+	for on in [1, 0]:
+		scr.set("RETURN_FIRE_ON", on)
+		var sc4 := {"width_m": 400, "height_m": 400, "ai_sides": [], "orders": [], "los": 1, "time_limit": 600,
+			"terrain": {"kind": Terrain.K_FLAT, "rocks": [[20, 20, 1, 13]]},
+			"units": [Scenarios.unit(0, UT.index_of("musketeers"), 60, 200, 200, Scenarios.FACE_UP, 15),
+				Scenarios.unit(1, UT.index_of("w_pikemen"), 40, 200, 140, Scenarios.FACE_DOWN, 10),
+				Scenarios.unit(1, UT.index_of("musketeers"), 40, 270, 200, 512, 10)]}
+		var s4 := BattleSim.new()
+		s4.setup(sc4, 1)
+		s4.queue_order(BattleSim.make_attack_order(0, 0, 1, 0))
+		s4.queue_order(BattleSim.make_fire_order(0, 2, 1))
+		for k in 200:
+			s4.step()
+		rf[on] = [s4.u_ftarget[0], s4.u_count0[2] - s4.u_alive[2], s4.stat_return_fire, s4.u_target[0], s4.u_state[0]]
+	scr.set("RETURN_FIRE_ON", 1)
+	scr.set("STAND_CHECK_ON", 1)
+	if int(rf[1][0]) != 2 or int(rf[1][1]) == 0 or int(rf[1][3]) != 1 or int(rf[0][0]) != 1 or int(rf[0][1]) != 0:
+		_fail("cover4: return fire (on: fire target %d, the side line lost %d, order target %d; off: fire target %d, lost %d)" % [
+			rf[1][0], rf[1][1], rf[1][3], rf[0][0], rf[0][1]])
+	print("cover4: checked (lines from cover: lee men %s lost %s; breach heap: lines %s / aim block %s, shots %d, lost %s; fronts %d / %d / %d; return fire %s)" % [
+		str(lee), str(lost), str(see[0]), str(see[1]), bshots, str(blost), f_in, f_back, f_tgt, str(rf)])
 
 
 ## The three play scenarios in the Tests and benchmarks menu (docs/AI.md 44.1, 44.5, 44.6; 2026-11-05): each has a

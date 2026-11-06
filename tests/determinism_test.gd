@@ -7333,6 +7333,12 @@ func _check_cover() -> void:
 	# Line infantry: no cover trait: no cover or ground rolls, no cover spots,
 	# its men keep their places (the rocks still stop the balls that strike
 	# them: phase C0, so no more lost than in the open).
+	# (Fourth pass of cover, 2026-11-06: a line standing under fire now takes
+	# cover spots too, LINE_COVER_ON, docs/design/battle_sim.md "Cover and line
+	# of fire, fourth pass"; the rule here is checked with it off, and with it
+	# on the town line takes spots but never the cover trait's rolls, below.)
+	var scr: Script = BattleSim
+	scr.set("LINE_COVER_ON", 0)
 	var lr: Array = []
 	for k in 2:
 		var l := _cover_run("line", k == 0, 11, -1)
@@ -7361,13 +7367,18 @@ func _check_cover() -> void:
 	# 2026-11-06 were a slide-memory hold renewed without end, _free_mem.)
 	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 20 > int(tl["alive_d"]):
 		bad.append("cover: town: the line took cover spots or scattered (%s)" % str([tl["cvb_on"], tl["cs_men"], tl["far"]]))
+	scr.set("LINE_COVER_ON", 1)
+	var tl1 := _cover_run("town_line", false, 7, -1)
+	if int(tl1["cs_men"]) <= 0 or int(tl1["cvb_on"]) <= 0 or int(tl1["cover_stop"]) != 0 or int(tl1["ground_stop"]) != 0:
+		bad.append("cover: town: the line under fire (fourth pass) took no cover spots or got the cover trait's rolls (%s)" % str([
+			tl1["cs_men"], tl1["cvb_on"], tl1["cover_stop"], tl1["ground_stop"]]))
 	if int(tw["behind"]) * 100 < int(tw["alive_d"]) * 20 or int(tw["behind"]) * int(tl["alive_d"]) <= int(tl["behind"]) * int(tw["alive_d"]):
 		bad.append("cover: town: buccaneers behind cover %d / %d, the line %d / %d" % [int(tw["behind"]), int(tw["alive_d"]),
 			int(tl["behind"]), int(tl["alive_d"])])
 	if bad.is_empty():
-		print("PASS cover: warriors hidden in the wood %d ticks, charged at %d, seen at %d, ambush at %d (morale -%d), never aimed at while hidden, %d / %d lost (musketeers / warriors); buccaneers in rocks gone to ground at %d, %d balls stopped by the rocks (%d traced), %d ground stops, lost %d vs %d in the open (4 seeds); line musketeers %d in rocks, %d in the open, no cover taken, none off their places" % [
+		print("PASS cover: warriors hidden in the wood %d ticks, charged at %d, seen at %d, ambush at %d (morale -%d), never aimed at while hidden, %d / %d lost (musketeers / warriors); buccaneers in rocks gone to ground at %d, %d balls stopped by the rocks (%d traced), %d ground stops, lost %d vs %d in the open (4 seeds); line musketeers %d in rocks, %d in the open, no cover taken, none off their places (LINE_COVER_ON 0; on, the town line took %d cover spots, no cover rolls)" % [
 			int(a["hid_ticks"]), int(a["charge_t"]), int(a["seen_t"]), int(a["amb_t"]), int(a["mor_drop"]), int(a["lost1"]), int(a["lost0"]),
-			int(r["gnd_t"]), int(r["flat_block"]), int(r["flat_traced"]), int(r["ground_stop"]), lost_rocks, lost_open, lost_line[0], lost_line[1]])
+			int(r["gnd_t"]), int(r["flat_block"]), int(r["flat_traced"]), int(r["ground_stop"]), lost_rocks, lost_open, lost_line[0], lost_line[1], int(tl1["cs_men"])])
 		print("PASS cover (town, phase C0): buccaneers at a street's mouth: %d balls stopped by the houses (%d traced), %d men to cover spots, %d leaning shots, %d / %d behind cover at the end (a line there: %d / %d, no spots, none off its places), lost %d / %d (the line %d / %d); identical on repeat and across snapshot / restore" % [
 			int(tw["flat_block"]), int(tw["flat_traced"]), int(tw["cs_men"]), int(tw["lean"]), int(tw["behind"]), int(tw["alive_d"]),
 			int(tl["behind"]), int(tl["alive_d"]), int(tw["lost0"]), int(tw["lost1"]), int(tl["lost0"]), int(tl["lost1"])])

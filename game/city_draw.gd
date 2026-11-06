@@ -1281,13 +1281,20 @@ static func draw_rubble_ob(ci: CanvasItem, sim, cells: PackedInt32Array, sc: flo
 static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, low: bool, up: float = 0.0) -> void:
 	var ow: int = sim.ob_w
 	var hmax := float(BattleSim.RUBBLE_H) / 1024.0
+	var heap := up <= 0.0 and hmax > 0.0
+	if heap:
+		_rubble_heap(ci, sim, cells, sc, o, 0)
 	for c in cells:
 		var i := c % ow
 		var j := c / ow
 		var h := ((i * 73856093) ^ (j * 19349663)) & 0x7FFFFFFF
 		var p := o + Vector2(i * 2, j * 2) * sc
-		ci.draw_rect(Rect2(p - Vector2(0.25, 0.25) * sc, Vector2(2.5, 2.5) * sc),
-			RUBBLE_DUST.darkened(float(h % 7) * 0.025))
+		var bed := RUBBLE_DUST.darkened(float(h % 7) * 0.025)
+		if heap:
+			# (The top view's heap: its crest, the cells inside the band, lit; its slopes, the cells at an open
+			# side, in shade.)
+			bed = RUBBLE_TOP.darkened(float(h % 7) * 0.025) if _rubble_n4(sim, c) == 4 else RUBBLE_SLOPE.darkened(float(h % 7) * 0.02)
+		ci.draw_rect(Rect2(p - Vector2(0.25, 0.25) * sc, Vector2(2.5, 2.5) * sc), bed)
 	for c in cells:
 		var i := c % ow
 		var j := c / ow
@@ -1324,3 +1331,82 @@ static func draw_rubble(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float,
 					spoly.append(v + sh)
 				ci.draw_colored_polygon(spoly, Color(0.1, 0.08, 0.06, 0.35))
 			ci.draw_colored_polygon(poly, col)
+	if heap:
+		_rubble_heap(ci, sim, cells, sc, o, 1)
+
+
+static var heap_marks := 0  # (the top view's heap marks drawn: open sides and crest blocks; read by tests/battle_screen_test.gd)
+const RUBBLE_SHADE := Color(0.10, 0.08, 0.06, 0.45)
+const RUBBLE_CREST := Color(0.86, 0.82, 0.72)
+const RUBBLE_TOP := Color(0.66, 0.62, 0.55)
+const RUBBLE_SLOPE := Color(0.45, 0.41, 0.36)
+
+
+## How many of the 4 cells beside 2 m cell c are rubble too.
+static func _rubble_n4(sim, c: int) -> int:
+	var ow: int = sim.ob_w
+	var obs: PackedByteArray = sim.obs
+	var i := c % ow
+	var n := 0
+	if i + 1 < ow and obs[c + 1] == MapGen.C_RUBBLE:
+		n += 1
+	if i > 0 and obs[c - 1] == MapGen.C_RUBBLE:
+		n += 1
+	if c + ow < obs.size() and obs[c + ow] == MapGen.C_RUBBLE:
+		n += 1
+	if c - ow >= 0 and obs[c - ow] == MapGen.C_RUBBLE:
+		n += 1
+	return n
+
+## The top view's heap mark (fourth pass of cover, 2026-11-06: the rubble read as a road): `pass_k` 0 under the bed,
+## the heap's shadow cast to the south east outside its open sides (as the stones' own); 1 over the stones, a dark
+## edge along every open side and a pale crest along the north and west ones (lit from the north west), so the band
+## reads as a raised heap (cover) at phone size. Open side: the neighbour cell is not rubble.
+static func _rubble_heap(ci: CanvasItem, sim, cells: PackedInt32Array, sc: float, o: Vector2, pass_k: int) -> void:
+	var ow: int = sim.ob_w
+	var oh: int = sim.ob_h
+	var obs: PackedByteArray = sim.obs
+	var lw := maxf(sc * 0.22, 1.0)
+	for c in cells:
+		var i := c % ow
+		var j := c / ow
+		var p := o + Vector2(i * 2, j * 2) * sc
+		var e_open := i + 1 >= ow or obs[c + 1] != MapGen.C_RUBBLE
+		var s_open := j + 1 >= oh or obs[c + ow] != MapGen.C_RUBBLE
+		var w_open := i == 0 or obs[c - 1] != MapGen.C_RUBBLE
+		var n_open := j == 0 or obs[c - ow] != MapGen.C_RUBBLE
+		if pass_k == 0:
+			if e_open:
+				ci.draw_rect(Rect2(p + Vector2(2.25, 0.4) * sc, Vector2(1.2, 2.25) * sc), RUBBLE_SHADE)
+			if s_open:
+				ci.draw_rect(Rect2(p + Vector2(0.4, 2.25) * sc, Vector2(2.25, 1.2) * sc), RUBBLE_SHADE)
+			continue
+		if not (e_open or s_open or w_open or n_open):
+			# (Big blocks heaped on the crest, each with a hard shadow.)
+			var h := ((i * 73856093) ^ (j * 19349663)) & 0x7FFFFFFF
+			for q in 2:
+				var hq := ((h >> (q * 7 + 3)) * 2246822519 + q * 7919) & 0x7FFFFFFF
+				var at := p + Vector2(0.4 + float(hq % 13) / 13.0 * 1.2, 0.4 + float((hq / 13) % 13) / 13.0 * 1.2) * sc
+				var r := (0.45 + float((hq / 169) % 5) * 0.06) * sc
+				var ang := float((hq / 7) % 31) * 0.2
+				var ax := Vector2(cos(ang), sin(ang)) * r
+				var ay := Vector2(-ax.y, ax.x) * 0.75
+				var poly := PackedVector2Array([at - ax - ay, at + ax * 0.9 - ay * 1.1, at + ax + ay * 0.8, at - ax * 0.8 + ay])
+				var spoly := PackedVector2Array()
+				for v in poly:
+					spoly.append(v + Vector2(0.35, 0.35) * sc)
+				ci.draw_colored_polygon(spoly, RUBBLE_SHADE)
+				ci.draw_colored_polygon(poly, (RUBBLE_STONES[(hq / 845) % RUBBLE_STONES.size()] as Color).lightened(0.06))
+		var a := p - Vector2(0.25, 0.25) * sc
+		var b := p + Vector2(2.25, 2.25) * sc
+		heap_marks += 1
+		if n_open:
+			ci.draw_line(Vector2(a.x, a.y), Vector2(b.x, a.y), STONE_DARK, lw)
+			ci.draw_line(Vector2(a.x, a.y + lw), Vector2(b.x, a.y + lw), RUBBLE_CREST, lw)
+		if w_open:
+			ci.draw_line(Vector2(a.x, a.y), Vector2(a.x, b.y), STONE_DARK, lw)
+			ci.draw_line(Vector2(a.x + lw, a.y), Vector2(a.x + lw, b.y), RUBBLE_CREST, lw)
+		if s_open:
+			ci.draw_line(Vector2(a.x, b.y), Vector2(b.x, b.y), STONE_DARK, lw)
+		if e_open:
+			ci.draw_line(Vector2(b.x, a.y), Vector2(b.x, b.y), STONE_DARK, lw)
