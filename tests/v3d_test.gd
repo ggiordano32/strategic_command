@@ -57,7 +57,7 @@ func _f(n: int) -> void:
 		await process_frame
 
 
-func _open(sc: String) -> void:
+func _open(sc: String, weather := "") -> void:
 	if battle != null:
 		battle.queue_free()
 		await _f(2)
@@ -65,6 +65,7 @@ func _open(sc: String) -> void:
 	battle.scenario_id = sc
 	battle.seed_value = 7
 	battle.dive = false
+	battle.weather = weather
 	root.add_child(battle)
 	await _f(4)
 
@@ -234,6 +235,40 @@ func _run() -> void:
 		fx8.update()
 		spent = fx8.flash_drawn
 		_check(spent == 0, "no flash billboard once the flashes are spent (%d)" % spent)
+	# --- 9 the weather pass, the look (game/weather3d.gd): the lamp's spike returns to its value, the fog, the precipitation
+	await _open("battle_2000", "storm,winter")
+	var wx9 = battle.view3d.wx
+	var lay9 = battle.wx_layer
+	_check(wx9 != null and lay9 != null and wx9.mmi != null, "storm: the 3D weather layer and its rain volume are built")
+	if wx9 != null and lay9 != null:
+		var low9: bool = lay9.low
+		var base: float = wx9.lamp_base
+		_check(absf(battle.view3d.lamp.light_energy - base) < 0.001 and base < 0.5, "storm: the lamp is dimmed to %.2f (clear is 1.0)" % base)
+		lay9.strike(0)
+		lay9.step(0.02)
+		wx9.update(0.016)
+		var peak: float = battle.view3d.lamp.light_energy
+		_check(low9 or peak > base + 0.5, "storm: the strike lifts the lamp (%.2f from %.2f)" % [peak, base])
+		lay9._next_strike = 1.0e9   # (no second strike by the timer while the first one is measured out)
+		for i in 80:
+			lay9.step(0.05)
+		wx9.update(0.016)
+		_check(absf(battle.view3d.lamp.light_energy - base) < 0.001 and absf(battle.view3d.env.ambient_light_energy - wx9.amb_base) < 0.001,
+			"storm: the lamp and the ambient are back at their values after the strike (%.3f, %.3f)" % [battle.view3d.lamp.light_energy, battle.view3d.env.ambient_light_energy])
+		var n_before: int = wx9.mmi.multimesh.instance_count
+		_check(n_before > 0 and n_before <= wx9.RAIN_MAX, "storm: %d rain streaks in one MultiMesh (cap %d, a quarter on Low)" % [n_before, wx9.RAIN_MAX])
+	await _open("battle_2000", "fog")
+	var wxf = battle.view3d.wx
+	_check(wxf != null and battle.view3d.env.fog_enabled, "fog: the environment's fog is on")
+	if wxf != null:
+		await _f(3)
+		var env: Environment = battle.view3d.env
+		_check(env.fog_depth_end > env.fog_depth_begin and env.fog_depth_begin > 0.0, "fog: the depth ramp is fitted to the camera (%.0f to %.0f m)" % [env.fog_depth_begin, env.fog_depth_end])
+	await _open("battle_2000", "snow")
+	_check(battle.view3d.wx != null and battle.view3d.wx.mmi != null and (battle.view3d.wx.mmi.material_override as ShaderMaterial).get_shader_parameter("snow") == 1.0,
+		"snow: the flakes volume is built")
+	await _open("battle_2000")
+	_check(battle.view3d.wx == null and battle.wx_layer == null, "a clear day builds no weather layer")
 	BoardView.force = ""
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")

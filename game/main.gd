@@ -2,6 +2,7 @@ extends Control
 ## Start screen: pick a scenario, then hand over to the battle view.
 
 const AudioFx := preload("res://game/audio.gd")
+const Weather := preload("res://game/weather.gd")
 const Quality := preload("res://game/quality.gd")
 const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleWarm := preload("res://game/battle_warm.gd")
@@ -2154,6 +2155,7 @@ func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	b.scenario_id = "custom"
 	b.custom_scenario = built["scenario"]
 	b.seed_value = int(built["seed"])
+	b.weather = Weather.join(str(st.get("weather", "clear")), str(st.get("season", "")))   # (view only)
 	b.player_side = maxi(CustomSetup.side_of_player(st, me), 0)
 	b.custom_summary = CustomSetup.summary(st)
 	var nk := [CustomSetup.names_of(st, 0), CustomSetup.names_of(st, 1)]

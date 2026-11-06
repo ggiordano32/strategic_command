@@ -51,3 +51,18 @@ environment/defaults/default_clear_color=Color(0.09, 0.1, 0.09, 1)
 Telemetry="*res://game/telemetry.gd"
 Net="*res://game/net/net.gd"
 Audio="*res://game/audio.gd"
+
+[shader_globals]
+
+wx_surf={
+"type": "vec4",
+"value": Plane(0, 0, 0, 0)
+}
+wx_tmul={
+"type": "vec4",
+"value": Plane(1, 1, 1, 0)
+}
+wx_tadd={
+"type": "vec4",
+"value": Plane(0, 0, 0, 0)
+}

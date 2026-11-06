@@ -8,6 +8,7 @@ shader_type spatial;
 // the battle look's saturation and contrast; the lamp adds only its shadows (as the kit's cards: lit 1.0, in shadow 0.71). No
 // texture read in the vertex stage (the compatible path's rule): the ground's height is in the instance's transform.
 render_mode diffuse_lambert, specular_disabled, cull_back;
+#include "res://game/weather.gdshaderinc"
 
 uniform sampler2D kit_tex : filter_linear_mipmap, repeat_disable;
 uniform vec3 stone_tint[8];
@@ -47,6 +48,11 @@ void fragment() {
 		col *= p / 0.85;
 	}
 	vec3 N = normalize(w_nrm);
+	if (wx_surf.y > 0.001) {
+		// Snow on the roofs (the mask class 0.7) and the faces that look up (the weather pass).
+		float roof = mclass > 0.55 && mclass < 0.85 ? 1.0 : 0.0;
+		col = wx_snow_on(col, roof * (0.5 + 0.5 * smoothstep(0.2, 0.8, N.y)) + (1.0 - roof) * 0.9 * smoothstep(0.7, 0.95, N.y));
+	}
 	vec3 L = normalize(key_dir);
 	// (half-Lambert and a floor: the painted sprites light a wall turned from the key at about 0.6 of its paint, not black)
 	float diff = clamp(dot(N, L) * 0.5 + 0.5, 0.0, 1.0);

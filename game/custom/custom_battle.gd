@@ -16,6 +16,7 @@ signal play_solo(built: Dictionary, setup: Dictionary)
 signal play_online(session: Node, setup: Dictionary)
 
 const CS := preload("res://game/custom/custom_setup.gd")
+const Weather := preload("res://game/weather.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
 const MenuStyle := preload("res://game/menu/menu_style.gd")
@@ -376,6 +377,28 @@ func _map_row() -> Control:
 	tlb.disabled = not ed
 	tp.add_child(tlb)
 	r2.add_child(tp)
+	# The weather pass, the look: the kind and the season (view only: no effect on the battle's rules yet; "weather" / "season" keys).
+	var wx_row := Kit.hbox(6)
+	wx_row.add_child(_small_label("Weather"))
+	var wx_kinds: Array = []
+	for i in Weather.KINDS.size():
+		wx_kinds.append([Weather.KIND_NAMES[i], Weather.KINDS[i]])
+	var wx_kind_dd := Kit.dropdown(wx_kinds, str(setup.get("weather", "clear")), func(x):
+		setup["weather"] = str(x)
+		_changed(), 0, 14)
+	wx_kind_dd.name = "custom_weather"
+	wx_kind_dd.disabled = not ed
+	wx_row.add_child(wx_kind_dd)
+	var wx_seasons: Array = []
+	for i in Weather.SEASONS.size():
+		wx_seasons.append([Weather.SEASON_NAMES[i], Weather.SEASONS[i]])
+	var wx_season_dd := Kit.dropdown(wx_seasons, str(setup.get("season", "")), func(x):
+		setup["season"] = str(x)
+		_changed(), 0, 14)
+	wx_season_dd.name = "custom_season"
+	wx_season_dd.disabled = not ed
+	wx_row.add_child(wx_season_dd)
+	r2.add_child(wx_row)
 	var fi := int(setup.get("funds", 0))
 	r2.add_child(_opt("Funds per side: " + CS.FUNDS_NAMES[fi], func():
 		setup["funds"] = (fi + 1) % CS.FUNDS.size()

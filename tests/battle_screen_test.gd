@@ -449,6 +449,7 @@ func _process(_d: float) -> bool:
 				_supp_cases()
 				_roll_cases()
 				_track_cases()
+				_weather_cases()
 			if _roll_phase == 1:
 				_step -= 1  # (the stone's roll is drawn on the next frames: _roll_frame)
 				return false
@@ -917,6 +918,59 @@ func _track_cases() -> void:
 	_check(trk.furrows == f0 + 1, "tracks: a stone's furrow is stamped once, after its run (the overlay no longer draws the line)")
 	b.queue_free()
 	CData.use_pack(was)
+
+
+## The weather pass, the look (docs/design/art_pipeline.md "The weather pass, the look", 2026-11-06): each kind builds its layer with
+## no error (the screen layer in every view, the particle volume as well in 3D), rain and snow have their precipitation alive (the
+## screen shader in the top and oblique views, one MultiMesh in 3D, thinned to a quarter on Low), the storm's strike lifts the flash
+## value and it falls back to 0, fog sets the environment's fog in 3D, a clear day builds nothing, the weather is not in the sim
+## hash, and the shader globals and the tracks' weather_mul return to neutral when the battle goes.
+func _weather_cases() -> void:
+	const Weather := preload("res://game/weather.gd")
+	const TrackLayer := preload("res://game/track_layer.gd")
+	var hashes: Array = []
+	for w in ["clear", "rain", "snow", "storm", "fog", "overcast", "downpour,autumn", "winter"]:
+		var b := Battle.new()
+		b.custom_scenario = {"width_m": 300, "height_m": 200, "ai_sides": [], "orders": [], "units": [
+			Scenarios.unit(0, UT.index_of("heavy"), 30, 100, 60, 0), Scenarios.unit(1, UT.index_of("heavy"), 30, 200, 140, 512)]}
+		b.seed_value = 5
+		b.weather = w
+		root.add_child(b)
+		var sp := Weather.spec(w)
+		var kind: String = sp["kind"]
+		if Weather.is_clear(sp):
+			_check(b.wx_layer == null and (b.view3d == null or b.view3d.wx == null), "weather %s: a clear day builds no layer" % w)
+		else:
+			_check(b.wx_layer != null, "weather %s: the screen layer is built" % w)
+		if b.wx_layer != null:
+			var lay = b.wx_layer
+			var wet: bool = float(sp["rain"]) > 0.0 or float(sp["snow"]) > 0.0
+			if b.view3d != null:
+				_check((b.view3d.wx != null and (b.view3d.wx.mmi != null) == wet) and (not wet or b.view3d.wx.drawn > 0 and b.view3d.wx.drawn <= 6000),
+					"weather %s: 3D has its particle volume (%d drops) only when it rains or snows" % [w, b.view3d.wx.drawn if b.view3d.wx != null else -1])
+				if kind == "fog":
+					_check(b.view3d.env.fog_enabled, "weather fog: the 3D environment's fog is on")
+			else:
+				_check(lay.precip_on == wet, "weather %s: the screen precipitation is on only when it rains or snows" % w)
+			if kind == "storm":
+				lay._next_strike = 1.0e9
+				lay.strike(0)
+				lay.step(0.02)
+				var f0: float = lay.flash
+				for i in 60:
+					lay.step(0.05)
+				_check((lay.low or f0 > 0.3) and lay.flash < 0.01, "weather storm: a strike flashes (%.2f) and is over after 3 s (%.2f)" % [f0, lay.flash])
+		b.paused = true
+		for t in 20:
+			b.sim.step()
+		hashes.append(b.sim.state_hash())
+		root.remove_child(b)
+		b.free()
+		_check(TrackLayer.weather_mul == Vector3.ONE, "weather %s: the tracks' weather_mul is back to neutral once the battle is gone" % w)
+	var same := true
+	for h in hashes:
+		same = same and h == hashes[0]
+	_check(same, "weather: the sim's hash is the same under every weather (view only)")
 
 
 ## Suppression (2026-11-06; docs/design/ui.md "Suppression chips"): a player's musket line under fire is suppressed

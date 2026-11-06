@@ -3,7 +3,7 @@ shader_type spatial;
 // (game/terrain_body.gdshaderinc, the same uniforms the 2D terrain layer built) at the fragment's world point, lit by the lamp.
 // The 2D shading's display values go to ALBEDO as they are: the Compatibility renderer's 3D output matches the 2D layers that way
 // (measured against the oblique view; linearising first made the board far too dark).
-render_mode diffuse_lambert, specular_disabled;
+render_mode diffuse_lambert, specular_schlick_ggx;
 #define V3D
 #include "res://game/board_view.gdshaderinc"
 #include "res://game/terrain_body.gdshaderinc"
@@ -55,5 +55,7 @@ void fragment() {
 		}
 	}
 	ALBEDO = c;
-	ROUGHNESS = 1.0;
+	// (the weather pass: a wet board is glossy under the lamp; wx_surf.w is 0 on Graphics Low and in dry weather)
+	ROUGHNESS = mix(1.0, 0.28, wx_surf.x * wx_surf.w * (1.0 - clamp(wx_surf.y, 0.0, 1.0)));
+	SPECULAR = 0.6 * wx_surf.x * wx_surf.w;
 }

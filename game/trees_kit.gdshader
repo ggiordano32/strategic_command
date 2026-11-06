@@ -11,6 +11,7 @@ shader_type canvas_item;
 // (the ground's crown shadows lie under it), each part faded by the men on the ground it hides. The instances are sorted by y (farther
 // first) in game/tree_layer.gd.
 #include "res://game/board_view.gdshaderinc"
+#include "res://game/weather.gdshaderinc"
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -133,6 +134,8 @@ void fragment() {
 		float lum = dot(base, vec3(0.3, 0.59, 0.11));
 		vec3 tinted = lum * tint * 3.2;
 		base = mix(base, tinted, tk) * var_l;
+		base = wx_veg(base);
+		base = mix(base, vec3(0.9, 0.93, 0.99) * (0.8 + 0.4 * lum), wx_surf.y * 0.62 * (0.35 + 0.65 * (1.0 - q.y)));
 		if (is_low) {
 			col = base;
 		} else {

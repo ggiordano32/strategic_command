@@ -10,6 +10,7 @@ shader_type canvas_item;
 
 // The oblique view (tabletop pass 3): the glyph lies on the board at its place (squashed, lifted).
 #include "res://game/board_view.gdshaderinc"
+#include "res://game/weather.gdshaderinc"
 uniform sampler2D atlas : filter_linear_mipmap, repeat_disable;
 uniform sampler2D occ : filter_linear, repeat_disable;
 uniform vec2 occ_size_px = vec2(1.0);
@@ -75,6 +76,8 @@ void fragment() {
 	float fade = mix(1.0, fade_to, smoothstep(0.05, 0.5, o));
 	float light = 1.0 + 0.45 * ((0.5 - UV.x) + (0.5 - UV.y));
 	vec3 canopy = tint * (0.6 + 0.7 * t.r) * var_l * light;
+	canopy = wx_veg(canopy);
+	canopy = mix(canopy, vec3(0.9, 0.93, 0.99) * (0.85 + 0.3 * t.r), wx_surf.y * 0.62 * (0.35 + 0.65 * (1.0 - UV.y)));
 	float ca = t.g * fade;
 	float sa = shadow * shadow_k * fade;
 	float a = ca + sa * (1.0 - ca);

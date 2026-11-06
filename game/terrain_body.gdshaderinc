@@ -1,3 +1,4 @@
+#include "res://game/weather.gdshaderinc"
 // The battlefield ground's shading, shared by game/terrain.gdshader (the top and oblique views) and game/terrain3d.gdshader (the
 // 3D view's board mesh): the uniforms and `terrain_col`, the colour of the ground at a world point (px). Include
 // board_view.gdshaderinc first. (Split out of terrain.gdshader on 2026-11-06, unchanged.)
@@ -490,6 +491,19 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 			col = mix(col, line_col.rgb, line_col.a * contour_k * fade * line_a(dist, fw, 0.5));
 		}
 	}
+	// The weather pass: the season's grade on the ground (not water, little on streets), under the snow and the tracks.
+	float veg_k = (1.0 - sea) * (1.0 - ford) * (1.0 - 0.6 * pave_m);
+	if (veg_k > 0.001) {
+		col = mix(col, wx_veg(col), veg_k);
+	}
+	if (wx_surf.y > 0.001) {
+		// Snow cover (the weather pass): the board toward white, a little of its own tone and relief kept, less on bare rock
+		// and the steep faces, none on water; the tracks below stamp dark prints into it.
+		float lum0 = dot(col, vec3(0.3, 0.59, 0.11));
+		float sk = wx_surf.y * (1.0 - sea) * (1.0 - ford) * (1.0 - 0.45 * rock_o) * (1.0 - 0.5 * pave_m);
+		vec3 snow_c = vec3(0.90, 0.93, 0.99) * (0.86 + 0.5 * (lum0 - 0.35)) * (0.96 + 0.08 * n2);
+		col = mix(col, snow_c, clamp(sk * 0.92, 0.0, 1.0));
+	}
 	if (marks_size_px.x > 0.0 && sea < 0.5 && ford < 0.5) {
 		// Tracks on the board: trodden ground darker and a little browner (more on bare earth patches), ruts as dark lines,
 		// hoof churn clodded. The stamp strength by ground kind is the layer's own table.
@@ -507,6 +521,8 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 				float wear = smoothstep(thr - 0.08, thr + 0.08, mk.r * bare);
 				float damp = max(max(pave_m, earthm), 0.0);
 				vec3 dirt = vec3(0.34, 0.265, 0.15) * (1.0 - 0.3 * damp) * (0.85 + 0.3 * n2);   // (wet brown earth)
+				dirt *= 1.0 - 0.28 * wx_surf.z;   // (the weather pass: mud is darker)
+				dirt = mix(dirt, vec3(0.62, 0.6, 0.6), wx_surf.y * 0.55);   // (trodden snow: slush, greyer than the earth)
 				col = mix(col, dirt, wear * (0.8 + 0.1 * far_k));
 				float prt = 0.0;
 				if (!low && mpp < 0.7) {
@@ -618,5 +634,7 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 		float lm = dot(col, vec3(0.3, 0.59, 0.11));
 		col = clamp(mix(vec3(lm), col, splat_sat), 0.0, 1.0);
 	}
+	// The weather pass: the rain's wet darkening (the season's grade is applied before the snow and the tracks).
+	col *= 1.0 - 0.17 * wx_surf.x * (1.0 - sea) * (1.0 - ford);
 	return col;
 }

@@ -6,6 +6,7 @@ shader_type spatial;
 // from the camera's axes (cam_*), in the shadow pass upright facing the lamp (its shadow the same at every yaw). The canopy thins
 // over men under it (the tree layer's occupancy texture).
 render_mode unshaded, cull_disabled, world_vertex_coords;
+#include "res://game/weather.gdshaderinc"
 
 uniform sampler2D albedo_tex : filter_linear, repeat_disable;
 uniform sampler2D nrm_tex : filter_linear, repeat_disable;
@@ -85,6 +86,8 @@ void fragment() {
 	vec3 base = alb.rgb;
 	float lum = dot(base, vec3(0.3, 0.59, 0.11));
 	base = mix(base, lum * tint * 3.2, tk) * var_l;
+	base = wx_veg(base);
+	base = mix(base, vec3(0.9, 0.93, 0.99) * (0.8 + 0.4 * lum), wx_surf.y * 0.62 * (0.35 + 0.65 * (1.0 - q.y)));
 	vec3 col = base;
 	if (!is_low) {
 		vec4 n = texture(nrm_tex, uv);

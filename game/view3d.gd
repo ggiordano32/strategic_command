@@ -50,6 +50,8 @@ const BattleLook := preload("res://game/battle_look.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Kit3D := preload("res://game/kit3d.gd")
 const Fx3D := preload("res://game/fx3d.gd")
+const Weather3D := preload("res://game/weather3d.gd")
+const Weather := preload("res://game/weather.gd")
 const KIT_MESH_SHADER := preload("res://game/kit_mesh3d.gdshader")
 const KitAtlas := preload("res://game/battlekit_atlas.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -112,6 +114,7 @@ var pr_mat: ShaderMaterial
 var tick_mats: Array[ShaderMaterial] = []
 var kits: Array = []             # [kit node, MultiMeshInstance3D, its rev, its yaw sector] per kit with rows
 var fx: Node3D                   # the flashes and the smoke (game/fx3d.gd)
+var wx: Node3D                   # the weather: rain / snow volume, the lamp and the fog, the lightning (game/weather3d.gd)
 var gear_mi: MeshInstance3D
 var ship_mi: MeshInstance3D
 var _gear_tick := -1
@@ -159,6 +162,10 @@ func setup(p_battle: Node, p_sim, p_ppm: float) -> void:
 	_build_trees()
 	_build_men()
 	_build_fx()
+	if not battle.wx_spec.is_empty() and not Weather.is_clear(battle.wx_spec):
+		wx = Weather3D.new()
+		add_child(wx)
+		wx.setup(self, battle.wx_spec)
 	_build_kits()
 	_build_ground_canvas()
 	if "--v3d-no-men" in OS.get_cmdline_user_args():
@@ -966,7 +973,7 @@ func set_shadows(on: bool) -> void:
 		terrain_mat.set_shader_parameter("fake_lamp", 0.0 if on else 1.0)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _probe_frames >= 0:
 		_probe_frames += 1
 		if _probe_frames >= PROBE_FRAMES:
@@ -976,6 +983,8 @@ func _process(_delta: float) -> void:
 	if lamp_yaw < -999.0:
 		set_lamp(BoardView.yaw)   # (the first frame: the battle has set its opening view)
 	sync_camera()
+	if wx != null:
+		wx.update(delta)
 	if fx != null:
 		fx.update()
 	refresh_kit()

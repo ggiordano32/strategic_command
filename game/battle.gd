@@ -21,6 +21,8 @@ const OrderPreview := preload("res://game/order_preview.gd")
 const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
 const TrackLayer := preload("res://game/track_layer.gd")
+const Weather := preload("res://game/weather.gd")
+const WeatherLayer := preload("res://game/weather_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const TableMotion := preload("res://game/table_motion.gd")
@@ -178,6 +180,11 @@ var _v3d_twist_prev := 1e9    # the two fingers' angle at the last frame (1e9: n
 var _rmb_turn := false        # 3D: the right drag turns and tilts the camera
 var terrain: TerrainLayer
 var tracks: TrackLayer   # the ground-marks layer (tracks on the board)
+## The weather pass, the look (game/weather.gd; view only, never in the sim): the setup's weather string ("storm,winter"; the sandbox's
+## picker and the campaign's season mapping set it, --weather= / ?weather= override it), its spec and the screen layer.
+var weather := ""
+var wx_spec: Dictionary = {}
+var wx_layer: CanvasLayer
 var city: CityLayer
 var works: WorksLayer
 var ships: ShipLayer   # (2026-11-05) the ships lying off the shore (under the men)
@@ -468,6 +475,10 @@ func _loading_pack() -> String:
 
 
 func _ld_scenario() -> void:
+	var wa := Weather.launch_arg()
+	wx_spec = Weather.spec(wa if wa != "" else weather)
+	Weather.current = Weather.join(wx_spec["kind"], wx_spec["season"])
+	Weather.apply_globals(wx_spec)   # (before any shader is built: the board, the trees and the kit read the globals)
 	sim = BattleSim.new()
 	_ld_scn = custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
 	if unit_faction.is_empty() and _ld_scn.get("unit_faction") is Array:
@@ -623,6 +634,10 @@ func _ld_hud() -> void:
 	if _ld_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" and not BoardView.v3d \
 			and not ("--no-dof" in OS.get_cmdline_user_args()):
 		add_child(BattleDof.new())
+	if not Weather.is_clear(wx_spec):
+		wx_layer = WeatherLayer.new()
+		add_child(wx_layer)   # (before the HUD: under it)
+		wx_layer.setup(self, wx_spec, seed_value)
 	hud = Hud.new()
 	add_child(hud)
 	hud.unit_faction = soldiers.unit_faction
@@ -1701,6 +1716,7 @@ func _on_page_hiding() -> void:
 
 
 func _exit_tree() -> void:
+	Weather.neutral()   # (the weather's shader globals back to a clear day for the menu and the next battle)
 	if Tips.presenter == Callable(self, "_show_tip"):
 		Tips.presenter = _prev_presenter
 	if _au_on:

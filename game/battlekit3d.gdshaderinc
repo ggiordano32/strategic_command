@@ -10,6 +10,7 @@
 // men behind them; the occluder and the ghosts are not needed).
 #define V3D
 #include "res://game/board_view.gdshaderinc"
+#include "res://game/weather.gdshaderinc"
 uniform float ob_depth = 0.0;
 uniform vec2 ob_near_r = vec2(0.0, 1.0);
 uniform float ob_ppm = 10.0;
@@ -501,6 +502,11 @@ void fragment() {
 	} else {
 		vec3 p = mc > 0.55 ? pal_r[ci] : (mc > 0.25 ? pal_g[ci] : pal_b[ci]);
 		col *= p / 0.85;
+	}
+	if (wx_surf.y > 0.001) {
+		// Snow on the roofs (the mask class 0.7: the palette's roof) and a little on the walls' tops (the weather pass).
+		float roof = mc > 0.55 && mc < 0.85 ? 1.0 : 0.0;
+		col = wx_snow_on(col, roof * (0.55 + 0.45 * smoothstep(0.3, 0.9, nz)) + (1.0 - roof) * 0.22 * smoothstep(0.6, 0.95, nz));
 	}
 	col *= lf;
 	// Rim: pixels higher than their surroundings catch the light; outline on the silhouette.
