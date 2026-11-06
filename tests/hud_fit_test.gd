@@ -12,6 +12,7 @@ extends SceneTree
 const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
+const BoardView := preload("res://game/board_view.gd")
 const UT := preload("res://sim/unit_types.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Terrain := preload("res://sim/terrain.gd")
@@ -91,6 +92,28 @@ func _scenario(by_role: Dictionary) -> Dictionary:
 	var sc := Scenarios._test(units, [])
 	sc["ai_sides"] = [1]
 	return sc
+
+
+## The bar is the same in every Battle view (docs/design/art_pipeline.md "The 3D battle view, step one"): at the phone and the
+## desktop size the battle opens in the top, the oblique and the 3D view (the 3D scene only in the last), nothing selected and
+## the mixed selection fit, and --shots= saves each (hud_views_<view>_<size>.png).
+func _views_check(sc: Dictionary, by_role: Dictionary) -> void:
+	for sz in [[844, 390, true], [1280, 720, false]]:
+		_size_name = "%dx%d" % [sz[0], sz[1]]
+		await _resize(sz[0], sz[1], sz[2])
+		for v in ["top", "oblique", "3d"]:
+			BoardView.force = v
+			await _new_battle(sc)
+			_check((b.view3d != null) == (v == "3d") and BoardView.oblique == (v != "top"),
+				"%s %s: the battle opens in that view" % [_size_name, v])
+			await _select_types([], by_role)
+			await _fit("%s view: nothing selected" % v, false)
+			await _select_types([], by_role)
+			await _fit("%s view: everything (mixed)" % v)
+			if _shots != "":
+				await _frames(6)
+				root.get_texture().get_image().save_png("%s/hud_views_%s_%s.png" % [_shots, v, _size_name])
+	BoardView.force = ""
 
 
 func _new_battle(sc: Dictionary, side := 0) -> void:
@@ -709,6 +732,7 @@ func _run() -> void:
 	await _states(by_role)
 	await _resize_check(by_role)
 	await _siege()
+	await _views_check(sc, by_role)
 	UiScale._dpr_override = -1.0
 	UiScale._touch_override = -1
 	print("RESULT: ", "PASS" if failures == 0 else "FAIL (%d)" % failures)

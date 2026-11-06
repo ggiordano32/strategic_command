@@ -1492,7 +1492,7 @@ func _draw_cover_chip(u: int, c: Vector2, r: float, lw: float) -> void:
 	draw_polyline(pts + PackedVector2Array([pts[0]]), Color(col.lightened(0.3), 1.0), ol * 0.8)
 	if int(e[2]) >= 0:
 		var b: float = int(e[2]) * TAU / 1024.0
-		var dv := Vector2(cos(b), sin(b) * (BoardView.OBLIQUE_COS if BoardView.oblique else 1.0)).normalized()
+		var dv := BoardView.dir_board(Vector2(cos(b), sin(b))).normalized()
 		var tang := Vector2(-dv.y, dv.x)
 		var rr := h * 0.62
 		var tip := at + dv * (rr + ol * 3.0)
@@ -1824,7 +1824,7 @@ func _draw_impacts(lw: float) -> void:
 		# the men on it are drawn at (SoldierLayer.point_dm).
 		var up_h := 0.0
 		if BoardView.oblique and sim.obs_on != 0:
-			up_h = float(SoldierLayer.point_dm(sim, sim.fx_x[k], sim.fx_y[k])) * 0.1 * px_per_m * BoardView.OBLIQUE_SIN
+			up_h = float(SoldierLayer.point_dm(sim, sim.fx_x[k], sim.fx_y[k])) * 0.1 * px_per_m * BoardView.ob_s
 		_up(p)
 		draw_circle(p + Vector2(0, -up_h - px_per_m * (0.6 + 1.8 * f) * 0.5 if BoardView.oblique else 0.0), px_per_m * (0.6 + 1.8 * f), Color(0.55, 0.45, 0.32, a * 0.55))
 		if up_h > 0.0:
@@ -2792,6 +2792,11 @@ func _draw_bld_fires(lw: float) -> void:
 
 ## Piece q's heading on screen (radians): its carriers' facing, a little
 ## askew lying on the ground; NAN while a reinforcement's (not on the field).
+## The 3D view's siege gear (game/view3d.gd): the pieces as solids, as the oblique view draws them; null when there is none.
+func gear_mesh() -> ArrayMesh:
+	return _siege_ob.build_mesh(sim, px_per_m, _gear_angle, func(w: Vector2) -> float: return BoardView.ground_m(w))
+
+
 func _gear_angle(q: int) -> float:
 	var st: int = sim.q_state[q]
 	var u: int = sim.q_unit[q]
@@ -2861,7 +2866,8 @@ func _draw_prop(prop: String, act: int, fr: int, c: Vector2, ang: float) -> void
 
 func _draw_siege_gear(lw: float) -> void:
 	if BoardView.oblique:
-		_siege_ob.draw_all(self, sim, px_per_m, lw, _gear_angle)
+		if not BoardView.v3d:   # (the 3D view builds them as solids: game/view3d.gd, SiegeGearOb.build_mesh)
+			_siege_ob.draw_all(self, sim, px_per_m, lw, _gear_angle)
 		for q in sim.n_eq:
 			if sim.q_kind[q] == BattleSim.EQ_WAGON and sim.q_state[q] != BattleSim.Q_WRECKED and not is_nan(_gear_angle(q)):
 				_draw_wagon_stock(q, to_px(sim.q_x[q], sim.q_y[q]), lw)
@@ -3032,7 +3038,7 @@ func _draw_place(lw: float) -> void:
 			var ang := place_face_angle()
 			var fd := Vector2(cos(ang), sin(ang))
 			if BoardView.oblique:
-				fd = Vector2(fd.x, fd.y * BoardView.OBLIQUE_COS).normalized()
+				fd = BoardView.dir_board(fd).normalized()
 			var side := Vector2(-fd.y, fd.x)
 			draw_colored_polygon(PackedVector2Array([pos + fd * k * 1.15, pos - fd * k * 0.6 + side * k * 0.8,
 				pos - fd * k * 0.6 - side * k * 0.8]), g)
@@ -3040,7 +3046,7 @@ func _draw_place(lw: float) -> void:
 			var ang2 := place_face_angle() + PI * 0.5
 			var ed := Vector2(cos(ang2), sin(ang2))
 			if BoardView.oblique:
-				ed = Vector2(ed.x, ed.y * BoardView.OBLIQUE_COS).normalized()
+				ed = BoardView.dir_board(ed).normalized()
 			if id == PH_END_A:
 				ed = -ed
 			var sd := Vector2(-ed.y, ed.x)

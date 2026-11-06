@@ -41,6 +41,7 @@ const CData := preload("res://campaign/cdata.gd")
 const FM := preload("res://sim/fixed_math.gd")
 const OccView := preload("res://game/occupy_view.gd")
 const Traits := preload("res://game/unit_traits.gd")
+const View3D := preload("res://game/view3d.gd")
 
 const PX_PER_M := 10.0
 const M := 1024.0
@@ -162,6 +163,17 @@ var custom_summary: Dictionary = {}
 
 var sim: BattleSim
 var camera: Camera2D
+## The 3D battle view (BoardView.v3d; game/view3d.gd), else null. Its camera follows `camera` every frame; the turn and the tilt
+## are BoardView's yaw and elevation (set by `_v3d_turn`), the gestures in _update_pinch, _right_motion and _keys_held.
+var view3d: Node3D = null
+var _v3d_yaw_vel := 0.0       # radians a second still turning after a twist or a drag (inertia)
+var _v3d_turning := false     # a twist or a turning drag is under way (no inertia meanwhile)
+var _v3d_acc_ang := 0.0       # the twist so far in this two-finger gesture (until its dead zone)
+var _v3d_twist := false       # the twist passed its dead zone in this gesture
+var _v3d_c3 := Vector2(-1e9, -1e9)   # three fingers: their centroid at the last step
+var _pinch_ang := 0.0
+var _v3d_twist_prev := 1e9    # the two fingers' angle at the last frame (1e9: none yet)
+var _rmb_turn := false        # 3D: the right drag turns and tilts the camera
 var terrain: TerrainLayer
 var city: CityLayer
 var works: WorksLayer
@@ -337,8 +349,9 @@ func _ready() -> void:
 
 	# Ground: height shading, contours and the faint 50 m grid in one shader.
 	var look_dio := BattleLook.is_diorama()
+	var board: Node2D = null
 	if look_dio and not ("--no-board" in OS.get_cmdline_user_args()):
-		var board := BoardLayer.new()
+		board = BoardLayer.new()
 		add_child(board)
 		board.setup(sim, PX_PER_M)
 		BoardView.lift_node(board)
@@ -406,7 +419,7 @@ func _ready() -> void:
 	trees.setup(sim, PX_PER_M)
 	if "--no-trees" in OS.get_cmdline_user_args():
 		trees.visible = false  # testing aid: frame cost without the trees
-	if BoardView.oblique and not ("--no-occluder" in OS.get_cmdline_user_args()):
+	if BoardView.oblique and not BoardView.v3d and not ("--no-occluder" in OS.get_cmdline_user_args()):
 		# The oblique view: the men behind a house, a wall or a rock are hidden by it (the kit's nearness).
 		var occ := KitOccluder.new()
 		add_child(occ)
@@ -434,8 +447,10 @@ func _ready() -> void:
 	camera = Camera2D.new()
 	add_child(camera)
 	camera.make_current()
+	if BoardView.v3d:
+		_v3d_build(board)
 
-	if look_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" \
+	if look_dio and not Quality.is_low() and DisplayServer.get_name() != "headless" and not BoardView.v3d \
 			and not ("--no-dof" in OS.get_cmdline_user_args()):
 		add_child(BattleDof.new())
 	hud = Hud.new()
@@ -1188,11 +1203,13 @@ func _process(delta: float) -> void:
 		AudioFx.fire_level(0.0)
 	if coop == null:
 		soldiers.set_alpha(clampf(_acc / TICK_SEC, 0.0, 1.0))
-	if BoardView.oblique and city != null and city.kit != null:
+	if BoardView.oblique and not BoardView.v3d and city != null and city.kit != null:
 		# The oblique view: a wall stretch hiding men close behind it fades while the camera is close (view only).
 		var vr := get_viewport_rect().size / camera.zoom
 		city.kit.ob_fade_update(camera.zoom.x, Rect2(camera.position - vr * 0.5, vr), player_side)
 	_keys_held(delta)
+	if view3d != null:
+		_v3d_process(delta)
 	orders.refresh()  # drop orders the sim has applied
 	if paths_on and city != null and (_paths_t < PATHS_FADE_SEC or (city.paths_node != null and city.paths_node.visible)):
 		if overlay.preview_on:
@@ -3982,6 +3999,95 @@ func _pick_unit(w: Vector2, tight := false) -> int:
 	return best
 
 
+# ------------------------------------------------------------ the 3D view ---
+
+## The 3D view (BoardView.v3d): the Node3D scene under the overlay and the HUD; the 2D world layers stay built (the overlay, the
+## orders and the 3D layers read them) but are not drawn.
+func _v3d_build(board: Node2D) -> void:
+	for n in [board, terrain, city, works, ships, trays, soldiers, trees]:
+		if n != null:
+			(n as CanvasItem).visible = false
+	if "--v3d-show-2d" in OS.get_cmdline_user_args():
+		for n in [terrain, city]:
+			(n as CanvasItem).visible = true
+	view3d = View3D.new()
+	add_child(view3d)
+	view3d.setup(self, sim, PX_PER_M)
+	# The battle opens facing the player's side: an army deployed in the north half turns the table half round.
+	var cy := 0.0
+	var nn := 0
+	for u in sim.n_units:
+		if (sim.u_side[u] & 1) == (player_side & 1) and sim.u_state[u] < BattleSim.U_DESTROYED:
+			cy += float(sim.u_cy[u])
+			nn += 1
+	var y0 := PI if nn > 0 and cy / nn < sim.field_h * 0.5 and not sim.is_ai_side(player_side) else 0.0
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--v3d-yaw="):
+			y0 = deg_to_rad(float(a.get_slice("=", 1)))
+	var e0 := BoardView.ELEVATION_DEG
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--v3d-tilt="):
+			e0 = clampf(float(a.get_slice("=", 1)), V3D_TILT_MIN, V3D_TILT_MAX)
+	BoardView.set_view(y0, e0)
+
+
+const V3D_TILT_MIN := 25.0
+const V3D_TILT_MAX := 60.0
+const V3D_KEY_TURN := 1.4        # radians a second (Q / E held)
+const V3D_KEY_TILT := 30.0       # degrees a second (Home / End held)
+const V3D_INERTIA_SEC := 0.35    # the turn's inertia decays with this time constant
+const V3D_TWIST_DEAD := 0.14     # radians (8 degrees) of two-finger twist before it turns the table
+
+
+## Turn the 3D camera by dyaw (radians) and tilt it by dtilt (degrees) about the ground point under screen point `pivot` (it stays
+## under the same screen point).
+func _v3d_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
+	if view3d == null:
+		return
+	camera.force_update_scroll()
+	var g := _screen_to_world(pivot)
+	BoardView.set_view(wrapf(BoardView.yaw + dyaw, -PI, PI), clampf(BoardView.elev_deg + dtilt, V3D_TILT_MIN, V3D_TILT_MAX))
+	camera.force_update_scroll()
+	var s := get_canvas_transform() * BoardView.to_board(g)
+	camera.position += (s - pivot) / camera.zoom
+	_clamp_camera()
+	overlay.queue_redraw()
+
+
+## Held keys and the inertia of a turn (every frame, 3D only).
+func _v3d_process(delta: float) -> void:
+	_v3d_twist_step()
+	var c := get_viewport_rect().size * 0.5
+	var turn := 0.0
+	if not _gm and not hud.book.visible and not hud.controls.visible:
+		if Controls.held("group_rotate_left"):
+			turn += V3D_KEY_TURN * delta
+		if Controls.held("group_rotate_right"):
+			turn -= V3D_KEY_TURN * delta
+		var tilt := 0.0
+		if Controls.held("camera_tilt_up"):
+			tilt += V3D_KEY_TILT * delta
+		if Controls.held("camera_tilt_down"):
+			tilt -= V3D_KEY_TILT * delta
+		if turn != 0.0 or tilt != 0.0:
+			_v3d_yaw_vel = 0.0
+			_v3d_turn(turn, tilt, c)
+			return
+	if not _v3d_turning and absf(_v3d_yaw_vel) > 0.02:
+		_v3d_turn(_v3d_yaw_vel * delta, 0.0, c)
+		_v3d_yaw_vel *= exp(-delta / V3D_INERTIA_SEC)
+	elif not _v3d_turning:
+		_v3d_yaw_vel = 0.0
+
+
+## A turning step of a gesture: turn now and keep its rate for the inertia.
+func _v3d_drag_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
+	_v3d_turning = true
+	var dt := maxf(get_process_delta_time(), 1.0 / 240.0)
+	_v3d_yaw_vel = lerpf(_v3d_yaw_vel, dyaw / dt, 0.5)
+	_v3d_turn(dyaw, dtilt, pivot)
+
+
 # ---------------------------------------------------------------- input ---
 
 func _screen_to_world(p: Vector2) -> Vector2:
@@ -4070,6 +4176,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_rmb_pos = mb.position
 				_rmb_drag = false
 				_rmb_pan = false
+				_rmb_turn = false
 			elif _rmb:
 				_right_release(mb.position)
 		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
@@ -4112,7 +4219,11 @@ func _right_motion(e: InputEventMouseMotion) -> void:
 	if not _rmb_drag and not _rmb_pan:
 		if e.position.distance_to(_rmb_pos) <= DRAG_THRESHOLD:
 			return
-		if interactive and not selection.is_empty() and _exit_timer <= 0.0:
+		if view3d != null and (selection.is_empty() or Input.is_key_pressed(KEY_ALT) or not interactive):
+			_rmb_pan = true
+			_rmb_turn = true
+			_count("v3d_drag_turn")
+		elif interactive and not selection.is_empty() and _exit_timer <= 0.0:
 			_rmb_drag = true
 			overlay.preview_on = true
 			_cancel_left_drag()
@@ -4122,6 +4233,10 @@ func _right_motion(e: InputEventMouseMotion) -> void:
 			_count("mouse_pan")
 	if _rmb_drag:
 		_line_preview(_rmb_pos, e.position)
+	elif _rmb_turn:
+		# (3D: like the spike's orbit: across turns the table, up and down tilts it)
+		_v3d_drag_turn(-e.relative.x * deg_to_rad(0.3), e.relative.y * 0.2,
+			get_viewport_rect().size * 0.5)
 	elif _rmb_pan:
 		camera.position -= e.relative / camera.zoom
 		_clamp_camera()
@@ -4142,6 +4257,8 @@ func _right_release(pos: Vector2) -> void:
 		return
 	if _rmb_pan:
 		_rmb_pan = false
+		_rmb_turn = false
+		_v3d_turning = false
 		_rmb_shift = false
 		return
 	var now := Time.get_ticks_msec() / 1000.0
@@ -4430,6 +4547,8 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 	if _gesture_multi:
 		if _touches.size() >= 2:
 			_start_pinch()
+		else:
+			_v3d_turning = false   # (3D: a twist let go keeps turning a little: the inertia)
 		if _touches.is_empty():
 			_gesture_multi = false
 			_primary = -1
@@ -4528,9 +4647,7 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		overlay.preview_b = _screen_to_world(e.position)
 		overlay.queue_redraw()
 	elif _gm and _gm_mouse:
-		_gm_move = (e.position - _gm_mouse_start) / camera.zoom.x
-		if BoardView.oblique:
-			_gm_move.y /= BoardView.OBLIQUE_COS
+		_gm_move = BoardView.dir_world((e.position - _gm_mouse_start) / camera.zoom.x)
 		_gm_update()
 	elif _box:
 		overlay.box_b = _screen_to_world(e.position)
@@ -4629,9 +4746,7 @@ func _gm_touch_update() -> void:
 		_gm_begin()
 		_count("three_finger_move")
 	if _gm:
-		_gm_move = move / camera.zoom.x
-		if BoardView.oblique:
-			_gm_move.y /= BoardView.OBLIQUE_COS
+		_gm_move = BoardView.dir_world(move / camera.zoom.x)
 		_gm_rot = rot
 		_gm_update()
 
@@ -4732,6 +4847,12 @@ func _start_pinch() -> void:
 	var t := _two_touches()
 	_pinch_dist = (t[0] as Vector2).distance_to(t[1])
 	_pinch_mid = ((t[0] as Vector2) + (t[1] as Vector2)) * 0.5
+	_pinch_ang = ((t[1] as Vector2) - (t[0] as Vector2)).angle()
+	_v3d_acc_ang = 0.0
+	_v3d_twist = false
+	_v3d_twist_prev = 1e9
+	_v3d_yaw_vel = 0.0
+	_v3d_c3 = Vector2(-1e9, -1e9)
 
 
 func _update_pinch() -> void:
@@ -4740,12 +4861,61 @@ func _update_pinch() -> void:
 	var t := _two_touches()
 	var dist := (t[0] as Vector2).distance_to(t[1])
 	var mid := ((t[0] as Vector2) + (t[1] as Vector2)) * 0.5
+	if view3d != null and _touches.size() >= 3 and not _gm and not _gm_pending and selection.is_empty():
+		_v3d_three()
+		return
+	if view3d != null and _touches.size() == 2 and _v3d_pinch(t, dist, mid):
+		return
 	camera.position -= (mid - _pinch_mid) / camera.zoom
 	if _pinch_dist > 1.0 and dist > 1.0:
 		_zoom_at(mid, dist / _pinch_dist)
 	_pinch_dist = dist
 	_pinch_mid = mid
 	_clamp_camera()
+
+
+## The 3D view's two-finger gesture, beside the pan and the pinch (which go on as in the other views): the twist turns the table
+## about the fingers' midpoint once it passes V3D_TWIST_DEAD (so a pinch or a pan does not turn it). Three fingers with nothing
+## selected (`_v3d_three`): across turns, up and down tilts. Returns true when the step is used up here (never, for two fingers).
+func _v3d_pinch(_pair: Array, _dist: float, _mid: Vector2) -> bool:
+	return false
+
+
+## The twist, once a frame from both fingers' latest places (the touch events come a finger at a time: a parallel pan would
+## swing the line between them back and forth within a frame), turning about their midpoint past the dead zone.
+func _v3d_twist_step() -> void:
+	if not _gesture_multi or _touches.size() != 2 or _gm or _gm_pending:
+		_v3d_twist_prev = 1e9
+		return
+	var t := _two_touches()
+	var ang := ((t[1] as Vector2) - (t[0] as Vector2)).angle()
+	if _v3d_twist_prev > 1e8:
+		_v3d_twist_prev = ang
+		return
+	var da := wrapf(ang - _v3d_twist_prev, -PI, PI)
+	_v3d_twist_prev = ang
+	if not _v3d_twist:
+		_v3d_acc_ang += da
+		if absf(_v3d_acc_ang) <= V3D_TWIST_DEAD:
+			return
+		_v3d_twist = true
+		_count("v3d_twist")
+		da = _v3d_acc_ang   # (the dead zone's turn is not lost)
+	if da != 0.0:
+		_v3d_drag_turn(da, 0.0, ((t[0] as Vector2) + (t[1] as Vector2)) * 0.5)
+
+
+## Three fingers with nothing selected in the 3D view (no group move to make): their centroid's motion across turns the table,
+## up and down tilts it (down: more from above), about the screen's centre.
+func _v3d_three() -> void:
+	var c := Vector2.ZERO
+	for k in _touches:
+		c += _touches[k]
+	c /= float(_touches.size())
+	if _v3d_c3.x > -1e8:
+		var d := c - _v3d_c3
+		_v3d_drag_turn(-d.x * deg_to_rad(0.3), d.y * 0.25, get_viewport_rect().size * 0.5)
+	_v3d_c3 = c
 
 
 func _zoom_at(screen_pos: Vector2, factor: float) -> void:
@@ -4870,6 +5040,8 @@ func _rebind(s) -> void:
 	trees.sim = s
 	works.sim = s
 	hud._sim = s
+	if view3d != null:
+		view3d.sim = s   # (the 3D view reads the sim the lockstep session runs: a joiner's restored copy)
 	soldiers.upload()
 	_view_tick()
 	_prune_selection()

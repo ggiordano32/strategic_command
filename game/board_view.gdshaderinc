@@ -20,6 +20,15 @@ uniform vec4 ob_fq = vec4(0.0, 1.0, 0.0, 0.18);
 uniform sampler2D ob_ftex : filter_linear, repeat_disable;
 #endif
 
+#ifdef V3D
+// The 3D view (game/board_view.gd set_view): the camera's right and toward-the-viewer directions on the ground, (sin, cos) of its
+// elevation, and the stored lifts' scale to that elevation. ob_board below is then the 3D camera's projection of the ground.
+uniform vec2 ob_r = vec2(1.0, 0.0);
+uniform vec2 ob_f = vec2(0.0, 1.0);
+uniform vec2 ob_cs = vec2(0.6427876097, 0.7660444431);
+uniform float ob_lk = 1.0;
+#endif
+
 const float OB_COS = 0.6427876097;   // cos(50 deg): ground y on the board
 const float OB_SIN = 0.7660444431;   // sin(50 deg): heights on the board
 const float OB_UP_K = 0.999;         // BoardView.UP_K: the upright draw mark
@@ -71,7 +80,11 @@ float ob_lift_px(vec2 w) {
 
 // World point (px, at ground level) -> board point (px).
 vec2 ob_board(vec2 w) {
+#ifdef V3D
+	return vec2(dot(w, ob_r), dot(w, ob_f) * ob_cs.x - ob_lift_px(w) * ob_lk);
+#else
 	return vec2(w.x, w.y * OB_COS - ob_lift_px(w));
+#endif
 }
 
 // Board point -> the ground point under it. The coarse grid: Newton steps on y (the lift is linear along y inside a cell).

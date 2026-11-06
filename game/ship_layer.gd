@@ -245,6 +245,77 @@ func _draw_oblique(s: int, lw: float) -> void:
 	ob.end_at()
 
 
+## The 3D view (game/view3d.gd): every ship as solids in one mesh, the oblique view's hull, rail, oars, masts, yards and furled
+## sails (the waterline's foam, the gunports and the pennant stay flat details of the 2D views); null when there is none.
+## `sig` tells the view when to build it again (a gun silenced, her crew gone, her party landed).
+func sig() -> int:
+	return _sig
+
+
+func build_mesh3d() -> ArrayMesh:
+	if sim == null or sim.shp_on == 0 or sim.sh_side.size() == 0:
+		return null
+	var ob := _ob
+	ob.sim = sim
+	ob.ppm = px_per_m
+	ob.lw = 1.0
+	ob.ground_m = func(w: Vector2) -> float: return BoardView.ground_m(w)
+	ob.st3 = SurfaceTool.new()
+	ob.st3.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for s in sim.sh_side.size():
+		_ship3d(s)
+	var m := ob.st3.commit()
+	ob.st3 = null
+	return m
+
+
+func _ship3d(s: int) -> void:
+	var ob := _ob
+	var st := _state(s)
+	var key: String = sim.sh_key[s]
+	var ln := float(sim.sh_len[s])
+	var bm := float(sim.sh_beam[s])
+	var canoe := masts_of(key, int(ln)).is_empty() or key == "piragua"
+	var hd := float(sim.sh_head[s]) * TAU / 1024.0
+	var fwd := Vector2(cos(hd), sin(hd))
+	var sd := Vector2(-fwd.y, fwd.x)
+	var at := Vector2(sim.sh_x[s], sim.sh_y[s]) * (px_per_m / 1024.0)
+	ob.begin_at(at)
+	var fb := clampf(bm * 0.22, 0.5, 2.6) * (0.6 if st == 1 else 1.0)
+	var pts: Array = []
+	for v in hull_shape(ln, bm, canoe):
+		pts.append(fwd * v.x + sd * v.y)
+	ob.prism(pts, -0.3, fb, COL_HULL.darkened(0.45 if st > 0 else 0.0), COL_DECK.darkened(0.3 if st > 0 else 0.0))
+	for i in pts.size():
+		var p: Vector2 = pts[i] * 0.97
+		var q: Vector2 = pts[(i + 1) % pts.size()] * 0.97
+		ob.bar(p, fb + 0.15, q, fb + 0.15, colors[s], 1.0)
+	if canoe and key != "piragua":
+		for i in 5:
+			var f2 := (float(i) + 0.5) / 5.0 - 0.5
+			for sg2 in [-1.0, 1.0]:
+				var a: Vector2 = fwd * (f2 * ln * 0.7) + sd * (sg2 * bm * 0.5)
+				ob.bar(a, fb * 0.8, a + sd * (sg2 * bm * 0.7) - fwd * (bm * 0.3), 0.1, Color(0.3, 0.2, 0.1), 0.8)
+		ob.end_at()
+		return
+	var mh := clampf(ln * 0.42, 7.0, 18.0)
+	var masts := masts_of(key, int(ln))
+	var yd := (sd * cos(0.4) + fwd * sin(0.4)).normalized()
+	for i in masts.size():
+		var mp: Vector2 = fwd * (float(masts[i]) * ln)
+		var top := mh * (1.0 if i == 0 or masts.size() == 1 else (0.92 if i == 1 else 0.8))
+		if st == 1 and i > 0:
+			ob.bar(mp, fb, mp + sd * 1.2, fb + top * 0.25, COL_MAST, 1.8)
+			continue
+		ob.bar(mp, fb, mp, fb + top, COL_MAST, 3.0)
+		for yk in 2:
+			var yh: float = fb + top * (0.5 if yk == 0 else 0.82)
+			var half := bm * (0.7 if yk == 0 else 0.5)
+			ob.bar(mp - yd * half, yh, mp + yd * half, yh, COL_MAST, 1.6)
+			ob.bar(mp - yd * half * 0.9, yh - 0.45, mp + yd * half * 0.9, yh - 0.45, COL_SAIL, 5.0)
+	ob.end_at()
+
+
 func ci_poly(p: Array, col: Color) -> void:
 	draw_colored_polygon(PackedVector2Array(p), col)
 
@@ -270,6 +341,20 @@ class Solid extends SiegeGearOb:
 		for p in poly:
 			c += p
 		c /= maxf(poly.size(), 1)
+		if st3 != null:
+			# (the 3D view: every side and the deck as a fan; the depth buffer hides the far sides)
+			for i in poly.size():
+				var p3: Vector2 = poly[i]
+				var q3: Vector2 = poly[(i + 1) % poly.size()]
+				var e3 := q3 - p3
+				var n3 := Vector2(e3.y, -e3.x).normalized()
+				if n3.dot((p3 + q3) * 0.5 - c) < 0.0:
+					n3 = -n3
+				var k3 := 0.62 + 0.38 * clampf(n3.dot(LIGHT.normalized()) * 0.5 + 0.5, 0.0, 1.0)
+				_quad3(_p3(p3, h0), _p3(q3, h0), _p3(q3, h1), _p3(p3, h1), _tint(col, k3))
+			for i in poly.size():
+				_tri3(_p3(c, h1), _p3(poly[(i + 1) % poly.size()], h1), _p3(poly[i], h1), top_col)
+			return
 		var faces: Array = []
 		for i in poly.size():
 			var p: Vector2 = poly[i]

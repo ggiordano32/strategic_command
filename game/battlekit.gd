@@ -227,7 +227,7 @@ func setup(p_sim, p_lay: Dictionary, p_k: float) -> void:
 	else:
 		_build_houses()
 	_build_instances()
-	low = Quality.is_low()
+	low = _want_low()
 	_make_nodes()
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 
@@ -417,7 +417,7 @@ func setup_land(p_sim, p_k: float) -> void:
 	var ld: Dictionary = sim.map_info.get("land", {})
 	for r in ld.get("rocks", []):
 		_rock(r)
-	low = Quality.is_low()
+	low = _want_low()
 	_make_nodes()
 
 
@@ -978,7 +978,7 @@ func _make_nodes() -> void:
 			_low_node.strip_mesh = _strip_mesh(false)
 		add_child(_low_node)
 		return
-	shadows_on = not ("--no-kit-shadow" in OS.get_cmdline_user_args())
+	shadows_on = not ("--no-kit-shadow" in OS.get_cmdline_user_args()) and not BoardView.v3d   # (3D: the lamp casts them)
 	if shadows_on:
 		var t0 := Time.get_ticks_usec()
 		_shadow = Shadow.new()
@@ -1113,6 +1113,7 @@ func _ob_landmarks() -> void:
 		if q < 0:
 			continue
 		var sc := float(int(a[4])) / 1000.0
+		_ob_lm.append([_ob_wall.size() / 12, nm, rad_to_deg(-yaw)])
 		var e := Vector2(cos(yaw), sin(yaw))
 		var dn := Vector2(-e.y, e.x)
 		var c := Vector2(float(int(a[1])), float(int(a[2])))
@@ -1134,6 +1135,7 @@ func _ob_landmarks() -> void:
 func _ob_walls() -> void:
 	_ob_wall.clear()
 	_ob_wkey.clear()
+	_ob_lm.clear()
 	_ob_seg.clear()
 	_ob_wseg.clear()
 	_ob_nwall = 0
@@ -1848,8 +1850,39 @@ func _make_ob_nodes(mat: ShaderMaterial) -> void:
 	add_child(_mmi)
 
 
+## The 3D view (game/view3d.gd): the sorted MultiMesh's rows as they are, with every sprite piece's render re-picked for a camera
+## turned cam_yaw_deg (the sheet's yaws relative to the camera: a piece at world yaw Y is its render at Y - the camera's yaw);
+## `ob_rev` counts the changes to the rows (a gate's state, a fallen house, the rubble) so the view copies them again.
+var ob_rev := 0
+var _ob_lm: Array = []     # the landmark rows: [row index in _ob_wall, piece name, yaw degrees]
+
+
+func ob_buffer_3d(cam_yaw_deg: float) -> PackedFloat32Array:
+	if ob_mm == null:
+		return PackedFloat32Array()
+	var buf := ob_mm.buffer
+	for i in i_piece.size():
+		var sl := _ob_slot[i] if i < _ob_slot.size() else -1
+		if sl < 0 or fallen(i) or _ob_sprite(i) < 0:
+			continue
+		var yaw := rad_to_deg(atan2(-i_e[i].y, i_e[i].x)) - cam_yaw_deg
+		var q := KitOb.index_yaw(Atlas.NAMES[i_piece[i]], yaw)
+		if q >= 0:
+			buf[sl * 12 + 8] = float(KitOb.BASE + q)
+	for lm in _ob_lm:
+		var w: int = lm[0]
+		var sl2 := _ob_wslot[w] if w < _ob_wslot.size() else -1
+		if sl2 < 0:
+			continue
+		var q2 := KitOb.index_yaw(str(lm[1]), float(lm[2]) - cam_yaw_deg)
+		if q2 >= 0:
+			buf[sl2 * 12 + 8] = float(KitOb.BASE + q2)
+	return buf
+
+
 ## The sorted MultiMesh's rows from _ob_order (the pieces from their instances, the walls and landmarks from _ob_wall).
 func _ob_fill() -> void:
+	ob_rev += 1
 	ob_mm.instance_count = _ob_order.size()
 	var buf := PackedFloat32Array()
 	buf.resize(_ob_order.size() * 12)
@@ -1959,6 +1992,7 @@ func _ob_put(i: int) -> void:
 	var sl := _ob_slot[i] if i < _ob_slot.size() else -1
 	if sl < 0:
 		return
+	ob_rev += 1
 	var buf := PackedFloat32Array()
 	buf.resize(12)
 	_write(buf, i, 0)
@@ -2019,12 +2053,18 @@ static func _make_quad() -> ArrayMesh:
 
 # --------------------------------------------------------------- per tick ----
 
+## The Low path (the pre-lit atlas drawn by _LowDraw, no rows): Graphics Low, but never in the 3D view, which places the
+## oblique rows in 3D on every graphics setting (game/view3d.gd; on Low its lamp casts no shadows).
+func _want_low() -> bool:
+	return Quality.is_low() and not BoardView.v3d
+
+
 ## Gates: the piece follows the state (closed / open / broken), a flash while struck; a gate
 ## breaking re-bakes its shadow. Also follows a Graphics quality switch.
 func refresh() -> void:
 	if i_piece.is_empty():
 		return
-	if Quality.is_low() != low:
+	if _want_low() != low:
 		low = not low
 		_make_nodes()
 		return

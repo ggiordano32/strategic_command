@@ -57,6 +57,8 @@ var viewer_side := -1    # line of sight: the enemy's hidden units do not thin t
 var _kit_mat: ShaderMaterial
 var _ob_sheet := false   # the oblique view draws the kit sheet's trees (assets/battlekit_ob)
 var _n_inner := 0   # instances before the orchard rows (gameplay woods)
+## The 3D view (game/view3d.gd): the woods' and orchards' instances as built (16 floats each, the custom data at 12-15).
+var data3d := PackedFloat32Array()
 
 
 func setup(p_sim, p_px_per_m: float) -> void:
@@ -233,6 +235,8 @@ func _build() -> void:
 		# The oblique view: the trees stand up, drawn farther first (the woods, then the orchards and willows).
 		data = _sorted_by_y(data, 0, _n_inner)
 		data = _sorted_by_y(data, _n_inner, data.size() / 16)
+	if BoardView.v3d:
+		data3d = data
 	var shades: Array = pal["trees"]
 	var base: Color = pal["base"]
 	_occ_bytes.resize(vw * vh)

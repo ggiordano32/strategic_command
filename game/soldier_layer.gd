@@ -252,6 +252,10 @@ var _ord_idx: Image                       # (texture path) 2 x n RGBA8: the inst
 var _ord_img: Image
 var _cbuf2: Image                         # (CPU path) the reordered buffer
 var order_us := 0                         # microseconds the last ordering took (benchmarks)
+## The 3D view (game/view3d.gd): its MultiMeshes (TRANSFORM_3D, no custom data) take the CPU-fed buffers as they are, 12 floats
+## an instance (the men unordered: depth sorts them); the 2D layers are not drawn. Set by the view before the first upload.
+var v3d_mm: MultiMesh = null
+var v3d_pr_mm: MultiMesh = null
 var _occ_tex: Texture2D = null            # the kit's nearness (game/kit_occluder.gd), or null
 var _occ_near := Vector2(0.0, 1.0)
 ## Microseconds the last upload() took (both paths; for benchmarks).
@@ -339,20 +343,22 @@ func setup(p_sim, p_px_per_m: float) -> void:
 	add_child(_pr_layer)
 
 	var forced := forced_path()
-	auto_fallback = forced == ""
+	auto_fallback = forced == "" and not BoardView.v3d
+	if BoardView.v3d:
+		_probe_frames = -1   # (the 3D view draws the men itself from the CPU-fed buffer; the 2D probe would see nothing)
 	# Testing aid: the texture path's probe reports nothing drawn, as on the
 	# devices it fails on (exercises the automatic switch).
 	_probe_fail = "--soldier-probe-fail" in _launch_args() or "--soldier-probe-fail=1" in _launch_args()
 	# Testing aid: hold the atlas men's animation (frame-time comparisons).
 	if "--soldier-anim=0" in _launch_args():
 		animate = false
-	set_cpu_fed(forced == "cpu" or (forced == "" and load_pref() == "cpu"))
+	set_cpu_fed(BoardView.v3d or forced == "cpu" or (forced == "" and load_pref() == "cpu"))
 
 
 ## Use the CPU-fed path (true) or the texture path (false) from now on.
 func set_cpu_fed(on: bool) -> void:
 	cpu_fed = on
-	if on and BoardView.oblique:
+	if on and BoardView.oblique and not BoardView.v3d:
 		BoardView.use_grid()   # the CPU-fed shaders cannot read the fine lift field: every layer uses the coarse grid
 	if on:
 		_build_cpu()
@@ -790,6 +796,11 @@ func upload() -> void:
 			# (A unit on a wall: its walk's height; in a held building: the building's firing level, ob_z; a unit
 			# climbing a ladder or a siege tower: 0, its men's own heights are _stair_lift's.)
 			_unit_ext[u] = 0 if sim.u_stair[u] == sim.ST_LADDER else _stand_dm(u, sim.wall_h * 10 / 1024)
+			if BoardView.v3d and sim.shp_on != 0 and sim.u_ship[u] >= 0 and sim.sh_unit[sim.u_ship[u]] == u:
+				# (the 3D view: a ship's crew stands on her deck, the freeboard game/ship_layer.gd builds her to; the 2D views
+				# draw them at the water's level under the deck's drawing, as before)
+				var sb: int = sim.u_ship[u]
+				_unit_ext[u] = roundi(clampf(float(sim.sh_beam[sb]) * 0.22, 0.5, 2.6) * 10.0)
 	if oblique:
 		_stair_lift()
 	# Engines follow the soldiers in every array.
@@ -1187,7 +1198,11 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 		_column(_cbuf, _ccol, C_B, sts, _n_inst)
 		for r in range(0, _runs.size(), 3):
 			_cbuf.fill_rect(Rect2i(C_FLAGS, _runs[r], 1, _runs[r + 1]), Color(float(_flags[_runs[r + 2]]), 0.0, 0.0))
-		if oblique:
+		if BoardView.v3d:
+			_ext_cpu()
+			if v3d_mm != null:
+				v3d_mm.buffer = _cbuf.get_data().to_float32_array()
+		elif oblique:
 			_order_cpu()
 			_mm_cpu.buffer = _cbuf2.get_data().to_float32_array()
 		else:
@@ -1224,7 +1239,11 @@ func _upload_cpu(xs: PackedInt32Array, ys: PackedInt32Array, pxs: PackedInt32Arr
 			_pr_ak_seen = pa
 			_pr_ccol.set_data(1, m, false, Image.FORMAT_RF, _pr_code.to_byte_array())
 			_pr_cbuf.blit_rect(_pr_ccol, Rect2i(0, 0, 1, m), Vector2i(C_SPRITE, 0))
-		_pr_mm_cpu.buffer = _pr_cbuf.get_data().to_float32_array()
+		var pbuf := _pr_cbuf.get_data().to_float32_array()
+		_pr_mm_cpu.buffer = pbuf
+		if v3d_pr_mm != null:
+			v3d_pr_mm.instance_count = _pr_n
+			v3d_pr_mm.buffer = pbuf
 
 
 ## The oblique view, texture path: the instances in draw order, the men sorted by ground y (farther first), with native
@@ -1285,6 +1304,17 @@ func _order_cpu() -> void:
 			_cbuf2.blit_rect(_cbuf, Rect2i(0, first, STRIDE, cnt), Vector2i(0, at))
 		at += cnt
 	order_us = Time.get_ticks_usec() - t0
+
+
+## The 3D view, CPU-fed buffer: the sprite column carries each run's height (sprite + 16 x dm: a wall walk, a held building's
+## level) and a man on a stair's or a ladder's flight his own (as _order_cpu does, without the reorder: depth sorts the men).
+func _ext_cpu() -> void:
+	for r in range(0, _runs.size(), 3):
+		var u := _runs[r + 2]
+		var spr := _unit_sprite[u] if _runs[r] < sim.n else _unit_engine[u]
+		_cbuf.fill_rect(Rect2i(C_SPRITE, _runs[r], 1, _runs[r + 1]), Color(float(spr + 16 * _unit_ext[u]), 0.0, 0.0))
+	for i in _man_ext_on:
+		_cbuf.set_pixel(C_SPRITE, i, Color(float(_unit_sprite[sim.unit_of[i]] + 16 * _man_ext[i]), 0.0, 0.0))
 
 
 ## CPU path: the missile MultiMesh covers the slots in use so far, in steps

@@ -62,9 +62,9 @@ static func sheets_present() -> bool:
 	return true
 
 
-## True on the web when the Battle view is Oblique and the sheets are not mounted.
+## True on the web when the Battle view is Oblique (or 3D, which draws the same sheets) and the sheets are not mounted.
 static func wanted() -> bool:
-	return OS.has_feature("web") and BoardView.pref() == "oblique" and not sheets_present()
+	return OS.has_feature("web") and (BoardView.pref() == "oblique" or BoardView.pref() == "3d") and not sheets_present()
 
 
 ## The page's directory plus the pack, versioned by the stamp's "ob:" token (the sheets' content hash) so a new build

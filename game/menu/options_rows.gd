@@ -74,12 +74,14 @@ func build(parent: Control, o: Dictionary) -> void:
 		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
 	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
-	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"]], BoardView.pref(), "Battle view",
+	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"], ["3D", "3d"]], BoardView.pref(), "Battle view",
 		"Oblique (the default): the tabletop seen from its southern edge at 40 degrees, the hills rising, the figures, walls " \
 		+ "and town standing upright; men behind a wall or a house show as ghosts. Top: the battle map from straight above, " \
-		+ "the lighter of the two. On the web Oblique downloads its figures once (12 MB). Takes effect at the next battle.", func(v):
+		+ "the lighter of the two. 3D: the table as a real model under a lamp, the camera free to turn (twist two fingers, or " \
+		+ "right drag) and tilt (two fingers side by side up or down), the painted figures standing on it, real shadows on " \
+		+ "Graphics High. On the web Oblique and 3D download their figures once (12 MB). Takes effect at the next battle.", func(v):
 			BoardView.save_pref(str(v))
-			if str(v) == "oblique":
+			if str(v) == "oblique" or str(v) == "3d":
 				ObliquePack.ensure(true))
 	# The table's motion on the same row (tabletop pass 5, game/table_motion.gd): the dive onto the table and the die.
 	_beside("battle_view", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",

@@ -18,6 +18,9 @@
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -oblique [-shots DIR]
 //	    only the oblique pack check: a battle opened with ?battle-view=oblique fetches oblique.pck, mounts it and
 //	    finds the real sheets (see checkOblique; works against tools/serve_web.py too)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -v3d [-shots DIR]
+//	    only the 3D battle view check: a battle opened with ?battle-view=3d fetches the oblique pack, builds the 3D
+//	    scene and its probe sees the men drawn in WebGL ("V3D_PROBE drawn=N"; see checkV3d; works against any static server)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio [-audio-autoplay] [-audio-query '&audio-exp=master']
 //	    only the sound check (see audio.go; works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio-loop
@@ -137,6 +140,7 @@ func main() {
 	live := flag.Bool("live", false, "check a live co-op battle instead of the turn flow")
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
 	obliqueOnly := flag.Bool("oblique", false, "only check the on-demand oblique sheets pack in a battle")
+	v3dOnly := flag.Bool("v3d", false, "only check the 3D battle view: the scene builds and its probe sees the men")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
 	audioLoop := flag.Bool("audio-loop", false, "only check that the ambient bed loops without a gap (plays bed_map for 54 s)")
@@ -221,6 +225,15 @@ func main() {
 	front(ctxA)
 	if *live {
 		os.Exit(runLive(ctxA, ca, newBrowser, front, phone, *url, inv, check, &fails))
+	}
+	if *v3dOnly {
+		checkV3d(ctxA, ca, phone, *url, *shots, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
 	}
 	if *obliqueOnly {
 		checkOblique(ctxA, ca, phone, *url, *shots, check)
@@ -442,6 +455,35 @@ func idx(m []string, i int) string {
 // checkOblique: the oblique Battle view on the web (game/oblique_pack.gd). A battle opened with
 // ?battle-view=oblique must download oblique.pck, mount it ("oblique pack: loaded ... sheets found"), draw
 // its soldiers (SOLDIER_PROBE) and print neither loader's fallback notice (game/sprite_ob.gd, game/kit_ob.gd).
+// checkV3d: the 3D Battle view on the web (game/view3d.gd, docs/design/art_pipeline.md "The 3D battle view, step one"). A
+// battle opened with ?battle-view=3d mounts the oblique sheets (downloading oblique.pck when absent), builds its 3D scene
+// ("view3d: built ...") and its own probe ("V3D_PROBE drawn=N men=M path=v3d-gpu|v3d-cpu") must see the men drawn.
+func checkV3d(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
+	c.reset()
+	t0 := time.Now()
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&battle-view=3d")); err != nil {
+		check(false, "3d: navigate: "+err.Error())
+		return
+	}
+	b := c.wait(regexp.MustCompile(`view3d: built in ([\d.]+) ms \(board (\d+) verts, (\d+) trees, shadows (\w+)\)`), 240*time.Second)
+	check(b != nil, fmt.Sprintf("the 3D scene builds: %v ms, board %v verts, shadows %v (%.1f s)", idx(b, 1), idx(b, 2), idx(b, 4), time.Since(t0).Seconds()))
+	m := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`), 120*time.Second)
+	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the 3D battle draws its men: %v pixels, %v men, %v path", idx(m, 1), idx(m, 2), idx(m, 3)))
+	time.Sleep(2 * time.Second)
+	for _, l := range c.all {
+		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
+			check(false, "a shader failed: "+strings.TrimSpace(l))
+		}
+	}
+	if shots != "" && m != nil {
+		if png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
+			p := filepath.Join(shots, "web_v3d.png")
+			os.WriteFile(p, png, 0o644)
+			fmt.Println("  screenshot", p)
+		}
+	}
+}
+
 func checkOblique(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
 	c.reset()
 	t0 := time.Now()

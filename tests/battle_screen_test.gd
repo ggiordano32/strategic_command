@@ -25,7 +25,9 @@ extends SceneTree
 ## layer under the men (drawn by the board's lift in the oblique view), a hull for each of the three ships in her
 ## faction's colours, each ship's crew on her deck.
 ## Then the whole run again in the oblique battle view (tabletop pass 3, BoardView.force = "oblique"; the checks
-## marked "[oblique]"): the same assertions, plus the battles open in that view with the upright figures' shaders.
+## marked "[oblique]"): the same assertions, plus the battles open in that view with the upright figures' shaders; and once
+## more in the 3D view (BoardView.force = "3d", "[3d]"; docs/design/art_pipeline.md "The 3D battle view, step one"): the same
+## assertions plus `_v3d_cases`.
 
 const CampaignScreen := preload("res://game/campaign/campaign_screen.gd")
 const BattleScreen := preload("res://game/campaign/battle_screen.gd")
@@ -54,10 +56,11 @@ var _bid := -1
 var _snap: Dictionary = {}
 var _hero: Dictionary = {}
 var _oblique := false   # the second run: the oblique battle view
+var _v3d := false       # the third run: the 3D battle view (game/view3d.gd; oblique true as well: the same board transform)
 
 
 func _check(c: bool, what: String) -> void:
-	print(("PASS " if c else "FAIL ") + ("[oblique] " if _oblique else "") + what)
+	print(("PASS " if c else "FAIL ") + ("[3d] " if _v3d else ("[oblique] " if _oblique else "")) + what)
 	if not c:
 		_ok = false
 
@@ -312,6 +315,10 @@ func _process(_d: float) -> bool:
 			if cs.battle != null:
 				_check(BoardView.oblique == _oblique and cs.battle.soldiers.oblique == _oblique,
 					"the battle opens in the %s view" % ("oblique" if _oblique else "top"))
+				_check((cs.battle.view3d != null) == _v3d and BoardView.v3d == _v3d,
+					"the 3D scene is built only in the 3D view (%s)" % str(cs.battle.view3d != null))
+				if _v3d:
+					_v3d_cases(cs.battle)
 				cs.battle.hud.menu_pressed.emit()
 				_check(cs.battle.leave_dialog == null, "a Leave tap while the battle opens does nothing")
 				cs.battle.leave_grace = 0.0
@@ -409,10 +416,11 @@ func _process(_d: float) -> bool:
 			_ship_cases()
 			_flash_cases()
 			_cover_cases()
-			if not _oblique:
-				# Again, in the oblique battle view.
+			if not _oblique or not _v3d:
+				# Again, in the oblique battle view, then in the 3D view.
+				_v3d = _oblique
 				_oblique = true
-				BoardView.force = "oblique"
+				BoardView.force = "3d" if _v3d else "oblique"
 				if is_instance_valid(cs):
 					cs.queue_free()
 				_begin()
@@ -443,6 +451,33 @@ func _end_open() -> void:
 	root.add_child(_eb)
 	_check(_eb.soldiers.oblique == _oblique and (not _oblique or _eb.soldiers._blocks == SoldierLayer.BLOCKS + 2),
 		"the end-of-battle screen's view: %s" % ("oblique (the per-tick order block, the stair heights block)" if _oblique else "top"))
+
+
+## The 3D view (game/view3d.gd) in a campaign battle: the men come from the CPU-fed buffer into the 3D MultiMesh (every man, no
+## probe of the hidden 2D layers), the 2D world layers are not drawn, the board mesh and the camera stand, a turn keeps the
+## ground under the screen's centre, and taps come back where the 3D camera shows the ground.
+func _v3d_cases(b) -> void:
+	var sl = b.soldiers
+	_check(sl.cpu_fed and sl.v3d_mm != null and sl.v3d_mm.instance_count == sl._n_inst and not sl.auto_fallback,
+		"3D: the men fed from the CPU-fed buffer (%d instances), no 2D probe fallback" % (sl.v3d_mm.instance_count if sl.v3d_mm != null else -1))
+	_check(not sl.visible and not b.terrain.visible and not b.trees.visible and b.overlay.visible and b.hud.visible,
+		"3D: the 2D world layers hidden, the overlay and the HUD drawn")
+	var v = b.view3d
+	_check(v.terrain_mi != null and v.terrain_mi.mesh != null and v.cam != null and v.cam.projection == Camera3D.PROJECTION_ORTHOGONAL,
+		"3D: the board mesh and the orthographic camera")
+	var vp: Vector2 = b.get_viewport_rect().size
+	b.camera.force_update_scroll()
+	var g0: Vector2 = b._screen_to_world(vp * 0.5)
+	b._v3d_turn(deg_to_rad(75.0), 0.0, vp * 0.5)
+	b.camera.force_update_scroll()
+	var g1: Vector2 = b._screen_to_world(vp * 0.5)
+	_check(g0.distance_to(g1) < b.PX_PER_M * 0.2, "3D: a turn keeps the ground under the screen's centre (%.2f m)" % (g0.distance_to(g1) / b.PX_PER_M))
+	v.sync_camera()
+	var w: Vector2 = g1 + Vector2(30.0, -20.0) * b.PX_PER_M
+	var s3: Vector2 = v.cam.unproject_position(Vector3(w.x / b.PX_PER_M, BoardView.ground_m(w), w.y / b.PX_PER_M))
+	var back: Vector2 = b._screen_to_world(s3)
+	_check(back.distance_to(w) < b.PX_PER_M * 0.3, "3D: a tap where the 3D camera shows a ground point comes back to it (%.2f m)" % (back.distance_to(w) / b.PX_PER_M))
+	b._v3d_turn(-deg_to_rad(75.0), 0.0, vp * 0.5)
 
 
 func _end_close() -> void:
@@ -808,8 +843,12 @@ func _ship_cases() -> void:
 	root.add_child(sb)
 	var tag := ""  # (_check marks the oblique run itself)
 	var lay = sb.ships
-	_check(lay != null and lay.visible and sb.sim.shp_on == 1 and lay.colors.size() == 3 and lay.colors[0] == CData.faction_color(tf),
+	_check(lay != null and (lay.visible or _v3d) and sb.sim.shp_on == 1 and lay.colors.size() == 3 and lay.colors[0] == CData.faction_color(tf),
 		tag + "ships: the ship layer holds the three hulls in their faction's colours")
+	if _v3d:
+		# (the 3D view hides the 2D layer and builds the hulls as solids: game/ship_layer.gd build_mesh3d)
+		_check(not lay.visible and sb.view3d != null and sb.view3d.ship_mi.mesh != null and sb.view3d.ship_mi.mesh.get_surface_count() > 0,
+			tag + "ships: the 3D view builds the hulls as solids")
 	_check(lay != null and lay.get_index() < sb.soldiers.get_index(), tag + "ships: the hulls are drawn under the men")
 	_check(lay != null and (lay.material != null) == _oblique, tag + "ships: placed by the board's lift in the oblique view only")
 	var on_deck := true

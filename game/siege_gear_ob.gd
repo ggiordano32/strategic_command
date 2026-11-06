@@ -4,6 +4,9 @@ extends RefCounted
 ## small solids projected with the board's own oblique constants (BoardView.OBLIQUE_COS for ground depth, OBLIQUE_SIN
 ## for height) as upright items (BoardView.up_xf) round the piece's ground point, in the overlay's world px. View only: it
 ## reads the sim and writes nothing. The top view keeps overlay.gd's flat drawing.
+## The 3D view (game/view3d.gd, `build_mesh`): the same pieces as real solids, every box, bar, quad and disc emitted into a
+## SurfaceTool in world metres (the ground under the piece's anchor its foot), lit by the lamp and casting shadows; the
+## overlay then skips them.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
 const BoardView := preload("res://game/board_view.gd")
@@ -28,6 +31,86 @@ func _walk_m() -> float:
 
 
 var _a := Vector2.ZERO      # the anchor (world px)
+var st3: SurfaceTool = null   # the 3D view: geometry goes here (metres), not to the canvas
+var _a3 := Vector3.ZERO       # the anchor's ground point (3D, metres)
+var ground_m: Callable        # the 3D view: the ground's height (m) at a world point (px)
+
+
+## The 3D view: every piece as solids into a new mesh (null when there is none).
+func build_mesh(p_sim, p_ppm: float, gear_angle: Callable, p_ground: Callable) -> ArrayMesh:
+	sim = p_sim
+	ppm = p_ppm
+	lw = 1.0
+	ground_m = p_ground
+	st3 = SurfaceTool.new()
+	st3.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := 0
+	for q in sim.n_eq:
+		if BattleSim.EQ_FW[sim.q_kind[q]] != 0:
+			continue
+		var ang: float = gear_angle.call(q)
+		if is_nan(ang):
+			continue
+		_piece(q, ang)
+		n += 1
+	var mesh: ArrayMesh = null
+	if n > 0:
+		mesh = st3.commit()
+	st3 = null
+	return mesh
+
+
+## A point off metres from the anchor (x east, y south) h metres up, in 3D (metres).
+func _p3(off: Vector2, h: float) -> Vector3:
+	return _a3 + Vector3(off.x, h, off.y)
+
+
+func _tri3(a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
+	var n := (b - a).cross(c - a)
+	if n.length_squared() < 1e-10:
+		return
+	n = n.normalized()
+	for v in [a, b, c]:
+		st3.set_color(col)
+		st3.set_normal(n)
+		st3.add_vertex(v)
+
+
+func _quad3(a: Vector3, b: Vector3, c: Vector3, d: Vector3, col: Color) -> void:
+	_tri3(a, b, c, col)
+	_tri3(a, c, d, col)
+
+
+## A quad given as [offset, height] pairs (the 2D views: projected and drawn; the 3D view: a real quad).
+func _quad_oh(pts: Array, col: Color) -> void:
+	if st3 != null:
+		_quad3(_p3(pts[0][0], pts[0][1]), _p3(pts[1][0], pts[1][1]), _p3(pts[2][0], pts[2][1]), _p3(pts[3][0], pts[3][1]), col)
+		return
+	var v: Array = []
+	for pp in pts:
+		v.append(_pt(pp[0], pp[1]))
+	_quad(v, col)
+
+
+## A round knob (a wheel, the ram's head, a horse's head): a disc on the canvas, a small box in 3D.
+func _disc(off: Vector2, h: float, r_px: float, col: Color) -> void:
+	if st3 != null:
+		var r := r_px / ppm
+		var c := _p3(off, h)
+		_cube3(c, r, col)
+		return
+	ci.draw_circle(_pt(off, h), r_px, col)
+
+
+func _cube3(c: Vector3, r: float, col: Color) -> void:
+	var x := Vector3(r, 0, 0)
+	var y := Vector3(0, r, 0)
+	var z := Vector3(0, 0, r)
+	_quad3(c - x - y + z, c + x - y + z, c + x + y + z, c - x + y + z, col)
+	_quad3(c + x - y - z, c - x - y - z, c - x + y - z, c + x + y - z, col)
+	_quad3(c + x - y + z, c + x - y - z, c + x + y - z, c + x + y + z, col)
+	_quad3(c - x - y - z, c - x - y + z, c - x + y + z, c - x + y - z, col)
+	_quad3(c - x + y + z, c + x + y + z, c + x + y - z, c - x + y - z, col)
 
 
 ## A point `off` metres from the anchor on the ground (x east, y south) and h metres up, in the upright group's px.
@@ -37,14 +120,37 @@ func _pt(off: Vector2, h: float) -> Vector2:
 
 func _begin(anchor: Vector2) -> void:
 	_a = anchor
+	if st3 != null:
+		_a3 = Vector3(anchor.x / ppm, float(ground_m.call(anchor)), anchor.y / ppm)
+		return
 	ci.draw_set_transform_matrix(BoardView.up_xf(anchor))
 
 
 func _end() -> void:
+	if st3 != null:
+		return
 	ci.draw_set_transform_matrix(Transform2D.IDENTITY)
 
 
 func _bar(p0: Vector2, h0: float, p1: Vector2, h1: float, col: Color, w: float) -> void:
+	if st3 != null:
+		# (a beam: a square timber about w x 0.09 m thick)
+		var a3 := _p3(p0, h0)
+		var b3 := _p3(p1, h1)
+		var d := b3 - a3
+		if d.length_squared() < 1e-8:
+			return
+		var t := maxf(0.06, w * 0.06)
+		var side := d.cross(Vector3.UP)
+		if side.length_squared() < 1e-8:
+			side = Vector3.RIGHT
+		side = side.normalized() * t
+		var up := side.cross(d).normalized() * t
+		_quad3(a3 - side + up, b3 - side + up, b3 + side + up, a3 + side + up, col)
+		_quad3(a3 + side - up, b3 + side - up, b3 - side - up, a3 - side - up, _tint(col, 0.7))
+		_quad3(a3 + side + up, b3 + side + up, b3 + side - up, a3 + side - up, _tint(col, 0.85))
+		_quad3(a3 - side - up, b3 - side - up, b3 - side + up, a3 - side + up, _tint(col, 0.85))
+		return
 	var a := _pt(p0, h0)
 	var b := _pt(p1, h1)
 	ci.draw_line(a, b, LINE, w + maxf(1.0, lw * 0.9))
@@ -66,6 +172,16 @@ func _tint(col: Color, k: float) -> Color:
 ## h0 to h1. Its standing faces far first, shaded by the key light, then its top.
 func _box(c: Vector2, f: Vector2, s: Vector2, hf: float, hs: float, h0: float, h1: float, col: Color) -> void:
 	var cs := [c + f * hf + s * hs, c + f * hf - s * hs, c - f * hf - s * hs, c - f * hf + s * hs]
+	if st3 != null:
+		# (every face: the depth buffer hides the far ones)
+		for i in 4:
+			var p: Vector2 = cs[i]
+			var q: Vector2 = cs[(i + 1) % 4]
+			var n := ((p + q) * 0.5 - c).normalized()
+			var k3 := 0.62 + 0.38 * clampf(n.dot(LIGHT.normalized()) * 0.5 + 0.5, 0.0, 1.0)
+			_quad3(_p3(p, h0), _p3(q, h0), _p3(q, h1), _p3(p, h1), _tint(col, k3))
+		_quad3(_p3(cs[3], h1), _p3(cs[2], h1), _p3(cs[1], h1), _p3(cs[0], h1), _tint(col, 1.12))
+		return
 	var faces: Array = []
 	for i in 4:
 		var p: Vector2 = cs[i]
@@ -136,7 +252,7 @@ func _piece(q: int, ang: float) -> void:
 		else:
 			# the hanging beam, its iron head out of the front, and the pitched roof's ridge
 			_bar(c - f * 3.0, 1.0, c + f * 4.6, 1.0, WOOD_DARK, lw * 2.2)
-			ci.draw_circle(_pt(c + f * 4.6, 1.0), maxf(lw * 1.6, ppm * 0.22), Color(0.3, 0.3, 0.33))
+			_disc(c + f * 4.6, 1.0, maxf(lw * 1.6, ppm * 0.22), Color(0.3, 0.3, 0.33))
 			_bar(mid - f * 3.25, h1 + 0.5, mid + f * 3.25, h1 + 0.5, WOOD_LIGHT, lw * 1.2)
 		_end()
 	elif st == BattleSim.Q_PLANTED:
@@ -233,12 +349,12 @@ func _tower(q: int, at: Vector2, f: Vector2, s: Vector2, st: int) -> void:
 	var r0 := c + f * h
 	var rh := _walk_m()
 	if st == BattleSim.Q_PLANTED:
-		_quad([_pt(r0 + s * h * 0.7, rh), _pt(r0 - s * h * 0.7, rh),
-			_pt(r0 + f * rl - s * h * 0.7, rh - 0.8), _pt(r0 + f * rl + s * h * 0.7, rh - 0.8)], WOOD_LIGHT)
+		_quad_oh([[r0 + s * h * 0.7, rh], [r0 - s * h * 0.7, rh],
+			[r0 + f * rl - s * h * 0.7, rh - 0.8], [r0 + f * rl + s * h * 0.7, rh - 0.8]], WOOD_LIGHT)
 	else:
 		# raised: a flap standing against the face
-		_quad([_pt(r0 + s * h * 0.7, rh), _pt(r0 - s * h * 0.7, rh),
-			_pt(r0 - s * h * 0.7 + f * 0.3, rh + 1.6), _pt(r0 + s * h * 0.7 + f * 0.3, rh + 1.6)], WOOD_LIGHT)
+		_quad_oh([[r0 + s * h * 0.7, rh], [r0 - s * h * 0.7, rh],
+			[r0 - s * h * 0.7 + f * 0.3, rh + 1.6], [r0 + s * h * 0.7 + f * 0.3, rh + 1.6]], WOOD_LIGHT)
 	_end()
 
 
@@ -287,11 +403,11 @@ func _wagon(q: int, at: Vector2, f: Vector2, s: Vector2, st: int) -> void:
 			_bar(o, h1 + 0.8, o + s * 0.9, h1, Color(0.9, 0.85, 0.7), lw * 0.9)
 		for sg in [-1.0, 1.0]:
 			for w in [-1.0, 1.0]:
-				ci.draw_circle(_pt(s * 1.2 * sg + f * 1.3 * w, 0.5), maxf(lw * 1.6, ppm * 0.42), WOOD_DARK)
+				_disc(s * 1.2 * sg + f * 1.3 * w, 0.5, maxf(lw * 1.6, ppm * 0.42), WOOD_DARK)
 		var horses := UT.wagon_stat(sim.q_tier[q], "horses")
 		for hh in horses:
 			var hp := f * 3.9 + s * (0.0 if horses == 1 else (hh - 0.5) * 1.05)
 			if hh < int(sim.q_hn[q]):
 				_box(hp, f, s, 0.9, 0.3, 0.4, 1.5, Color(0.45, 0.3, 0.2))
-				ci.draw_circle(_pt(hp + f * 1.0, 1.7), maxf(lw * 1.4, ppm * 0.3), Color(0.4, 0.27, 0.17))
+				_disc(hp + f * 1.0, 1.7, maxf(lw * 1.4, ppm * 0.3), Color(0.4, 0.27, 0.17))
 	_end()

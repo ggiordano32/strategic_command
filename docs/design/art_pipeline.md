@@ -1684,3 +1684,125 @@ men are (figures standing on the water while they paddle). Shots: the session sc
 party coming ashore at the quay). Open: the deck is a flat plank colour (no hatches or boats); the hull does not rock;
 the crew figures stand at water level under a deck drawn 0.5-2.6 m up (a few pixels low in the oblique view); the
 owner's eye on the masts' height and the yards' brace.
+
+### The 3D battle view, step one (2026-11-06; plan and as built, view only)
+
+**The decision.** The owner, after the 3D spike on his phone (the session scratchpad `spike3d/report.md`): "go with the 3D view
+with painted sprites." The spike drew 3,400 men as the oblique sheets' painted cards in a real 3D scene (orthographic camera, one
+lamp, shadows on) at 112 fps on his Galaxy phone (Firefox, 2094 x 798, Fit; average 8.9 ms, p95 16.5 ms, 131k triangles),
+against 23-27 fps (p95 64-77 ms) for the game's 2D soldier layer at the same count; mesh figures held 74 fps (800 triangles,
+shadows on) but are not needed for this step. So the board, the camera and the lamp go 3D now, the figures stay the painted
+sprites (cards), and meshes come set by set later where the close-up pays.
+
+**What it is.** A third Battle view, **3D**, beside Top and Oblique (Options > Battle view; `[video] battle_view = 3d`,
+`--battle-view=3d`, `?battle-view=3d` on the web, `BoardView.force = "3d"` in tests). The defaults are unchanged (Oblique); nothing
+the player sees changes until he picks it. View only: nothing under `sim/` or `campaign/` changed, no hash, no lockstep input; the
+view reads the sim and the 2D layers' built data and sends orders as the other views do.
+
+**Architecture.**
+- `game/view3d.gd` (a Node3D under the battle, `Battle.view3d`) holds the scene; the battle's own viewport renders it first and
+  the 2D canvas (the overlay, the HUD) on top. The 2D world layers (board, terrain, city, works, ships, trays, soldiers, trees)
+  are still built, since the overlay, the orders and the 3D layers read their data, but are not drawn (`visible = false`; the
+  soldier layer keeps running its per-tick work, on the CPU-fed path).
+- **One transform for both.** `game/board_view.gd` generalises the oblique board transform with the camera's yaw and elevation
+  (`BoardView.v3d`, `set_view(yaw, elev)`): a ground point w goes to (dot(w, r), dot(w, f) x sin(e) - lift(w) x cos(e) / cos(40)),
+  r and f the camera's right and toward-the-viewer directions on the ground. With yaw 0 at 40 degrees it is the oblique view's
+  exactly. The orthographic Camera3D is placed every frame from the battle's Camera2D (its canvas transform: the board point at the
+  screen's centre and the zoom; `View3D.sync_camera`), so this transform is the 3D camera's projection of the ground, pixel for
+  pixel: the overlay keeps drawing in the board's space through `game/board_lift3d.gdshader` (the lift shader with the yaw), and
+  the taps come back through `BoardView.to_world` (the inverse marched along the view ray, `_to_world_3d`). The camera's zoom
+  levels, the fit, the clamp (the rotated field's bounding box) and the dive are the oblique view's.
+- **The board**: a mesh of the fine lift field's nodes (2 m; a coarser stride past 200,000 vertices; the coarse grid sampled every
+  4 m on the compatible path or Graphics Low), the foam steps quantised as `BoardView.quant` does, the 3D y the lift over
+  `px_per_m x cos(40)` (the 1.4 x exaggeration included). Shaded by the terrain shader's own body: `game/terrain.gdshader`'s
+  uniforms and fragment moved verbatim into `game/terrain_body.gdshaderinc` (`terrain_col(world, ob_in)`), the canvas shader now a
+  thin wrapper, `game/terrain3d.gdshader` the spatial one with the 2D layer's material parameters copied (`View3D.copy_params`):
+  the painted board of pass 2 and the hills of pass 6, the resin water where the map has it, the streets (the city's street
+  texture) and the Paths hatch as ground decals. The baked hill shade is off (`shade_k` 0): the lamp lights the steps. The 2D
+  shading's display values go to ALBEDO unconverted (the Compatibility renderer's output matches the 2D layers that way; linearised
+  first, the board came out far too dark).
+- **The table**: the board a cut slab on all four edges (`game/board_slab3d.gdshader`: foam layers a band high in two creams with
+  a glue line, an MDF base strip, the flock's lip) standing on a wooden plane (`game/table3d.gdshader`: 26 m planks, seams, grain,
+  falling off into a dark room).
+- **The camera**: orthographic at the oblique view's 40 degrees, the same zoom levels and fit; turns freely in yaw (no snapping)
+  and tilts from 25 to 60 degrees (`Battle._v3d_turn`, about a screen point: the ground under it stays under it); a turn keeps a
+  little inertia (0.35 s). The battle opens facing the player's side (an army deployed in the north half turns the table half
+  round). Gestures: ui.md "The 3D battle view's camera".
+- **The lamp**: one DirectionalLight3D fixed to the camera's yaw frame, from the screen's upper left and the far side (the painted
+  sprites' key light; shadows fall to the lower right as the 2D views' baked ones), light 1.0, ambient 0.42, linear tone mapping
+  (the spike's). Shadows on at Graphics High, off at Low (orthogonal, the range following the camera's span).
+- **Cards**: every card (a man, a tree, a house) is a quad placed in the vertex stage in the camera's plane from the camera's
+  axes passed as uniforms (`cam_r`, `cam_u`, `cam_b`), so the shadow pass builds the same card and the card casts its silhouette.
+  A card is moved toward the camera along the view (its screen place unchanged) by its sheet's part below the anchor x cot(e) so
+  that part clears the ground in front: the depth buffer then orders men, houses, walls and trees (no per-tick sort, no occluder,
+  no ghosts behind walls: a man behind a wall is hidden by it, a man in front is drawn over it). Alpha-cut (0.5), so cards write
+  depth and cast shadows; unshaded (the light is painted in).
+
+**Checkpoint A (the board and the camera).** The board mesh, the terrain shader port, the slab and the table, the camera with
+yaw and tilt, the lamp and shadows, the trees as cards (`game/trees3d.gdshader`: the tree layer's woods and orchards at their
+ground height, the oblique kit sheet's tree sprites, the canopy thinned over men by the tree layer's occupancy texture; the
+ground cover, reeds and tufts not drawn yet).
+
+**Checkpoint B (the kit and the men).**
+- **The men** (`game/soldiers3d.gdshaderinc`; `soldiers3d.gdshader`, `soldiers3d_cpu.gdshader`): the soldier layer's CPU-fed
+  buffer goes as it is into a 3D MultiMesh (`SoldierLayer.v3d_mm`, TRANSFORM_3D with no custom data: the 2D layout's 8 transform
+  floats land where the 3D transform's do and its custom data in the transform's third row, `MODEL_MATRIX[0..3].z`, read back in
+  the shader; the man's height on a wall, a stair, a ladder or in a held building in the sprite column as the oblique CPU path
+  has it, without the reorder: `_ext_cpu`). The action, frame, tints and palette are soldiers.gdshaderinc's oblique branch (copied:
+  the same numbers), the sheet direction against the camera's yaw (`cam_yaw` added on the one line, as the plan of 2026-11-05
+  found); an action with no upright frames lies on the board as the top-down sprite. The ground's height in the vertex stage: the
+  fine lift field (one texture read; the default) or the coarse grid's uniforms (`CPU_FED`: the compatible path, with the board
+  then the grid too); the data itself is never a texture. The round flocked bases with the faction's rim lie flat under them
+  (`soldier_bases3d.gdshader`, lit, shadows fall on them). The soldier layer's 2D probe is off in the 3D view (its layers are
+  hidden); the 3D view has its own (`View3D._probe`, "V3D_PROBE drawn=N men=M path=v3d-gpu|v3d-cpu", the soldier layer's `probed`
+  signal for telemetry): no men drawn on the fine path switches the men, bases, missiles and kit to the compatible shaders and
+  remembers "cpu" for later battles.
+- **The missiles** (`game/projectiles3d.gdshaderinc`): the CPU-fed missile buffer as it is (`v3d_pr_mm`); the shot flies a
+  straight line from the ground under the shooter (plus his height) to the ground under the target plus its arc, now in real
+  height, 1.1 m up (a man's chest); the streak a card turned along its path on the screen. The muzzle flashes and the gun smoke
+  stay the overlay's (2D billboards over the 3D, placed by the board transform).
+- **The kit** (`game/battlekit3d.gdshaderinc`; `battlekit3d.gdshader`, `battlekit3d_cpu.gdshader`): the oblique view's sorted
+  MultiMesh rows as they are (`BattleKit.ob_buffer_3d`, 12 floats a row). A wall row (walls, merlons, the walk, the inner
+  rampart, end caps, gates and square towers off the axes in their own frame, the trace forts' drums, stone stairs, the timber
+  stockade's stakes, platform, posts, rail, plank stairs, the garden fences) becomes real geometry on the board's ground, coloured
+  by battlekit.gdshader's own functions (copied); the sheet pieces (houses, towers, gates on the axes, bastions, rocks, the town
+  plan's landmarks) are cards at their footprint's centre, re-picked from the sheet's renders for the camera's yaw (a piece at
+  world yaw Y shows its render nearest Y - the camera's yaw: 0 / 180 for square pieces, 0 / 90 / 180 / 270 for the long ones; the
+  rows are copied again when the camera crosses into another quarter, and when `BattleKit.ob_rev` counts a change: a gate's state,
+  a fallen house, a breach). Lit softly by the lamp (no N.L: the faces carry the 2D key; lit 1.0, in shadow 0.71), casting
+  shadows. The wall fade and the occluder are not needed. The kit builds its rows on every graphics setting in the 3D view
+  (`BattleKit._want_low`: Graphics Low's pre-lit 2D drawing has no rows, so a Low or compatible-path device would have shown
+  no town; found on the third cover pass's base, 2026-11-06), and skips the 2D shadow bake there (the lamp casts them).
+- **The siege gear and the ships** (`game/solid3d.gdshader`): `game/siege_gear_ob.gd` gained a 3D emitter (`build_mesh`: every box,
+  bar, quad and knob into a SurfaceTool in world metres on the ground under the piece's anchor; the 2D drawing unchanged, the
+  overlay skips its oblique gear in 3D) and `game/ship_layer.gd` `build_mesh3d` (the hull's prism, rail, oars, masts, yards and
+  furled sails through the same emitter); rebuilt each tick (the gear) or when a ship's state changes.
+
+**Checkpoint C (the overlay, the orders, the HUD).** The overlay keeps its code: every mark it draws (selection, the move and
+attack previews, the placement tool's ghost and handles, range rings, cover chips, hittable marks, deployment zones, group badges,
+standards, tokens, smoke, flashes) goes through the board transform with the yaw (`board_lift3d.gdshader`; the few spots that
+squashed a direction by OBLIQUE_COS now call `BoardView.dir_board` / `dir_world`), so it lies on the 3D ground but draws over
+the 3D (no depth: a house does not hide a marker). The Paths hatch is drawn by the board's shader. Taps, drags and the long press
+come back through `BoardView.to_world`; gestures in ui.md "The 3D battle view's camera". The HUD is unchanged; Options and the
+Keys page gained their entries.
+
+**Measured (2026-11-06).** tests/v3d_test.gd: the 3D camera's projection of the ground against the board transform 0.00 px
+(4 yaws x 3 tilts x 3 zooms over the ridge), the board round trip 0.001 px, a turn's pivot 0.00 px, taps on a marker select and
+taps on the ground order the unit 0.00 m from the tapped point at yaws 0 / 120 / 240 (tilt 30 at the last). input_test in the
+3D view: 502 / 502 at yaw 0; at 120 and 240 two and three checks fail that assume screen-right is world east (a mouse line
+"straight along the drag" in world y, the placement ghost's world dx after a screen drag, a right-click group's spacing near the
+edge); input_test's artillery tap now aims at `marker_screen` (the old world offset north missed the marker in a turned view).
+Frame cost (this desktop, RTX 3070, the battle running, HUD and overlay on, 1280 x 720, 8 s at the fit; the machine lightly
+loaded): battle_2000 (2,028 men) 3D avg 4.98 ms, p95 8.46, GPU 1.40 ms, 372k primitives, against Oblique 5.40 / 9.24 / 1.49;
+bench_4000 (4,055 men) 3D 9.54 / 20.5 / 2.76 against Oblique 9.27 / 20.5 / 2.69 (the frame is the sim's at that size);
+3D on Graphics Low (no shadows, the coarse grid) 9.47 / 20.3 / 2.93. The phone is the real measure: the owner's readings of the
+web export are the next step. Web: the export builds (index.pck 18.9 MB, oblique.pck 14.7 MB) and `webcheck -v3d` (new) passes
+in headless Chromium (the scene built, the probe 811 px on the v3d-gpu path).
+
+**Left for step two.** Meshes set by set (the spike's bone-texture route: musketeers and the West line sets first; 800
+triangles the budget, 2,400 at the close zoom); the houses and towers as meshes or at least more renders (they swap between their
+renders as the table turns); the board as a true cut slab following every hill (the foam faces with lit risers instead of the
+2 m grid's sloped steps, which show zig-zag edges up close); things on the table (plan pass 9); the ground cover, reeds and tufts;
+the tray fill (the standards and tokens stand, the card tray under a unit is not drawn); the terrain layer's drawn decals
+(tracks, flock-square fields) as ground decals; the rubble's heap (the third cover pass's 1.3 m: the 3D view lays it flat as a decal); the gun smoke, flashes, standards and markers as 3D billboards
+with depth (now 2D over everything); the top-down view as a steep 3D camera and the oblique view retired when the phone holds.

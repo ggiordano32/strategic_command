@@ -1866,9 +1866,8 @@ func _step_art_shoot() -> void:
 	_focus(sim.u_cx[u_art_enemy], sim.u_cy[u_art_enemy])
 	# Its marker, not its body: in battle_2000's second line the marker of
 	# the unit behind floats over this unit's centre and markers pick first.
-	var r := maxf(Overlay.MARKER_MIN_R, Overlay.MARKER_SCREEN_R / battle.camera.zoom.x)
-	var p := _world_to_screen(Vector2(sim.u_cx[u_art_enemy], sim.u_cy[u_art_enemy]) / 1024.0 * Battle.PX_PER_M
-		+ Vector2(0, -r * 2.2))
+	# (marker_screen: the marker where every view draws it; a world offset north is not screen-up in a turned 3D view)
+	var p := _vp_to_window(battle.marker_screen(u_art_enemy))
 	_touch(0, p, true)
 	_touch(0, p, false)
 

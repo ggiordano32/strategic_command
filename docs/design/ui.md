@@ -1642,3 +1642,32 @@ enemy, and a house counted as cover from the men at its own windows.
 - Tests: battle_screen_test `_cover_cases` (the chip rated against a unit that shot at it; the opening pulls in a
   two-step spike and keeps a wide sector), custom_battle_test `_check_cover3` (the sim's shooters and the garrison's
   house). Known: the chip still is not on the unit card; still no legend; no device check.
+### The 3D battle view's camera (as built, 2026-11-06, view only)
+
+docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; this is its setting and its controls.
+
+- **The setting.** Options > Looks > Battle view gains a third capsule, **3D**, beside Top and Oblique (`[video] battle_view =
+  3d`; the default stays Oblique; takes effect at the next battle; on the web it fetches the oblique sheets' pack as Oblique does,
+  and a battle without them is drawn from the top). Graphics High turns the lamp's shadows on, Low off.
+- **The camera** is the oblique view's (the same zoom levels, the fit, the clamp, the dive, the pinch and pans) plus a free turn in
+  yaw and a tilt from 25 to 60 degrees (40 the start). The battle opens facing the player's side. A turn keeps a little inertia
+  when let go (decays in 0.35 s); there is no snapping (the men's sheet directions step every 45 degrees as they do when the men
+  turn; the houses swap renders every 90).
+- **Touch.** A two-finger twist turns the table about the fingers' midpoint once it passes a dead zone of 8 degrees (so a
+  pinch or a pan does not turn it; the dead zone's turn is then applied at once), while the pan and the pinch go on as in the other
+  views. The twist is read once a frame from both fingers' latest places (the touch events come a finger at a time, so a
+  parallel pan would otherwise swing the line between them). Three fingers with nothing selected (there is no group to move) turn the table as they drag across and tilt it as they
+  drag up or down (down: more from above). One finger and three fingers with a selection are unchanged (select, drag orders, pan
+  with nothing selected; the group move). (A two-finger vertical drag stays a pan: it is the phone players' common pan, which
+  input_test checks.)
+- **Mouse and keys.** A right drag with nothing selected (Alt + right drag with a selection; any right drag in a battle you only
+  watch) turns the table across and tilts it up and down, about the screen's centre (the spike's orbit: 0.3 degrees a pixel across,
+  0.2 up and down); a right drag with a selection still lays out a line, a right click still orders. Q / E held turn the table
+  (when no group move is under way; during one they still turn the group), Home / End held tilt it. Middle drag, W A S D and the
+  arrows pan, the wheel and Page Up / Down zoom, as before. The Keys page lists "3D view: turn the table" and "3D view: tilt the
+  camera" in the battle's view section.
+- **Taps and the overlay.** Every tap, drag and long press goes through the same board transform as the other views
+  (`Battle._screen_to_world` -> `BoardView.to_world`, now the 3D camera's inverse onto the board's ground), so orders land where
+  tapped at any yaw and tilt; the overlay (selection, previews, the placement tool's ghost and handles, range rings, cover chips,
+  hittable marks, deployment zones, group badges, standards, smoke) is drawn in 2D over the 3D through the lift shader with the
+  yaw (`game/board_lift3d.gdshader`); the Paths hatch is drawn by the board's own shader. The HUD is unchanged.

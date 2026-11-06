@@ -20,6 +20,14 @@ extends RefCounted
 ## `fine`), quantised into the terrain's foam bands with a short ramp so each riser is a vertical face; the coarse grid stays
 ## for the CPU-fed soldier path, Graphics Low and `--lift-grid`. The inverse then marches along the view ray.
 ##
+## The 3D view (2026-11-06, docs/design/art_pipeline.md "The 3D battle view, step one"; `[video] battle_view = 3d`): the battle is a
+## Node3D scene (game/view3d.gd) under an orthographic Camera3D that turns freely in yaw and tilts (`set_view`); `oblique` is true
+## as well, and the board transform above is the same one generalised: a ground point w goes to
+##     (dot(w, r), dot(w, f) * C - lift(w) * lift_k)
+## with r / f the camera's right / toward-the-viewer directions on the ground, C = sin(elevation) and lift_k = cos(elevation) /
+## OBLIQUE_SIN (the lifts are kept at the oblique view's 40 degrees). With yaw 0 at 40 degrees it is the oblique view's exactly. The
+## overlay and the taps keep using this transform; the 3D camera is placed from the Camera2D so the two agree pixel for pixel.
+##
 ## Shaders read the same grid (game/board_view.gdshaderinc, `apply` sets the uniforms). The figures' nearness (what
 ## draws over what) is NEAR(y, h) = y * OBLIQUE_SIN + h * OBLIQUE_COS (world pixels along the view).
 
@@ -43,7 +51,16 @@ const TerrainNodes := preload("res://game/terrain_nodes.gd")
 
 ## The view of the battle being set up (set by `begin`; tests set `force` first).
 static var oblique := false
-static var force := ""               # tests: "top" / "oblique" (overrides the setting and the command line)
+static var force := ""               # tests: "top" / "oblique" / "3d" (overrides the setting and the command line)
+## The 3D view (see above): its camera's yaw (radians, 0 looking north) and elevation, set by game/view3d.gd through `set_view`.
+static var v3d := false
+static var yaw := 0.0
+static var elev_deg := ELEVATION_DEG
+static var ob_c := OBLIQUE_COS       # sin(elevation): ground depth on the board
+static var ob_s := OBLIQUE_SIN       # cos(elevation): heights on the board
+static var lift_k := 1.0             # ob_s / OBLIQUE_SIN: the stored lifts (at 40 degrees) to this elevation
+static var dir_r := Vector2(1.0, 0.0)   # the camera's right on the ground (world, unit)
+static var dir_f := Vector2(0.0, 1.0)   # toward the viewer on the ground (screen down; world, unit)
 static var web_top := false          # set by the battle: the web without the oblique sheets draws this battle from the top
 static var px_per_m := 10.0
 static var field_px := Vector2(1000.0, 1000.0)
@@ -74,21 +91,24 @@ static var _mats: Array = []         # weak refs of every material `apply` was c
 
 
 static func pref() -> String:
-	if force == "top" or force == "oblique":
+	if force == "top" or force == "oblique" or force == "3d":
 		return force
 	for a in OS.get_cmdline_user_args():
 		if str(a).begins_with("--battle-view="):
 			var v := str(a).get_slice("=", 1).to_lower()
-			if v == "top" or v == "oblique":
+			if v == "top" or v == "oblique" or v == "3d":
 				return v
 	if OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("window.location.search", true)
 		if q is String and (q as String).contains("battle-view=oblique"):
 			return "oblique"
+		if q is String and (q as String).contains("battle-view=3d"):
+			return "3d"
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) != OK:
 		return "oblique"
-	return "top" if str(cf.get_value("video", "battle_view", "oblique")) == "top" else "oblique"
+	var sv := str(cf.get_value("video", "battle_view", "oblique"))
+	return sv if sv == "top" or sv == "3d" else "oblique"
 
 
 static func save_pref(v: String) -> void:
@@ -126,7 +146,10 @@ static func save_crest_ghost(on: bool) -> void:
 
 ## Set up the view for a new battle on `sim` (before the layers are built).
 static func begin(sim, p_px_per_m: float) -> void:
-	oblique = pref() == "oblique" and not web_top
+	var pv := pref()
+	oblique = (pv == "oblique" or pv == "3d") and not web_top
+	v3d = pv == "3d" and not web_top
+	set_view(0.0, ELEVATION_DEG)
 	px_per_m = p_px_per_m
 	exag = HEIGHT_EXAG
 	var ex := _arg("--height-exag=")
@@ -249,6 +272,11 @@ static func _build_fine(sim, k_lift: float) -> void:
 	lift_min = minf(lift_min, minf(fine_min, mn))
 
 
+## The foam steps on a stored lift (board px at 40 degrees): the 3D view's board mesh (game/view3d.gd).
+static func quant(l: float) -> float:
+	return _quant(l)
+
+
 ## The foam steps: lift (board px) snapped to the terrain's bands, each riser a ramp RAMP of a band high (terrain.gdshader's
 ## ob_quant is the same function).
 static func _quant(l: float) -> float:
@@ -291,6 +319,51 @@ static func apply(mat: ShaderMaterial, register := true) -> void:
 	else:
 		mat.set_shader_parameter("ob_lrange", Vector2(grid_max, grid_min))
 		mat.set_shader_parameter("ob_fine", 0.0)
+	if v3d:
+		_apply_view(mat)
+
+
+## The 3D view's camera terms (game/board_view.gdshaderinc under V3D).
+static func _apply_view(mat: ShaderMaterial) -> void:
+	mat.set_shader_parameter("ob_r", dir_r)
+	mat.set_shader_parameter("ob_f", dir_f)
+	mat.set_shader_parameter("ob_cs", Vector2(ob_c, ob_s))
+	mat.set_shader_parameter("ob_lk", lift_k)
+
+
+## The 3D view: the camera's yaw (radians: 0 looks north, positive turns the view clockwise seen from above) and elevation
+## (degrees above the horizon). Re-applies the terms to every registered material. The oblique view is (0, 40).
+static func set_view(p_yaw: float, p_elev_deg: float) -> void:
+	yaw = p_yaw
+	elev_deg = p_elev_deg
+	if not v3d:
+		yaw = 0.0
+		elev_deg = ELEVATION_DEG
+		ob_c = OBLIQUE_COS
+		ob_s = OBLIQUE_SIN
+		lift_k = 1.0
+		dir_r = Vector2(1.0, 0.0)
+		dir_f = Vector2(0.0, 1.0)
+		return
+	var e := deg_to_rad(elev_deg)
+	ob_c = sin(e)
+	ob_s = cos(e)
+	lift_k = ob_s / OBLIQUE_SIN
+	dir_r = Vector2(cos(yaw), -sin(yaw))
+	dir_f = Vector2(sin(yaw), cos(yaw))
+	for r in _mats:
+		var m = r.get_ref()
+		if m != null:
+			_apply_view(m)
+
+
+## A ground direction (world px) -> its direction on the board (the transform's linear part, no lift).
+static func dir_board(d: Vector2) -> Vector2:
+	if not oblique:
+		return d
+	if v3d:
+		return Vector2(d.dot(dir_r), d.dot(dir_f) * ob_c)
+	return Vector2(d.x, d.y * OBLIQUE_COS)
 
 
 ## The coarse grid's lift (board px) at world point w, and its derivative along y (per world px).
@@ -322,14 +395,33 @@ static func lift_px(w: Vector2) -> float:
 	if not oblique:
 		return 0.0
 	if fine:
-		return _quant(_fine_smooth(w))
-	return lift_dy(w).x
+		return _quant(_fine_smooth(w)) * lift_k
+	return lift_dy(w).x * lift_k
+
+
+## A board direction (px) -> the ground direction (world px) under it (the inverse of dir_board).
+static func dir_world(d: Vector2) -> Vector2:
+	if not oblique:
+		return d
+	if v3d:
+		return dir_r * d.x + dir_f * (d.y / ob_c)
+	return Vector2(d.x, d.y / OBLIQUE_COS)
+
+
+## The ground's height in metres above the base at world point w (the 3D view's y, the exaggeration included).
+static func ground_m(w: Vector2) -> float:
+	if not oblique:
+		return 0.0
+	var l := _quant(_fine_smooth(w)) if fine else lift_dy(w).x
+	return l / (px_per_m * OBLIQUE_SIN)
 
 
 ## World point (px) at ground level (plus h_m metres above it) -> board point (px).
 static func to_board(w: Vector2, h_m := 0.0) -> Vector2:
 	if not oblique:
 		return w
+	if v3d:
+		return Vector2(w.dot(dir_r), w.dot(dir_f) * ob_c - lift_px(w) - h_m * px_per_m * ob_s)
 	return Vector2(w.x, w.y * OBLIQUE_COS - lift_px(w) - h_m * px_per_m * OBLIQUE_SIN)
 
 
@@ -340,6 +432,8 @@ static func to_board(w: Vector2, h_m := 0.0) -> Vector2:
 static func to_world(b: Vector2, iters := 3) -> Vector2:
 	if not oblique:
 		return b
+	if v3d:
+		return _to_world_3d(b)
 	if fine:
 		var y_hi := (b.y + lift_max) / OBLIQUE_COS
 		var y_lo := (b.y + lift_min) / OBLIQUE_COS
@@ -369,10 +463,47 @@ static func to_world(b: Vector2, iters := 3) -> Vector2:
 	return Vector2(b.x, y)
 
 
+## The 3D view's inverse: along the view ray through board point b (u = b.x fixed, v the ground depth toward the viewer), the
+## nearest root of v x C - lift(r u + f v) = b.y, marched from the near end in 1/48 of the lift's range and bisected.
+static func _to_world_3d(b: Vector2) -> Vector2:
+	var lmax := maxf(lift_max, 0.0) * lift_k
+	var lmin := minf(lift_min, 0.0) * lift_k
+	var v_hi := (b.y + lmax) / ob_c
+	var v_lo := (b.y + lmin) / ob_c
+	var base := dir_r * b.x
+	if v_hi - v_lo < 0.01:
+		return base + dir_f * v_hi
+	var n := 48
+	var step := (v_hi - v_lo) / float(n)
+	var va := v_hi
+	var vb := v_lo
+	for i in range(1, n + 1):
+		var vv := v_hi - step * i
+		if vv * ob_c - lift_px(base + dir_f * vv) - b.y <= 0.0:
+			vb = vv
+			break
+		va = vv
+	for it in 24:
+		var vm := 0.5 * (va + vb)
+		if vm * ob_c - lift_px(base + dir_f * vm) - b.y > 0.0:
+			va = vm
+		else:
+			vb = vm
+	return base + dir_f * (0.5 * (va + vb))
+
+
 ## The board rect the field covers (with its lift).
 static func board_field() -> Rect2:
 	if not oblique:
 		return Rect2(Vector2.ZERO, field_px)
+	if v3d:
+		var r := Rect2(to_board(Vector2.ZERO), Vector2.ZERO)
+		for c in [Vector2(field_px.x, 0.0), Vector2(0.0, field_px.y), field_px]:
+			r = r.expand(Vector2((c as Vector2).dot(dir_r), (c as Vector2).dot(dir_f) * ob_c))
+		r = r.expand(Vector2.ZERO)
+		r.position.y -= maxf(lift_max, 0.0) * lift_k
+		r.size.y += (maxf(lift_max, 0.0) - minf(lift_min, 0.0)) * lift_k
+		return r
 	return Rect2(0.0, -lift_max, field_px.x, field_px.y * OBLIQUE_COS + lift_max - lift_min)
 
 
@@ -380,6 +511,11 @@ static func board_field() -> Rect2:
 static func world_rect(br: Rect2) -> Rect2:
 	if not oblique:
 		return br
+	if v3d:
+		var r := Rect2(to_world(br.position), Vector2.ZERO)
+		for c in [Vector2(br.end.x, br.position.y), Vector2(br.position.x, br.end.y), br.end]:
+			r = r.expand(to_world(c))
+		return r.grow(maxf(lift_max - lift_min, 0.0) * lift_k / ob_c)
 	var y0 := (br.position.y + lift_min) / OBLIQUE_COS
 	var y1 := (br.end.y + lift_max) / OBLIQUE_COS
 	return Rect2(br.position.x, y0, br.size.x, y1 - y0)
@@ -387,6 +523,8 @@ static func world_rect(br: Rect2) -> Rect2:
 
 ## Nearness along the view of ground point w (world px) h_m metres up: what is nearer draws over what is farther.
 static func near_px(w: Vector2, h_m := 0.0) -> float:
+	if v3d:
+		return w.dot(dir_f) * ob_s + (lift_px(w) / ob_s + h_m * px_per_m) * ob_c
 	var lm := lift_px(w) / OBLIQUE_SIN + h_m * px_per_m   # height above the base, world px
 	return w.y * OBLIQUE_SIN + lm * OBLIQUE_COS
 
@@ -406,7 +544,7 @@ static func lift_node(ci: CanvasItem, draped := false) -> void:
 	if not oblique or ci == null:
 		return
 	var mat := ShaderMaterial.new()
-	mat.shader = load("res://game/board_lift.gdshader")
+	mat.shader = load("res://game/board_lift3d.gdshader" if v3d else "res://game/board_lift.gdshader")
 	apply(mat)
 	if draped and fine and steps:
 		mat.set_shader_parameter("ob_fq", Vector4(0.0, 1.0 / q_band, q_off, RAMP))
