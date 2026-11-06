@@ -435,7 +435,7 @@ const S_FORT_FALLBACK := 369   # 1: when a West fort town's streets fall (SiegeA
 const S_FB_GATE := 370         # ... this many melee units (nearest the gate) hold the fort's gate
 # Suppression, second pass (docs/AI.md 71, 2026-11-06): id 371.
 const SUPP_FLANK_TIME := 371   # 1: BattleAI's flank of a pinned unit (SUPP_FLANK_PCT) only when the melee unit can run the way round (1.5 x the gap) before the pin lapses with no further fire (BattleSim.supp_pin_left); else it goes straight in on the pinned front; 0 as the first pass (Easy)
-# Shots strike the walls they cross (docs/AI.md 73, 2026-11-06): id 373 (372 left to the fort tuning pass).
+# Shots strike the walls they cross (docs/AI.md 73, 2026-11-06): id 373 (374 unused: KNOB_GAPS).
 const ART_ARC_PCT := 373       # a stone battery's target scan (BattleAI's artillery scan, BattleSim._art_think's fire at will): a target its stone's arc cannot reach (BattleSim.art_arc_strike: it would strike a wall, tower or shut gate first) scores this % (100: as any other, Easy: it shoots at the men and hits the wall)
 # The fort towns tuned (docs/AI.md 72, 2026-11-06): ids 372, 375-376.
 const S_FORT_ANSWER := 372     # 1: the attackers of a West fort town answer the fort's walk: their storming shooters and guns take a fort wall unit in their reach and line as a target (FORT_ANSWER_PUSH farther than a street defender), so the walk over the plaza is shot at and suppressed; 0 they leave the fort be (the town is the prize), as before
@@ -444,7 +444,7 @@ const S_FORT_LINE_PCT := 376   # a West fort town (walls 1-2): the defenders' li
 const N_KNOBS := 377
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360], [372, 373]]
+const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360], [374, 375]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a

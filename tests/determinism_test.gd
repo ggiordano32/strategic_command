@@ -1191,7 +1191,13 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (No gate_hack: walls-3 gates do not yield to swords.)
 			need = ["paths", "clamp", "obs_lof", "tower_hits"]
 		"gate_ops":
-			need = ["gate_close", "gate_open", "gate_hack", "gate_art", "gate_broken", "paths"]
+			# (No gate_hack since shots strike the walls they cross, 2026-11-06,
+			# battle_sim.md: the bolts that scatter off the gate's face and a
+			# fire-at-will bolt at the archers behind it now strike the shut gate
+			# (480 hp of its 1,800 at seed 12345), so it falls at tick 1,143,
+			# before the heavy foot reach it at 1,203 (before: hacked from 1,203,
+			# broken at 1,220); gate_hack is cit_ops'.)
+			need = ["gate_close", "gate_open", "gate_art", "gate_broken", "paths"]
 		"siege_castrum@ai":
 			# (No gate_broken since the 2026-10-09 siege rebalance: with fewer
 			# tower engines the batteries spend the run on them and the walls-3

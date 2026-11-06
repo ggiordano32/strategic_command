@@ -4862,8 +4862,7 @@ or a map change (the owner's call).
 
 The battle rule is docs/design/battle_sim.md "Shots strike the walls they cross (as built, 2026-11-06)": an engine's
 stone whose arc meets a wall, tower or shut gate before its landing point strikes it there (damage to the works, nobody
-behind hit). One knob, id 373 (372 left free for the fort tuning pass; `KNOB_GAPS` [372, 373), `N_KNOBS` 374; renumber
-on merge if needed):
+behind hit). One knob, id 373 (372 and 375-376 are note 72's; 374 is unused, `KNOB_GAPS` [374, 375), fixed 2026-11-06 after the merge: it had no row and `ai_profile` logged "knob 374 has no value"; `N_KNOBS` 377):
 
 | id | knob | Easy | Average | Skilled | what |
 |---|---|---|---|---|---|
