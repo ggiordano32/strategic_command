@@ -2046,3 +2046,60 @@ churn behind horse, a furrow stamped from a stone's landing.
 (prints show only close up); the head of a trail starts abruptly; a town's streets show none; the 2,048-texel cap makes a
 big field's marks coarser (1.2 px/m at 1 km); the marks are in the camera's 3D board as well but the decals drawn over the
 ground (the Paths hatch, the street sprite) hide them; snow, mud and rain are the weather pass; no device check yet.
+### The flash and the smoke (as built, 2026-11-06, view only)
+
+The owner, after the 3D view: "The muzzle flashes should be more of a flash instead of a small sprite rendered, and the smoke should
+look more like cotton or something physical that dissipates." View only (nothing under `sim/` or `campaign/`, no hash, no lockstep
+input). The per-man, per-shot rule of "The muzzle flash fires per man, per shot" is untouched: `Overlay._flash_add` still starts one
+flash per gun missile at the man's muzzle (0.12 s a musket, 0.06 s a pistol), `tests/muzzle_flash_probe.gd` and
+`battle_screen_test._flash_cases` pass as they were.
+
+- **The flash is light.** `GunSmoke.flash` is now three additive layers from a new flash tile of the smoke atlas (a white-hot core,
+  yellow, orange, a dim red halo, the edge broken by noise): a halo about 6 x the man's flash size in radius (about 2 m for a
+  musket, 1.3 m for a pistol, a few metres on the ground and the men round him), a glow at 42 % of it and the core at 15 %, all
+  falling off as strength squared (a snap, gone in about 0.1 s), plus a short flame spike along the shot. The gun engines' and ships'
+  flash is the same shape at 1.4 x the puff's size and lasts `GunSmoke.FLASH_S` 0.2 s (was 0.09). The top and oblique views draw it
+  on an additive child of the overlay (`Overlay._addn`: a `CanvasItemMaterial` ADD in the top view; `fx_add_lift.gdshader` /
+  `fx_add_lift3d.gdshader`, the board lifts with `blend_add`, in the oblique and 3D views), so it brightens the ground and the men
+  under it instead of painting an orange sprite over them; the sea battle (no additive layer) draws the engines' flash on its own.
+- **The 3D view's flash** (`game/fx3d.gd`, a node of `View3D`; `fx_flash3d.gdshader`): one MultiMesh of additive billboards (three
+  per flash, depth-tested so a flash behind a house does not show, pushed toward the camera so the ground does not cut it) and the
+  light: the live flashes are gathered into clusters of 6 m cells, one per volley position and not per man, the strongest 8 each an
+  `OmniLight3D` from a pool (range 9 m, 22 m for an engine, no shadow, energy 2.4 x strength; none on Graphics Low) that lights the
+  ground, the men's bases and the houses. The men and the smoke are unshaded shaders a real light does not reach, so the same
+  clusters are the `flash_pts` uniform of `fx_light3d.gdshaderinc` (a warm lift within 8 m, in `soldiers3d.gdshaderinc` and
+  `fx_smoke3d.gdshader`), so the men's faces and the puffs near a flash catch it.
+- **The smoke is cotton.** The four cloud tiles are re-baked with body (`GunSmoke.texture`): every lobe is a small sphere (3, 4, 3 and 5
+  lobes), the lobes' heights summed and lit with a wrapped Lambert from the upper left (the sprites' key and the 3D lamp), a cool
+  shaded underside, a brighter thin rim (the light passing the fibres) and fibre noise on the edge. A bank puff is now a CLUSTER of three
+  such lobes (`GunSmoke.collect`: three sprites, 84 / 72 / 60 % of the puff's radius, each its own tile, spreading apart as the puff ages,
+  billowing, turning slowly) that rises, drifts with the wind, grows and thins over `LIFE` 7 s (was 10); the volley's puffs still merge
+  into a bank and the long-fire haze lingers after it. A ring puff and a dust kick (the stone's landing, the gun engines' ring) are one
+  sprite as before (puff kind 2 and 1). `collect` fills one buffer of sprites (ground point, height, offset, radius, alpha, tile) that the
+  overlay draws in the 2D views and the 3D view turns into billboards: the same shapes in all three.
+- **The 3D view's smoke** (`fx_smoke3d.gdshader`): one MultiMesh of lit billboards (up to 880), the same atlas, depth-tested and not
+  written to depth, so a puff behind a house or a man is hidden and one in front of them covers them; the haze as large soft billboards
+  at 2 m. The overlay keeps the puffs, ages them and spawns them (one source for the three views and the tests); `Overlay.fx3d`
+  switches its own smoke and flash drawing off while the 3D layer is alive.
+- **Cost** (this desktop, RTX 3070, 2,000 men in 20 musket companies both attacking, quality High, vsync off, 8 s each, the other
+  agents' load on the machine; frame avg / p95 / GPU ms, before = HEAD 1dc0710 in a scratch copy; one run each on a quiet
+  minute, so about +-0.7 ms of noise; `first` = the 8 s of the opening volleys, `minute` = after 60 s of fire with the puff cap of 280
+  reached). 1280 x 720: top first 3.76 / 5.56 / 1.02 -> 4.95 / 7.69 / 1.16, minute 3.69 / 5.45 / 0.99 -> 5.20 / 7.69 / 1.13; oblique first
+  4.12 / 6.00 / 1.04 -> 4.68 / 6.79 / 1.03, minute 4.50 / 7.07 / 1.09 -> 3.96 / 6.09 / 0.94; 3D first 4.25 / 6.28 / 0.97 -> 4.67 / 6.87 / 1.07,
+  minute 4.52 / 6.87 / 1.07 -> 4.82 / 7.10 / 1.13. 844 x 390: top first 3.83 / 5.61 / 0.91 -> 3.90 / 5.51 / 0.91, minute 3.95 / 6.09 / 0.92 ->
+  3.72 / 5.75 / 0.94; oblique first 4.04 / 5.98 / 0.95 -> 4.90 / 7.15 / 1.04, minute 4.14 / 6.28 / 0.98 -> 5.24 / 7.91 / 1.04; 3D first
+  4.41 / 6.64 / 0.98 -> 4.89 / 7.20 / 1.01, minute 4.74 / 7.31 / 1.01 -> 5.18 / 7.87 / 1.04. So the frame costs 0 to +1.5 ms (the
+  CPU side: the effects' view cost, `Overlay.fx_us` plus `Fx3D.us_total`, 0.26-0.44 ms before and 0.8-0.95 ms after in a smoke-filled
+  minute, 0.25-0.8 in the first seconds), the GPU +-0.1 ms. What cost the most while building: the ground height read for every puff
+  (now read every 6th frame per puff and baked into the sprite's height), three sprites a puff (a puff past 55 % of its life is two).
+  **The phone** has about 3 to 4 times this desktop's CPU: +1.5 to +2.5 ms a frame at the cap in a smoke-filled minute on High; Low
+  caps the puffs at 70 and has no haze and no lights (a quarter of the sprites, about +0.5 ms there). No device check yet.
+- **Shots** (844 x 390, a 100-man musket line firing at 60 m, the flash frame held at full strength, then 3 s on; session scratchpad
+  `fx/shots/{before,after}_{top,oblique,3d}_{flash,3s}.png`). Probe and tests: `tests/muzzle_flash_probe.gd` (both soldier paths, both
+  views), `battle_screen_test` (the flash cases in three views), `v3d_test` part 8 (the billboard flashes equal the flashes alive,
+  at most 8 lights, the smoke as billboards, nothing once spent).
+- **Known.** The smoke is not sorted back to front (older to newer in the buffer); the 3D smoke does not fade at the ground (no depth
+  texture in the compatibility renderer), so a puff touching a house or a man shows a hard edge there; the haze stays flat soft
+  discs; a wind that changes does not exist (a fixed battle wind); the flash light on the men is a uniform, not a shadowed light; a
+  flash's glow in the top and oblique views has no depth (it lights a man behind a wall); sea battles keep the plain-blend flash; no
+  device check; the lights cost the terrain's fragment shader up to eight lights for 0.1 s at a time (not measured on a phone).

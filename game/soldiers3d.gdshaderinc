@@ -20,6 +20,7 @@
 // away darker, 0 at the opening yaw). `BASES` (soldier_bases3d.gdshader): the round flocked base with the faction's rim, flat on the board.
 #define V3D
 #include "res://game/board_view.gdshaderinc"
+#include "res://game/fx_light3d.gdshaderinc"
 #ifndef CPU_FED
 #define CPU_FED   // (after board_view: the fine variant keeps its texture; the frame table is always the constants)
 #endif
@@ -444,7 +445,13 @@ void fragment() {
 			outc = texture(proc_tex, UV) * v_color;
 		}
 	}
-	ALBEDO = clamp(outc.rgb, vec3(0.0), vec3(1.0));
+	vec3 fcol = outc.rgb;
+	if (flash_n > 0) {
+		// a muzzle flash going off near him lights him warm (game/fx3d.gd)
+		vec3 fl = fx_flash_light((INV_VIEW_MATRIX * vec4(VERTEX, 1.0)).xyz);
+		fcol = fcol * (1.0 + fl * 0.6) + fl * 0.05;
+	}
+	ALBEDO = clamp(fcol, vec3(0.0), vec3(1.0));
 	ALPHA = outc.a;
 	ALPHA_SCISSOR_THRESHOLD = 0.5;
 }

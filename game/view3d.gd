@@ -49,6 +49,7 @@ const GroundPalette := preload("res://game/ground_palette.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
 const Kit3D := preload("res://game/kit3d.gd")
+const Fx3D := preload("res://game/fx3d.gd")
 const KIT_MESH_SHADER := preload("res://game/kit_mesh3d.gdshader")
 const KitAtlas := preload("res://game/battlekit_atlas.gd")
 const MapGen := preload("res://sim/mapgen.gd")
@@ -110,6 +111,7 @@ var pr_mat: ShaderMaterial
 ## Materials whose interpolation (alpha, now) follows the soldier layer's every frame.
 var tick_mats: Array[ShaderMaterial] = []
 var kits: Array = []             # [kit node, MultiMeshInstance3D, its rev, its yaw sector] per kit with rows
+var fx: Node3D                   # the flashes and the smoke (game/fx3d.gd)
 var gear_mi: MeshInstance3D
 var ship_mi: MeshInstance3D
 var _gear_tick := -1
@@ -156,6 +158,7 @@ func setup(p_battle: Node, p_sim, p_ppm: float) -> void:
 	_build_table()
 	_build_trees()
 	_build_men()
+	_build_fx()
 	_build_kits()
 	_build_ground_canvas()
 	if "--v3d-no-men" in OS.get_cmdline_user_args():
@@ -731,6 +734,13 @@ static func copy_params(src: ShaderMaterial, dst: ShaderMaterial) -> void:
 			dst.set_shader_parameter(nm, v)
 
 
+## The muzzle flashes and the gun smoke as billboards with depth, the flash's pooled light (game/fx3d.gd).
+func _build_fx() -> void:
+	fx = Fx3D.new()
+	add_child(fx)
+	fx.setup(self)
+
+
 # --------------------------------------------------------------------------------------------- the camera
 
 ## Place the Camera3D (and the lamp, the shadow range, the cards' camera terms) from the battle's Camera2D: its canvas transform
@@ -966,6 +976,8 @@ func _process(_delta: float) -> void:
 	if lamp_yaw < -999.0:
 		set_lamp(BoardView.yaw)   # (the first frame: the battle has set its opening view)
 	sync_camera()
+	if fx != null:
+		fx.update()
 	refresh_kit()
 	_paths()
 	_ground_canvas_refresh()

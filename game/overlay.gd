@@ -204,6 +204,12 @@ const SMOKE_CAP := [280, 70]
 const GunSmoke := preload("res://game/gun_smoke.gd")
 const TrayLayer := preload("res://game/tray_layer.gd")
 var _gs := GunSmoke.new()                # the banks, flashes and haze (game/gun_smoke.gd)
+## The additive layer (the flash and smoke pass, 2026-11-06): the muzzle flashes are a flash of LIGHT, so they are drawn by a child
+## that blends additively (a CanvasItemMaterial in the top view; the lift shaders with blend_add in the oblique and 3D views).
+var _addn: Node2D
+var _add_drawn := false
+## The 3D view draws the smoke and the flashes itself (game/fx3d.gd: billboards with depth, a pooled light): the overlay's stay off.
+var fx3d := false
 var _sm_cell := {}                        # cell -> view clock of its last puff
 var _sm_low := false
 var _sm_low_t := -10.0
@@ -247,6 +253,8 @@ func _process(delta: float) -> void:
 		_gs.haze_on = not _sm_low
 		_gs.cap = int(SMOKE_CAP[1 if _sm_low else 0])
 	_gs.tick(delta, SMOKE_WIND * px_per_m)
+	if not fx3d and (not _mf_age.is_empty() or _add_drawn or _gs.has_engine_flash()):
+		_add_redraw()
 	var i := 0
 	while i < _fx_kind.size():
 		_fx_age[i] += delta
@@ -417,14 +425,37 @@ func _flash_add(p: int, ty: int) -> void:
 	flashes_made += 1
 
 
-func _draw_flashes() -> void:
-	var vr := _view_rect().grow(px_per_m * 4.0)
+func _draw_flashes(ci: CanvasItem) -> void:
+	var vr := _view_rect().grow(px_per_m * 10.0)
 	var up := BoardView.oblique
 	for k in _mf_age.size():
 		if vr.has_point(_mf_pos[k]):
-			GunSmoke.flash(self, _mf_pos[k], _mf_dir[k], _mf_sz[k], 1.0 - _mf_age[k] / _mf_life[k], up, px_per_m * 1.1)
+			GunSmoke.flash(ci, _mf_pos[k], _mf_dir[k], _mf_sz[k], 1.0 - _mf_age[k] / _mf_life[k], up, px_per_m * 1.1)
 	if up:
-		draw_set_transform_matrix(Transform2D.IDENTITY)
+		ci.draw_set_transform_matrix(Transform2D.IDENTITY)
+
+
+## The live flashes for the 3D view's lights and billboards: positions (world px), directions, sizes (px), strengths 0 .. 1, and the
+## gun engines' and ships' (GunSmoke.engine_flashes).
+func flash_data() -> Dictionary:
+	var fa := PackedFloat32Array()
+	fa.resize(_mf_age.size())
+	for k in fa.size():
+		fa[k] = 1.0 - _mf_age[k] / _mf_life[k]
+	return {"pos": _mf_pos, "dir": _mf_dir, "sz": _mf_sz, "fa": fa, "eng": _gs.engine_flashes()}
+
+
+## The smoke for the 3D view: GunSmoke.collect over the whole field (the 3D camera culls), SMOKE_WIND as the 2D draws it.
+func smoke_sprites() -> int:
+	return _gs.collect(SMOKE_WIND * px_per_m, Rect2(-1e6, -1e6, 2e6, 2e6), true, px_per_m)
+
+
+func smoke_buf() -> PackedFloat32Array:
+	return _gs.buf
+
+
+func haze_data() -> Array:
+	return [_gs.hz_pos, _gs.hz_amt, _gs.haze_on]
 
 
 func _smoke_spawn(p: int, ty: int) -> void:
@@ -455,7 +486,44 @@ func _smoke_at(s: Vector2, d: Vector2, big: bool) -> void:
 
 
 func _draw_smoke() -> void:
-	_gs.draw(self, SMOKE_WIND * px_per_m, _view_rect().grow(px_per_m * 20.0), px_per_m * 12.0, preload("res://game/battle_look.gd").is_diorama(), BoardView.oblique)
+	_gs.draw(self, SMOKE_WIND * px_per_m, _view_rect().grow(px_per_m * 20.0), px_per_m * 12.0, preload("res://game/battle_look.gd").is_diorama(), BoardView.oblique, self)
+
+
+## The additive layer: made at first use, redrawn while a flash shows (and once more to clear it).
+func _add_redraw() -> void:
+	if _addn == null:
+		_addn = Node2D.new()
+		_addn.draw.connect(_draw_add)
+		if BoardView.oblique:
+			var m := ShaderMaterial.new()
+			m.shader = load("res://game/fx_add_lift3d.gdshader" if BoardView.v3d else "res://game/fx_add_lift.gdshader")
+			BoardView.apply(m)
+			_addn.material = m
+			BoardView.cull_wide(_addn)
+		else:
+			var cm := CanvasItemMaterial.new()
+			cm.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+			_addn.material = cm
+		add_child(_addn)
+	_addn.queue_redraw()
+
+
+func _draw_add() -> void:
+	var t0 := Time.get_ticks_usec()
+	_draw_add_body()
+	fx_us += Time.get_ticks_usec() - t0
+
+
+func _draw_add_body() -> void:
+	_add_drawn = false
+	if fx3d:
+		return
+	if not _mf_age.is_empty():
+		_draw_flashes(_addn)
+		_add_drawn = true
+	if _gs.has_engine_flash():
+		_gs.draw_engine_flashes(_addn, _view_rect().grow(px_per_m * 20.0), BoardView.oblique)
+		_add_drawn = true
 
 
 func _fx_spawn(kind: int, at: Vector2, rad: float) -> void:
@@ -820,10 +888,8 @@ func _draw() -> void:
 		_draw_burning_units(_view_rect())
 	if not _fx_kind.is_empty():
 		_draw_fx(lw)
-	if not _gs.age.is_empty() or not _gs.hz_amt.is_empty():
+	if not fx3d and (not _gs.age.is_empty() or not _gs.hz_amt.is_empty()):
 		_draw_smoke()
-	if not _mf_age.is_empty():
-		_draw_flashes()
 	fx_us += Time.get_ticks_usec() - fx0
 	if show_all_orders:
 		_draw_all_orders()

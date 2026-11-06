@@ -20,6 +20,8 @@ extends SceneTree
 ## 7. Step two (game/kit3d.gd): in a West town and a Rome city every kit piece that stood as a card is a mesh instance (as
 ##    many as the plan's pieces, every building the kit places among them), its card left out of the rows, and a quarter
 ##    turn leaves the meshes' transforms as they were (they turn with the table: no swap); every gate is rows.
+## 8. The flashes and the smoke (game/fx3d.gd): billboards with depth, a billboard flash for each flash alive, at most 8 pooled
+##    lights (none on Low), the overlay's own flash and smoke off.
 ## Exits 0 / 1.
 
 const Battle := preload("res://game/battle.gd")
@@ -201,6 +203,37 @@ func _run() -> void:
 		await _open("battle_2000")
 		await _f(battle.view3d.PROBE_FRAMES + 12)
 		_check(battle.view3d.probe_drawn > 50, "the 3D probe sees the men drawn (%d px)" % battle.view3d.probe_drawn)
+	# --- 8 the flashes and the smoke (game/fx3d.gd; the flash and smoke pass)
+	await _open("bench_west_muskets")
+	var ov8 = battle.overlay
+	var fx8 = battle.view3d.fx
+	_check(fx8 != null and ov8.fx3d, "the flash and smoke layer is built and the overlay's own flash and smoke are off")
+	if fx8 != null:
+		var shown := -1
+		var most_lit := 0
+		for t in 1200:
+			battle.sim.step()
+			ov8._process(0.1)
+			if ov8.flashes_live > 0 and shown < 0:
+				fx8.update()
+				shown = ov8.flashes_live
+				_check(fx8.flash_drawn == shown, "bench_west_muskets: a billboard flash for each flash alive (%d of %d)" % [fx8.flash_drawn, shown])
+			if shown >= 0:
+				fx8.update()
+				most_lit = maxi(most_lit, fx8.lights_on)
+			if shown >= 0 and ov8._gs.age.size() > 60 and t > 200:
+				break
+		_check(shown > 0, "bench_west_muskets: the musket lines fired (%d flashes at the first volley)" % shown)
+		_check(fx8.smoke_drawn > 0 and fx8.smoke_drawn == mini(fx8.smoke_drawn, fx8.SMOKE_MAX), "the smoke is drawn as billboards (%d sprites)" % fx8.smoke_drawn)
+		var want_lights: bool = fx8.lights.size() > 0
+		_check(most_lit <= fx8.MAX_LIGHTS and (most_lit > 0) == want_lights,
+			"the pooled lights: %d at most live of %d pooled (none on Graphics Low)" % [most_lit, fx8.lights.size()])
+		var spent := 0
+		ov8._mf_age.fill(2000.0)
+		ov8._process(0.1)
+		fx8.update()
+		spent = fx8.flash_drawn
+		_check(spent == 0, "no flash billboard once the flashes are spent (%d)" % spent)
 	BoardView.force = ""
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")
