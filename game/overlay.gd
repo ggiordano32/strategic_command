@@ -1529,7 +1529,8 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 			if primary:
 				var into := "MOVING INTO RANGE"
 				if shooter and sim.lob_over_wall(u, t):
-					into = "TOO FAR TO LOB OVER THE WALL: MOVING CLOSER"
+					into = "TOO FAR TO LOB OVER THE WALL: MOVING CLOSER" if sim.wall_cross_at(sim.u_cx[u], sim.u_cy[u],
+						sim.u_cx[t], sim.u_cy[t]) >= 0 else "TOO FAR TO LOB OVER THE HOUSES: MOVING CLOSER"
 				_dstr(gp + Vector2(r, -r * 1.5),
 					"NO WAY IN: TO THE GATE" if ug.z == 2 else into,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), Color(1.0, 0.8, 0.45))
@@ -1713,7 +1714,16 @@ func _draw_blocked(u: int, t: int, w: float) -> bool:
 	var s := 9.0 / zoom
 	draw_line(crest + Vector2(-s, -s), crest + Vector2(s, s), COL_BLOCKED, w * 2.0)
 	draw_line(crest + Vector2(-s, s), crest + Vector2(s, -s), COL_BLOCKED, w * 2.0)
-	_dstr(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE",
+	# Buildings block a flat shot (2026-11-06): with an attack order it walks round to the spot with a line (the sim's
+	# fire_spot), drawn as its way there.
+	var sp: Vector3i = sim.fire_spot_view(u, t) if sim.u_order[u] == BattleSim.O_ATTACK and sim.u_target[u] == t \
+		and blk >= 0 and sim.lof_works_block(u, x0, y0, x1, y1) >= 0 else Vector3i.ZERO
+	if sp.z != 0:
+		var spx := to_px(sp.x, sp.y)
+		_dash_outlined(a, spx, Color(1.0, 0.8, 0.45, 0.9), w, 8.0 / zoom)
+		draw_arc(spx, px_per_m * 1.2, 0, TAU, 14, Color(1.0, 0.8, 0.45, 0.95), w * 1.5)
+		_dd(spx, b, Color(COL_FIRE, 0.6), w, 4.0 / zoom)
+	_dstr(crest + Vector2(s * 1.4, -s * 0.6), "NO LINE OF FIRE: MOVING AROUND" if sp.z != 0 else "NO LINE OF FIRE",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(12.0), COL_BLOCKED)
 	return true
 
@@ -1860,6 +1870,27 @@ func _draw_preview(lw: float) -> void:
 		var ang := face * TAU / 1024.0
 		var fwd := Vector2(cos(ang), sin(ang))
 		draw_line(centre, centre + fwd * px_per_m * 5.0, Color(1, 1, 0.6, 0.9), lw * 1.5)
+		if feat and not no_way:
+			_draw_dest_cover(u, centre, face, pfiles)
+
+
+## The cover at an order's destination (2026-11-06, cover like Company of Heroes): a small shield beside the front's
+## right end, green for heavy cover (a house, a wall, a tall rock between the men and the way they face), yellow for
+## light (woods, hedges, a low rock, rubble), none in the open (BattleSim.cover_rating_front: directional, the same
+## evaluation as the AI's cover spots).
+func _draw_dest_cover(u: int, centre: Vector2, face: int, files: int) -> void:
+	var c := centre / px_per_m * M
+	var hw := maxi(files - 1, 0) * UT.stat(sim.u_type[u], "file_sp") / 2
+	var cr: int = sim.cover_rating_front(int(c.x), int(c.y), face, hw)
+	if cr <= 0:
+		return
+	var ang := face * TAU / 1024.0
+	var right := Vector2(-sin(ang), cos(ang))
+	var sz := maxf(px_per_m * 2.2, 12.0 / zoom)
+	var at := centre + right * (hw * px_per_m / M + sz * 1.2)
+	var col := Color(0.45, 0.95, 0.4, 0.95) if cr == 2 else Color(1.0, 0.85, 0.3, 0.95)
+	draw_circle(at, sz * 0.75, Color(0, 0, 0, 0.45))
+	UIIcons.draw_icon(self, "stance_default", Rect2(at - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), col)
 
 
 ## Waypoints (docs/DESIGN.md "Waypoints"): unit u's chain (OrderPreview.chain)

@@ -2800,7 +2800,7 @@ func _unit_arrays() -> Array:
 ## Per-unit arrays of woods and settlement maps (hashed only on those maps,
 ## so the hash of a plain map is what it always was).
 func _map_unit_arrays() -> Array:
-	return [u_wall, u_sq, u_gtarget, u_pn, u_pk, u_pgx, u_pgy, u_pep, u_trn]
+	return [u_wall, u_sq, u_gtarget, u_pn, u_pk, u_pgx, u_pgy, u_pep, u_trn, u_fsx, u_fsy, u_fst]
 
 
 ## Per-unit stair moves and regrouping (maps with buildings or walls;
@@ -3245,7 +3245,31 @@ func range_vs(u: int, t: int) -> int:
 func lob_over_wall(u: int, t: int) -> bool:
 	if not lobber(u) or u_wall[t] != 0 or u_lq[t] >= 0 or t_fixed[u_type[t]] != 0:
 		return false
-	return wall_cross_at(u_cx[u], u_cy[u], u_cx[t], u_cy[t]) >= 0
+	if wall_cross_at(u_cx[u], u_cy[u], u_cx[t], u_cy[t]) >= 0:
+		return true
+	# Buildings block a flat shot (as built, 2026-11-06): a house standing
+	# close before the target is lobbed over as a wall is (not from or at a
+	# held building: the garrison rules).
+	if occ_on != 0 and (u_occ[u] > 0 or u_occ[t] > 0):
+		return false
+	return house_close_at(u_cx[u], u_cy[u], u_cx[t], u_cy[t])
+
+
+## The straight line (x0, y0) - (x1, y1) crosses a building within
+## HOUSE_LOB_NEAR of its end (sampled every 2 m on the obstacle grid; the
+## last LOF_SKIP left out: the target's own footing).
+func house_close_at(x0: int, y0: int, x1: int, y1: int) -> bool:
+	if obs_on == 0:
+		return false
+	var dx := x1 - x0
+	var dy := y1 - y0
+	var d := FM.approx_len(dx, dy)
+	var a := maxi(d - HOUSE_LOB_NEAR, LOF_SKIP)
+	while a < d - LOF_SKIP:
+		if obs_kind(x0 + dx * a / d, y0 + dy * a / d) == MapGen.C_BUILDING:
+			return true
+		a += 2 * M
+	return false
 
 
 ## Unit u shoots an arcing soldier weapon from the ground (lob_over_wall's
@@ -3456,6 +3480,185 @@ func lof_units(u: int, t: int) -> bool:
 				dm * t_m_apex[ty] / 100, 0, 2 * LOF_STEP, maxi(_skip0(u), pk.y), _skip1(t), pk.x) < 0:
 			return true
 	return false
+
+
+# ------------------------------------------ buildings block a flat shot ---
+# docs/design/battle_sim.md "Buildings block a flat shot (as built,
+# 2026-11-06)": a flat weapon's unit with an attack order and no line of
+# fire to its target, a house, wall, tower or shut gate between, walks round
+# it to the nearest spot within LOF_WALK that has one (the path planner's
+# way there); arcing weapons lob over a house close before the target at
+# ARC_OVER_WALL_PCT (lob_over_wall); a flat ball scattered into a house or
+# wall ends its flight there (_fire).
+static var LOF_WALK := 40 * M        # the farthest (straight, from its anchor) a unit walks for a line of fire
+const LOF_SPOT_STEP := 4 * M         # ... the spots tried: rings this far apart round its anchor
+const LOF_SPOT_SIDE := 3 * M         # ... a spot serves when the line holds from its middle and this far either side
+static var HOUSE_LOB_NEAR := 12 * M  # an arcing weapon's line crossing a building this near its target is a lob over it
+var u_fsx := PackedInt32Array()      # a unit's fire spot (-1: none within LOF_WALK; hashed on maps)
+var u_fsy := PackedInt32Array()
+var u_fst := PackedInt32Array()      # ... the target it was found for + 1 (0: none)
+var stat_lof_walk: int = 0           # ticks a unit walked to a fire spot
+var stat_flat_cut: int = 0           # flat balls ended at a house or wall they were scattered into
+
+
+## The first obstacle a flat shot of unit u from (x0, y0) toward (x1, y1)
+## meets (sampled every 2 m, the obstacle grid's cell: a corner clipped
+## counts): its distance to the face when a house, wall, tower or shut gate
+## rises above the line (not the ground, trees or rocks: as before), -1
+## none.
+func lof_works_block(u: int, x0: int, y0: int, x1: int, y1: int) -> int:
+	if obs_on == 0:
+		return -1
+	var d := FM.approx_len(x1 - x0, y1 - y0)
+	if d <= 0:
+		return -1
+	var pk := _peek(u)
+	var blk := lof_block(x0, y0, elev_at(x0, y0) + LOF_EYE, x1, y1, elev_at(x1, y1) + LOF_BODY,
+		d * t_m_apex[u_type[u]] / 100, 0, 2 * M, maxi(_skip0(u), pk.y), LOF_SKIP, pk.x)
+	if blk < 0:
+		return -1
+	var k := obs_kind(x0 + (x1 - x0) * blk / d, y0 + (y1 - y0) * blk / d)
+	if k != MapGen.C_BUILDING and not _works_cell(k):
+		return -1
+	# (Back to its face, half a metre at a time.)
+	var a := blk - M / 2
+	while a > 0:
+		var ka := obs_kind(x0 + (x1 - x0) * a / d, y0 + (y1 - y0) * a / d)
+		if ka != MapGen.C_BUILDING and not _works_cell(ka):
+			break
+		blk = a
+		a -= M / 2
+	return blk
+
+
+## Unit u's anchor at (px, py) would shoot target t: open ground for it,
+## within `reach` (and the type's minimum) of t's middle, and its middle
+## (half its depth behind the anchor, away from t) with a line of fire.
+func _spot_ok(u: int, t: int, px: int, py: int, reach: int, gm: int) -> bool:
+	if px < 5 * M or py < 5 * M or px > field_w - 5 * M or py > field_h - 5 * M:
+		return false
+	if (nav_at(px, py) & gm) == 0:
+		return false
+	var tx := u_cx[t]
+	var ty := u_cy[t]
+	var dd := FM.approx_len(tx - px, ty - py)
+	if dd > reach or dd < t_m_min[u_type[u]] or dd <= 0:
+		return false
+	var fl := maxi(u_files[u], 1)
+	var back := (u_alive[u] + fl - 1) / fl * t_rsp[u_type[u]] / 2 + M
+	# (Its middle and LOF_SPOT_SIDE either side of it: however the men
+	# settle round the anchor, the line holds.)
+	var ap := dd * t_m_apex[u_type[u]] / 100
+	var sk1 := _skip1(t)
+	for k in 3:
+		var lat := (k - 1) * LOF_SPOT_SIDE
+		var cx := px - ((tx - px) * back + (ty - py) * lat) / dd
+		var cy := py - ((ty - py) * back - (tx - px) * lat) / dd
+		if lof_block(cx, cy, elev_at(cx, cy) + LOF_EYE, tx, ty, u_h[t] + LOF_BODY, ap, 0, LOF_STEP, 0, sk1) >= 0:
+			return false
+	return true
+
+
+## The nearest spot round unit u's anchor (rings LOF_SPOT_STEP apart out to
+## LOF_WALK, on each ring the bearing of t first, then alternately either
+## side) from which it shoots t (_spot_ok, within 85 % of its range as the
+## closing move stops); z 0: none.
+func fire_spot(u: int, t: int) -> Vector3i:
+	var x0 := u_ax[u]
+	var y0 := u_ay[u]
+	var reach := range_vs(u, t) * 17 / 20
+	var gm := _ground_mask(u)
+	var b0 := FM.atan2_a(u_cy[t] - y0, u_cx[t] - x0)
+	var r := LOF_SPOT_STEP
+	while r <= LOF_WALK:
+		var nr := 8 + r / (2 * M)
+		for k in nr:
+			var off := (k + 1) / 2 * FM.ANGLE_FULL / nr
+			var ang := (b0 + (off if k % 2 == 1 else -off)) & FM.ANGLE_MASK
+			var px := x0 + FM.cos_a(ang) * r / FM.TRIG_ONE
+			var py := y0 + FM.sin_a(ang) * r / FM.TRIG_ONE
+			if _spot_ok(u, t, px, py, reach, gm):
+				return Vector3i(px, py, 1)
+		r += LOF_SPOT_STEP
+	return Vector3i.ZERO
+
+
+## fire_spot kept per unit (u_fsx, u_fsy, u_fst): searched again when the
+## target changes or, once a second, when the spot no longer serves.
+func _fire_spot_kept(u: int, t: int) -> Vector3i:
+	if u_fst[u] == t + 1:
+		if (tick + u) % TICKS_PER_SECOND != 0:
+			return Vector3i(u_fsx[u], u_fsy[u], 1 if u_fsx[u] >= 0 else 0)
+		var there := u_fsx[u] >= 0 and FM.approx_len(u_ax[u] - u_fsx[u], u_ay[u] - u_fsy[u]) <= M \
+			and FM.approx_len(u_cx[u] - u_ax[u], u_cy[u] - u_ay[u]) <= LOF_SPOT_STEP
+		if u_fsx[u] >= 0 and not there and _spot_ok(u, t, u_fsx[u], u_fsy[u], range_vs(u, t) * 17 / 20, _ground_mask(u)):
+			return Vector3i(u_fsx[u], u_fsy[u], 1)
+		# (There and its men up, still no line: the next ring round from here.)
+	var sp := fire_spot(u, t)
+	u_fst[u] = t + 1
+	u_fsx[u] = sp.x if sp.z != 0 else -1
+	u_fsy[u] = sp.y
+	return sp
+
+
+## The view's question (the order preview): the spot unit u walks to for a
+## line at t (its kept one when it has it), z 0 none. Changes nothing.
+func fire_spot_view(u: int, t: int) -> Vector3i:
+	if obs_on == 0 or t_m_arc[u_type[u]] != 0 or u_wall[u] != 0:
+		return Vector3i.ZERO
+	if u_fst.size() > u and u_fst[u] == t + 1:
+		return Vector3i(u_fsx[u], u_fsy[u], 1 if u_fsx[u] >= 0 else 0)
+	return fire_spot(u, t)
+
+
+## Cover a man at (x, y) has against fire from bearing `face` (the way he
+## faces): 2 heavy (a house, a wall in the field, a rock or cliff CS_H_LINE
+## tall: _cover_from's kinds that stop a flat shot outright, sampled 2 and
+## 4 m toward the bearing), 1 light (woods under him, a lower rock, rubble,
+## a field's hedges), 0 open. Directional as _cover_from: what stands on
+## his other side does not count. The order preview's shield and the AI's
+## cover spots (COVER_DIR) ask it; it changes nothing.
+func cover_rating(x: int, y: int, face: int) -> int:
+	var vb := veg_bits(x, y)
+	var light := (vb & MapGen.V_DENS) != 0
+	if obs_on != 0:
+		if rub_n > 0 and obs_kind(x, y) == MapGen.C_RUBBLE:
+			light = true
+		var fx := FM.cos_a(face)
+		var fy := FM.sin_a(face)
+		var k := COVER_LOOK / 2
+		while k <= COVER_LOOK:
+			var cx := x + fx * k / FM.TRIG_ONE
+			var cy := y + fy * k / FM.TRIG_ONE
+			var ck := _cover_cell(obs_kind(cx, cy))
+			if ck == COV_HOUSE or ck == COV_WALL or (ck == COV_ROCK and _obs_top(cx, cy) >= CS_H_LINE):
+				return 2
+			if ck != COV_NONE:
+				light = true
+			k += COVER_LOOK / 2
+	if (vb & MapGen.V_FIELD) != 0 and city_on == 0:
+		light = true
+	return 1 if light else 0
+
+
+## cover_rating along a unit's front at (x, y) facing `face`, `hw` either
+## side (five men): heavy when half of them have heavy cover, light when
+## half have some, else open.
+func cover_rating_front(x: int, y: int, face: int, hw: int) -> int:
+	var rx := -FM.sin_a(face)
+	var ry := FM.cos_a(face)
+	var nh := 0
+	var nl := 0
+	for k in 5:
+		var o := hw * (k - 2) / 2
+		var c := cover_rating(x + rx * o / FM.TRIG_ONE, y + ry * o / FM.TRIG_ONE, face)
+		if c == 2:
+			nh += 1
+		if c >= 1:
+			nl += 1
+	if nh * 2 >= 5:
+		return 2
+	return 1 if nl * 2 >= 5 else 0
 
 
 # ----------------------------------------------- woods and settlements ---
@@ -10621,12 +10824,23 @@ func _update_units() -> void:
 					mlof = lof_units(u, t)
 					if HIDDEN_CLOSE_ON != 0 and vis_on != 0 and u_seen[t] == 0:
 						mlof = false  # (not seen: no shot at it either, _pm_cand; docs/AI.md 48)
+				# Buildings block a flat shot (2026-11-06): no line of fire,
+				# a house, wall or tower between: round it to the nearest
+				# spot with one (fire_spot), the path planner's way.
+				var fsp := Vector3i.ZERO
+				if mis and not mlof and oon and u_wall[u] == 0 and u_charge[u] == 0 and t_m_arc[u_type[u]] == 0 \
+						and (vis_on == 0 or u_seen[t] != 0) and lof_works_block(u, u_cx[u], u_cy[u], u_cx[t], u_cy[t]) >= 0:
+					fsp = _fire_spot_kept(u, t)
 				# (u_inreach, not u_fighting: men holding to their places
 				# leave the closing to the anchor, which goes by the streets.)
 				if oon and u_wall[u] == 0 and u_charge[u] == 0 and u_inreach[u] == 0 \
-						and not (mis and d <= range_vs(u, t) and (mlof or (city_on == 0 and (land_only == 0 or HIDDEN_CLOSE_ON == 0)))):
+						and (fsp.z != 0 or not (mis and d <= range_vs(u, t) and (mlof or (city_on == 0 and (land_only == 0 or HIDDEN_CLOSE_ON == 0))))):
 					var goal := _attack_goal(u, t)
-					if city_on != 0:
+					if fsp.z != 0:
+						goal = Vector2i(fsp.x, fsp.y)
+						held = true  # (there it stands and shoots)
+						stat_lof_walk += 1
+					elif city_on != 0:
 						# Out of reach (another piece of ground: a shut gate
 						# between): to the gate (melee), or as near as its own
 						# ground goes (missile troops, shooting once in range).
@@ -10657,6 +10871,8 @@ func _update_units() -> void:
 					# places now and then kept to its own ground.
 					if (tick + u) % 10 == 0:
 						u_dirty[u] = 1
+					if fsp.z != 0 and d > 0:
+						want_face = FM.atan2_a(dy, dx)  # (at its fire spot: facing the target)
 				elif u_charge[u] != 0:
 					pass  # riders resolve the charge themselves; anchor waits
 				elif u_wall[u] > 0 and cls != UT.CLS_MISSILE:
@@ -13869,6 +14085,18 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 	var lx := ax + ((ux * lon - uy * lat) / FM.TRIG_ONE)
 	var ly := ay + ((uy * lon + ux * lat) / FM.TRIG_ONE)
 	var flight := clampi(dist / t_m_speed[ty] + 3, 3, PR_BUCKETS - 1)
+	if ft_on != 0 and obs_on != 0 and t_m_arc[ty] == 0 and t_m_kind[ty] == 0 and u_wall[u] == 0 and u_wall[ft] == 0 \
+			and not (occ_on != 0 and (u_occ[u] > 0 or u_occ[ft] > 0)):
+		# Buildings block a flat shot (2026-11-06): a ball scattered into a
+		# house, wall or tower ends its flight there (it was drawn through
+		# to land beyond).
+		var cb := lof_works_block(u, sx, sy, lx, ly)
+		if cb >= 0:
+			var ld := maxi(FM.approx_len(lx - sx, ly - sy), 1)
+			lx = sx + (lx - sx) * cb / ld
+			ly = sy + (ly - sy) * cb / ld
+			flight = clampi(cb / t_m_speed[ty] + 3, 3, PR_BUCKETS - 1)
+			stat_flat_cut += 1
 	pr_sx[p] = sx
 	pr_sy[p] = sy
 	pr_x[p] = clampi(lx, 0, field_w)
@@ -18367,8 +18595,8 @@ func _cs_threat(u: int) -> int:
 		# None in sight: a bound faces the way on, Hold street its front.
 		if u_bnd[u] != 0 and (u_dx[u] != u_ax[u] or u_dy[u] != u_ay[u]):
 			return FM.atan2_a(u_dy[u] - u_ay[u], u_dx[u] - u_ax[u]) & FM.ANGLE_MASK
-		if u_stance[u] == STANCE_HOLD:
-			return u_face[u]
+		if u_stance[u] == STANCE_HOLD or u_stance[u] == STANCE_COVER:
+			return u_face[u]  # (Take cover with no enemy in sight: the cover on the side it was ordered to face, 2026-11-06)
 		return -1
 	return FM.atan2_a(u_cy[t] - u_ay[u], u_cx[t] - u_ax[u]) & FM.ANGLE_MASK
 

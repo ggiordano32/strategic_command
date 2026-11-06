@@ -760,6 +760,129 @@ LINE OF FIRE", the gun by the gate too.
   within 10 m of a tower now shoots past that tower's body; the fort guns' 60-degree sector (`FORT_GUN_SECTOR`) is
   unchanged.
 
+### Buildings block a flat shot (as built, 2026-11-06)
+
+Why (the owner, a beauty pass on the battlefield): "I want to start to look at buildings being in the way when rounds
+are fired from a distance, and that units have to get around the building for line of sight before firing at an
+enemy." And: "We can use some Company of Heroes examples for line of fire and cover on the battlefield. I want it to
+be that type of experience if possible."
+
+**What was there (the diagnosis, tests/lof_probe.gd).** A flat shot was already blocked by a house, wall, tower or
+shut gate at three levels: the unit's choice (`lof_units` in fire at will and the attack order), each man's shot
+(`_shot_ok` -> `lof_block`, which reads `_obs_top`) and the ball reaching a man (`_flat_block`). So a musket line on
+fire at will never shot through a house and took another target with a line (the LOF_MEN cover men kept). Four gaps:
+(1) a ball scattered past a corner whose line crossed a house flew on through it and landed beyond when no man stood
+near its landing point (53 of 82 balls drawn across the house at 40 m in the probe's town case, 120 s); (2) an attack order
+on a target with no line closed along the street path toward the target (contact if need be, `HIDDEN_CLOSE_ON`) until
+some line opened, and on a field map with house blocks (`city_on` 0: tests only) walked straight into the house and
+stood there; (3) bows and slings lobbed over houses at their full range; (4) the AI's musket lines (`_mis_close`) took
+the nearest enemy in sight whatever stood between, and focus fire checked the line only on hilly maps (`ter_on`).
+
+**The rule.**
+- *Flat shots stop at the obstacle* (`_fire`, `lof_works_block`): a flat soldier's ball (`m_arc` 0, `m_kind` 0:
+  muskets, arquebuses, pistols, crossbows, javelins) whose straight line from the man to its scattered landing point
+  meets a house, wall, tower or shut gate (sampled every 2 m, the obstacle grid's cell; back to its face by half
+  metres) ends its flight at the face (`stat_flat_cut`); not from or at a held building or a wall's walk (the
+  garrison's and the battlements' rules as before). Engines and guns (`m_kind` 1, the field guns and the ships'
+  batteries) were already stopped there by `_land_bolt`'s trace.
+- *Walking round for a line* (the attack order's closing move): a flat-weapon unit with an attack order whose
+  target it sees but has no line of fire to, the first thing in the way being a house, wall, tower or shut gate
+  (`lof_works_block` from its middle), goes to its *fire spot* (`fire_spot`): rings `LOF_SPOT_STEP` 4 m apart round
+  its anchor out to `LOF_WALK` 40 m, on each ring the target's bearing first and then either side alternately, the
+  first open spot (its ground) within 85 % of `range_vs` (where the closing move stops) from whose middle (half its
+  depth back) and `LOF_SPOT_SIDE` 3 m either side the line to the target is clear. The path planner takes it there
+  (the gate rule's `held` goal), it faces the target and stands. The spot is kept (`u_fsx`, `u_fsy`, `u_fst` target +
+  1; hashed with the map arrays, in snapshots) and searched again when the target changes or, once a second, when it
+  no longer serves; there with its men up and still no line, the next ring round. None within 40 m: the closing
+  move as before (by the streets toward the target). Fire at will does not walk: it shoots what it has a line to.
+- *Arcing weapons lob over a house* (`lob_over_wall`, `house_close_at`): an arcing soldier weapon from the ground
+  whose line between the middles crosses a building within `HOUSE_LOB_NEAR` 12 m of the target's middle reaches
+  `ARC_OVER_WALL_PCT` (60) % of its range, as over a wall (not from or at a held building). The range ring is not
+  cut for houses (only for walls, as before); the attack order's out-of-reach label says "TOO FAR TO LOB OVER THE
+  HOUSES: MOVING CLOSER".
+- *The preview* (`game/overlay.gd` `_draw_blocked`): a flat unit's attack order with no line draws the red cross and
+  "NO LINE OF FIRE" at the obstacle as before; with a fire spot, "NO LINE OF FIRE: MOVING AROUND", its way to the
+  spot (a dashed amber line and a ring) and the line on to the target.
+- *The AI* (docs/AI.md 65): `LOF_PICK` (350): a musket line's target (`_mis_close`) is the nearest enemy it has a
+  line of fire to; one behind a house only when it has none (then the attack order walks round); focus fire checks
+  the line on maps with houses too. Easy 0 (the nearest, as before).
+
+**Cover like Company of Heroes (what exists, what was added).** Cover was already directional for everything that
+stands up: `_cover_from` reads the 2 m cell 2 and 4 m from the man *toward the shooter* (a house, a wall in the field,
+a rock or cliff), so a man behind a house corner is covered against fire from beyond it and not from the open side;
+flat shots are traced and stopped by the obstacle itself (real cover, phase C0). Woods cover a man standing in them
+from every side (correct: he is inside), and a field's hedges (`COV_FIELD`, an area of the veg grid with no hedge
+lines) count whichever way the shot comes: the one non-directional kind (no hedge geometry to read; left as is). The
+values are unchanged (`COVER_STOP`: woods 45, rock 60, house 50, wall 50, field 25, rubble 60 %). Tiers, as the
+player reads them: heavy (a house, a wall, a rock or cliff 2 m tall or more between him and the way he faces: stops a
+flat shot outright, `CS_H_LINE`) and light (woods, a lower rock, rubble, a field's hedges). The low wall exists: a West
+town's yard walls are 1.3 m rock cells (`_w_lowwall`), light cover, directional like a rock; no new kind was added.
+Added:
+- `cover_rating(x, y, face)` (2 heavy, 1 light, 0 open; directional, `_cover_from`'s kinds) and
+  `cover_rating_front` (five men along a front: heavy when half have heavy cover, light when half have some).
+- *The order preview's cover mark* (`_draw_dest_cover`): dragging a move order, a small shield (the stance icon) by
+  the right end of each unit's destination front, green for heavy cover, yellow for light, none in the open.
+- *Cover spots at the order's destination*: a unit in Take cover with no enemy in sight now lays out its cover spots
+  against the way it was ordered to face (`_cs_threat`: before, none until an enemy was seen), so its men settle on
+  the covered side of the house or wall it was sent to.
+- *The AI's cover spots* (`COVER_DIR` 351): cover troops' spots (`_cover_spot`) take the best `cover_rating` against
+  their front (heavy first) instead of any cover round the man. Easy 0.
+
+**Measured.** Probe (tests/lof_probe.gd, the town case, 120 s, HEAD -> after): a musket line
+40 m off pikes behind a house, attack order: shots 82 -> 313, pikes lost 16 -> 29, balls drawn across the house 53 ->
+4, first shot at 27 s both (it walks 34 m round); at 120 m: 117 -> 69 shots, 17 -> 5 lost, first shot 80 -> 87 s (it
+fires from a spot 48 m off past the corner, many balls cut at the corner, where HEAD walked on by the streets); fire
+at will with no line: no shot and no move both; the field block's half-hidden case 40 -> 80 shots, 9 -> 18 lost; a
+bow line at 120 m: 964 -> 814 shots (the house lob's reach), at 40 m unchanged. Balance (tools/balance, 8 seeds,
+before a clean copy of HEAD 1ec92d9e00, after ba60e5fba9): `west_walls` 38 -> 41 % (walls 0 / 1 / 2: 52 / 34 / 27
+-> 58 / 35 / 29), no pooled cell beyond its interval; cells beyond: havana w1 50 -> 12, port_royal w2 12 -> 50,
+veracruz w0 50 -> 100, santo_domingo w2 50 -> 88, merida w1 38 -> 88; `west_named` 35 -> 39 % (57 / 38 / 9 -> 59 / 36
+/ 23, walls 2 pooled +14 beyond its interval; the same cells and tayasal w0 38 -> 0); `rome_walls` 56 -> 61 % (75 /
+52 / 42 -> 79 / 56 / 48), no cell beyond; `open_town` attackers 79 -> 75 % (havana 38 -> 25), defenders' L3 133 ->
+157. Ablation (port_royal, santo_domingo, veracruz walls 2, 24 battles; 21 % before, 54 % after): the fire spot off
+29 %, the defenders' walk off 54 %, the attackers' walk off 29 %, the walk for houses only (not walls) 54 %, the AI
+knobs off 54 %, the Take cover fallback off 54 %: the shift is the attackers' shooters walking round houses inside
+the town for a line. Street cover (determinism `--only=street`): 23 lost at the mouth vs 58 in the open both, killed
+86 -> 93. Cost: bench_2000 3.43 / 3.18 -> 3.31 / 2.22 ms a tick, bench_4000_city 4.92 / 4.79 -> 4.75 / 4.84 (two
+paired runs; noise). Pins: campaign pins MATCH (Rome and West, 6 seeds); no flat golden moved (the rule needs a map
+with obstacles).
+
+**Tests.** custom_battle_test `_check_lof` (the probe's town case: the musket line has no line at the start, takes no
+shot without one, walks round for one on an attack order and fires, under a tenth of its balls drawn across a house;
+on fire at will it neither shoots nor moves; the bow line lobs over the house from where it stands).
+tests/lof_probe.gd (the table), tests/lof_shot.gd (the shots, both views).
+
+**Known.** The fire spot is the nearest by the target's bearing first, so the line often walks up close to
+the target's side of the house (10-15 m in the shots), and from a corner many of its balls are cut by the corner (a
+line of 20 files is wider than the view past a house); at 120 m in the probe it shot fewer and killed fewer than
+HEAD's walk by the streets. West sieges at walls 2 favour the attacker more (west_named +14 points pooled, beyond its
+interval: the attackers' shooters get lines in the streets). Field-map house blocks (tests only) hide a target behind
+them, so flat fire holds and the AI does not engage there. The range ring is not cut for houses. The AI's arcing
+units are unchanged (fire at will); only musket lines (`_mis_close`) and focus fire use `LOF_PICK`. No device check.
+
+### Cover like Company of Heroes (plan, 2026-11-06)
+
+What the owner's model has that this build does not, each with its cost (agent-days) and what it needs from the sim:
+- *Suppression* (2-3 days): a unit under heavy fire pins (fires slower, moves at a crawl, cannot charge) and recovers
+  when the fire stops. Needs a hashed per-unit suppression meter fed by near misses and hits in `_land` (shots landing
+  within a few metres of its men, the cover kind lowering the gain), decayed per tick; read by `_gun_unit` / the
+  reload, the anchor's speed and the charge; the AI's attack choices (do not send pinned units) and a HUD state chip.
+  Balance: the gun lines' duels and the sieges must be re-measured (it is a new damage channel).
+- *Negative cover* (1 day): open ground worse than open (a road, a bridge, a ford, shallow water: men there take
+  more), a third tier the preview shows red. Needs a `COV_EXPOSED` kind with a negative stop (an extra hit chance in
+  `_land`'s hit roll), read from the road / river grids; the preview's mark gets a red crossed shield.
+- *Cover icons for every object under the cursor* (1-2 days, view only): hovering any ground shows the cover a man
+  there would have against the nearest enemy (or the selected unit's facing), per object (the house's sides, a wall,
+  a rock). Needs nothing new in the sim (`cover_rating` answers it); the overlay needs a hover path on phones (a
+  long press) and a cache per 2 m cell.
+- *Garrison windows with sight arcs* (3-4 days): a held building's men fire only from windows on the sides facing the
+  enemy, each window an arc, and the preview draws the arcs. Needs window positions per building (MapGen's house
+  plans), per-window firing slots for `_occ_aim` / `_fire`, the arcs checked in `_pm_cand`; the siege fits and the
+  town fights re-measured.
+- *The AI's flanking of cover* (2-3 days): an AI attacker facing a unit in heavy cover sends a unit round to fire at
+  it from its open side (`cover_rating` from the flank) instead of trading volleys at the front. Needs a flank spot
+  search (fire_spot's rings with a cover test from the spot), a knob, and the open-town and siege measures.
+
 ### Terrain height: as built
 
 Numbers are the constants in `sim/battle_sim.gd` ("Terrain" block) and the

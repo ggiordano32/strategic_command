@@ -7218,7 +7218,9 @@ func _cover_run(kind: String, rocks: bool, p_seed: int, snap_at: int, los: int =
 		if sim.u_cvb[dv] >= 0:
 			ev["cvb_on"] += 1
 	ev["hashes"] = hashes
-	ev["flat_block"] = sim.stat_flat_block
+	# (Buildings block a flat shot, 2026-11-06: a ball scattered into a house
+	# ends at its face, stat_flat_cut, before it reaches a man to be traced.)
+	ev["flat_block"] = sim.stat_flat_block + sim.stat_flat_cut
 	ev["flat_traced"] = sim.stat_flat_traced
 	ev["cs_men"] = sim.stat_cs_men
 	ev["lean"] = sim.stat_lean
@@ -7336,7 +7338,9 @@ func _check_cover() -> void:
 		bad.append("cover: town: blocked %d, men to cover spots %d, ticks with spots %d, leaning shots %d" % [
 			int(tw["flat_block"]), int(tw["cs_men"]), int(tw["cvb_on"]), int(tw["lean"])])
 	var tl := _cover_run("town_line", false, 7, -1)
-	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 20 > int(tl["alive_d"]):
+	# (Two men of 33 off their places since balls end at the house faces,
+	# 2026-11-06, one before: up to a tenth.)
+	if int(tl["cvb_on"]) != 0 or int(tl["cs_men"]) != 0 or int(tl["far"]) * 10 > int(tl["alive_d"]):
 		bad.append("cover: town: the line took cover spots or scattered (%s)" % str([tl["cvb_on"], tl["cs_men"], tl["far"]]))
 	if int(tw["behind"]) * 100 < int(tw["alive_d"]) * 20 or int(tw["behind"]) * int(tl["alive_d"]) <= int(tl["behind"]) * int(tw["alive_d"]):
 		bad.append("cover: town: buccaneers behind cover %d / %d, the line %d / %d" % [int(tw["behind"]), int(tw["alive_d"]),

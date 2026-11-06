@@ -4626,3 +4626,26 @@ The rule is docs/design/campaign_rules.md "Support the shore (as built, 2026-11-
 | `SHORE_ATT` (`SK_SUPPORT + 62`) | 0 | 1 | 1 |
 
 Measured: campaign_rules.md "Support the shore (as built, 2026-11-05)".
+
+## 65. Buildings block a flat shot: the target with a line, cover facing the enemy (2026-11-06)
+
+(Numbered 65: 60-64 are taken or claimed in parallel.) The battle rule is docs/design/battle_sim.md "Buildings block a
+flat shot (as built, 2026-11-06)"; the sim's attack order walks round a house to a spot with a line of fire
+(`fire_spot`, `LOF_WALK` 40 m), so the AI needs only to choose well:
+
+- **`LOF_PICK`** (350). A flat-weapon missile unit on a map with houses or walls (`lof_pick`): `_mis_close` (the
+  musket lines and an army with no line, once engaged) keeps its attack target while it has a line of fire to it;
+  otherwise it takes the nearest enemy in sight it has a line to (`sim.lof_units`, tried only for enemies nearer than
+  the best so far), and an enemy behind a house only when none has a line (it keeps the one it has: the sim walks
+  round). The order is given again only when the target changes. Focus fire (`_sk_focus`) skips targets with no
+  line on maps with houses too (before, only on hilly maps).
+- **`COVER_DIR`** (351). Cover troops' spots in the line (`_cover_spot`) take the best `sim.cover_rating` against
+  their front (heavy before light, the first in the fixed order), the same evaluation as the order preview's cover
+  mark, instead of any cover round the man (`_cover_at`), which put men on the enemy's side of a house.
+
+| Knob (`sim/ai_profile.gd`, ids 350-351; `N_KNOBS` 352, gap 344-349) | Easy | Average | Skilled |
+|---|---|---|---|
+| `LOF_PICK` | 0 (the nearest, as before) | 1 | 1 |
+| `COVER_DIR` | 0 (any cover, as before) | 1 | 1 |
+
+Easy shoots at the nearest and takes any cover (deliberate mistakes). Measured: battle_sim.md (as built).

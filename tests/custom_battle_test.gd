@@ -199,9 +199,69 @@ func _init() -> void:
 	_check_sea()
 	_check_occupy()
 	_check_play_scenarios()
+	_check_lof()
 	await _check_names()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
+
+
+## Buildings block a flat shot (docs/design/battle_sim.md, as built 2026-11-06), on tests/lof_probe.gd's town case (a
+## 60-man line 40 m off a pike block standing 8 m behind the outermost house of a West open town): a musket line
+## ordered to attack has no line of fire at the start, takes no shot while it has none, walks round the house (the
+## fire spot) and shoots once it has one, its balls not drawn across a house; on fire at will it neither shoots
+## nor moves; a bow line lobs over the house (the lob's range cut) from where it stands.
+func _check_lof() -> void:
+	var Probe = load("res://tests/lof_probe.gd")
+	for mode in ["atk", "faw"]:
+		var sim := BattleSim.new()
+		sim.setup(Probe.scenario("musket", "town", 40, mode), 7)
+		if mode == "atk":
+			sim.queue_order(BattleSim.make_attack_order(0, 0, 1, 0))
+		sim.step()
+		if sim.lof_units(0, 1):
+			_fail("lof: the musket line has a line of fire through the house at the start")
+		var x0: int = sim.u_cx[0]
+		var y0: int = sim.u_cy[0]
+		var first := -1
+		var moved_first := 0
+		var thru := 0
+		var shots := 0
+		for k in 600:
+			var tb: int = sim.tick
+			var had: bool = sim.lof_units(0, 1)
+			sim.step()
+			if sim.stat_shots > shots:
+				if first < 0:
+					first = k
+					moved_first = int(Vector2(sim.u_cx[0] - x0, sim.u_cy[0] - y0).length()) / 1024
+					if not had and not sim.lof_units(0, 1):
+						_fail("lof: the musket line fired with no line of fire (tick %d)" % k)
+				for p in sim.pr_t0.size():
+					if sim.pr_t0[p] == tb and sim.pr_unit[p] == 0 \
+							and Probe.crosses_house(sim, sim.pr_sx[p], sim.pr_sy[p], sim.pr_x[p], sim.pr_y[p]):
+						thru += 1
+				shots = sim.stat_shots
+		var moved := int(Vector2(sim.u_cx[0] - x0, sim.u_cy[0] - y0).length()) / 1024
+		if mode == "atk":
+			if first < 0 or moved_first < 5 or sim.stat_lof_walk == 0:
+				_fail("lof: the attack order did not walk round the house for a line (first shot tick %d, walked %d m, walk ticks %d)" % [first, moved_first, sim.stat_lof_walk])
+			if thru * 10 > shots:
+				_fail("lof: %d of %d balls drawn across a house" % [thru, shots])
+		elif shots > 0 or moved > 2:
+			_fail("lof: fire at will with no line shot %d balls or moved %d m" % [shots, moved])
+	var sb := BattleSim.new()
+	sb.setup(Probe.scenario("bow", "town", 40, "atk"), 7)
+	sb.queue_order(BattleSim.make_attack_order(0, 0, 1, 0))
+	sb.step()
+	if not sb.lob_over_wall(0, 1):
+		_fail("lof: the bow line's shot over the house is not a lob")
+	var bx: int = sb.u_cx[0]
+	var by: int = sb.u_cy[0]
+	for k in 100:
+		sb.step()
+	if sb.stat_shots == 0 or int(Vector2(sb.u_cx[0] - bx, sb.u_cy[0] - by).length()) / 1024 > 3:
+		_fail("lof: the bow line did not lob over the house from where it stands (%d shots)" % sb.stat_shots)
+	print("lof: checked (musket walk, fire at will, bow lob)")
 
 
 ## The three play scenarios in the Tests and benchmarks menu (docs/AI.md 44.1, 44.5, 44.6; 2026-11-05): each has a

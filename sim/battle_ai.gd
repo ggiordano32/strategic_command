@@ -1756,12 +1756,21 @@ static func _no_line(sim, side: int) -> bool:
 ## has an attack order on such a target.
 static func _mis_close(sim, u: int) -> bool:
 	var side: int = sim.u_side[u]
+	# (LOF_PICK, docs/AI.md 65: the nearest it has a line of fire to; one
+	# behind a house only when it has none, the sim's attack order walking
+	# round for a line.)
+	var lofk := lof_pick(sim, u)
+	var keep := false
 	if sim.u_order[u] == O_ATTACK:
 		var cur: int = sim.u_target[u]
 		if cur >= 0 and sim.u_state[cur] == U_READY and sim.u_fighting[cur] == 0 and not sim.hidden_from(cur, side):
-			return true
+			if not lofk or sim.lof_units(u, cur):
+				return true
+			keep = true
 	var best := -1
 	var best_d := 0
+	var best_l := -1
+	var best_ld := 0
 	for o in sim.n_units:
 		if sim.u_side[o] == side or sim.u_state[o] != U_READY or sim.u_fighting[o] != 0 or sim.hidden_from(o, side):
 			continue
@@ -1771,10 +1780,24 @@ static func _mis_close(sim, u: int) -> bool:
 		if best < 0 or d < best_d:
 			best = o
 			best_d = d
+		if lofk and (best_l < 0 or d < best_ld) and sim.lof_units(u, o):
+			best_l = o
+			best_ld = d
 	if best < 0:
 		return false
-	_attack(sim, u, best, 0)
+	if best_l >= 0:
+		best = best_l
+	elif keep:
+		return true  # (none with a line: on round the house for the one it has)
+	if sim.u_order[u] != O_ATTACK or sim.u_target[u] != best:
+		_attack(sim, u, best, 0)
 	return true
+
+
+## LOF_PICK (docs/AI.md 65) on for missile unit u: a flat weapon on a map
+## with houses or walls.
+static func lof_pick(sim, u: int) -> bool:
+	return sim.obs_on != 0 and UT.stat(sim.u_type[u], "m_arc") == 0 and AP.of(sim, sim.u_side[u])[AP.LOF_PICK] != 0
 
 
 # ------------------------------------------------------------ artillery ---
@@ -2337,6 +2360,28 @@ static func _clear_spot(sim, px: int, py: int, rx: int, ry: int, fx: int, fy: in
 ## the slot itself, else up to 30 m aside or 10-20 m forward or back (fixed
 ## order), else the slot.
 static func _cover_spot(sim, u: int, px: int, py: int, rx: int, ry: int, fx: int, fy: int) -> Vector2i:
+	if AP.of(sim, sim.u_side[u])[AP.COVER_DIR] != 0 and sim.obs_on != 0:
+		# (COVER_DIR, docs/AI.md 65: cover between it and the enemy,
+		# BattleSim.cover_rating against its front; heavy first.)
+		var face := FM.atan2_a(fy, fx)
+		var bl := Vector2i(px, py)
+		var bc: int = sim.cover_rating(px, py, face)
+		if bc == 2:
+			return bl
+		for c in [Vector2i(-10, 0), Vector2i(10, 0), Vector2i(0, -10), Vector2i(0, 10), Vector2i(-20, 0),
+				Vector2i(20, 0), Vector2i(-10, -10), Vector2i(10, -10), Vector2i(0, -20), Vector2i(-30, 0),
+				Vector2i(30, 0), Vector2i(-20, 10), Vector2i(20, 10), Vector2i(0, 20)]:
+			var x := clampi(px + (rx * c.x - fx * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_w - 4 * M)
+			var y := clampi(py + (ry * c.x - fy * c.y) * M / FM.TRIG_ONE, 4 * M, sim.field_h - 4 * M)
+			if sim.nav_at(x, y) == 0:
+				continue
+			var cr: int = sim.cover_rating(x, y, face)
+			if cr > bc:
+				bc = cr
+				bl = Vector2i(x, y)
+				if cr == 2:
+					break
+		return bl
 	if sim._cover_at(px, py, u) != 0:
 		return Vector2i(px, py)
 	for c in [Vector2i(-10, 0), Vector2i(10, 0), Vector2i(0, -10), Vector2i(0, 10), Vector2i(-20, 0),
@@ -3003,7 +3048,7 @@ static func _sk_focus(sim, u: int, kn: PackedInt32Array) -> void:
 			continue
 		if flat and not sim._clear_line(u, o):
 			continue
-		if sim.ter_on != 0 and not sim.lof_units(u, o):
+		if (sim.ter_on != 0 or (sim.obs_on != 0 and kn[AP.LOF_PICK] != 0)) and not sim.lof_units(u, o):
 			continue
 		best = o
 		bs = sc

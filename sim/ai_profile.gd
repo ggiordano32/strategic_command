@@ -413,10 +413,13 @@ const SH_LAND_DEF := 340       # 1: a defending ship sends her landing party ash
 const SH_IDLE_T := 341         # ... ticks
 const SH_LAND_ATT_PCT := 342   # an attacking ship sends her party ashore once her side storms (the assault; the field: the engagement) while its strength is under this % of the enemy's; 0 never (Easy)
 const SH_FOCUS := 343          # 1: a ship's guns take enemy ships first, then batteries, in reach (else fire at will); 0 fire at will
-const N_KNOBS := 344
+# Buildings block a flat shot; cover facing the enemy (docs/AI.md 65, 2026-11-06): ids 350-351.
+const LOF_PICK := 350          # 1: a flat-weapon missile unit's target choice (_mis_close, focus fire) on a map with houses or walls takes the nearest target it has a line of fire to, a target behind a house only when it has none (the sim's attack order then walks round for a line); 0 the nearest (Easy)
+const COVER_DIR := 351         # 1: cover troops' spots (_cover_spot) want cover between them and the enemy (BattleSim.cover_rating against the front); 0 any cover round the man (Easy)
+const N_KNOBS := 352
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
-const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330]]
+const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350]]
 
 # Deliberate mistakes (docs/AI.md 3, "Deliberate mistakes"), rolled with the
 # sim's RNG at the decision point (battle_ai.gd _mistake): each is an order a
@@ -722,6 +725,9 @@ const KNOBS: Array = [
 	[SH_IDLE_T, 600, 600, 450],
 	[SH_LAND_ATT_PCT, 0, 300, 400],
 	[SH_FOCUS, 0, 1, 1],
+	# Buildings block a flat shot (docs/AI.md 65): Easy shoots at the nearest and takes any cover (a deliberate mistake).
+	[LOF_PICK, 0, 1, 1],
+	[COVER_DIR, 0, 1, 1],
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],
