@@ -1963,7 +1963,7 @@ static func stone_run_at(run_m: float, age: float, ball: bool) -> Vector3:
 var impact_stats := PackedInt32Array([0, 0, 0, 0])
 
 
-func _stone_run(p: Vector2, dir: Vector2, run_m: float, age: float, sd: int, lw: float, ball: bool) -> void:
+func _stone_run(p: Vector2, dir: Vector2, run_m: float, age: float, sd: int, _lw: float, ball: bool) -> void:
 	var r := maxf(px_per_m * (0.4 if ball else 0.45), 1.6 / zoom)
 	var hop_m := run_m * 0.4 if ball and run_m > 1.25 else 0.0
 	var st := stone_run_at(run_m, age, ball)
@@ -1971,11 +1971,8 @@ func _stone_run(p: Vector2, dir: Vector2, run_m: float, age: float, sd: int, lw:
 	var h_m := st.y
 	var rest_t := st.z   # (> 0: at rest)
 	var g := p + dir * s_m * px_per_m
-	# The furrow from where it first ran on the ground to where it is now, fading after it stops.
-	var fa := 0.75 * clampf(1.0 - maxf(rest_t, 0.0) / FX_SINK_T, 0.0, 1.0)
+	# (its furrow is stamped into the ground marks: game/track_layer.gd _furrows)
 	var f0 := p + dir * hop_m * px_per_m
-	if fa > 0.0 and s_m > hop_m + 0.2:
-		_dl(f0, g, Color(0.33, 0.25, 0.16, fa * (0.5 if ball else 0.7)), maxf(lw * 1.2, px_per_m * (0.25 if ball else 0.35)))
 	var hop_t := clampf(hop_m / 3.0, 2.0, 5.0) if hop_m > 0.0 else 0.0
 	if ball and hop_t > 0.0 and age >= hop_t and age < hop_t + 6.0:
 		# (the second touch: a small puff)

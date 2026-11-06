@@ -20,6 +20,7 @@ const BattleLoading := preload("res://game/battle_loading.gd")
 const OrderPreview := preload("res://game/order_preview.gd")
 const Quality := preload("res://game/quality.gd")
 const TerrainLayer := preload("res://game/terrain_layer.gd")
+const TrackLayer := preload("res://game/track_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const TableMotion := preload("res://game/table_motion.gd")
@@ -176,6 +177,7 @@ var _pinch_ang := 0.0
 var _v3d_twist_prev := 1e9    # the two fingers' angle at the last frame (1e9: none yet)
 var _rmb_turn := false        # 3D: the right drag turns and tilts the camera
 var terrain: TerrainLayer
+var tracks: TrackLayer   # the ground-marks layer (tracks on the board)
 var city: CityLayer
 var works: WorksLayer
 var ships: ShipLayer   # (2026-11-05) the ships lying off the shore (under the men)
@@ -506,6 +508,11 @@ func _ld_board_terrain() -> void:
 	terrain = TerrainLayer.new()
 	add_child(terrain)
 	terrain.setup(sim, PX_PER_M)
+	if not ("--no-tracks" in OS.get_cmdline_user_args()):
+		# Tracks on the board: the ground-marks texture the board shaders sample (view only).
+		tracks = TrackLayer.new()
+		add_child(tracks)
+		tracks.setup(sim, PX_PER_M, terrain.material_ref, player_side)
 
 
 func _ld_city() -> void:

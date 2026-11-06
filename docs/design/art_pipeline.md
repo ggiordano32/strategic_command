@@ -587,6 +587,20 @@ native desktop export preset is added beside the web one (no code change)
 for the owner's desktop sessions and for profiling; a native-only direction
 reopens only if a pass needs true 3D that the phones cannot take.
 
+**Goals noted 2026-11-06 (the owner).** Three goals for the board and the figures, kept here as plan, no code yet:
+
+- (a) A weather pass, in two halves, Company of Heroes 2's blizzards as the model (the owner's goal, here in our words).
+  The look first: rain and snow as particle layers over the board (all three views), the
+  sky and the one lamp dimmed, lightning as a lamp spike, fog as a distance fade, a season tint on the board and the kit's
+  roofs from the campaign's two-turns-a-year seasons (the stamp table of "Tracks on the board" below is the hook for snow
+  and mud). Then the rules: rain fouling powder, snow slowing the march, fog cutting sight, storms stopping landings and
+  lobs; weather becomes a battle parameter taken from the campaign state (sim state, hashed, lockstep input).
+- (b) An animation pass, later (the owner's goal, in our words): idle motion for the men, attack variation, and a real crouch pose
+  for suppression (the crouch is a squash today, no sheet has crouch frames).
+- (c) The long goal. The owner: "1 on 1 to 1 on 3 situations where we can start to get individuals fighting with each
+  other on the ground": the figure rig's duel animations (strike, parry, hit, fall, the pairs and the three on one) and the
+  sim's melee pairing (a man picks one enemy, up to three on one, deterministic) so that a fight reads as men fighting men.
+
 ### Pass 1, trays and bases (as built, 2026-10-27)
 
 Pass 1 of the tabletop plan above. View only: nothing under `sim/` changed, no hash moved, no lockstep input; `game/campaign/`
@@ -1993,3 +2007,42 @@ session scratchpad `proj/shots/` (`{roll,break,sink,ball,strike}_{top,oblique,3d
 ring did before); a scattered gun ball that strikes a work before its landing point is still drawn flying on to its landing
 point (the strike's dust comes at the face when it lands: the sim's trace is at landing, unchanged); no ricochet off walls;
 the fragments are flat polygons, not meshes in the 3D view; no device check.
+
+### Tracks on the board (as built, 2026-11-06, view only)
+
+The owner: "We should also look at adding some details like footsteps in the mud/snow/dirt." A ground-marks layer over the
+board: `game/track_layer.gd` (one per battle, `Battle.tracks`; `--no-tracks` turns it off). **The texture:** one SubViewport,
+RGBA8, 2 texels per metre (at most 2048 on a side, so a 600 x 320 m field is 1200 x 640, 3 MB; a 1 km field gets 2,048 x 1,229
+at 1.2 px/m), cleared when the battle opens, never redrawn whole: once per sim second (`_process` on the sim's tick; tests call
+`stamp()`) it draws one small mesh of soft bands, additively (`blend_add`), under a full rectangle that subtracts the fade
+(`blend_sub`; 0.9 / 255 a second with the fraction carried between passes, so a full-strength mark is gone in about 280 s and
+reads for about two minutes). Two passes in one frame share one update (a fast-forward cannot lose a stamp). No node per
+footprint, no per-man draw: a unit costs one 16-vertex band a second. **What stamps** (positions read from the sim, never
+written back): each foot unit's centroid since its last stamp, if it moved at least 1 m (and not more than 25 m: arrivals
+restart the trail), a band as wide as its front (`u_files * file_sp`) into R; cavalry into B (hoof churn); each artillery
+engine and each wagon, ram and siege tower (equipment) as two ruts 0.64 m wide at the gauge (1.6 / 1.8 / 3 m) into G; a stone's (or ball's)
+furrow, stamped 2 s after it came down (the sim's `fx_` ring, `fx_r` the run it ploughed, a ball's first 40 % its bounce) in G
+and a scuff where it landed in R, none for a strike on a work (the rolling stone's own furrow line in the overlay is gone: the
+roll, the dust ring and the fragments stay there; a ring entry overwritten inside those 2 s in very heavy fire loses its furrow). Hidden enemy units (fog, `hidden_from` for the viewer's side) leave none; gun crews
+and ships' crews none. The bands ramp up over the first metres of each second's move and down over the next, so a trail is
+even whatever the speed. **The ground kind table** (`GROUND_ROWS`, one `Vector3` per kind: foot, wheel, hoof strength; kind
+from the sim's 4 m vegetation cell: grass 0.8 / 0.8 / 0.75, road, street, plaza and settlement ground 1 / 1 / 0.95, ploughland
+0.95, woods 0.5, water 0) times `weather_mul`, the hook for the weather pass (snow: a bigger multiplier and a different dark
+in the shader; mud: the same). **The shaders:** the sampling is in `terrain_body.gdshaderinc`'s `terrain_col`, so the top and
+oblique terrain and the 3D board mesh share it (`marks_tex`, `marks_size_px` set on the terrain layer's material and copied to
+the 3D board by `copy_params`): worn ground is the grass trodden down to wet brown earth with a ragged edge (a noise
+threshold on the wear, so a thin trail is patchy and the edge breaks up; a quarter darker on ground that was bare earth
+already); close up (under 0.25 m a pixel) boot prints, one blob per 0.55 m cell, denser with traffic; ruts two dark lines;
+hoof churn dark clods in a worn patch. Water is left alone; a settlement's street sprite and decals still draw over the
+board, so a town's streets show no tracks (known). **Cost** (this desktop, 1280 x 720, battle_2000 after 120 s of battle, marks on and off in 3 s blocks alternating in one
+process because other agents loaded the machine: GPU median on / off 2.90 / 2.94 ms top, 2.71 / 2.79 oblique, 2.59 / 2.62 3D,
+so no GPU cost; frame time medians 14.3 / 15.1, 11.9 / 11.2, 10.8 / 10.4 ms, inside the load's noise of about 1 ms; the stamp
+pass 0.54 ms average and 1.6 ms worst, once a second). The phone's share is one more texture read per ground pixel and, on worn
+ground, about forty ALU of noise: guess +0.1 to 0.3 ms on the Tab S7, to be checked on the device. tests/battle_screen_test.gd `_track_cases` (headless: the
+layer's counters; windowed: the texture's pixels): blank at the start, stamped after a march, ruts behind a gun, hoof
+churn behind horse, a furrow stamped from a stone's landing.
+
+**Known.** Trails are bands as wide as the unit, so a column leaves a slab with ragged edges, not a line of boot prints
+(prints show only close up); the head of a trail starts abruptly; a town's streets show none; the 2,048-texel cap makes a
+big field's marks coarser (1.2 px/m at 1 km); the marks are in the camera's 3D board as well but the decals drawn over the
+ground (the Paths hatch, the street sprite) hide them; snow, mud and rain are the weather pass; no device check yet.

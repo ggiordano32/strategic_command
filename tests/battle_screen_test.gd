@@ -448,6 +448,7 @@ func _process(_d: float) -> bool:
 				_cover_cases()
 				_supp_cases()
 				_roll_cases()
+				_track_cases()
 			if _roll_phase == 1:
 				_step -= 1  # (the stone's roll is drawn on the next frames: _roll_frame)
 				return false
@@ -784,6 +785,59 @@ func _flash_cases() -> void:
 ## chip on the markers reads what the troop type gets (a musket line behind a 1.3 m wall: light; behind a 2.5 m one:
 ## heavy; in the open: none; riders behind the low wall: none), its tick points at the nearest enemy; while a musket
 ## line is selected an enemy behind a house is marked blocked and one in the open hittable; the overlay draws them.
+## Tracks on the board (docs/design/art_pipeline.md "Tracks on the board", 2026-11-06): the ground-marks layer has stamped
+## nothing when the battle opens; after a march of a foot column, a cavalry unit and a gun it has stamped each kind (foot
+## wear, hoof churn, two ruts); a unit that stands leaves none; a stone's landing stamps one furrow. Headless the layer keeps
+## no texture and counts its stamps; windowed it also owns the texture (tests/ has no windowed run: the shots read it).
+func _track_cases() -> void:
+	var was := CData.pack
+	CData.use_pack("west")
+	var b := Battle.new()
+	b.custom_scenario = {"width_m": 400, "height_m": 200, "ai_sides": [], "units": [
+		Scenarios.unit(0, UT.index_of("heavy"), 60, 40, 50, 0),
+		Scenarios.unit(0, UT.index_of("lancers"), 30, 40, 100, 0),
+		Scenarios.unit(0, UT.index_of("field_gun"), 4, 40, 150, 0),
+		Scenarios.unit(0, UT.index_of("heavy"), 40, 40, 180, 0),
+		Scenarios.unit(1, UT.index_of("heavy"), 40, 380, 100, 512)], "orders": []}
+	b.seed_value = 3
+	root.add_child(b)
+	b.paused = true
+	var s: BattleSim = b.sim
+	var trk = b.tracks
+	_check(trk != null and trk.stamps == 0 and trk.passes == 0 and trk.furrows == 0, "tracks: the layer exists and has stamped nothing when the battle opens")
+	var start := Vector2(s.u_cx[3], s.u_cy[3]) / 1024.0
+	for u in 3:
+		s.queue_order(BattleSim.make_move_order(s.tick, u, 300 * 1024, int(s.u_cy[u]), 0, BattleSim.files_to_width(s.u_files[u], s.u_type[u]), 0))
+	for t in 400:
+		s.step()
+		if t % 10 == 9:
+			trk.stamp()
+	_check(trk.by_channel.x > 0 and trk.by_channel.y > 0 and trk.by_channel.z > 0,
+		"tracks: a march stamped foot wear (%d), ruts behind the gun (%d) and hoof churn behind the horse (%d)" % [trk.by_channel.x, trk.by_channel.y, trk.by_channel.z])
+	var moved := Vector2(s.u_cx[3], s.u_cy[3]) / 1024.0
+	_check(moved.distance_to(start) < 1.0, "tracks: the unit left standing did not move (%.1f m), so it has no stamp to its name" % moved.distance_to(start))
+	var f0: int = trk.furrows
+	var k: int = s.fx_head
+	s.fx_x[k] = 200 * 1024
+	s.fx_y[k] = 100 * 1024
+	s.fx_dx[k] = 4096
+	s.fx_dy[k] = 0
+	s.fx_t[k] = s.tick
+	s.fx_k[k] = BattleSim.FXK_STONE
+	s.fx_r[k] = 8 * 1024
+	s.fx_h[k] = 0
+	s.fx_head = (k + 1) % s.fx_x.size()
+	trk.stamp()
+	_check(trk.furrows == f0, "tracks: a stone still rolling has no furrow yet")
+	for t in 25:
+		s.step()
+	trk.stamp()
+	trk.stamp()
+	_check(trk.furrows == f0 + 1, "tracks: a stone's furrow is stamped once, after its run (the overlay no longer draws the line)")
+	b.queue_free()
+	CData.use_pack(was)
+
+
 ## Suppression (2026-11-06; docs/design/ui.md "Suppression chips"): a player's musket line under fire is suppressed
 ## (its meter set, the sim's own state from it), then pinned; its men carry the crouch level in the soldier flags (both
 ## paths, the 3D view's buffer from the same flags; on the CPU path the buffer's flags column), its card strip and its
