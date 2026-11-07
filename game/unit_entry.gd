@@ -147,7 +147,7 @@ func set_unit_type(ty: int, p_side_color: Color = Color(0.35, 0.6, 1.0), p_facti
 	_rbadge.set_role(rk)
 	if rk != "":
 		_role.text = "%s: %s" % [str(UT.ROLES[rk]["name"]), _role.text]
-	_desc.text = UT.text(ty, "desc")
+	_desc.text = CData.unit_desc(UT.key_of(ty), p_faction)
 	_fill_glyphs(ty)
 	_good.text = "Good against: " + UT.text(ty, "good_vs")
 	_bad.text = "Countered by: " + UT.text(ty, "weak_vs")

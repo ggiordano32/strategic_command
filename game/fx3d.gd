@@ -19,7 +19,8 @@ const Quality := preload("res://game/quality.gd")
 
 const MAX_LIGHTS := 8
 const CELL_M := 6.0
-const SMOKE_MAX := 280 * 3 + 40            # (the overlay's cap is 280 puffs of three sprites, plus the haze)
+const Impacts3D := preload("res://game/impacts3d.gd")
+const SMOKE_MAX := 280 * 3 + 40 + Impacts3D.PUFF_MAX   # (the overlay's cap is 280 puffs of three sprites, plus the haze, plus the impacts' dust)
 const FLASH_MAX := 3 * 420
 
 var view
@@ -30,6 +31,7 @@ var smoke_mat: ShaderMaterial
 var flash_mmi: MultiMeshInstance3D
 var flash_mat: ShaderMaterial
 var lights: Array[OmniLight3D] = []
+var imp: Node3D                  # the stones, balls, chips, shadows and dust of the landings (game/impacts3d.gd)
 var _sbuf := PackedFloat32Array()
 var _fbuf := PackedFloat32Array()
 var _pts := PackedVector4Array()
@@ -78,6 +80,9 @@ func setup(p_view) -> void:
 			lights.append(l)
 	_pts.resize(MAX_LIGHTS)
 	ov.fx3d = true
+	imp = Impacts3D.new()
+	add_child(imp)
+	imp.setup(view)
 
 
 func _make_mmi(n: int, mat: ShaderMaterial, aabb: AABB) -> MultiMeshInstance3D:
@@ -116,6 +121,8 @@ func update() -> void:
 	if ov == null or smoke_mmi == null:
 		return
 	var t0 := Time.get_ticks_usec()
+	if imp != null:
+		imp.update()
 	_update_smoke()
 	var t1 := Time.get_ticks_usec()
 	us_smoke += t1 - t0
@@ -149,7 +156,7 @@ func _update_smoke() -> void:
 	var uy := cb.y.y * inv
 	var uz := cb.y.z * inv
 	var k := 0
-	var kmax := SMOKE_MAX - 20
+	var kmax := SMOKE_MAX - 20 - Impacts3D.PUFF_MAX
 	for i in mini(n, kmax):
 		var o := i * GunSmoke.STRIDE
 		var ox := sb[o + 3]
@@ -162,6 +169,12 @@ func _update_smoke() -> void:
 		_sbuf[q + 13] = sb[o + 6]
 		_sbuf[q + 14] = sb[o + 7]
 		k += 1
+	if imp != null:
+		var ip: PackedFloat32Array = imp.puffs
+		for i in imp.n_puff:
+			var o: int = i * Impacts3D.PUFF_STRIDE
+			_put(_sbuf, k, Vector3(ip[o], ip[o + 1], ip[o + 2]), ip[o + 3], ip[o + 4], ip[o + 5], 0.0)
+			k += 1
 	var hz: Array = ov.haze_data()
 	if hz[2]:
 		var hp: PackedVector2Array = hz[0]

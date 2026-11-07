@@ -122,7 +122,8 @@ const PROP_PIECE := ["barrels", "crates", "cart", "well"]
 
 ## The height (dm) the men of a held building stand at as the oblique view draws its piece: the roof deck of a flat-roofed piece,
 ## by the building's index in the layout (the sim's own ob_z is a per-building number that does not follow the piece's drawn
-## height, up to 1.7 m off on a flat roof). A building not in it: the sim's ob_z (game/soldier_layer.gd _stand_dm).
+## height, up to 1.7 m off on a flat roof), times the instance's scale (the 3D mesh scales its height by it). A building not in it:
+## the sim's ob_z (game/soldier_layer.gd _stand_dm).
 const DECK_DM := {"house_flat_s": 32, "house_flat_m": 35, "shop": 38, "governor": 70}
 static var held_dm := {}
 
@@ -310,7 +311,7 @@ func _add(piece: String, pos: Vector2, e: Vector2, sx: float, sy: float, hs: flo
 	i_flash.append(0.0)
 	i_bld.append(_cur_bld)
 	if _cur_bld >= 0 and DECK_DM.has(piece):
-		held_dm[_cur_bld] = DECK_DM[piece]
+		held_dm[_cur_bld] = roundi(float(DECK_DM[piece]) * sy)   # (the piece's deck scales with it: sy 0.63 to 1.22 in a West town)
 	return i_piece.size() - 1
 
 
@@ -1431,7 +1432,7 @@ func _ob_gate_rows(t: float, hm: float) -> void:
 		var w0 := _ob_wkey.size()
 		var dd := t + 1.0           # the piece's depth: the wall's thickness and a half metre either side
 		var vh := dd * 0.5
-		var jh := maxf(hm + 1.0, (6.0 if _timber else 7.0) * hw / 4.0)
+		var jh := hm   # (the jambs, the lintel and the deck flush with the walk the men stand on: they were max(hm + 1, 7 hw / 4), up to 4 m over the men beside a gate)
 		var zd := clampf(4.6 * hw / 4.0, 2.4, jh - 1.4)   # the door's height
 		# The parts, each [depth along the camera's view (n . y x v), builder id]: far parts first.
 		var parts: Array = [[n.y * vh, 0], [n.y * (vh - GATE_DOOR_V), 1], [n.y * (-vh + GATE_DECK * 0.5), 2], [-1000.0, 3]]
@@ -1486,7 +1487,7 @@ func _ob_gate_lintel(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, j
 	if _timber:
 		_ob_prism(c, e, n, -hw - 0.2, hw + 0.2, vh - 1.0, vh - 0.4, jh - 0.9, jh - 0.35, base, WK_CAP, WK_WALK, sw)
 		return
-	var zt := jh + 0.3 + MERLON_H
+	var zt := jh + MERLON_H
 	var v1 := vh - 0.9
 	var v2 := vh - GATE_JAMB
 	var pa := c + e * -hw + n * vh
@@ -1495,10 +1496,10 @@ func _ob_gate_lintel(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, j
 	var qb := c + e * hw + n * v1
 	var ra := c + e * -hw + n * v2
 	var rb := c + e * hw + n * v2
-	_ob_face(rb, ra, zd, jh + 0.3, WK_CAP, base, -1.0, 0.0, sw)             # (its inner face)
+	_ob_face(rb, ra, zd, jh, WK_CAP, base, -1.0, 0.0, sw)             # (its inner face)
 	_ob_face(pa, pb, zd, zt, WK_OUT, base, -1.0, 0.0, sw)                   # (its outer face, the merlon band on top)
-	_ob_face(qb, qa, jh + 0.3, zt, WK_MERLON, base, -1.0, 0.0, sw)
-	_ob_top(pa, pb, ra, rb, jh + 0.3, WK_WALK, base, -1.0, sw)
+	_ob_face(qb, qa, jh, zt, WK_MERLON, base, -1.0, 0.0, sw)
+	_ob_top(pa, pb, ra, rb, jh, WK_WALK, base, -1.0, sw)
 	_ob_top(pa, pb, qa, qb, zt, WK_MTOP, base, -1.0, sw)
 
 
@@ -1540,10 +1541,10 @@ func _ob_gate_door(c: Vector2, e: Vector2, n: Vector2, hw: float, vh: float, zd:
 ## A stone square tower (the plans' tower_sq: tools/battlekit b_tower_sq, a body 0.87 r a side) as rows along its own
 ## angle (the sim's tower list gives it, on the stretch's direction): four faces to the platform at 9.9 / 6.1 r with
 ## the merlon band on top, the merlons' inner faces and tops, the platform. A stretch of its own, never fading.
-func _ob_sqtower(c: Vector2, r: float, ang: float, _hm: float) -> void:
+func _ob_sqtower(c: Vector2, r: float, ang: float, hm: float) -> void:
 	var sc := r / 6.1
 	var hb := 5.3 * sc
-	var zp := 9.9 * sc
+	var zp := hm if hm > 0.0 else 9.9 * sc   # (the platform at the walk's height, where the sim stands its men; was 9.9 / 6.1 r, 1-3 m over them)
 	var zt := zp + 1.3 * sc
 	var n := Vector2(cos(ang), sin(ang))
 	var e := Vector2(-n.y, n.x)

@@ -248,6 +248,45 @@ const AMMO_AVAIL: Array = [
 	["fire_pots", ["rome", "carthage", "macedon", "greeks", "syracuse"], WORKSHOP, 2],
 ]
 
+## Per-faction display names for the rows a faction alone carries a special on (view only; CData.unit_name / unit_short /
+## unit_desc; the West's UNIT_NAMES, now the Rome pack's too, 2026-11-07; the owner: "Rome needs unique names for the special
+## units that make a difference, like the stone throwers with explosives for Syracuse"): faction key -> unit row key ->
+## [name, short, what sets them apart (shown before the row's own description)]. The shared rows whose ammunition kind, engine
+## shot or beast a faction alone has (AMMO_AVAIL: fire arrows, fire javelins, lead bullets, heavy bolts, explosive stones;
+## elephants, war dogs) read as that faction's own unit. The name is the faction's, not the ammunition's: a unit
+## without the building level still carries its name, and "- fire arrows" follows it when it has the arrow. Rows not
+## listed keep their own name (the tier 2 and 3 rows already have their own).
+const UNIT_NAMES := {
+	"syracuse": {
+		"stone": ["Archimedean Engines", "Archimedes", "Archimedes' onagers: with the Workshop raised their stones are packed with pitch and sulphur and burst on landing."],
+		"bolt": ["Dionysian Catapults", "Catapults", "The katapeltai of the Syracusan arsenal, where the catapult was born: with the Workshop raised their bolts carry heavy iron heads."],
+		"archer": ["Sicilian Toxotai", "Toxotai", "Island bowmen of the tyrant's levies; with the second Range their arrows are tipped with pitch and fly alight."],
+		"archer2": ["Veteran Sicilian Toxotai", "Vet Toxotai", "Island bowmen of long service; with the second Range their arrows are tipped with pitch and fly alight."]},
+	"greeks": {
+		"archer": ["Scythian Toxotai", "Toxotai", "The Scythian-trained bowmen of the city watch; with the second Range their arrows are tipped with pitch and fly alight."],
+		"archer2": ["Veteran Toxotai", "Vet Toxotai", "Bowmen of the city watch grown old in it; with the second Range their arrows are tipped with pitch and fly alight."],
+		"slinger": ["Achaean Slingers", "Achaeans", "Peasant slingers of the Peloponnese; with the second Range they cast lead bullets that outpunch stones."],
+		"dog_handlers": ["Laconian Hounds", "Hounds", "The Laconian hunting pack of the Greek cities, turned on the enemy."]},
+	"carthage": {
+		"archer": ["Libyan Bowmen", "Bowmen", "Subject Libyan bowmen of the Punic levy; with the second Range their arrows are tipped with pitch and fly alight."],
+		"archer2": ["Veteran Libyan Bowmen", "Vet Bowmen", "Libyan bowmen of many campaigns; with the second Range their arrows are tipped with pitch and fly alight."],
+		"slinger": ["Punic Slingers", "Slingers", "Slingers of the Punic levy; with the second Range they cast lead bullets that outpunch stones."],
+		"elephant": ["Libyan War Elephants", "Elephants", "The forest elephants of the Atlas, Carthage's answer to every phalanx."]},
+	"epirus": {
+		"elephant": ["Pyrrhus' Elephants", "Pyrrhus' Eleph.", "The elephants Pyrrhus brought from Tarentum: the beasts that broke the Roman line at Heraclea."],
+		"dog_handlers": ["Molossian Hounds", "Molossians", "The great hounds of Epirus: handlers with a pack of two dogs each."]},
+	"iberians": {
+		"javelin": ["Falarica Throwers", "Falarica", "Saguntine javelinmen with the falarica; with the second Range the shafts are bound in burning pitch."],
+		"javelin2": ["Veteran Falarica Throwers", "Vet Falarica", "Falarica throwers of many sieges; with the second Range the shafts are bound in burning pitch."]},
+	"gauls": {
+		"javelin": ["Gaesatae", "Gaesatae", "Alpine spearmen of the gaesum, who fight in the front of the Gallic line; with the second Range they hurl it alight."],
+		"javelin2": ["Veteran Gaesatae", "Vet Gaesatae", "Gaesatae of long service; with the second Range they hurl the gaesum alight."],
+		"dog_handlers": ["Gallic War Hounds", "Hounds", "The great hounds of the Celtic chieftains, handlers with a pack of two dogs each."]},
+	"rome": {
+		"bolt": ["Roman Ballistae", "Ballistae", "Torsion engines of the legion's train on Greek models; with the Workshop raised their bolts carry heavy iron heads."],
+		"dog_handlers": ["Roman Mastiffs", "Mastiffs", "Mastiffs of the legion's baggage: handlers with a pack of two dogs each."]},
+}
+
 ## Key cities for the default victory condition.
 const KEY_CITIES: Array[String] = ["latium", "zeugitana", "macedonia", "sicilia_or", "attica"]
 

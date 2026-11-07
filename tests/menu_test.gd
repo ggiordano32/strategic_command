@@ -196,8 +196,10 @@ func _unit_book_names() -> void:
 	rb.open()
 	await _frames(2)
 	var wr := UTm.index_of("heavy")
-	_check(not rb.faction_pick.visible and rb.names_for(-1).has(str(UTm.TYPES[wr]["name"])) and rb.variants_text(wr) == "" and str(rb._list[wr].text).strip_edges() == str(UTm.TYPES[wr]["name"]),
-		"unit book (rome): unchanged (no picker, the row's name, no variants)")
+	var st := UTm.index_of("stone")
+	_check(rb.faction_pick.visible and rb.names_for(-1).has(str(UTm.TYPES[wr]["name"])) and rb.variants_text(wr) == "" and str(rb._list[wr].text).strip_edges() == str(UTm.TYPES[wr]["name"])
+		and rb.variants_text(st).contains("Archimedean Engines"),
+		"unit book (rome, 2026-11-07): the faction picker shows (the Rome specials' names), a plain row keeps its name, the stone throwers list Archimedean Engines")
 	rb.queue_free()
 	await _frames(2)
 

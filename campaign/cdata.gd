@@ -663,6 +663,17 @@ static func unit_name(key: String, f: int) -> String:
 	return str(UT.TYPES[UT.index_of(key)]["name"])
 
 
+## The description of unit row `key` for faction f: the pack's third UNIT_NAMES element (what sets the faction's unit apart)
+## before the row's own text; the row's own with none. View only.
+static func unit_desc(key: String, f: int) -> String:
+	var base := UT.text(UT.index_of(key), "desc")
+	if f >= 0 and not UNIT_NAMES.is_empty():
+		var e = UNIT_NAMES.get(str(FACTIONS[f]["key"]), {}).get(key)
+		if e != null and (e as Array).size() > 2:
+			return "%s %s" % [str(e[2]), base]
+	return base
+
+
 ## The short display name (unit cards) of unit row `key` for faction f.
 static func unit_short(key: String, f: int) -> String:
 	if f >= 0 and not UNIT_NAMES.is_empty():

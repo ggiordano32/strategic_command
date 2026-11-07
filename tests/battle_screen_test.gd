@@ -450,6 +450,7 @@ func _process(_d: float) -> bool:
 				_cover_cases()
 				_supp_cases()
 				_roll_cases()
+				_deck_cases()
 				_track_cases()
 				_weather_cases()
 				_vet_cases()
@@ -1174,9 +1175,94 @@ func _roll_frame() -> void:
 	_check(st[0] > 0 and st[1] > 0 and st[2] > 0 and st[3] > 0,
 		"the stone rolls and breaks: the overlay drew stones running %d, breaking %d, sinking %d, shattering at a wall %d (frames %d)" % [
 			st[0], st[1], st[2], st[3], _roll_frames])
+	if _v3d:
+		var im = _roll_b.view3d.fx.imp if _roll_b.view3d != null and _roll_b.view3d.fx != null else null
+		_check(im != null and _roll_b.overlay.impacts3d and im.n_sph > 0 and im.n_disc > 0 and im.n_puff > 0,
+			"the stones are 3D nodes, not overlay draws: the impacts layer drew %d spheres, %d ground discs, %d dust billboards and the overlay draws none (impacts3d)" % [
+				im.n_sph if im != null else -1, im.n_disc if im != null else -1, im.n_puff if im != null else -1])
 	_roll_b.queue_free()
 	_roll_b = null
 	_roll_phase = 2
+
+
+## The men on the walk surface in 3D (2026-11-07; docs/design/art_pipeline.md "Men on the walk surface and stones with depth"): a
+## garrisoned stone city (walls 3) and a palisade town (level 0, walls 2), stepped a few seconds: every man on a wall stands at
+## `wall_h`, and the 3D walk surfaces that contain him (the kit's wall rows, WK_WALK: the walk, the gates' decks and jambs, the square
+## towers' platforms) are at that height, none above him (before: gates 1-4 m over, square towers 2-3 m over); the round and timber
+## towers' meshes are fitted to the walk's height (View3D._deck_fit), their decks at it, and each carrying kind was met.
+func _deck_cases() -> void:
+	if not _v3d:
+		return
+	const MapGen := preload("res://sim/mapgen.gd")
+	const Terrain := preload("res://sim/terrain.gd")
+	const KitAtlas := preload("res://game/battlekit_atlas.gd")
+	for cfg in [[3, 2, 3, "a stone city of walls 3"], [3, 0, 2, "a palisade town"]]:
+		var b := Battle.new()
+		b.custom_scenario = Scenarios.siege_test(int(cfg[0]), int(cfg[1]), int(cfg[2]), MapGen.PAL_DRY, Terrain.K_FLAT)
+		b.seed_value = 3
+		root.add_child(b)
+		b.paused = true
+		if b.dive_t >= 0.0:
+			b.dive_finish()
+		for t in 60:
+			b.sim.step()
+		var sim: BattleSim = b.sim
+		var kit = b.city.kit
+		var k: float = kit.k
+		var w: PackedFloat32Array = kit._ob_wall
+		var rows := []
+		for r in w.size() / 12:
+			var o := r * 12
+			if w[o + 8] < 400.0 or (w[o + 11] > 1.5 and w[o + 11] < 2.5):
+				continue
+			var c := int(w[o + 8] + 0.5) - 400
+			if c % 8 != 5:
+				continue   # (WK_WALK tops only)
+			var d := Vector2(w[o + 1], w[o + 5]) + Vector2(w[o + 9], w[o + 10])
+			rows.append([PackedVector2Array([Vector2(w[o], w[o + 4]), Vector2(w[o + 1], w[o + 5]), d, Vector2(w[o + 3], w[o + 7])]), c / 8])
+		var wdm: int = sim.wall_h * 10 / 1024
+		var men := 0
+		var over := 0
+		var off := 0
+		var kinds := {}
+		for i in sim.n:
+			var u: int = sim.unit_of[i]
+			if sim.hp[i] <= 0 or sim.u_wall[u] <= 0:
+				continue
+			men += 1
+			var p := Vector2(sim.pos_x[i], sim.pos_y[i]) / 1024.0 * k
+			var top := -1
+			for r in rows:
+				var q: PackedVector2Array = r[0]
+				var pos := false
+				var neg := false
+				for e in 4:
+					var cr := (q[(e + 1) % 4].x - q[e].x) * (p.y - q[e].y) - (q[(e + 1) % 4].y - q[e].y) * (p.x - q[e].x)
+					pos = pos or cr > 0.0001
+					neg = neg or cr < -0.0001
+				if not (pos and neg):
+					top = maxi(top, int(r[1]))
+			kinds[sim.obs_kind(sim.pos_x[i], sim.pos_y[i])] = true
+			if top > wdm:
+				over += 1
+			elif top >= 0 and top != wdm:
+				off += 1
+		_check(men > 20 and over == 0 and off == 0,
+			"men on the walk surface in 3D, %s: %d men on the walls, %d with a walk surface over them, %d off it (wall height %d dm; cell kinds met %s)" % [
+				cfg[3], men, over, off, wdm, str(kinds.keys())])
+		var hm := float(int(sim.map_info["city"]["wall_h_m"]))
+		var fits := 0
+		var wrong := 0
+		for i in kit.i_piece.size():
+			var nm: String = KitAtlas.NAMES[kit.i_piece[i]]
+			if nm == "tower_round" or nm == "tower_timber":
+				var f: Vector3 = b.view3d._deck_fit(nm, kit)
+				if f.z > 0.0 and is_equal_approx(f.y, hm):
+					fits += 1
+				else:
+					wrong += 1
+		_check(fits > 0 and wrong == 0, "the towers' decks are fitted to the walk's height (%.0f m) in 3D, %s: %d towers fitted, %d not" % [hm, cfg[3], fits, wrong])
+		b.queue_free()
 
 
 func _cover_cases() -> void:

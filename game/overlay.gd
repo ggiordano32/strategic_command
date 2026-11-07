@@ -211,6 +211,9 @@ var _addn: Node2D
 var _add_drawn := false
 ## The 3D view draws the smoke and the flashes itself (game/fx3d.gd: billboards with depth, a pooled light): the overlay's stay off.
 var fx3d := false
+## The 3D view draws the landed stones, balls, chips, shadows and the dust and blasts itself (game/impacts3d.gd: spheres, ground discs and
+## billboards with depth, so a house or a line of men in front hides them): the overlay's _draw_impacts and the dust of _draw_fx stay off.
+var impacts3d := false
 var _sm_cell := {}                        # cell -> view clock of its last puff
 var _sm_low := false
 var _sm_low_t := -10.0
@@ -572,7 +575,7 @@ func _draw_fx(lw: float) -> void:
 	var pm := px_per_m
 	for i in _fx_kind.size():
 		var p := _fx_pos[i]
-		if not vr.has_point(p):
+		if not vr.has_point(p) or (impacts3d and _fx_kind[i] != FX_FIRE):
 			continue
 		var a := _fx_age[i]
 		var sd := int(absf(p.x) * 7.0 + absf(p.y) * 13.0)
@@ -1940,6 +1943,8 @@ const COL_IRON := Color(0.17, 0.16, 0.16)
 
 
 func _draw_impacts(lw: float) -> void:
+	if impacts3d:
+		return
 	var now: float = float(sim.tick)
 	if soldiers != null:
 		now = float(sim.tick) - 1.0 + float(soldiers.alpha)

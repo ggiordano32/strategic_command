@@ -592,7 +592,7 @@ func _fill_meshes(km: Dictionary) -> void:
 		var sy: float = k.i_sy[i]
 		# (the footprint's centre on the instance's place, as the oblique sheet anchors the card)
 		var o: Vector2 = k.i_pos[i] - e * (c.x * sx) - Vector2(e.y, -e.x) * (c.y * sy)
-		_mesh_row(rows, nm, o, e, sx, sy, sy, float(k.i_cul[i]))
+		_mesh_row(rows, nm, o, e, sx, sy, sy, float(k.i_cul[i]), _deck_fit(nm, k))
 	for lm in km["lm"]:
 		var yaw: float = lm[4]
 		var sc: float = lm[5]
@@ -627,14 +627,33 @@ func _fill_meshes(km: Dictionary) -> void:
 
 ## One instance: the piece's origin `o` (m, the map), its right `e` (a unit vector on the map, y down), scales along its right,
 ## its depth (toward its outer side) and up; standing on the board's ground under the origin.
-func _mesh_row(rows: Dictionary, nm: String, o: Vector2, e: Vector2, sx: float, sy: float, sz: float, cul: float) -> void:
+func _mesh_row(rows: Dictionary, nm: String, o: Vector2, e: Vector2, sx: float, sy: float, sz: float, cul: float,
+		fit := Vector3.ZERO) -> void:
 	var g := BoardView.ground_m(o * ppm)
 	var bx := Vector3(e.x * sx, 0.0, e.y * sx)
 	var by := Vector3(0.0, sz, 0.0)
 	var bz := Vector3(-e.y * sy, 0.0, e.x * sy)
 	var buf: PackedFloat32Array = rows.get(nm, PackedFloat32Array())
-	buf.append_array(PackedFloat32Array([bx.x, by.x, bz.x, o.x, bx.y, by.y, bz.y, g, bx.z, by.z, bz.z, o.y, cul, 0.0, 0.0, 0.0]))
+	buf.append_array(PackedFloat32Array([bx.x, by.x, bz.x, o.x, bx.y, by.y, bz.y, g, bx.z, by.z, bz.z, o.y, cul, fit.x, fit.y, fit.z]))
 	rows[nm] = buf
+
+
+## The pieces whose deck the men stand on at the sim's walk height: piece -> [the deck's height in the mesh (m), the scale of what
+## stands above it (a timber tower's log ring is a low stake line, not 4.4 m)]. tools/battlekit/build.py b_tower_round (the
+## platform at 10.0), b_tower_timber (2.8), the bastion (5.0, kit3d.res's top faces; tests/zz probe 2026-11-07).
+const DECK_FIT := {"tower_round": [10.0, 1.0], "tower_timber": [2.8, 0.3], "bastion": [5.0, 1.0]}
+
+
+## The instance's custom data for the deck fit (kit_mesh3d.gdshader): (deck in the mesh, the walk's height m, the scale above),
+## or zero for a piece that keeps its own shape (no walls: a field's pieces, a sea fort with no wall height).
+func _deck_fit(nm: String, k) -> Vector3:
+	if not DECK_FIT.has(nm):
+		return Vector3.ZERO
+	var hm := float(int(k.lay.get("wall_h_m", 0)))
+	if hm <= 0.0:
+		return Vector3.ZERO
+	var f: Array = DECK_FIT[nm]
+	return Vector3(float(f[0]), hm, float(f[1]))
 
 
 ## Whether a Rome house's door (its outer side, +y in the kit's frame) should turn round: its own side faces a building, a wall

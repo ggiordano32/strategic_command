@@ -191,8 +191,22 @@ func _west() -> void:
 		"a faction without an entry keeps the row name (%s)" % CData.unit_name("musketeers", CData.faction_index("england")))
 	CData.use_pack("rome")
 	_check(CData.pack == "rome" and CData.gen > g0, "back to Rome after West")
-	_check(CData.UNIT_NAMES.is_empty() and CData.unit_name("chieftain", 0) == "Chieftain's Guard" and CData.unit_name("general", 1) == UT.TYPES[UT.index_of("general")]["name"],
-		"Rome has no UNIT_NAMES: a Rome faction gets the row name")
+	var syr := CData.faction_index("syracuse")
+	var mac := CData.faction_index("macedon")
+	_check(not CData.UNIT_NAMES.is_empty() and CData.unit_name("chieftain", 0) == "Chieftain's Guard" and CData.unit_name("general", 1) == UT.TYPES[UT.index_of("general")]["name"]
+		and CData.unit_name("stone", syr) == "Archimedean Engines" and CData.unit_short("stone", syr) == "Archimedes"
+		and CData.unit_name("stone", mac) == "Stone Throwers" and CData.unit_name("stone", -1) == "Stone Throwers"
+		and CData.unit_desc("stone", syr).begins_with("Archimedes' onagers") and CData.unit_desc("stone", mac) == UT.text(UT.index_of("stone"), "desc"),
+		"Rome's UNIT_NAMES (2026-11-07): the special rows are the faction's own (Syracuse's stone throwers Archimedean Engines, their line before the row's text), a faction without an entry gets the row name")
+	for fk in CData.UNIT_NAMES:
+		var fi := CData.faction_index(str(fk))
+		for uk in CData.UNIT_NAMES[fk]:
+			var ent: Array = CData.UNIT_NAMES[fk][uk]
+			var carried := false
+			for line in CData.roster(fi):
+				carried = carried or (CData.roster(fi)[line] as Array).has(uk)
+			_check(fi >= 0 and UT.index_of(str(uk)) >= 0 and carried and ent.size() == 3 and str(ent[1]).length() <= 15,
+				"Rome UNIT_NAMES %s / %s: the faction exists, its roster holds the row, name / short / line, short fits (%s)" % [fk, uk, str(ent[1])])
 	var r := _rome20()
 	_check(CState.hash_text(r) == ROME_20 and CState.hash_text(CState.as_format(r, 7)) == ROME_20_V7,
 		"Rome golden after a West campaign (%s)" % CState.hash_text(r))

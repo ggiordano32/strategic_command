@@ -27,6 +27,15 @@ varying float mclass;
 
 void vertex() {
 	culture = INSTANCE_CUSTOM.r;
+	if (INSTANCE_CUSTOM.g > 0.0) {
+		// A tower's (or bastion's) deck at the walk's height (custom: g the deck's height in the mesh, b the walk's height in
+		// metres, a the scale of what stands above the deck): the body under the deck is squeezed or stretched to it, the
+		// parapet above keeps its own size, so the men the sim stands at the walk's height stand on the deck.
+		float sz = max(length(MODEL_MATRIX[1].xyz), 0.0001);
+		float deck = INSTANCE_CUSTOM.g;
+		float to = INSTANCE_CUSTOM.b / sz;
+		VERTEX.y = VERTEX.y <= deck ? VERTEX.y * to / deck : to + (VERTEX.y - deck) * INSTANCE_CUSTOM.a;
+	}
 	mclass = UV2.x;
 	w_nrm = MODEL_NORMAL_MATRIX * NORMAL;
 }
