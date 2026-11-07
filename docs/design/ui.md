@@ -850,10 +850,10 @@ keep Leave in the battle menu, and Close on books, keys and the unit picker stay
 **Custom battle page** (2026-10-23, house style): a fixed strip with Back and the Cinzel heading "Custom battle", then
 one line of explanation and three `Kit.trim_panel` cards with gold `Kit.title` heads. **Battle**: Template, Setting, Sea
 battle (a row), the map options as one wrapping flow with "Seed" as a label + field pair that never splits, and
-Deployment / Battle time / Weather / Season / Funds per side as one row of label + dropdown pairs (sea battles show the wind / water / fleets
-here; **Weather** is the weather pass's picker, 2026-11-06: Clear, Overcast, Drizzle, Rain, Downpour, Thunderstorm, Light snow, Snow, Blizzard, Fog,
-and **Season** No season, Spring, Summer, Autumn, Winter, the setup's `weather` / `season` keys, view only: the battle's look, no rules yet;
-testing aids `--weather=storm,winter` and `?weather=storm,winter`). **Side 1** and **Side 2**: the side cards, side by side from 900 px of width and stacked below it (`_fit` on
+Deployment / Battle time / Sky / Season / Ground / Funds per side as one row of label + dropdown pairs (sea battles show the wind / water / fleets
+here; **Sky** is the weather pass's picker, 2026-11-06: Clear, Overcast, Drizzle, Rain, Downpour, Thunderstorm, Heavy thunderstorm (2026-11-07), Light snow, Snow, Blizzard, Fog,
+**Season** No season, Spring, Summer, Autumn, Winter, and **Ground** As it comes / Snow cover / Wet (2026-11-07: snow lying or a wet field under any sky), the setup's `weather` / `season` / `wx_ground` keys, view only: the battle's look, no rules yet;
+testing aids `--weather=overcast,wet` and `?weather=clear,winter,snowcover`, tokens in any order). **Side 1** and **Side 2**: the side cards, side by side from 900 px of width and stacked below it (`_fit` on
 resize). **Play**: the check line ("Ready to play solo."), then Play solo, Play online and the friend's code with Join in
 one wrapping row. 16 px side gutter on a phone; the page is at most 1100 wide. In the online lobby the room card sits
 under the explanation. Node names are unchanged.

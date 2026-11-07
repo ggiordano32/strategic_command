@@ -43,7 +43,7 @@ func setup(p_view, p_spec: Dictionary) -> void:
 	lamp_col = Color(1.0, 0.95, 0.86).lerp(Color(0.8, 0.85, 0.95), grey)
 	amb_col = Color(0.62, 0.6, 0.66).lerp(Color(0.66, 0.68, 0.72) if float(spec["snow"]) > 0.0 else Color(0.62, 0.66, 0.74), grey)
 	if bool(spec["storm"]):
-		lamp_col = Color(0.72, 0.78, 0.95)
+		lamp_col = Color(0.64, 0.7, 0.92) if float(spec["storm_k"]) > 1.0 else Color(0.72, 0.78, 0.95)
 	var rain: float = spec["rain"]
 	var snow: float = spec["snow"]
 	if rain > 0.0 or snow > 0.0:
@@ -67,7 +67,7 @@ func setup(p_view, p_spec: Dictionary) -> void:
 		mat.set_shader_parameter("count", float(n))
 		mat.set_shader_parameter("fall", 7.0 if is_snow else 38.0)
 		var w := float(spec["wind"])
-		mat.set_shader_parameter("wind", Vector2((14.0 if not is_snow else 6.0) * w, 0.3 * w * 10.0))
+		mat.set_shader_parameter("wind", Vector2((14.0 if not is_snow else 6.0) * w * (1.25 if float(spec["storm_k"]) > 1.0 else 1.0), 0.3 * w * 10.0))
 		mat.set_shader_parameter("col", Color(1.0, 1.0, 1.0, 0.9) if is_snow else Color(0.82, 0.88, 0.98, 0.5))
 		mmi = MultiMeshInstance3D.new()
 		mmi.multimesh = mm
@@ -91,10 +91,10 @@ func setup(p_view, p_spec: Dictionary) -> void:
 func _apply_lamp(f: float) -> void:
 	var lamp: DirectionalLight3D = view.lamp
 	var env: Environment = view.env
-	lamp_now = lamp_base + f * 2.2
+	lamp_now = lamp_base + f * 2.2 * float(spec["storm_k"])
 	lamp.light_energy = lamp_now
 	lamp.light_color = lamp_col.lerp(Color(0.85, 0.9, 1.0), f)
-	env.ambient_light_energy = amb_base + f * 1.2
+	env.ambient_light_energy = amb_base + f * 1.2 * float(spec["storm_k"])
 	env.ambient_light_color = amb_col.lerp(Color(0.8, 0.85, 1.0), f)
 
 
@@ -124,7 +124,7 @@ func update(delta: float) -> void:
 		mat.set_shader_parameter("box", Vector3(bx, hh, bz))
 		mat.set_shader_parameter("y0", view.ground_lo - 2.0)
 		mat.set_shader_parameter("t", _t)
-		mat.set_shader_parameter("size", cs * (0.0075 if float(spec["snow"]) > 0.0 else 0.02))
+		mat.set_shader_parameter("size", cs * ((0.0032 if spec["kind"] == "blizzard" else 0.0025) if float(spec["snow"]) > 0.0 else 0.02))
 		mat.set_shader_parameter("cam_r", b.x)
 		mat.set_shader_parameter("cam_u", b.y)
 	var fog_m: float = spec["fog_m"]

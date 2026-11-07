@@ -958,7 +958,7 @@ func _weather_cases() -> void:
 	const Weather := preload("res://game/weather.gd")
 	const TrackLayer := preload("res://game/track_layer.gd")
 	var hashes: Array = []
-	for w in ["clear", "rain", "snow", "storm", "fog", "overcast", "downpour,autumn", "winter"]:
+	for w in ["clear", "rain", "snow", "storm", "fog", "overcast", "downpour,autumn", "winter", "clear,winter,snowcover", "overcast,wet", "tempest"]:
 		var b := Battle.new()
 		b.custom_scenario = {"width_m": 300, "height_m": 200, "ai_sides": [], "orders": [], "units": [
 			Scenarios.unit(0, UT.index_of("heavy"), 30, 100, 60, 0), Scenarios.unit(1, UT.index_of("heavy"), 30, 200, 140, 512)]}
@@ -974,6 +974,13 @@ func _weather_cases() -> void:
 		if b.wx_layer != null:
 			var lay = b.wx_layer
 			var wet: bool = float(sp["rain"]) > 0.0 or float(sp["snow"]) > 0.0
+			if w == "clear,winter,snowcover" or w == "overcast,wet":
+				var drops: int = b.view3d.wx.drawn if b.view3d != null else (1 if lay.precip_on else 0)
+				_check(not wet and drops == 0 and float(sp["cover" if w.ends_with("cover") else "wet"]) > 0.0,
+					"weather %s: the ground without anything falling (no flakes or streaks alive)" % w)
+			if kind == "tempest":
+				_check(float(sp["rain"]) > float(Weather.spec("storm")["rain"]) and lay.heavy and (b.view3d == null or b.view3d.wx.mmi != null or lay.low),
+					"weather tempest: denser rain than the thunderstorm, the heavy strikes, its layer alive")
 			if b.view3d != null:
 				_check((b.view3d.wx != null and (b.view3d.wx.mmi != null) == wet) and (not wet or b.view3d.wx.drawn > 0 and b.view3d.wx.drawn <= 6000),
 					"weather %s: 3D has its particle volume (%d drops) only when it rains or snows" % [w, b.view3d.wx.drawn if b.view3d.wx != null else -1])
@@ -981,7 +988,7 @@ func _weather_cases() -> void:
 					_check(b.view3d.env.fog_enabled, "weather fog: the 3D environment's fog is on")
 			else:
 				_check(lay.precip_on == wet, "weather %s: the screen precipitation is on only when it rains or snows" % w)
-			if kind == "storm":
+			if kind == "storm" or kind == "tempest":
 				lay._next_strike = 1.0e9
 				lay.strike(0)
 				lay.step(0.02)
@@ -996,6 +1003,14 @@ func _weather_cases() -> void:
 		root.remove_child(b)
 		b.free()
 		_check(TrackLayer.weather_mul == Vector3.ONE, "weather %s: the tracks' weather_mul is back to neutral once the battle is gone" % w)
+	_check(Weather.parse("snowcover winter,clear")["ground"] == "snowcover" and Weather.parse("wet")["kind"] == "clear" and Weather.parse("wet,rain")["ground"] == "wet",
+		"weather: the ground token parses in any order and 'wet' is no longer rain")
+	var wcs := {}
+	for t in 40:
+		wcs[Weather.for_campaign(t * 2 + 1, "rome", t * 977)] = 1
+		wcs[Weather.for_campaign(t * 2, "west", t * 977)] = 1
+	_check(wcs.has("clear,winter,snowcover") or wcs.has("overcast,winter,snowcover"), "weather: the campaign mapping gives snow cover without snowfall")
+	_check(wcs.has("overcast,summer,wet") and wcs.has("tempest,summer"), "weather: the campaign mapping gives a wet field and the heavy storm")
 	var same := true
 	for h in hashes:
 		same = same and h == hashes[0]

@@ -51,7 +51,11 @@ void fragment() {
 	if (wx_surf.y > 0.001) {
 		// Snow on the roofs (the mask class 0.7) and the faces that look up (the weather pass).
 		float roof = mclass > 0.55 && mclass < 0.85 ? 1.0 : 0.0;
-		col = wx_snow_on(col, roof * (0.5 + 0.5 * smoothstep(0.2, 0.8, N.y)) + (1.0 - roof) * 0.9 * smoothstep(0.7, 0.95, N.y));
+		// Every face that looks up (wall tops, walks, decks, parapet and merlon tops, drums, rubble) takes it, the baked paint's own
+		// grain breaking the edge so it is not flat paint; no snow on a vertical face. A few instructions.
+		float grain = dot(a, vec3(0.3, 0.59, 0.11)) - 0.5;
+		float up = smoothstep(0.5, 0.8, N.y + grain * 0.25);
+		col = wx_snow_on(col, max(roof * (0.5 + 0.5 * smoothstep(0.2, 0.8, N.y)), up));
 	}
 	vec3 L = normalize(key_dir);
 	// (half-Lambert and a floor: the painted sprites light a wall turned from the key at about 0.6 of its paint, not black)

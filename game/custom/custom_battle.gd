@@ -379,7 +379,7 @@ func _map_row() -> Control:
 	r2.add_child(tp)
 	# The weather pass, the look: the kind and the season (view only: no effect on the battle's rules yet; "weather" / "season" keys).
 	var wx_row := Kit.hbox(6)
-	wx_row.add_child(_small_label("Weather"))
+	wx_row.add_child(_small_label("Sky"))
 	var wx_kinds: Array = []
 	for i in Weather.KINDS.size():
 		wx_kinds.append([Weather.KIND_NAMES[i], Weather.KINDS[i]])
@@ -395,9 +395,19 @@ func _map_row() -> Control:
 	var wx_season_dd := Kit.dropdown(wx_seasons, str(setup.get("season", "")), func(x):
 		setup["season"] = str(x)
 		_changed(), 0, 14)
+	wx_season_dd.tooltip_text = "The tint; pick a snow kind or Ground: snow cover for snow"
 	wx_season_dd.name = "custom_season"
 	wx_season_dd.disabled = not ed
 	wx_row.add_child(wx_season_dd)
+	var wx_grounds: Array = []
+	for i in Weather.GROUNDS.size():
+		wx_grounds.append([Weather.GROUND_NAMES[i], Weather.GROUNDS[i]])
+	var wx_ground_dd := Kit.dropdown(wx_grounds, str(setup.get("wx_ground", "")), func(x):
+		setup["wx_ground"] = str(x)
+		_changed(), 0, 14)
+	wx_ground_dd.name = "custom_ground"
+	wx_ground_dd.disabled = not ed
+	wx_row.add_child(wx_ground_dd)
 	r2.add_child(wx_row)
 	var fi := int(setup.get("funds", 0))
 	r2.add_child(_opt("Funds per side: " + CS.FUNDS_NAMES[fi], func():

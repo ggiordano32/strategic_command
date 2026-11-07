@@ -51,6 +51,7 @@ uniform float wind = 0.15;
 uniform float unit = 1.0;           // screen px per reference px (viewport height / 390)
 uniform vec2 pan = vec2(0.0);       // the camera's world position (px)
 uniform int layers = 3;
+uniform float flake_k = 1.0;        // flake size against snow's (the blizzard a little bigger)
 uniform vec4 col : source_color = vec4(0.82, 0.88, 0.97, 0.5);
 
 float h11(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
@@ -99,7 +100,7 @@ void fragment() {
 		vec2 pp = p + pan * 0.012 * (1.0 + f) / unit;
 		float dens = density * (0.55 - 0.1 * f);
 		if (is_snow > 0.5) {
-			a += snow_layer(pp, 18.0 + 14.0 * f, 0.9 * (0.6 + 0.3 * f), f * 3.7, dens * 1.3, 2.4 + 1.8 * f);
+			a += snow_layer(pp, 18.0 + 14.0 * f, 0.9 * (0.6 + 0.3 * f), f * 3.7, dens * 1.3, (1.0 + 0.6 * f) * flake_k);
 		} else {
 			a += rain_layer(pp, 11.0 + 7.0 * f, 90.0 + 40.0 * f, 1.5 + 0.8 * f, f * 3.7, dens * 1.3, 0.8 + 0.4 * f) * (0.55 + 0.25 * f);
 		}
@@ -138,11 +139,21 @@ const PATTERNS := [
 ]
 
 
+## The heavy storm's strikes: 4 to 6 strokes.
+const HEAVY_PATTERNS := [
+	[[0.0, 1.0], [0.08, 0.3], [0.15, 0.9], [0.27, 0.4], [0.4, 1.0], [0.6, 0.45]],
+	[[0.0, 0.8], [0.06, 0.25], [0.11, 1.0], [0.24, 0.5], [0.33, 0.9]],
+	[[0.0, 1.0], [0.14, 0.45], [0.22, 0.2], [0.34, 0.95], [0.5, 0.4], [0.62, 0.8]],
+]
+var heavy := false
+
+
 func setup(p_battle: Node, p_spec: Dictionary, seed_v: int) -> void:
 	battle = p_battle
 	spec = p_spec
 	v3d = BoardView.v3d
 	low = Quality.is_low()
+	heavy = float(spec["storm_k"]) > 1.0
 	layer = 1
 	_rng.seed = (seed_v ^ 0x57A11) & 0x7FFFFFFF
 	_next_strike = _rng.randf_range(1.5, 5.0)
@@ -165,6 +176,7 @@ func setup(p_battle: Node, p_spec: Dictionary, seed_v: int) -> void:
 	_precip_mat.set_shader_parameter("is_snow", 1.0 if snow > 0.0 else 0.0)
 	_precip_mat.set_shader_parameter("density", dens * (0.5 if low else 1.0))
 	_precip_mat.set_shader_parameter("wind", float(spec["wind"]))
+	_precip_mat.set_shader_parameter("flake_k", 1.3 if spec["kind"] == "blizzard" else 1.0)
 	_precip_mat.set_shader_parameter("layers", 1 if low else 3)
 	_precip_mat.set_shader_parameter("col", Color(0.84, 0.9, 0.98, 0.55) if rain > 0.0 else Color(1.0, 1.0, 1.0, 0.95))
 	_precip.visible = precip_on
@@ -216,7 +228,10 @@ func _update_veil() -> void:
 
 ## One strike now (tests: the same pattern the timer picks).
 func strike(pattern := -1) -> void:
-	_strike_pat = PATTERNS[(pattern if pattern >= 0 else _rng.randi() % PATTERNS.size())]
+	if heavy:
+		_strike_pat = HEAVY_PATTERNS[(pattern if pattern >= 0 else _rng.randi() % HEAVY_PATTERNS.size()) % HEAVY_PATTERNS.size()]
+	else:
+		_strike_pat = PATTERNS[(pattern if pattern >= 0 else _rng.randi() % PATTERNS.size())]
 	_strike_t = 0.0
 	strikes += 1
 
@@ -242,7 +257,7 @@ func step(delta: float) -> void:
 			_next_strike -= delta
 			if _next_strike <= 0.0:
 				strike()
-				_next_strike = _rng.randf_range(6.0, 18.0)
+				_next_strike = _rng.randf_range(3.0, 8.0) if heavy else _rng.randf_range(6.0, 18.0)
 		if _strike_t >= 0.0:
 			_strike_t += delta
 			for s in _strike_pat:
@@ -256,4 +271,4 @@ func step(delta: float) -> void:
 	_flash.visible = f > 0.01
 	if f > 0.01:
 		# (3D: the lamp does most of it, the rect only the sky's glare)
-		_flash_mat.set_shader_parameter("amount", f * (0.18 if v3d else 0.34))
+		_flash_mat.set_shader_parameter("amount", f * (0.18 if v3d else 0.34) * (1.3 if heavy else 1.0))

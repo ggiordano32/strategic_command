@@ -477,7 +477,7 @@ func _loading_pack() -> String:
 func _ld_scenario() -> void:
 	var wa := Weather.launch_arg()
 	wx_spec = Weather.spec(wa if wa != "" else weather)
-	Weather.current = Weather.join(wx_spec["kind"], wx_spec["season"])
+	Weather.current = Weather.join(wx_spec["kind"], wx_spec["season"], wx_spec["ground"])
 	Weather.apply_globals(wx_spec)   # (before any shader is built: the board, the trees and the kit read the globals)
 	sim = BattleSim.new()
 	_ld_scn = custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)

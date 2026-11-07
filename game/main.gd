@@ -2155,7 +2155,7 @@ func _custom_battle(built: Dictionary, st: Dictionary, me: int) -> Battle:
 	b.scenario_id = "custom"
 	b.custom_scenario = built["scenario"]
 	b.seed_value = int(built["seed"])
-	b.weather = Weather.join(str(st.get("weather", "clear")), str(st.get("season", "")))   # (view only)
+	b.weather = Weather.join(str(st.get("weather", "clear")), str(st.get("season", "")), str(st.get("wx_ground", "")))   # (view only)
 	b.player_side = maxi(CustomSetup.side_of_player(st, me), 0)
 	b.custom_summary = CustomSetup.summary(st)
 	var nk := [CustomSetup.names_of(st, 0), CustomSetup.names_of(st, 1)]

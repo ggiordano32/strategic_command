@@ -257,6 +257,22 @@ func _run() -> void:
 			"storm: the lamp and the ambient are back at their values after the strike (%.3f, %.3f)" % [battle.view3d.lamp.light_energy, battle.view3d.env.ambient_light_energy])
 		var n_before: int = wx9.mmi.multimesh.instance_count
 		_check(n_before > 0 and n_before <= wx9.RAIN_MAX, "storm: %d rain streaks in one MultiMesh (cap %d, a quarter on Low)" % [n_before, wx9.RAIN_MAX])
+	await _open("battle_2000", "tempest")
+	var wxt = battle.view3d.wx
+	var layt = battle.wx_layer
+	_check(wxt != null and layt != null and wxt.mmi != null and layt.heavy, "tempest: the 3D layer, its rain volume and the heavy strikes are built")
+	if wxt != null and layt != null:
+		var baset: float = wxt.lamp_base
+		layt._next_strike = 1.0e9
+		layt.strike(0)
+		layt.step(0.02)
+		wxt.update(0.016)
+		_check(layt.low or battle.view3d.lamp.light_energy > baset + 1.0, "tempest: the strike's spike is bigger (%.2f from %.2f)" % [battle.view3d.lamp.light_energy, baset])
+		for i in 80:
+			layt.step(0.05)
+		wxt.update(0.016)
+		_check(absf(battle.view3d.lamp.light_energy - baset) < 0.001 and absf(battle.view3d.env.ambient_light_energy - wxt.amb_base) < 0.001,
+			"tempest: the lamp and the ambient are back after the strike")
 	await _open("battle_2000", "fog")
 	var wxf = battle.view3d.wx
 	_check(wxf != null and battle.view3d.env.fog_enabled, "fog: the environment's fog is on")
