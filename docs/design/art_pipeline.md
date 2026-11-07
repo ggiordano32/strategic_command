@@ -2046,6 +2046,58 @@ churn behind horse, a furrow stamped from a stone's landing.
 (prints show only close up); the head of a trail starts abruptly; a town's streets show none; the 2,048-texel cap makes a
 big field's marks coarser (1.2 px/m at 1 km); the marks are in the camera's 3D board as well but the decals drawn over the
 ground (the Paths hatch, the street sprite) hide them; snow, mud and rain are the weather pass; no device check yet.
+### Footprints (as built, 2026-11-06, view only)
+
+The owner, of the first tracks pass: "the footsteps need another pass. Right now they just generate like a plow. They should actually be a
+footstep pattern on the ground for each soldier that fades over time. We should think of how to make it as cheap as possible." Per-man prints
+on top of "Tracks on the board", nothing under `sim/` or `campaign/` (the sim is only read). Two parts, both in `game/print_layer.gd` (a child
+of the `TrackLayer`, `TrackLayer.footprints`), the look in `game/prints_stamp.gdshader` (the stamp) and `game/prints.gdshaderinc` (the board's
+sampling, included by `terrain_body.gdshaderinc`).
+
+- **The print ring.** A capped ring (`CAP` 49,152 entries, the oldest overwritten) of four floats a print in one `PackedFloat32Array` (x m,
+  y m, a code = heading + 8 x (type + 4 x ground kind), the sim second): 0.8 MB. Filled from the sim's soldier arrays (`pos_x`, `pos_y`,
+  `unit_of`, `state`), a tenth of the men every sim tick (so each man once a sim second and the cost spread over the frames; `SLICES`): a
+  man's accumulator is the distance from his last print; each `STRIDE_M` 0.7 m of it makes one print along the line he walked, the feet
+  alternating 0.22 m left and right, the heading that of the segment; a man who did not walk a stride costs a compare. A rider's four hooves
+  (two near, two far, staggered along and across, a little scatter) every 1.6 m. Left out: gun crews, ships' crews, units hidden from the
+  viewer, water; guns, wagons, rams and towers keep the ruts of the coarse layer. A jump over 25 m restarts a man's trail.
+- **The detail window.** A SubViewport (the window is 256 m square: 2048 texels at 8 a metre on High, 1024 at 4 on Low) round the camera's
+  look-at point (the ground under the screen's centre from `Battle._screen_to_world`, which is right in the oblique and 3D views, where the
+  Camera2D is not in ground px). RGBA8, because a SubViewport has no single-channel or RG format in the compatibility renderer: R the
+  print's second mod 256, G 1 (the coverage: alpha blending makes it the shape), B its darkness; 16 MB on High, 4 MB on Low (the
+  prints' own float texture 0.8 MB and the MultiMesh's identity buffer 1.5 MB more). `transparent_bg` so a clear is 0 (the project's
+  clear colour is not black). A stamp batch (the prints made since the last, once a sim second) is one MultiMesh draw, additive over
+  nothing cleared: one instance per print, the vertex shader reads the print from the ring as a float texture (`texelFetch` on
+  `INSTANCE_ID`, `first` the ring index of the batch's first print) and places and turns a quad (0.58 x 0.26 m for a boot, 0.42 m for
+  a hoof, a little bigger than real so a few texels can draw it; x 1.5 on Low), the fragment draws a boot (sole and heel, the right foot
+  mirrored) or a round hoof. So a print costs four float stores on the CPU and one instanced quad on the GPU, no node, no per-print
+  transform. The window **re-stamps in full** from the ring (cleared first, `CLEAR_MODE_ALWAYS` for that update) when the look-at point
+  leaves the middle half of the window (more than a quarter of its width from the centre, at most four times a second) and every `RESTAMP_S` 100 sim
+  seconds (the time channel wraps at 256 s). Two flushes in one frame share one render (the second carries the first's prints and
+  its clear). The 2D canvas culls a MultiMesh by its AABB, so `custom_aabb` is huge (the quads are placed by the shader; without it a
+  window that does not contain the origin drew nothing).
+- **The look.** `prints_dark` in the board shader: the stored darkness, the blur sharpened to an edge (the window is bilinear), faded by
+  age (`FADE_S` 90 s, smoothed) and by zoom (gone beyond 0.4 to 0.9 m a pixel, where the coarse layer's wear carries the look); darker on
+  streets, earth and damp ground than on grass (the strength a print is stamped with is `GROUND_ROWS` x `weather_mul`, so the weather pass
+  scales the table as before; the print colour is one constant in `terrain_body.gdshaderinc`, the snow hook: on white a dark print reads
+  as it is). The coarse layer's foot band is stamped at 0.4 (`FOOT_WEAR`) and hoof churn at 0.4 (`HOOF_WEAR`), and drawn fainter near the
+  camera, so near the camera the prints are the look and far away the wear is; the old per-cell boot blobs of the shader are gone.
+- **Cost** (this desktop, RTX 3070, 1280 x 720, quality High, 1,429 men marching in eight units from the start, 8 s after 3 s of warm-up,
+  frame average ms before -> after, a shared machine so +-0.5 ms of noise: top 2.82 -> 2.37 (quiet run; 3.63 -> 4.14 and 4.07 -> 3.94
+  while the load was 14), oblique 2.47 -> 2.50 (4.92 -> 3.29 loaded), 3D 2.45 -> 2.58 (2.41 for the repeat before; its repeat after was
+  lost): on a quiet machine 0 to +0.15 ms, GPU within 0.1 ms. The CPU's slice (a tenth of the men, once a sim tick): 0.25-0.39 ms average, 0.67-1.2 ms worst (2.5 once
+  under load); the batch landing (`flush`, the ring's upload and one draw): 0.24-0.5 ms worst, once a second. At 60 fps that is about 0.03 ms
+  a frame on average, with a 0.3-0.4 ms slice in one frame in six. **The phone** (3 to 4 times this CPU): about 1.2-1.5 ms in the frame that
+  carries a slice, about 0.15 ms averaged, plus the one more texture read in the ground shader, inside the window only; the 4 MB / 16 MB
+  window and 2.3 MB for the ring are the memory. A full army marching leaves about 25 s of prints in a 49 k ring (1,400 men make 3,000
+  prints a second), so a re-stamp after a long pan keeps the last 25 s, while the texture itself keeps every print the window has
+  seen. Tests: `battle_screen_test._track_cases` (the ring empty at the start, a march makes boots of both feet and hoof prints, the unit
+  left standing none, the window stamped, a re-stamp when the camera leaves it).
+- **Known.** Boots read as dark ovals with a heel at the close zoom (a boot is 4 to 5 texels, so the sole and heel only hint); hoof prints
+  pile into churn lines behind a squadron; a town's streets and decals draw over the board and show none; the window is 256 m, so a very far
+  zoom shows the coarse wear only; the ring holds about 25 s of prints for a whole army on a re-stamp; prints hide with fog only at the
+  moment they are made; no device check; snow (white ground, dark prints) waits for the weather pass.
+
 ### The flash and the smoke (as built, 2026-11-06, view only)
 
 The owner, after the 3D view: "The muzzle flashes should be more of a flash instead of a small sprite rendered, and the smoke should

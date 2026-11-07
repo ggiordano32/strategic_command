@@ -16,6 +16,7 @@ uniform float h_base_m = 0.0;         // the commonest height: midway between tw
 uniform bool terrain_on = false;
 // Tracks on the board (game/track_layer.gd): the ground-marks texture over the whole field, R foot wear, G ruts and furrows,
 // B hoof churn, faded by the layer; marks_size_px = the field in world px (0: no layer).
+#include "res://game/prints.gdshaderinc"
 uniform sampler2D marks_tex : filter_linear, repeat_disable;
 uniform vec2 marks_size_px = vec2(0.0);
 uniform vec3 base_col = vec3(0.27, 0.38, 0.2);
@@ -513,8 +514,8 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 			if (mk.r + mk.g + mk.b > 0.01) {
 				// Worn ground: the grass trodden down to bare earth, a ragged-edged patch (a noise threshold on the wear, so
 				// the edge breaks up and a thin trail is patchy), tan on grass and darker on ground that was earth already
-				// (bare patches, streets). Close up, boot prints on top, one blob per 0.55 m cell where men have walked (denser
-				// the more traffic); zoomed out they average into the patch. Ruts: two dark lines. Hoof churn: clods.
+				// (bare patches, streets). Footprints are drawn after this block (prints_dark).
+				// Ruts: two dark lines. Hoof churn: clods.
 				float bare = (0.85 + 0.4 * earthm) * 0.62;
 				float thr = low ? 0.25 : 0.05 + 0.62 * vnoise(wm / 1.1 + vec2(2.1, 6.4)) + 0.3 * (n3 - 0.5);
 				float far_k = smoothstep(0.25, 0.7, mpp);
@@ -523,24 +524,22 @@ vec3 terrain_col(highp vec2 world, float ob_in) {
 				vec3 dirt = vec3(0.34, 0.265, 0.15) * (1.0 - 0.3 * damp) * (0.85 + 0.3 * n2);   // (wet brown earth)
 				dirt *= 1.0 - 0.28 * wx_surf.z;   // (the weather pass: mud is darker)
 				dirt = mix(dirt, vec3(0.62, 0.6, 0.6), wx_surf.y * 0.55);   // (trodden snow: slush, greyer than the earth)
-				col = mix(col, dirt, wear * (0.8 + 0.1 * far_k));
-				float prt = 0.0;
-				if (!low && mpp < 0.7) {
-					vec2 pc = wm / 0.55;
-					vec2 cell = floor(pc);
-					vec2 jit = vec2(hash12(cell + vec2(1.7, 4.1)), hash12(cell + vec2(8.3, 2.9))) - 0.5;
-					vec2 lp = fract(pc) - 0.5 - jit * 0.35;
-					lp.y *= 1.5;   // (a boot print is longer than wide)
-					float blob = 1.0 - smoothstep(0.24, 0.42, length(lp));
-					prt = blob * step(hash12(cell + vec2(5.5, 0.7)), clamp(mk.r * bare * 1.1, 0.0, 1.0)) * (1.0 - far_k);
-				}
-				col = mix(col, dirt * 0.62, prt * 0.7 * wear);
+				col = mix(col, dirt, wear * (0.5 + 0.3 * far_k));   // (a faint wear near, where the prints read; the far look)
 				float rut = smoothstep(0.1, 0.6, mk.g) * 0.85;
 				col = mix(col, dirt * 0.7, rut);
 				float clod = low ? 0.0 : step(0.62, hash12(floor(wm / 0.45) + vec2(3.3, 8.8)));   // (dark clods of turned earth)
-				float hoof = smoothstep(thr - 0.1, thr + 0.1, mk.b * bare) * 0.88;
+				float hoof = smoothstep(thr - 0.1, thr + 0.1, mk.b * bare) * (0.4 + 0.45 * far_k);   // (fainter near: the hoof prints carry it)
 				col = mix(col, mix(dirt * 1.05, dirt * 0.58, clod), hoof);
 			}
+		}
+	}
+	if (prints_win.z > 0.0 && sea < 0.5 && ford < 0.5) {
+		// Footprints (game/print_layer.gd): dark, soft-edged, darker on streets, earth and damp ground than on grass.
+		float pk = prints_dark(wm, mpp);
+		if (pk > 0.0) {
+			float damp_p = max(max(pave_m, earthm), 0.0);
+			vec3 pdirt = vec3(0.34, 0.265, 0.15) * 0.5 * (1.0 - 0.25 * damp_p);
+			col = mix(col, pdirt, pk * (0.6 + 0.4 * damp_p) * 0.85);
 		}
 	}
 	if (board) {

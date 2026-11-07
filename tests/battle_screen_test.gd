@@ -893,14 +893,40 @@ func _track_cases() -> void:
 	var start := Vector2(s.u_cx[3], s.u_cy[3]) / 1024.0
 	for u in 3:
 		s.queue_order(BattleSim.make_move_order(s.tick, u, 300 * 1024, int(s.u_cy[u]), 0, BattleSim.files_to_width(s.u_files[u], s.u_type[u]), 0))
+	var pr = trk.footprints
+	_check(pr != null and pr.total == 0 and pr.count == 0, "prints: the ring is empty when the battle opens")
 	for t in 400:
 		s.step()
 		if t % 10 == 9:
+			pr.sweep()
+			pr.flush()
 			trk.stamp()
 	_check(trk.by_channel.x > 0 and trk.by_channel.y > 0 and trk.by_channel.z > 0,
 		"tracks: a march stamped foot wear (%d), ruts behind the gun (%d) and hoof churn behind the horse (%d)" % [trk.by_channel.x, trk.by_channel.y, trk.by_channel.z])
 	var moved := Vector2(s.u_cx[3], s.u_cy[3]) / 1024.0
 	_check(moved.distance_to(start) < 1.0, "tracks: the unit left standing did not move (%.1f m), so it has no stamp to its name" % moved.distance_to(start))
+	# Footprints: boots of both feet in about equal number, hoof prints behind the horse, none where the unit stood still
+	# (its men's lane, y 175..185 m: the marching units are 50 m or more away), a stride apart, and a stamp batch drawn.
+	_check(pr.by_type.x > 50 and pr.by_type.y > 50 and absi(pr.by_type.x - pr.by_type.y) <= pr.by_type.x / 4 and pr.by_type.z > 50,
+		"prints: a march made boot prints of both feet (%d left, %d right) and hoof prints (%d)" % [pr.by_type.x, pr.by_type.y, pr.by_type.z])
+	var stand := 0
+	var seen := 0
+	for k in pr.count:
+		var py: float = pr.ring[k * 4 + 1]
+		if py > 172.0 and py < 190.0:
+			stand += 1
+		seen += 1
+	_check(seen == pr.count and pr.total >= pr.count and stand == 0, "prints: the unit left standing made none (%d of %d in its lane)" % [stand, pr.count])
+	_check(pr.window_stamps > 0, "prints: the detail window was stamped (%d batches, %d full re-stamps)" % [pr.window_stamps, pr.restamps])
+	if pr.vp != null:
+		pr._look = pr._look + Vector2(150.0, 0.0)
+		var r0: int = pr.restamps
+		pr._have_win = true
+		pr._last_restamp_ms = -100000
+		pr.win_org = Vector2(-500.0, -500.0)
+		for i in 7:
+			pr.process(b)
+		_check(pr.restamps > r0, "prints: the window re-stamps when the camera leaves its middle (%d -> %d)" % [r0, pr.restamps])
 	var f0: int = trk.furrows
 	var k: int = s.fx_head
 	s.fx_x[k] = 200 * 1024

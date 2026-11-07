@@ -10,6 +10,7 @@ extends Node
 ## (headless) run keeps no texture but counts its stamps (`stamps`) so the tests can follow a march.
 
 const BattleSim := preload("res://sim/battle_sim.gd")
+const PrintLayer := preload("res://game/print_layer.gd")
 const UT := preload("res://sim/unit_types.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 
@@ -18,6 +19,8 @@ const MAX_PX := 2048           # the texture's longest side (a big field gets fe
 const FADE_PER_S := 0.9 / 255.0  # the fade a second (full strength gone in about 280 s; the marks read for about two minutes)
 const MIN_MOVE_M := 1.0        # a unit or engine that moved less than this since its last stamp leaves none
 const MAX_JUMP_M := 25.0       # ... and one that moved further (arrived, teleported) restarts its trail
+const FOOT_WEAR := 0.4         # the coarse foot band's strength: the prints (game/print_layer.gd) carry the look near the camera
+const HOOF_WEAR := 0.4         # ... and the hoof churn's
 const FURROW_M := 8.0          # a furrow's length when the sim gives no run
 const FURROW_DELAY := 20       # ticks after a landing before its furrow is stamped (the longest run is 2 s)
 
@@ -38,6 +41,7 @@ var sim
 var px_per_m := 10.0
 var viewer_side := -1
 var vp: SubViewport = null
+var footprints: PrintLayer = null    # the footprints (print ring and detail window)
 var stamps := 0                # stamps made (foot, hoof, wheel, furrow), tests
 var passes := 0                # texture updates
 var by_channel := Vector3i.ZERO   # foot, wheel, hoof stamps
@@ -66,6 +70,9 @@ func setup(p_sim, p_px_per_m: float, mat: ShaderMaterial, p_viewer_side := -1) -
 	_size_px = Vector2(sim.field_w, sim.field_h) / float(BattleSim.M) * px_per_m
 	var fm := _size_px / px_per_m
 	_sc = minf(TEX_PPM, float(MAX_PX) / maxf(fm.x, fm.y)) / px_per_m
+	footprints = PrintLayer.new()
+	add_child(footprints)
+	footprints.setup(self, sim, px_per_m, mat, p_viewer_side)
 	_ulast.resize(sim.n_units * 2)
 	_ulast.fill(-1)
 	_elast.resize(sim.n_eng * 2)
@@ -91,6 +98,8 @@ func setup(p_sim, p_px_per_m: float, mat: ShaderMaterial, p_viewer_side := -1) -
 
 
 func _process(_delta: float) -> void:
+	if footprints != null:
+		footprints.process(get_parent())
 	var sec: int = sim.tick / BattleSim.TICKS_PER_SECOND
 	if sec == _last_sec:
 		return
@@ -157,6 +166,11 @@ func _kind_at(p: Vector2) -> int:
 	return K_GRASS
 
 
+## The ground kind under a sim position (sim units).
+func kind_at_sim(x: int, y: int) -> int:
+	return _kind_at(_w(x, y))
+
+
 func _w(x: int, y: int) -> Vector2:
 	return Vector2(x, y) / float(BattleSim.M) * px_per_m
 
@@ -191,10 +205,10 @@ func _units() -> void:
 		var hw := wm * 0.5 * px_per_m
 		var d0 := 2.2 * px_per_m
 		if cls == UT.CLS_CAV:
-			_strip(a, b, hw, d0, Color(0, 0, row.z, 1))
+			_strip(a, b, hw, d0, Color(0, 0, row.z * HOOF_WEAR, 1))
 			by_channel.z += 1
 		else:
-			_strip(a, b, hw, d0, Color(row.x, 0, 0, 1))
+			_strip(a, b, hw, d0, Color(row.x * FOOT_WEAR, 0, 0, 1))
 			by_channel.x += 1
 		stamps += 1
 
