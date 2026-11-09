@@ -31,8 +31,7 @@ const BoardView := preload("res://game/board_view.gd")
 const Quality := preload("res://game/quality.gd")
 const KitOb := preload("res://game/kit_ob.gd")
 const TERRAIN_SHADER := preload("res://game/terrain3d.gdshader")
-const TABLE_SHADER := preload("res://game/table3d.gdshader")
-const SLAB_SHADER := preload("res://game/board_slab3d.gdshader")
+const Table3D := preload("res://game/table3d.gd")
 const TREE_SHADER := preload("res://game/trees3d.gdshader")
 const MEN_SHADER := preload("res://game/soldiers3d.gdshader")
 const MEN_SHADER_CPU := preload("res://game/soldiers3d_cpu.gdshader")
@@ -60,22 +59,22 @@ const MapGen := preload("res://sim/mapgen.gd")
 const DOOR_PIECES := ["house_gable_s", "house_gable_m", "house_gable_l", "house_hip_s", "house_hip_m", "longhouse",
 	"house_L", "hut_thatch", "house_flat_s", "house_flat_m"]
 
-const AMBIENT := 0.42
-const LAMP := 1.0
+const AMBIENT := Table3D.AMBIENT
+const LAMP := Table3D.LAMP
 ## The lamp at yaw 0 (the direction its light travels): from the screen's upper left and the far side, so shadows fall to the
 ## lower right as the 2D views' baked shadows do (the sprites' key light is the camera's upper left). The world lamp is this turned
 ## by the battle's opening yaw (lamp_yaw) and then stays: 50.3 degrees up, 38.7 degrees left of the opening camera's forward.
-const LAMP_DIR := Vector3(0.40, -0.77, 0.50)
+const LAMP_DIR := Table3D.LAMP_DIR
 ## The painted sprites' and the trees' screen-space key (x right, y down, z toward the viewer): the 2D kit's light_dir.
 const PAINT_KEY := Vector3(-0.55, -0.50, 0.67)
 ## How much a figure's card is darkened on the side away from the lamp and lightened toward it when the table is turned
 ## (the paint's highlight is on the camera's left; at the opening yaw the term is 0): a gradient over a man's width.
 const SIDE_K := 0.3
 ## The lamp's first shadow split, a share of the camera's near-far range (the ground in view, sync_camera).
-const SHADOW_SPLIT := 0.5
+const SHADOW_SPLIT := Table3D.SHADOW_SPLIT
 var side_amt := SIDE_K           # (--v3d-side=K: a testing aid, 0 the paint as it is)
-const SLAB_BELOW := 3.0          # metres of board under its lowest ground
-const TABLE_BELOW := 0.05        # the table just under the slab's foot
+const SLAB_BELOW := Table3D.SLAB_BELOW          # metres of board under its lowest ground
+const TABLE_BELOW := Table3D.TABLE_BELOW        # the table just under the slab's foot
 const MESH_MAX_VERTS := 200000   # the board mesh's budget (a coarser stride past it)
 
 var battle: Node
@@ -194,36 +193,9 @@ func setup(p_battle: Node, p_sim, p_ppm: float) -> void:
 
 
 func _build_env() -> void:
-	env = Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.13, 0.09, 0.06)
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.62, 0.6, 0.66)
-	env.ambient_light_energy = AMBIENT
-	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
-	var we := WorldEnvironment.new()
-	we.environment = env
-	add_child(we)
-	lamp = DirectionalLight3D.new()
-	lamp.light_energy = LAMP
-	lamp.light_color = Color(1.0, 0.95, 0.86)
-	lamp.shadow_enabled = shadows
-	# Two splits over the camera's near-far range (sync_camera fits it to the ground in view): the near half of the ground (the
-	# screen's lower half) gets its own map. At the phone's fit this drew the houses' shadows where one orthogonal map blurred
-	# them away, for about the same GPU time (art_pipeline.md "The 3D battle view: the world lamp").
-	lamp.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	lamp.directional_shadow_split_1 = SHADOW_SPLIT
-	for a in OS.get_cmdline_user_args():
-		if a.begins_with("--v3d-splits="):   # (testing aids: 1 one orthogonal map, 2 or 4 parallel splits; the first split)
-			var n := int(a.get_slice("=", 1))
-			lamp.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if n <= 1 else (DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if n == 2 else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS)
-		elif a.begins_with("--v3d-split1="):
-			lamp.directional_shadow_split_1 = float(a.get_slice("=", 1))
-	lamp.shadow_bias = 0.05
-	lamp.shadow_normal_bias = 1.0
-	lamp.shadow_blur = 1.0
-	lamp.transform = Transform3D(_lamp_basis(), Vector3.ZERO)
-	add_child(lamp)
+	var r := Table3D.build_env(self, shadows)
+	env = r["env"]
+	lamp = r["lamp"]
 
 
 # --------------------------------------------------------------------------------------------- the board
@@ -331,10 +303,6 @@ func _build_board() -> void:
 ## foam layers, the MDF base and the flock lip by height).
 func _build_slab(hs: PackedFloat32Array, gx: int, gy: int, cell: float) -> void:
 	var foot := ground_lo - SLAB_BELOW
-	var verts := PackedVector3Array()
-	var norms := PackedVector3Array()
-	var uvs := PackedVector2Array()
-	var idx := PackedInt32Array()
 	# (each edge: a run of ground points, its outward normal)
 	var edges: Array = []
 	var north: Array = []
@@ -351,55 +319,21 @@ func _build_slab(hs: PackedFloat32Array, gx: int, gy: int, cell: float) -> void:
 	edges.append([south, Vector3(0, 0, 1)])
 	edges.append([west, Vector3(-1, 0, 0)])
 	edges.append([east, Vector3(1, 0, 0)])
-	for e in edges:
-		var pts: Array = e[0]
-		var n: Vector3 = e[1]
-		var base := verts.size()
-		for p in pts:
-			var v: Vector3 = p
-			verts.append(v)
-			verts.append(Vector3(v.x, foot, v.z))
-			norms.append(n)
-			norms.append(n)
-			uvs.append(Vector2(v.x + v.z, v.y))
-			uvs.append(Vector2(v.x + v.z, v.y))
-		for s in pts.size() - 1:
-			var a := base + s * 2
-			idx.append_array(PackedInt32Array([a, a + 2, a + 1, a + 2, a + 3, a + 1]))
-	var arr := []
-	arr.resize(Mesh.ARRAY_MAX)
-	arr[Mesh.ARRAY_VERTEX] = verts
-	arr[Mesh.ARRAY_NORMAL] = norms
-	arr[Mesh.ARRAY_TEX_UV] = uvs
-	arr[Mesh.ARRAY_INDEX] = idx
-	var am := ArrayMesh.new()
-	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	var mat := ShaderMaterial.new()
-	mat.shader = SLAB_SHADER
-	mat.set_shader_parameter("band_m", BoardView.BAND_M * BoardView.exag)
-	mat.set_shader_parameter("foot_y", foot)
+	var flock = null
 	var tl = battle.terrain
 	if tl != null and tl.material_ref != null:
 		var bc = tl.material_ref.get_shader_parameter("base_col")
 		if bc is Vector3:
-			mat.set_shader_parameter("flock_col", bc)
+			flock = bc
 	slab_mi = MeshInstance3D.new()
-	slab_mi.mesh = am
-	slab_mi.material_override = mat
+	slab_mi.mesh = Table3D.slab_mesh(edges, foot)
+	slab_mi.material_override = Table3D.slab_material(BoardView.BAND_M * BoardView.exag, foot, flock)
 	add_child(slab_mi)
 
 
 func _build_table() -> void:
-	table_mi = MeshInstance3D.new()
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(6000.0, 6000.0)
-	table_mi.mesh = pm
-	table_mi.position = Vector3(field_m.x * 0.5, ground_lo - SLAB_BELOW - TABLE_BELOW, field_m.y * 0.5)
-	var mat := ShaderMaterial.new()
-	mat.shader = TABLE_SHADER
-	mat.set_shader_parameter("board_rect", Vector4(0.0, 0.0, field_m.x, field_m.y))
-	table_mi.material_override = mat
-	table_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	table_mi = Table3D.table(Vector3(field_m.x * 0.5, ground_lo - SLAB_BELOW - TABLE_BELOW, field_m.y * 0.5),
+		Vector4(0.0, 0.0, field_m.x, field_m.y), 6000.0)
 	add_child(table_mi)
 
 
@@ -859,8 +793,7 @@ static func _turn2(v: Vector2, a: float) -> Vector2:
 
 
 static func _lamp_basis() -> Basis:
-	var d := LAMP_DIR.normalized()
-	return Basis.looking_at(d, Vector3.UP)
+	return Table3D.lamp_basis()
 
 
 ## The Paths overlay (game/city_layer.gd set_paths_alpha builds and fades it) drawn by the board's shader.

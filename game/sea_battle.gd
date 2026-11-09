@@ -28,7 +28,11 @@ extends Node2D
 ## lists your ships (hull, crew, rigging, loaded broadsides); the wind rose
 ## sits top left.
 ##
-## Drawn: the sea with waves running before the wind, land and shoals from
+## The 3D view (stage D1, `--sea-view=3d`, docs/design/sea.md "The sea battle in 3D, stage D1"): game/sea_view3d.gd draws the sea, the
+## ships and the orders in a 3D room with a camera of its own in place of the layers below; the HUD, the input decisions and co-op are
+## this script's either way.
+##
+## Drawn (2D): the sea with waves running before the wind, land and shoals from
 ## the sim's grid (smoothed), top-down hulls with gunports, sails that
 ## brace round with the wind and tear with the rigging, flags (white when
 ## struck), wakes, broadside smoke and muzzle flashes drifting downwind
@@ -59,6 +63,8 @@ const AudioFx := preload("res://game/audio.gd")
 const CoopHud := preload("res://game/coop_hud.gd")
 const SeaBook := preload("res://game/sea_book.gd")
 const Lockstep := preload("res://sim/lockstep.gd")
+const SeaView3D := preload("res://game/sea_view3d.gd")
+const Controls := preload("res://game/controls.gd")
 
 const TICK_SEC := 0.1
 const MAX_STEPS := 4
@@ -66,6 +72,10 @@ const ZOOM_MIN := 0.12
 const ZOOM_MAX := 3.0
 const DRAG_PX := 16.0
 const LONG_PRESS := 0.35
+const V3_TWIST_DEAD := 0.14       # radians (8 degrees) of two-finger twist before it turns the table (3D view)
+const V3_KEY_TURN := 1.4          # radians a second (Q / E held)
+const V3_KEY_TILT := 30.0         # degrees a second (Home / End held)
+const V3_INERTIA_SEC := 0.35      # a turn's inertia decays with this time constant
 const DOUBLE_TAP := 0.35
 const GunSmoke := preload("res://game/gun_smoke.gd")
 const BattleLook := preload("res://game/battle_look.gd")
@@ -94,6 +104,20 @@ var look_cell := Vector2i(-1, -1)   # the campaign cell of the battle (the look:
 var look_region := -1               # ... and its nearest region
 var _look: SeaLook
 var interactive := true
+## The 3D view (game/sea_view3d.gd; stage D1 of the sea battle in 3D): set before the screen is added, or `--sea-view=3d` / the web's
+## `?sea-view=3d`; the 2D layers and Camera2D are then not built (`camera` is null) and `v3` is the world and its camera.
+var view_3d := false
+var v3: SeaView3D = null
+var _marks: Control = null         # (3D) the health bars over the ships and the selection box, drawn on the HUD from projected points
+var _map_btn: Button = null
+var _follow_btn: Button = null
+var _yaw_vel := 0.0                # (3D) radians a second still turning after a twist or a drag
+var _turning := false
+var _twist_acc := 0.0
+var _twist_on := false
+var _twist_prev := 1e9
+var _c3 := Vector2(-1e9, -1e9)
+var _rmb := false
 
 var sim: SeaSim
 var speed_q := 4
@@ -207,26 +231,32 @@ func _ready() -> void:
 	_snap_prev()
 	_look = SeaLook.new()
 	_look.setup(sim, seed_value, scenario, look_cell, look_region)
-	_water = Node2D.new()
-	_water.draw.connect(_draw_water)
-	_water.material = _look.water_mat
-	add_child(_water)
-	_land = Node2D.new()
-	_land.draw.connect(_draw_land)
-	_land.material = _look.land_mat
-	add_child(_land)
-	_props = Node2D.new()
-	_props.draw.connect(_look.draw_props.bind(_props))
-	add_child(_props)
-	_ships = Node2D.new()
-	_ships.draw.connect(_draw_ships)
-	add_child(_ships)
-	_sky = Node2D.new()
-	_sky.draw.connect(_draw_sky)
-	add_child(_sky)
-	camera = Camera2D.new()
-	add_child(camera)
-	camera.make_current()
+	if view_3d or wants_3d():
+		view_3d = true
+		v3 = SeaView3D.new()
+		add_child(v3)
+		v3.setup(self)
+	else:
+		_water = Node2D.new()
+		_water.draw.connect(_draw_water)
+		_water.material = _look.water_mat
+		add_child(_water)
+		_land = Node2D.new()
+		_land.draw.connect(_draw_land)
+		_land.material = _look.land_mat
+		add_child(_land)
+		_props = Node2D.new()
+		_props.draw.connect(_look.draw_props.bind(_props))
+		add_child(_props)
+		_ships = Node2D.new()
+		_ships.draw.connect(_draw_ships)
+		add_child(_ships)
+		_sky = Node2D.new()
+		_sky.draw.connect(_draw_sky)
+		add_child(_sky)
+		camera = Camera2D.new()
+		add_child(camera)
+		camera.make_current()
 	_frame_fleet()
 	_build_hud()
 	AudioFx.set_battle_kind("coast")
@@ -242,6 +272,22 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	AudioFx.leave_battle()
+
+
+## True when the 3D sea view is asked for by the command line (`--sea-view=3d`; `=2d` forces the flat one) or the web page's query.
+static func wants_3d() -> bool:
+	for a in OS.get_cmdline_user_args():
+		if str(a) == "--sea-view=3d":
+			return true
+		if str(a) == "--sea-view=2d":
+			return false
+	if OS.has_feature("web"):
+		var q = JavaScriptBridge.eval("window.location.search", true)
+		if q is String:
+			for kv in (q as String).trim_prefix("?").split("&"):
+				if kv == "sea-view=3d":
+					return true
+	return false
 
 
 func is_decided() -> bool:
@@ -293,8 +339,13 @@ func _process(delta: float) -> void:
 	if _decided_at >= 0.0 and not _end_shown and _clock - _decided_at > 3.5:
 		_show_end()
 	_look.tick(_clock, sim)
-	_ships.queue_redraw()
-	_sky.queue_redraw()
+	if v3 != null:
+		_v3_process(delta)
+		v3.update(delta)
+		_marks.queue_redraw()
+	else:
+		_ships.queue_redraw()
+		_sky.queue_redraw()
 	_rose.queue_redraw()
 	_refresh_hud()
 
@@ -417,7 +468,7 @@ func _broadside_fx(s: int, side: int, t: int, hits: int, shot: int) -> void:
 	for j in clampi(hits, 0, 10):
 		var r2 := Vector2(sin(j * 1.9), cos(j * 2.9)) * tl * 0.3
 		_fx.append(["hit", tp + r2, -d / 450.0 - j * 0.03, shot, 0])
-	var cam := camera.get_screen_center_position() if camera != null else p
+	var cam := _cam_center() if (camera != null or v3 != null) else p
 	var vol := clampf(0.35 + guns / 40.0, 0.3, 1.0) * clampf(1.0 - p.distance_to(cam) / 1800.0, 0.25, 1.0)
 	AudioFx.play("cannon", vol, clampf((p.x - cam.x) / 900.0, -0.8, 0.8), "art")
 
@@ -996,6 +1047,13 @@ func _build_hud() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_hud.add_child(root)
+	if v3 != null:
+		_marks = Control.new()
+		_marks.name = "sea_marks"
+		_marks.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_marks.draw.connect(_draw_marks)
+		root.add_child(_marks)
 	# Top bar: the wind rose, title and clock, speed, leave.
 	var top := HBoxContainer.new()
 	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
@@ -1045,6 +1103,22 @@ func _build_hud() -> void:
 		Kit.tip(sb, stips[i][0], stips[i][1])
 		_speed_btns.append(sb)
 	top.add_child(_speed_seg)
+	if v3 != null:
+		# The camera's chits (3D): the map camera (N) and follow the selected ship.
+		_map_btn = Kit.icon_button("", "compass", func(): _map_toggle(), 46, Kit.FONT_SMALL)
+		_map_btn.name = "sea_map"
+		_map_btn.toggle_mode = true
+		_map_btn.custom_minimum_size = Vector2(46, 34)
+		BTheme.plate(_map_btn, true)
+		Kit.tip(_map_btn, "Map camera", "Straight down over the whole field, north up (N). Press again to go back to the camera you had. Turning or tilting leaves it.")
+		top.add_child(_map_btn)
+		_follow_btn = Kit.icon_button("", "target", func(): _follow_toggle(), 46, Kit.FONT_SMALL)
+		_follow_btn.name = "sea_follow"
+		_follow_btn.toggle_mode = true
+		_follow_btn.custom_minimum_size = Vector2(46, 34)
+		BTheme.plate(_follow_btn, true)
+		Kit.tip(_follow_btn, "Follow", "The camera follows the selected ship. Dragging the view lets go. A double tap on her card follows her too.")
+		top.add_child(_follow_btn)
 	_book_btn = Kit.icon_button("Ships", "units", _open_book, 64, Kit.FONT_SMALL)
 	_book_btn.name = "sea_book_button"
 	Kit.tip(_book_btn, "Ship book", "Points of sail, sails, shot, boarding and every ship's numbers.")
@@ -1222,7 +1296,7 @@ func _card_input(e: InputEvent, s: int) -> void:
 		_not_mine_hint(s)
 		return
 	if selection == [s] and _clock - _last_tap_t < DOUBLE_TAP * 2.0:
-		camera.position = _pos(s)
+		_center_on_ship(s, true)
 	selection = [s]
 	_last_tap_t = _clock
 	_refresh_bar()
@@ -1592,11 +1666,15 @@ func _draw_rose() -> void:
 	var r := 22.0
 	_rose.draw_circle(c, r + 3, Color(0, 0, 0, 0.45))
 	_rose.draw_arc(c, r, 0, TAU, 32, Color(1, 1, 1, 0.6), 1.5, true)
+	var yaw := v3.yaw if v3 != null else 0.0   # (3D: the rose turns with the table, north where north is)
 	for i in 4:
-		var a := i * PI / 2.0 - PI / 2.0
+		var a := i * PI / 2.0 - PI / 2.0 + yaw
 		_rose.draw_line(c + Vector2(cos(a), sin(a)) * (r - 5), c + Vector2(cos(a), sin(a)) * r, Color(1, 1, 1, 0.6), 1.5)
-	_rose.draw_string(ThemeDB.fallback_font, c + Vector2(-4, -r + 12), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))
-	var wt := _wind_to()
+	if v3 != null:
+		_rose.draw_string(ThemeDB.fallback_font, c + Vector2(0, -1).rotated(yaw) * (r - 7) + Vector2(-3.5, 4), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))
+	else:
+		_rose.draw_string(ThemeDB.fallback_font, c + Vector2(-4, -r + 12), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(1, 1, 1, 0.8))
+	var wt := _wind_to().rotated(yaw)
 	var tail := c - wt * (r - 4)
 	var tip := c + wt * (r - 4)
 	_rose.draw_line(tail, tip, SeaKey.col("wind"), 3.0, true)
@@ -1681,6 +1759,9 @@ func _ask_leave() -> void:
 # ------------------------------------------------------------------ input ---
 
 func _frame_fleet() -> void:
+	if v3 != null:
+		v3.open()
+		return
 	var vp := get_viewport_rect().size
 	var fit := minf(vp.x / sim.field_w, vp.y / sim.field_h)
 	camera.zoom = Vector2.ONE * clampf(fit * 1.6, ZOOM_MIN, ZOOM_MAX)
@@ -1694,21 +1775,195 @@ func _frame_fleet() -> void:
 
 
 func _clamp_cam() -> void:
+	if v3 != null:
+		v3.clamp_target()
+		v3.sync_camera()
+		return
 	var m := 300.0
 	camera.position = camera.position.clamp(Vector2(-m, -m), Vector2(sim.field_w + m, sim.field_h + m))
 
 
 func _world(screen: Vector2) -> Vector2:
+	if v3 != null:
+		return v3.world_at(screen)
 	return get_canvas_transform().affine_inverse() * screen
 
 
+## A sea point (metres) -> the screen point (either view; `h` a height in metres, 3D only).
+func world_to_screen(p: Vector2, h := 0.0) -> Vector2:
+	if v3 != null:
+		return v3.project(p, h)
+	return get_canvas_transform() * p
+
+
+## What the HUD covers (pixels from the screen's left, top, right, bottom edges): the ship cards, the top bar, the orders bar.
+func hud_insets() -> Vector4:
+	var vp := get_viewport_rect().size
+	return Vector4(144.0, 66.0, 8.0, 104.0 if vp.x >= 900.0 else 120.0)
+
+
+func _cam_center() -> Vector2:
+	if v3 != null:
+		return v3.target
+	return camera.get_screen_center_position()
+
+
 func _zoom_at(screen: Vector2, f: float) -> void:
+	if v3 != null:
+		v3.zoom_at(screen, f)
+		return
 	var before := _world(screen)
 	camera.zoom = Vector2.ONE * clampf(camera.zoom.x * f, ZOOM_MIN, ZOOM_MAX)
 	camera.force_update_scroll()
 	var after := _world(screen)
 	camera.position += before - after
 	_clamp_cam()
+
+
+## Drag the view by a screen delta (the sea follows the finger).
+func _pan_px(d: Vector2) -> void:
+	if v3 != null:
+		v3.pan_px(d)
+		return
+	camera.position -= d / camera.zoom.x
+	_clamp_cam()
+
+
+## Centre the view on a ship (a tap on the deck inset; 2D: also a double tap on her card). 3D: a double tap on her card follows her.
+func _center_on_ship(s: int, follow_her := false) -> void:
+	if v3 != null:
+		if follow_her:
+			v3.set_follow(s)
+		else:
+			v3.follow = -1
+			v3.center_on(_pos(s))
+		return
+	camera.position = _pos(s)
+	_clamp_cam()
+
+
+# --------------------------------------------------------- the 3D camera's gestures (as the land battle's: ui.md "The 3D camera") ---
+
+func _v3_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
+	v3.turn(dyaw, dtilt, pivot)
+	_sync_chits()
+
+
+func _v3_drag_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
+	_turning = true
+	var dt := maxf(get_process_delta_time(), 1.0 / 240.0)
+	_yaw_vel = lerpf(_yaw_vel, dyaw / dt, 0.5)
+	_v3_turn(dyaw, dtilt, pivot)
+
+
+## Held keys (Q / E turn, Home / End tilt), the inertia of a turn and the two-finger twist, every frame.
+func _v3_process(delta: float) -> void:
+	_v3_twist_step()
+	var c := get_viewport_rect().size * 0.5
+	var turn := 0.0
+	var tilt := 0.0
+	if not book.visible:
+		if Controls.held("group_rotate_left"):
+			turn += V3_KEY_TURN * delta
+		if Controls.held("group_rotate_right"):
+			turn -= V3_KEY_TURN * delta
+		if Controls.held("camera_tilt_up"):
+			tilt += V3_KEY_TILT * delta
+		if Controls.held("camera_tilt_down"):
+			tilt -= V3_KEY_TILT * delta
+	if turn != 0.0 or tilt != 0.0:
+		_yaw_vel = 0.0
+		_v3_turn(turn, tilt, c)
+	elif not _turning and absf(_yaw_vel) > 0.02:
+		_v3_turn(_yaw_vel * delta, 0.0, c)
+		_yaw_vel *= exp(-delta / V3_INERTIA_SEC)
+	elif not _turning:
+		_yaw_vel = 0.0
+	_sync_chits()
+
+
+## The twist of two fingers, once a frame, turning about their midpoint past the dead zone (so a pinch or a pan does not turn).
+func _v3_twist_step() -> void:
+	if _touch.size() != 2:
+		_twist_prev = 1e9
+		return
+	var ps: Array = _touch.values()
+	var ang := ((ps[1] as Vector2) - (ps[0] as Vector2)).angle()
+	if _twist_prev > 1e8:
+		_twist_prev = ang
+		return
+	var da := wrapf(ang - _twist_prev, -PI, PI)
+	_twist_prev = ang
+	if not _twist_on:
+		_twist_acc += da
+		if absf(_twist_acc) <= V3_TWIST_DEAD:
+			return
+		_twist_on = true
+		da = _twist_acc   # (the dead zone's turn is not lost)
+	if da != 0.0:
+		_v3_drag_turn(da, 0.0, ((ps[0] as Vector2) + (ps[1] as Vector2)) * 0.5)
+
+
+## Three fingers with nothing selected: their centroid across turns the table, up and down tilts it, about the screen's centre.
+func _v3_three() -> void:
+	var c := Vector2.ZERO
+	for k in _touch:
+		c += _touch[k]
+	c /= float(_touch.size())
+	if _c3.x > -1e8:
+		var d := c - _c3
+		_v3_drag_turn(-d.x * deg_to_rad(0.3), d.y * 0.25, get_viewport_rect().size * 0.5)
+	_c3 = c
+
+
+func _map_toggle() -> void:
+	if v3 == null:
+		return
+	v3.map_set(not v3.map_view)
+	_yaw_vel = 0.0
+	_sync_chits()
+
+
+func _follow_toggle() -> void:
+	if v3 == null:
+		return
+	if v3.follow >= 0:
+		v3.follow = -1
+	elif not selection.is_empty():
+		v3.set_follow(selection[0])
+	_sync_chits()
+
+
+func _sync_chits() -> void:
+	if _map_btn != null and v3 != null:
+		_map_btn.set_pressed_no_signal(v3.map_view)
+	if _follow_btn != null and v3 != null:
+		_follow_btn.set_pressed_no_signal(v3.follow >= 0)
+
+
+## (3D) The health and crew bars over each ship and the selection box, on the HUD from projected points.
+func _draw_marks() -> void:
+	if v3 == null:
+		return
+	var ppm := v3.vp_size().y / v3.size
+	for s in sim.n_units:
+		if sim.u_state[s] != SeaSim.S_SAIL:
+			continue
+		var ln := float(ST.stat(sim.s_type[s], "len")) * VIS * ppm
+		var bw := maxf(ln, 26.0)
+		var top := v3.project(_pos(s), float(ST.stat(sim.s_type[s], "len")) * VIS * 0.46 + 4.0)
+		var bp := top + Vector2(-bw * 0.5, -12.0)
+		var hp := float(sim.s_hull[s]) / sim.s_hull0[s]
+		var cp := float(sim.s_crew[s]) / maxi(sim.s_crew0[s], 1)
+		_marks.draw_rect(Rect2(bp, Vector2(bw, 3.5)), Color(0, 0, 0, 0.55))
+		_marks.draw_rect(Rect2(bp, Vector2(bw * hp, 3.5)), Color(0.45, 0.85, 0.4) if hp > 0.5 else Color(0.95, 0.7, 0.25) if hp > 0.25 else Color(0.95, 0.3, 0.25))
+		_marks.draw_rect(Rect2(bp + Vector2(0, 4.0), Vector2(bw, 2.5)), Color(0, 0, 0, 0.55))
+		_marks.draw_rect(Rect2(bp + Vector2(0, 4.0), Vector2(bw * cp, 2.5)), Color(0.6, 0.75, 1.0))
+		_marks.draw_rect(Rect2(bp + Vector2(-5.0, 0), Vector2(3.5, 6.5)), _side_col(sim.u_side[s]))
+	if _boxing:
+		var r2 := Rect2(_box_a, _box_b - _box_a).abs()
+		_marks.draw_rect(r2, Color(1, 1, 1, 0.12))
+		_marks.draw_rect(r2, Color(1, 1, 1, 0.8), false, 1.5)
 
 
 func _unhandled_input(e: InputEvent) -> void:
@@ -1718,6 +1973,15 @@ func _unhandled_input(e: InputEvent) -> void:
 			_zoom_at(mb.position, 1.12)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_zoom_at(mb.position, 1.0 / 1.12)
+		elif v3 != null and mb.button_index == MOUSE_BUTTON_RIGHT and mb.device != InputEvent.DEVICE_ID_EMULATION:
+			# 3D: the right drag turns (across) and tilts (up and down) the table.
+			_rmb = mb.pressed
+			if not mb.pressed:
+				_turning = false
+		return
+	if e is InputEventMouseMotion and v3 != null and _rmb:
+		var mm := e as InputEventMouseMotion
+		_v3_drag_turn(-mm.relative.x * deg_to_rad(0.3), mm.relative.y * 0.2, get_viewport_rect().size * 0.5)
 		return
 	if e is InputEventKey and (e as InputEventKey).pressed:
 		match (e as InputEventKey).keycode:
@@ -1733,6 +1997,9 @@ func _unhandled_input(e: InputEvent) -> void:
 				selection.clear()
 				arm = ""
 				_refresh_bar()
+			_:
+				if v3 != null and not (e as InputEventKey).echo and Controls.action_for_key(e as InputEventKey, "battle") == "camera_map":
+					_map_toggle()
 		return
 	if e is InputEventScreenTouch:
 		var t := e as InputEventScreenTouch
@@ -1747,9 +2014,17 @@ func _unhandled_input(e: InputEvent) -> void:
 				var ps: Array = _touch.values()
 				_pinch_d = (ps[0] as Vector2).distance_to(ps[1])
 				_boxing = false
+				_twist_acc = 0.0
+				_twist_on = false
+				_twist_prev = 1e9
 		else:
 			var was := _touch.size()
 			_touch.erase(t.index)
+			if _touch.is_empty():
+				_turning = false
+				_twist_on = false
+				_twist_acc = 0.0
+				_c3 = Vector2(-1e9, -1e9)
 			if was == 1:
 				if _boxing:
 					_box_select()
@@ -1762,27 +2037,29 @@ func _unhandled_input(e: InputEvent) -> void:
 		var prev: Vector2 = _touch.get(d.index, d.position)
 		_touch[d.index] = d.position
 		if _touch.size() >= 2:
+			if v3 != null and _touch.size() >= 3 and selection.is_empty():
+				_v3_three()
+				_dragging = true
+				return
 			var ps2: Array = _touch.values()
 			var nd := (ps2[0] as Vector2).distance_to(ps2[1])
 			var mid := ((ps2[0] as Vector2) + (ps2[1] as Vector2)) * 0.5
 			if _pinch_d > 1.0:
 				_zoom_at(mid, nd / _pinch_d)
 			_pinch_d = nd
-			camera.position -= (d.position - prev) / camera.zoom.x * 0.5
+			_pan_px((d.position - prev) * 0.5)
 			_dragging = true
-			_clamp_cam()
 			return
 		if not _dragging and not _boxing and d.position.distance_to(_press_pos) > DRAG_PX:
 			if _clock - _press_t >= LONG_PRESS:
 				_boxing = true
-				_box_a = _world(_press_pos)
+				_box_a = _press_pos if v3 != null else _world(_press_pos)
 			else:
 				_dragging = true
 		if _boxing:
-			_box_b = _world(d.position)
+			_box_b = d.position if v3 != null else _world(d.position)
 		elif _dragging:
-			camera.position -= (d.position - prev) / camera.zoom.x
-			_clamp_cam()
+			_pan_px(d.position - prev)
 
 
 func _ship_at(w: Vector2) -> int:
@@ -1805,7 +2082,7 @@ func _tap(screen: Vector2) -> void:
 	if not interactive:
 		return
 	var w := _world(screen)
-	var s := _ship_at(w)
+	var s := v3.ship_at(screen) if v3 != null else _ship_at(w)
 	var double := _clock - _last_tap_t < DOUBLE_TAP and s == _last_tap_ship
 	_last_tap_t = _clock
 	_last_tap_ship = s
@@ -1864,9 +2141,15 @@ func _tap(screen: Vector2) -> void:
 func _box_select() -> void:
 	var r := Rect2(_box_a, _box_b - _box_a).abs()
 	var got: Array[int] = []
-	for s in sim.n_units:
-		if sim.u_side[s] == player_side and sim.u_state[s] == SeaSim.S_SAIL and r.has_point(_pos(s)) and _mine(s):
-			got.append(s)
+	if v3 != null:
+		# (3D: the box is a screen rectangle over the ships' projected centres)
+		for s in v3.ships_in_rect(r, player_side):
+			if _mine(s):
+				got.append(s)
+	else:
+		for s in sim.n_units:
+			if sim.u_side[s] == player_side and sim.u_state[s] == SeaSim.S_SAIL and r.has_point(_pos(s)) and _mine(s):
+				got.append(s)
 	if not got.is_empty():
 		selection = got
 		arm = ""
@@ -1948,6 +2231,8 @@ func _coop_step(delta: float) -> void:
 func _rebind(s) -> void:
 	sim = s
 	_snap_prev()
+	if v3 != null:
+		v3.rebind()
 	_ev_seen = sim.ev_n  # (a restored sim's past events are not replayed)
 	_decided_at = -1.0 if sim.decided_tick < 0 else _clock
 	_prune_selection()
@@ -2133,8 +2418,7 @@ func _inset_input(e: InputEvent) -> void:
 	var tapped := e is InputEventMouseButton and (e as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT \
 		and not (e as InputEventMouseButton).pressed
 	if tapped and _inset_m >= 0 and _inset_m < sim.n_units:
-		camera.position = _pos(_inset_m)
-		_clamp_cam()
+		_center_on_ship(_inset_m)
 
 
 func _draw_inset() -> void:

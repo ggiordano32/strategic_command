@@ -57,6 +57,14 @@ func _process(_d: float) -> bool:
 	if _frame < 120:
 		return false
 	_check(sb.sim.tick > 5, "the battle ran with the galleys drawn (tick %d)" % sb.sim.tick)
+	if sb.v3 != null:
+		# (3D, `-- --sea-view=3d`) every galley is a node with a hull, her furled sail on the yard and her ensign.
+		var meshes := true
+		for s in sb.sim.n_units:
+			var n: Dictionary = sb.v3.ships[s]
+			meshes = meshes and (n["hull"] as MeshInstance3D).mesh.get_surface_count() > 0 and (n["rig"] as MeshInstance3D).mesh.get_surface_count() > 0 \
+				and (n["flags"] as MeshInstance3D).mesh.get_surface_count() > 0
+		_check(meshes, "(3D) the galleys' hulls, sails and flags are built")
 	print("RESULT: ", "PASS" if _ok else "FAIL")
 	quit(0 if _ok else 1)
 	return true

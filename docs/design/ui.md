@@ -1997,3 +1997,17 @@ The 3D battle view is the only view every player gets (docs/design/art_pipeline.
   Table motion still sits beside Battle look, that a saved battle_view of top, oblique or 3d reads as 3d, and that `BoardView.force` still
   picks a flat view.
 - **Not touched:** the campaign's city preview and the sea battle screen stay 2D (the sea screen moves to 3D in stage D).
+
+### The sea camera (as built, 2026-11-09, view only; stage D1 of the sea battle in 3D, behind `--sea-view=3d`)
+
+The sea screen's 3D camera is the land battle's in behaviour (the 3D camera section above), on the sea plane, with its own state (target,
+yaw, tilt, the view's height in metres) in `game/sea_view3d.gd`, never `BoardView`'s. Gestures, driven from `SeaBattle._unhandled_input`
+and `_process`: one finger pans (the sea follows the finger; a pan lets a follow go), two fingers pinch (60 m to the field and its
+margin) and, past 8 degrees of twist, turn the table about their midpoint; three fingers with nothing selected turn (across) and tilt (up
+and down, 25-60 degrees); the right mouse button drags to turn and tilt; Q / E turn and Home / End tilt (the land's key bindings
+`group_rotate_left / right`, `camera_tilt_up / down`); the wheel zooms; the turn keeps 0.35 s of inertia. A long press and drag draws the
+selection box (a screen rectangle over the ships' projected centres), a tap picks by projected distance (22 px or the hull) or orders a
+course to the tapped point of the sea plane. Chits in the top bar between the speed capsule and Ships (46 x 34): the compass (the map
+camera: N, yaw 0, tilt 85 over the whole field, pressed while in it, again goes back exactly, a turn or a tilt down leaves it at tilt 60)
+and the target (follow the selected ship; a double tap on her card follows her too; a drag lets go). The wind rose turns with the yaw. At
+844 x 390 the bar takes both chits and the opening fit keeps the fleets out from under the cards and the bar.

@@ -31,6 +31,8 @@ const CTown := preload("res://campaign/ctown.gd")
 const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/sea_water.gdshader")
 const LAND_SHADER := preload("res://game/sea_land.gdshader")
+const WATER3D_SHADER := preload("res://game/sea_water3d.gdshader")
+const LAND3D_SHADER := preload("res://game/sea_land3d.gdshader")
 
 const T := 10.0                  # metres a texel of the baked fields
 const SDF_LO := -80.0            # R = 0
@@ -78,6 +80,8 @@ var fld2_tex: ImageTexture
 var cell_tex: ImageTexture
 var water_mat: ShaderMaterial
 var land_mat: ShaderMaterial
+var water3d_mat: ShaderMaterial        # the 3D view's spatial twins (materials3d), same uniforms
+var land3d_mat: ShaderMaterial
 var foam_tex: ImageTexture
 var soft_tex: ImageTexture
 var trees: Array = []                  # [x, y, piece index, scale, tint]
@@ -126,6 +130,24 @@ func setup(sim, seed_v: int, scn: Dictionary, cell: Vector2i, region: int) -> vo
 	build_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	_wind_vis = _wind_angle(sim)
 	wind_base = _wind_vis
+
+
+## The spatial twins of the two canvas materials for the 3D sea view (game/sea_view3d.gd): the same shader body, every uniform copied
+## from the 2D materials (the baked textures included), and kept in step by tick().
+func materials3d() -> void:
+	water3d_mat = _twin(water_mat, WATER3D_SHADER)
+	land3d_mat = _twin(land_mat, LAND3D_SHADER)
+
+
+static func _twin(src: ShaderMaterial, shader: Shader) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = shader
+	for u in src.shader.get_shader_uniform_list():
+		var nm: String = u["name"]
+		var v = src.get_shader_parameter(nm)
+		if v != null:
+			m.set_shader_parameter(nm, v)
+	return m
 
 
 static func _wind_angle(sim) -> float:
@@ -522,6 +544,10 @@ func tick(clock: float, sim) -> void:
 	water_mat.set_shader_parameter("t", clock)
 	water_mat.set_shader_parameter("wdir", Vector2(cos(_wind_vis), sin(_wind_vis)))
 	water_mat.set_shader_parameter("wstr", clampf(float(sim.w_str) / 100.0, 0.1, 1.0))
+	if water3d_mat != null:
+		water3d_mat.set_shader_parameter("t", clock)
+		water3d_mat.set_shader_parameter("wdir", Vector2(cos(_wind_vis), sin(_wind_vis)))
+		water3d_mat.set_shader_parameter("wstr", clampf(float(sim.w_str) / 100.0, 0.1, 1.0))
 
 
 func wind_to(sim) -> Vector2:

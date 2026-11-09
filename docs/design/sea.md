@@ -984,3 +984,94 @@ with four units aboard carries about 400 men on top of her 60 crew; before, the 
 natives' deck troops 0 / 100 each / 400 + 300 + 300): AI-ordered natives win 0 / 0 / 10 of 24, ordered to board 0 / 13 / 20 of
 24 (median 90 s / 132 s / 108 s). A full-loaded trio is a real threat to a lone frigate, which is the point of a troop
 transport; an escort frigate with troops of its own (the AI's) is not in the probe.
+
+### The sea battle in 3D, stage D1 (as built, 2026-11-09)
+
+Stage D of the owner's decision ("sea battle screen should move into the 3d view as well", 2026-11-09; plan option (b): the sea screen
+keeps its scene, sim binding, HUD, controls and co-op, and gains a 3D world). D1 is the playable skeleton behind a flag; the 2D screen
+stays the default and every 2D path is as it was. View only: nothing under `sim/`, `campaign/` or `game/net/` changed, no hash moves.
+
+**The flag.** `--sea-view=3d` on the command line (`=2d` forces the flat one) or the web page's `?sea-view=3d`; a test or a shot sets
+`SeaBattle.view_3d = true` before adding the screen. `SeaBattle._ready` then builds `game/sea_view3d.gd` (`v3`, a Node3D) instead of its
+five Node2D layers and the Camera2D (`camera` is null; `world_to_screen()`, `_world()`, `_pan_px()`, `_zoom_at()` and `_cam_center()`
+answer for either view). Everything else on the screen is the 2D screen's: the HUD, the cards, the bar, the book, the Key, the deck
+inset, co-op. The sea view never reads or writes `BoardView`'s statics.
+
+**The room.** `game/table3d.gd` (art_pipeline.md "The room's builders") holds the environment, the lamp, the wooden table and the cut slab
+as static functions that View3D calls too (v3d_test unchanged). The sea board is the field plus a 300 m margin on the table, its cut
+edge the slab shader's resin option (`resin_k`: a cast-resin edge in the depth colour with a lighter meniscus over the MDF foot). The lamp
+stands at the opening yaw as in the land battle; no shadows in D1 (S15).
+
+**Water and land.** `sea_water.gdshader` and `sea_land.gdshader` keep their canvas wrappers; their fragments are now functions in
+`sea_water_body.gdshaderinc` / `sea_land_body.gdshaderinc` (`sea_water_color(p)`, `sea_land_color(p)`, p the sea point in metres), which
+the spatial wrappers `sea_water3d.gdshader` and `sea_land3d.gdshader` call: one flat quad over the board for the water (unshaded, the
+display values straight to ALBEDO as the land board does), one a hair above it for the land (alpha where the sim has land). The baked
+`fld` / `fld2` / `cells` textures are the same objects: `SeaLook.materials3d()` copies every uniform of the 2D materials into the twins
+and `tick()` moves their time, wind direction and strength. Graphics Low is the 2D Low (`hi` 0: the depth colour and a still wash, no
+time). `shore_ok()` still holds (water drawn over sim land, never the reverse; tests/sea_look_test.gd, sea3d_test). No swell, no wakes,
+no coast mesh or props (D2).
+
+**Ships.** One node set per ship, keyed by her index (`ships[s]`): `game/sea_ship3d.gd` builds the hull once (the 2D screen's seven-point
+outline, a galley's six, 1.5 x her length as `VIS`: keel under the water, waterline, hull side, the rail stripe in the faction's colour,
+the deck, gunports along both sides, a stern castle for the big sailers with a treasure galleon's gilded, the bowsprit, a galley's bronze
+ram, a fire ship's brushwood) and the rig as she changes (`SeaShip.rig`: masts, yards, square sails of 6 x 3 cells per sail braced with the
+relative wind and bellied by the drive, the topsail gone under 55 % rig, cells dropped as holes as the rigging goes, a stump from the
+second mast on under 30 %, furled on the yards hove to or struck, the sloop's fore-and-aft sail with its boom to leeward) and the flags
+every frame (the ensign at the stern and a pennant at the masthead streaming downwind in her colour, white struck, the captor's taken).
+The sails are rebuilt when her state changes enough (brace, drive, rig, furled, state) and at most every 50 ms; the transform every frame
+from the interpolated place and heading (`_draw_pos`, `_head`: a boarder lies clear of her prize as in 2D), a heel from the drive and
+the wind (leeward side down, eased), a sinking hull lowering and rolling over the 6 s until the water plane hides her. `sea_ship3d.gdshader`
+is the land's solid shader with a half-Lambert and a tint (a struck prize, a fire ship alight). Galleys have a furled sail and the ram;
+the oars, the corvus, wakes, effects, weather, the deck figures and the coast are D2 / D3.
+
+**The camera** (the land's, copied in behaviour; ui.md "The sea camera"). An orthographic Camera3D of its own: the target (a sea point),
+yaw, tilt (25-60) and the height of the view in metres, 60 m (one frigate fills a phone) to the field plus the margin (3,000 m at the
+default field); the target clamps to the field plus 300 m. `world_at(screen)` is a ray against the sea plane y 0 (the projection
+round-trips at 0.0003 px for 4 yaws x 3 tilts and agrees with Camera3D.unproject_position), `project(point, height)` its inverse,
+`ship_at(screen)` picks by projected screen distance (22 px or her hull, projected at 3 m), `ships_in_rect()` the box. The opening: the
+table turned in quarter turns so the player's fleet is nearest the viewer, the lamp at that yaw, both fleets fitted into the free part of
+the screen (`safe_rect()`: not under the top bar, the cards or the orders bar: `SeaBattle.hud_insets()`). Zoom by wheel and pinch, one
+finger pans, two-finger twist past 8 degrees turns, three fingers with nothing selected turn and tilt, right drag turns and tilts, Q / E
+and Home / End, 0.35 s of inertia; the map camera (N, a compass chit: yaw 0, tilt 85, the field; again restores exactly; a turn or a tilt
+down leaves it), follow (a chit; a double tap on a ship's card; a drag lets go).
+
+**Orders and HUD on a turned camera.** One ImmediateMesh of ribbons on the water, 0.4 m over it, depth-tested so a ship's hull and sails
+stand over them (they lie under the sails), constant screen width (2-3 px, from the metres a pixel): courses with their tacks
+(`course_points`), waypoint rings, attack / board / fire-ship / flee lines and rings, the selected ring, both broadsides' arcs and reach
+(`broadside_arcs()`: the keel +-256 and `ARC`, range `shot_range`, bright loaded and dim reloading), the grapple lines and ring, in
+`SeaKey.col`'s colours. The health and crew bars over the ships and the selection box are drawn on the HUD from projected points
+(`sea_marks`). The wind rose turns with the camera's yaw (north where north is); a faint wind arrow lies on the water when the rose is
+not on the screen. At 844 x 390 the two chits fit the bar and nothing of the opening fit lies under the cards or the bar.
+
+**The read-only contract** (S13). The view reads `host.sim` every frame and caches no sim; per-ship nodes are keyed by index (`n_units`
+never changes); `_rebind` calls `v3.rebind()` (the sails stale, the heel and the follow reset; past events not replayed as before); the
+view only calls the pure `drive`, `heading` and `shot_range`. tests/sea3d_test.gd checks that a frame leaves `state_hash()` unchanged,
+that a sim run under the 3D view equals one run without any view, and that a rebind rebuilds the sails.
+
+**Tests and shots.** `tests/sea3d_test.gd` (headless): the projection, taps at yaws 0 / 120 / 240, picking, the box, the arcs against
+`shot_range`, the order mesh, the map camera, follow, the clamp, the opening fit, the rig (20 % rigging, hove to), a sinking hull, a
+struck ensign, the rebind, the hash, the 2D default, Graphics Low, shore_ok, the layout. `sea_screen_test` and `sea_galley_view_test` run
+in 2D and with `-- --sea-view=3d`. `tests/sea_shot.gd` (a window) takes the shots (`--sc=frigates|coast|line|havana|fireship|galleys`,
+`--view=3d|2d`, `--size=`, `--yaw= --tilt= --size-m= --map --follow --select=`) and the frame cost (`--bench=8`).
+
+**Cost on this desktop** (RTX 3070, 1280 x 720, `tests/sea_shot.gd --bench=8`, the battle running at 1 x, mean frame ms / GPU ms / draw calls):
+
+| scene | 3D view | 2D screen |
+|---|---|---|
+| duel (2 frigates) | 1.34 ms mean (p95 1.59), GPU 0.62, 330 draws | 1.56 (1.82), GPU 0.29, 241 draws |
+| line battle by a coast (8 ships) | 2.05 (2.44), GPU 0.65, 357 draws | 3.91 (4.50), GPU 0.45, 506 draws |
+| the same, Graphics Low | 2.34 (2.71), GPU 0.70, 385 draws | 4.10 (4.78), GPU 0.47, 540 draws |
+
+The 3D view is cheaper on the CPU than the 2D screen's per-frame `_draw` of hulls and sails (the sails are rebuilt on change, 20 Hz at
+most), dearer on the GPU (a 3D scene with the water fragment at full screen: 0.6-0.7 ms), well inside the budget; the Low run is not
+cheaper than High here (the water's time-free branch saves little at this size on a desktop GPU; the Tab S7 and the phone are the owner's
+device pass, D4).
+
+**Open, what D2-D5 still owe.** D2 the look: the coast mesh and the trees and forts as kit meshes (the land is a flat quad here), ship
+models from the Blender specs, the oars, ram blows and the corvus, the water's bob and the wakes, the tabletop pass (S3, S4, S6, S14); D3
+effects and weather: the flash and smoke through Fx3D, shot streaks, splashes, hits, fires, the magazine blast, dismasting as a falling
+mast, sinking's foam and debris, the grapples as 3D, Weather3D at sea (S7, S8, S12); D4 the default: Quality Auto's measurement in the
+sea view, shadows on High, the webcheck, the device pass (the phone and the Tab S7, High and Low), the co-op two-client run with the view
+built (`live_e2e` with windowed clients); D5 delete the 2D layers. Known in D1: the gun smoke, flashes, splashes and hits are not drawn
+(the audio and the messages still play); the deck inset stays 2D HUD; no wakes; the order lines have no dashes' phase animation; the
+follow camera eases at 6 / s with no zoom change; the opening fit makes a 1,400 m duel small (zoom in to read it: the plan's scale risk).

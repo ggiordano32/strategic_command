@@ -6,7 +6,7 @@ extends SceneTree
 ## shows the sea battle's card (its title, the water preview, both fleets'
 ## ships, Auto-resolve / Fight). Fight opens the real-time sea battle
 ## screen (game/sea_battle.gd: the HUD with the wind, the ship cards, the
-## orders bar; a tap on the sea gives a sail order); the battle AI then
+## orders bar; a tap on the sea gives a sail order, through the 2D canvas or the 3D camera: run it with -- --sea-view=3d too); the battle AI then
 ## sails both sides to the end, the screen's Continue applies the outcome
 ## (the campaign's fleets change, the battle is gone, the phase is plan) and
 ## the result card shows the fates. A second pending sea battle,
@@ -128,6 +128,7 @@ func _process(_d: float) -> bool:
 			_check(lk != null and lk.shore_ok(), "the drawn shore lies inside the sim's land cells")
 			_check(lk != null and lk.trees.size() <= lk.TREE_CAP and lk.fld_tex != null and lk.water_mat != null,
 				"the look is baked (%d trees, %d forts, %.0f ms)" % [lk.trees.size(), lk.forts.size(), lk.build_ms])
+			_check(("--sea-view=3d" in OS.get_cmdline_user_args()) == (_sb.v3 != null), "the view is the 3D one exactly when --sea-view=3d is set (%s)" % ("3D" if _sb.v3 != null else "2D"))
 			_shot("sea_campaign")
 			var tips := true
 			for n in ["sea_full", "sea_battle_sail", "sea_stop", "sea_round", "sea_chain", "sea_grape", "sea_fire", "sea_board", "sea_hold", "sea_flee"]:
@@ -143,7 +144,7 @@ func _process(_d: float) -> bool:
 			# A tap on the sea: the selected ship gets a sail order.
 			var s0: int = _sb.selection[0]
 			var p: Vector2 = _sb._pos(s0) + Vector2(0, -300)
-			var scr: Vector2 = _sb.get_canvas_transform() * p
+			var scr: Vector2 = _sb.world_to_screen(p)
 			_sb._tap(scr)
 			_sb.sim.step()
 			_check(_sb.sim.s_mode[s0] == SeaSim.M_GOTO, "a tap on the sea: sail there (mode %d)" % _sb.sim.s_mode[s0])

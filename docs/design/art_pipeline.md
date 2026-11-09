@@ -2289,3 +2289,14 @@ The owner (2026-11-07): "I don't think I want to maintain the other views, I wan
 - **The view contract** (checked by grep and by reading): nothing under `sim/`, `campaign/` or `game/net/` refers to BoardView, view3d, View3D, v3d or battle_view; the view is only the BoardView statics and `Battle.view3d`; the co-op rebind (`Battle._rebind` sets `view3d.sim`) follows the session's sim, and `Lockstep.restore` restores the same sim object in place. One view-side gap found and fixed: `View3D._GroundDraw.sim` (the city's ground canvas) kept the sim the battle was built with when a co-op session replaced it; `_ground_canvas_refresh` now follows `sim` and redraws once.
 - **Stage C will delete:** see the removal inventory in the plan (kit_occluder, ground_depth, the flat soldier, base, projectile and terrain shaders, the trims of overlay, soldier_layer and battlekit, `web_top`, the other `force` values, the flat passes of the tests, the shot scripts forcing a flat view).
 
+
+### The room's builders: table3d.gd (as built, 2026-11-09, view only)
+
+Stage D1 of the sea battle in 3D moved the room's builders out of `game/view3d.gd` into `game/table3d.gd` as static functions so two views
+stand their boards in the same room: `Table3D.build_env(host, shadows)` (the environment, the world lamp with its two shadow splits, the
+`--v3d-splits=` aids), `lamp_basis()`, `slab_mesh(edges, foot)` (the cut sides from four runs of top points and their outward normals),
+`slab_material(band_m, foot, flock, resin)` and `table(centre, board_rect, size)`; the constants (`AMBIENT`, `LAMP`, `LAMP_DIR`,
+`SHADOW_SPLIT`, `SLAB_BELOW`, `TABLE_BELOW`) live there and View3D's names are aliases. View3D calls them with the numbers it had (v3d_test
+passes unchanged); nothing there reads a sim or BoardView. `board_slab3d.gdshader` gained `resin_k` / `resin_col`: 0 (the default) is the
+land board's foam layers, 1 a cast-resin board (the sea's: the layers above the MDF foot read as resin in its depth colour, lighter toward
+the top with a pale meniscus). The sea view's board is the field plus a 300 m margin at y 0 with a 3 m slab and the table 3x the field.
