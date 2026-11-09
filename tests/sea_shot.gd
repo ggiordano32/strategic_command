@@ -5,6 +5,7 @@ extends SceneTree
 ##     [--quality=high|low] [--bench=SECONDS] ("SEA_BENCH {...}": the mean / p95 frame time and the draw calls over that many seconds
 ##     after a 3 s warm-up, the battle running at 1 x)
 const SeaBattle := preload("res://game/sea_battle.gd")
+const Quality := preload("res://game/quality.gd")
 const Checks := preload("res://tests/sea_checks.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const CData := preload("res://campaign/cdata.gd")
@@ -24,6 +25,11 @@ var map := false
 var follow := false
 var select := ""
 var bench := 0.0
+var at := Vector2(-1, -1)
+var hide_hud := false
+var quality := ""
+var run_frames := 0
+var at_ship := -1
 
 
 func _initialize() -> void:
@@ -41,6 +47,11 @@ func _initialize() -> void:
 		elif a == "--follow": follow = true
 		elif a.begins_with("--select="): select = v
 		elif a.begins_with("--bench="): bench = float(v)
+		elif a.begins_with("--at="): at = Vector2(float(v.get_slice(",", 0)), float(v.get_slice(",", 1)))
+		elif a == "--no-hud": hide_hud = true
+		elif a.begins_with("--run="): run_frames = int(v)
+		elif a.begins_with("--atship="): at_ship = int(v)
+		elif a.begins_with("--quality="): quality = v
 	_run.call_deferred()
 
 
@@ -71,6 +82,8 @@ func _run() -> void:
 	if bench > 0.0:
 		DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	await _f(4)
+	if quality == "low":
+		Quality.session_low = true
 	var b = SeaBattle.new()
 	var cell := Vector2i(-1, -1)
 	var region := -1
@@ -97,6 +110,10 @@ func _run() -> void:
 	b.speed_q = 0
 	root.add_child(b)
 	await _f(6)
+	if b.v3 != null and b.v3.coast != null:
+		var cs = b.v3.coast
+		print("COAST verts %d tris %d trees %d kit_instances %d kit_tris %d forts %d" % [cs.verts, cs.tris, cs.trees, cs.kit_instances, cs.kit_tris, b._look.forts.size()])
+		print("FORTS ", b._look.forts)
 	b.sim.ai_sides[0] = 1
 	for t in ticks:
 		b.sim.step()
@@ -110,6 +127,8 @@ func _run() -> void:
 			b.v3.tilt = tilt
 		if size_m > 0.0:
 			b.v3.size = size_m
+		if at.x >= 0.0:
+			b.v3.target = at
 		b.v3.sync_camera()
 		if map:
 			b._map_toggle()
@@ -125,6 +144,20 @@ func _run() -> void:
 	b._refresh_bar()
 	if bench > 0.0:
 		b.speed_q = 4
+	if run_frames > 0:
+		b.speed_q = 4
+		await _f(run_frames)
+		b.speed_q = 0
+	if b.v3 != null and run_frames > 0:
+		print("WAKE quads ", b.v3.wake_quads, " pts ", b.v3.ships[0]["wake"].size(), " ", "", " tick ", b.sim.tick)
+	if at_ship >= 0 and b.v3 != null:
+		b.v3.target = b._pos(at_ship)
+		b.v3.size = size_m if size_m > 0.0 else 160.0
+		b.v3.sync_camera()
+	if hide_hud:
+		for ch in b.get_children():
+			if ch is CanvasLayer or ch is Control:
+				ch.visible = false
 	await _f(20)
 	if out != "":
 		root.get_texture().get_image().save_png(out)

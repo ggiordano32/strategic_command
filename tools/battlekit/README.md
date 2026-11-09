@@ -152,3 +152,16 @@ smart-projected UVs, the emission albedo times a soft AO (a ground plane under i
 landmarks), `<piece>.json` (Godot frame) and `<piece>.png`. `kit3d_res.gd` shelf-packs the textures into one 2048 atlas
 (scaled together until they fit) and writes `assets/battlekit_ob/kit3d.res` (one ArrayMesh, a surface per piece; the mask
 class in UV2.x) and `kit3d_albedo.png`; both ride in the web's main pack (index.pck) since 2026-11-09.
+
+
+## Ship models (the sea battle, 2026-11-09)
+
+`export_ships.py` builds the sea battle's ship models inside Blender (lofted hulls, deck, castles, gunports; the galleys' outrigger, ram and
+stern post; no masts, sails, oars or corvus, which are dynamic), paints the swatch atlas and bakes a vertex occlusion; `ships3d_res.gd`
+packs them. Rebuild:
+
+    ~/.local/bin/blender -b --factory-startup -P tools/battlekit/export_ships.py -- [--out DIR] [--only sloop,frigate]
+    godot --headless --path . --script res://tools/battlekit/ships3d_res.gd [-- --frames=DIR]
+    godot --headless --path . --import
+
+Writes `assets/battlekit_ob/ships3d.res` (a surface a row, meta "models") and `ships3d_albedo.png`; built at VIS 2 (`SeaShip.MODEL_VIS`).

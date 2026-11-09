@@ -2,7 +2,7 @@ extends Node3D
 ## The sea battle's 3D world (view only; docs/design/sea.md "The sea battle in 3D, stage D1"): built by SeaBattle._ready in place of its
 ## five Node2D layers and Camera2D when `--sea-view=3d` (or the web's `?sea-view=3d`) is set. It stands the sea on the same wooden table
 ## and lamp as the land battle (game/table3d.gd), draws the water and the land as flat quads with the 2D screen's own shader bodies
-## (game/sea_water3d.gdshader, sea_land3d.gdshader), every ship as a node (hull from game/sea_ship3d.gd, sails and flags rebuilt as she
+## (game/sea_water3d.gdshader, sea_coast3d.gdshader), every ship as a node (hull from game/sea_ship3d.gd, sails and flags rebuilt as she
 ## changes), the orders as ribbons on the water, and owns an orthographic camera of its own: target (a point of the sea), yaw, tilt and
 ## the height of the view in metres. 1 m of the sim is 1 m here: x east, z south (the sim's y), y up, the sea plane y 0.
 ##
@@ -16,15 +16,25 @@ const FM := preload("res://sim/fixed_math.gd")
 const SeaKey := preload("res://game/sea_key.gd")
 const SeaShip := preload("res://game/sea_ship3d.gd")
 const Table3D := preload("res://game/table3d.gd")
+const SeaCoast := preload("res://game/sea_coast3d.gd")
+const SeaWake := preload("res://game/sea_wake3d.gd")
+const Swell := preload("res://game/sea_swell3d.gd")
+const Quality := preload("res://game/quality.gd")
+const Oars := preload("res://game/sea_oars3d.gd")
 const SHIP_SHADER := preload("res://game/sea_ship3d.gdshader")
 
+const VIS3 := 2.0                  # toy scale (the owner, 2026-11-09): ships drawn twice their length; the 2D screen keeps its VIS 1.5
 const MARGIN := 300.0              # the board's margin round the field (metres): the camera's clamp, the slab's edge
 const TILT_MIN := 25.0
 const TILT_MAX := 60.0
 const TILT_OPEN := 45.0
 const MAP_TILT := 85.0
 const SIZE_MIN := 60.0             # the closest view: one frigate fills a phone (metres of the screen's height)
-const ORDER_Y := 0.4               # the order ribbons ride this far over the water
+const ORDER_Y := 1.9               # the order ribbons ride this far over the water (clear of the swell)
+const WAKE_EVERY := 0.3            # a wake point this often (seconds) ...
+const WAKE_KEEP := 28              # ... and this many kept: a wake about 8 s long, over a ship length and a half at speed
+const WAKES_EVERY := 0.05
+const SPLINTER_CAP := 60
 const RIG_EVERY := 0.05            # a ship's sails are rebuilt at most this often (seconds)
 
 var host: Node
@@ -42,10 +52,20 @@ var map_view := false
 var _map_prev := {}
 var lamp_yaw := -1000.0
 var water_mi: MeshInstance3D
-var land_mi: MeshInstance3D
+var land_mi: MeshInstance3D       # the coast mesh (null: the field has no land)
+var coast                          # SeaCoast: the land's stats, trees and kit pieces
 var slab_mi: MeshInstance3D
 var table_mi: MeshInstance3D
 var orders_mi: MeshInstance3D
+var wakes_mi: MeshInstance3D
+var _wakes_mesh := ImmediateMesh.new()
+var foam_mat: StandardMaterial3D   # the foam rings' and the wakes' material (null on Low: neither is drawn)
+var splinters_mi: MultiMeshInstance3D
+var _splinters: Array = []        # a ram blow's splinters: {p, v, age}
+var _rng := RandomNumberGenerator.new()   # (the view's own: never the sim's)
+var _wakes_t := -9.0
+var wake_quads := 0               # (a count for the tests: the wake strips drawn this frame)
+var bob_on := false               # the hulls bob and pitch on the CPU twin of the water's trains (not on Low)
 var _orders_mesh := ImmediateMesh.new()
 var ships: Array = []              # per ship (by index): {"root", "hull", "rig", "flags", "mat", "rig_buf", "flag_buf", "sig", "t", "heel"}
 var _clock := 0.0
@@ -66,7 +86,16 @@ func setup(p_host: Node) -> void:
 	env = r["env"]
 	lamp = r["lamp"]
 	look.materials3d()
+	Swell.read_args()
+	bob_on = not look.low
 	_build_board()
+	if bob_on:
+		foam_mat = SeaWake.foam_material(SeaWake.foam_strip_texture())
+		wakes_mi = MeshInstance3D.new()
+		wakes_mi.mesh = _wakes_mesh
+		wakes_mi.material_override = foam_mat
+		wakes_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(wakes_mi)
 	_build_ships()
 	orders_mi = MeshInstance3D.new()
 	orders_mi.mesh = _orders_mesh
@@ -110,27 +139,30 @@ func _build_board() -> void:
 	slab_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(slab_mi)
 	var ctr := Vector3(field.x * 0.5, 0.0, field.y * 0.5)
-	var pm := PlaneMesh.new()
-	pm.size = Vector2(field.x + 2.0 * m, field.y + 2.0 * m)
 	water_mi = MeshInstance3D.new()
-	water_mi.mesh = pm
-	water_mi.position = ctr
+	if look.low:
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(field.x + 2.0 * m, field.y + 2.0 * m)
+		water_mi.mesh = pm
+		water_mi.position = ctr
+	else:
+		water_mi.mesh = Swell.grid_mesh(look, x0, z0, x1, z1)
+	Swell.apply(look.water3d_mat, not look.low)
 	water_mi.material_override = look.water3d_mat
 	water_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(water_mi)
-	# The land, D1: a flat quad a hair over the water with the 2D shader's body (alpha where there is land).
-	land_mi = MeshInstance3D.new()
-	land_mi.mesh = pm
-	land_mi.position = ctr + Vector3(0, 0.06, 0)
-	land_mi.material_override = look.land3d_mat
-	land_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(land_mi)
+	# The land, D2: a relief mesh from the baked signed distance with the 2D shader's body, the trees as cards, the rocks, the ruin
+	# and the harbour forts as the kit's meshes (game/sea_coast3d.gd); no mesh where the field has no land.
+	coast = SeaCoast.new()
+	land_mi = coast.build(self, look, field, m, look.land3d_mat, Table3D.lamp_basis().z)
 
 
 ## Stand the lamp in the room at yaw y (the opening yaw; as View3D.set_lamp).
 func set_lamp(y: float) -> void:
 	lamp_yaw = y
 	lamp.transform = Transform3D(Basis(Vector3.UP, y) * Table3D.lamp_basis(), Vector3.ZERO)
+	if coast != null and coast.kit_mat != null:
+		coast.kit_mat.set_shader_parameter("key_dir", lamp.transform.basis.z)
 
 
 # --------------------------------------------------------------------------------------------- the camera
@@ -368,7 +400,7 @@ func ship_at(screen: Vector2) -> int:
 		if st == SeaSim.S_SUNK or st == SeaSim.S_FLED:
 			continue
 		var d := screen.distance_to(project(host._pos(s), 3.0))
-		var r := maxf(float(ST.stat(sim.s_type[s], "len")) * 0.6 * host.VIS * ppm, 22.0)
+		var r := maxf(float(ST.stat(sim.s_type[s], "len")) * 0.6 * VIS3 * ppm, 22.0)
 		if d < r and d < bd:
 			bd = d
 			best = s
@@ -392,17 +424,28 @@ func _build_ships() -> void:
 	for n in ships:
 		if n != null:
 			(n["root"] as Node3D).queue_free()
+			if n["ring"] != null:
+				(n["ring"] as Node3D).queue_free()
 	ships = []
 	for s in sim.n_units:
 		var ty: int = sim.s_type[s]
 		var d: Dictionary = (host.scenario.get("units", []) as Array)[s]
 		var gold := int(d.get("g", 0)) > 0
+		var dm0 := SeaShip.dims(ty, VIS3)
 		var mat := ShaderMaterial.new()
 		mat.shader = SHIP_SHADER
 		var root := Node3D.new()
 		var hull := MeshInstance3D.new()
-		hull.mesh = SeaShip.hull(ty, host.VIS, host._ship_col(s), gold)
-		hull.material_override = mat
+		var mk := SeaShip.model_key(ty)
+		var hmat := mat
+		if SeaShip.has_model(mk):
+			# The row's model (tools/battlekit/export_ships.py): hull, deck, castles, gunports, ram; the rig stays dynamic.
+			hull.mesh = SeaShip.model(mk)
+			hmat = SeaShip.model_material(host._ship_col(s), gold)
+			hull.scale = Vector3.ONE * (VIS3 / SeaShip.MODEL_VIS)
+		else:
+			hull.mesh = SeaShip.hull(ty, VIS3, host._ship_col(s), gold)
+		hull.material_override = hmat
 		hull.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		root.add_child(hull)
 		var rig := MeshInstance3D.new()
@@ -415,8 +458,33 @@ func _build_ships() -> void:
 		fl.material_override = mat
 		fl.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		root.add_child(fl)
+		var oars: MultiMeshInstance3D = null
+		var corvus: MeshInstance3D = null
+		if ST.is_galley(ty) and Oars.pairs(ty) > 0:
+			var omm := MultiMesh.new()
+			omm.transform_format = MultiMesh.TRANSFORM_3D
+			omm.mesh = Oars.oar_mesh()
+			omm.instance_count = Oars.pairs(ty) * 2
+			omm.custom_aabb = AABB(Vector3(-60, -10, -40), Vector3(120, 30, 80))
+			oars = MultiMeshInstance3D.new()
+			oars.multimesh = omm
+			oars.material_override = mat
+			oars.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(oars)
+		if ST.stat(ty, "corvus") != 0:
+			corvus = MeshInstance3D.new()
+			corvus.material_override = mat
+			corvus.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			root.add_child(corvus)
 		add_child(root)
-		ships.append({"root": root, "hull": hull, "rig": rig, "flags": fl, "mat": mat, "sig": -1, "t": -1.0, "heel": 0.0})
+		var ring: MeshInstance3D = null
+		if bob_on:
+			ring = MeshInstance3D.new()
+			ring.mesh = SeaWake.ring_mesh(ty, VIS3, 2.2 + float(dm0["bm"]) * 0.12)
+			ring.material_override = foam_mat
+			ring.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(ring)
+		ships.append({"root": root, "hull": hull, "rig": rig, "flags": fl, "mat": mat, "hmat": hmat, "oars": oars, "corvus": corvus, "cv": 0.0, "cv_b": -9.0, "cv_yaw": 0.0, "ram_t": -9.0, "ring": ring, "wake": PackedVector2Array(), "wake_t": -1.0, "sig": -1, "t": -1.0, "heel": 0.0})
 
 
 ## The sim was replaced (a co-op session started or restored a snapshot): the sails are rebuilt from the new state.
@@ -425,6 +493,7 @@ func rebind() -> void:
 		n["sig"] = -1
 		n["t"] = -1.0
 		n["heel"] = 0.0
+		n["wake"] = PackedVector2Array()
 	follow = -1
 
 
@@ -442,12 +511,14 @@ func _update_ship(s: int, dt: float) -> void:
 	var sink := 0.0
 	if st == SeaSim.S_FLED or (st == SeaSim.S_SUNK and (sim.s_blown[s] != 0 or age_end > 6.0)):
 		root.visible = false
+		if n["ring"] != null:
+			(n["ring"] as Node3D).visible = false
 		return
 	if st == SeaSim.S_SUNK:
 		sink = clampf(age_end / 6.0, 0.0, 1.0)
 	root.visible = true
 	var ty: int = sim.s_type[s]
-	var dm := SeaShip.dims(ty, host.VIS)
+	var dm := SeaShip.dims(ty, VIS3)
 	var p: Vector2 = host._draw_pos(s)
 	var h: float = host._head(s) + sink * 0.5
 	var wtl := _wind_local(sim, h)
@@ -460,8 +531,32 @@ func _update_ship(s: int, dt: float) -> void:
 		heel_t = 0.11 * minf(drv, 1.0) * clampf(absf(wtl.y) * 1.4, 0.0, 1.0) * signf(wtl.y)
 	n["heel"] = lerpf(float(n["heel"]), heel_t, minf(1.0, dt * 3.0))
 	var roll: float = float(n["heel"]) + sink * 0.55
-	root.transform = Transform3D(Basis(Vector3.UP, -h) * Basis(Vector3.RIGHT, roll) * Basis(Vector3(0, 0, 1), sink * 0.3),
-		Vector3(p.x, -sink * (float(dm["fb"]) + 2.5), p.y))
+	var wv := Vector3.ZERO
+	if bob_on and st != SeaSim.S_SUNK:
+		wv = Swell.ride(p, host._head(s), look._clock, look._wind_dir(), look._wstr(sim), look.sdf_at(p))
+	var pitch := wv.y
+	roll += wv.z
+	root.transform = Transform3D(Basis(Vector3.UP, -h) * Basis(Vector3.RIGHT, roll) * Basis(Vector3(0, 0, 1), sink * 0.3 + pitch),
+		Vector3(p.x, wv.x - sink * (float(dm["fb"]) + 2.5), p.y))
+	if n["oars"] != null:
+		Oars.sweep((n["oars"] as MultiMeshInstance3D).multimesh, ty, VIS3, Oars.rate(sim, s), _clock)
+	if n["corvus"] != null:
+		var o: int = sim.s_grap[s]
+		var dropped: bool = o >= 0 and sim.s_boarder[s] != 0 and sim.tick - sim.s_cv_t[s] >= SeaSim.CORVUS_COOL
+		n["cv"] = move_toward(float(n["cv"]), 1.0 if dropped else 0.0, dt * 2.5)
+		if dropped:
+			var dd: Vector2 = host._pos(o) - host._pos(s)
+			n["cv_yaw"] = wrapf(atan2(dd.y, dd.x) - host._head(s), -PI, PI)
+		if absf(float(n["cv"]) - float(n["cv_b"])) > 0.03 or (dropped and absf(wrapf(float(n["cv_yaw"]) - float(n["cv_yb"] if n.has("cv_yb") else 9.0), -PI, PI)) > 0.05):
+			n["cv_b"] = n["cv"]
+			n["cv_yb"] = n["cv_yaw"]
+			(n["corvus"] as MeshInstance3D).mesh = Oars.corvus_mesh(ty, VIS3, float(n["cv"]), float(n["cv_yaw"]))
+	if n["ring"] != null:
+		var rg: MeshInstance3D = n["ring"]
+		rg.visible = sink < 0.2 and st != SeaSim.S_SUNK
+		var pulse := 1.0 + 0.9 * clampf(1.0 - (_clock - float(n["ram_t"])) / 1.2, 0.0, 1.0)   # a ram blow's bow wave: the ring swells and settles
+		rg.transform = Transform3D(Basis(Vector3.UP, -h) * Basis(Vector3.RIGHT, wv.z) * Basis(Vector3(0, 0, 1), wv.y) * Basis.from_scale(Vector3(pulse, 1.0, pulse)),
+			Vector3(p.x, SeaWake.RING_Y + wv.x, p.y))
 	var fire := ST.is_fire(ty)
 	var tint := 1.0
 	if st == SeaSim.S_STRUCK or st == SeaSim.S_TAKEN:
@@ -469,6 +564,8 @@ func _update_ship(s: int, dt: float) -> void:
 	if fire and sim.s_lit[s] >= 0:
 		tint = 0.55
 	(n["mat"] as ShaderMaterial).set_shader_parameter("tint", Vector3(tint, tint, tint))
+	if n["hmat"] != n["mat"]:
+		(n["hmat"] as ShaderMaterial).set_shader_parameter("tint", Vector3(tint, tint, tint))
 	# The rig, when the ship's state changed enough (and not oftener than RIG_EVERY).
 	var rigf := float(sim.s_rig[s]) / maxi(sim.s_rig0[s], 1)
 	var furled: bool = sim.s_sail[s] == 0 or st != SeaSim.S_SAIL
@@ -482,7 +579,7 @@ func _update_ship(s: int, dt: float) -> void:
 		var offw := absi(FM.angle_diff(hh, sim.w_from))
 		var swing := clampf((512 - offw) * 0.45, 20.0, 230.0) * TAU / 1024.0
 		var lee := 1.0 if FM.angle_diff(hh, sim.w_from) < 0 else -1.0
-		SeaShip.rig(b, ty, host.VIS, rigf, furled, float(rel), drv, wtl, s, lee, swing)
+		SeaShip.rig(b, ty, VIS3, rigf, furled, float(rel), drv, wtl, s, lee, swing)
 		b.mesh((n["rig"] as MeshInstance3D).mesh as ArrayMesh)
 		rig_builds += 1
 	# The flags, every frame: her colour, white struck, the captor's when taken.
@@ -493,8 +590,125 @@ func _update_ship(s: int, dt: float) -> void:
 	elif st == SeaSim.S_TAKEN and sim.s_by[s] >= 0:
 		ens = host._side_col(sim.s_by[s])
 	var fb := SeaShip.Buf.new()
-	SeaShip.flags(fb, ty, host.VIS, wtl, ens, col, _clock, s, st == SeaSim.S_SAIL and sink == 0.0)
+	SeaShip.flags(fb, ty, VIS3, wtl, ens, col, _clock, s, st == SeaSim.S_SAIL and sink == 0.0)
 	fb.mesh((n["flags"] as MeshInstance3D).mesh as ArrayMesh)
+
+
+## The wake strips of every ship still afloat (the host's wake points, the ship's place appended).
+func _update_wakes() -> void:
+	if not bob_on:
+		return
+	if _clock - _wakes_t < WAKES_EVERY and wake_quads > 0:
+		return   # (the ribbons are rebuilt at 20 Hz: the ships move a metre or two between)
+	_wakes_t = _clock
+	var sim = host.sim
+	var list: Array = []
+	for s in mini(sim.n_units, ships.size()):
+		var st: int = sim.u_state[s]
+		if st == SeaSim.S_SUNK or st == SeaSim.S_FLED:
+			continue
+		var n: Dictionary = ships[s]
+		var wk: PackedVector2Array = n["wake"]
+		var now: Vector2 = host._draw_pos(s)
+		if st == SeaSim.S_SAIL and (wk.is_empty() or (_clock - float(n["wake_t"]) >= WAKE_EVERY and now.distance_to(wk[wk.size() - 1]) > 0.5)):
+			wk.append(now)
+			n["wake_t"] = _clock
+			if wk.size() > WAKE_KEEP:
+				wk.remove_at(0)
+			n["wake"] = wk
+		elif st != SeaSim.S_SAIL and not wk.is_empty() and _clock - float(n["wake_t"]) >= WAKE_EVERY:
+			wk.remove_at(0)   # (a ship hove to or struck lets her wake die away)
+			n["wake_t"] = _clock
+			n["wake"] = wk
+		if wk.size() < 1:
+			continue
+		var pts := wk.duplicate()
+		pts.append(now)
+		var ty: int = sim.s_type[s]
+		list.append({"pts": pts, "beam": float(ST.stat(ty, "beam")) * VIS3 * 0.6,
+			"speed": clampf(float(sim.s_spd[s]) / maxf(float(ST.stat(ty, "vmax")) * 10.24, 1.0), 0.0, 1.0), "heading": host._head(s)})
+	var wd: Vector2 = look._wind_dir()
+	var ws: float = look._wstr(sim)
+	var lift := func(q: Vector2) -> float:
+		return Swell.sample(q, look._clock, wd, ws, smoothstep(8.0, 120.0, look.sdf_at(q))).x
+	wake_quads = SeaWake.build_wakes(_wakes_mesh, list, lift)
+
+
+## Quality Auto's mid-battle downgrade (game/sea_battle.gd measures the first 3 s): the swell, the bob, the foam rings and the wakes go,
+## the water becomes the flat quad with the 2D Low's still wash. (A battle that opened on Low never built them.)
+func apply_quality() -> void:
+	if not bob_on or not Quality.is_low():
+		return
+	bob_on = false
+	var m := MARGIN
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(field.x + 2.0 * m, field.y + 2.0 * m)
+	water_mi.mesh = pm
+	water_mi.position = Vector3(field.x * 0.5, 0.0, field.y * 0.5)
+	look.water3d_mat.set_shader_parameter("hi", 0.0)
+	Swell.apply(look.water3d_mat, false)
+	if wakes_mi != null:
+		wakes_mi.visible = false
+	for n in ships:
+		if n["ring"] != null:
+			(n["ring"] as Node3D).visible = false
+		(n["root"] as Node3D).position.y = 0.0
+
+
+## A ram blow (SeaSim.EV_RAM, a the rammer, c the struck): a crunch of splinters at the rammer's bow and the struck hull's ring swelling.
+func on_ram(a: int, c: int) -> void:
+	if a < 0 or a >= ships.size():
+		return
+	var sim = host.sim
+	var ty: int = sim.s_type[a]
+	var h: float = host._head(a)
+	var bow: Vector2 = host._pos(a) + Vector2(cos(h), sin(h)) * float(SeaShip.dims(ty, VIS3)["ln"]) * 0.5
+	for k in 20:
+		var ang := _rng.randf() * TAU
+		var sp := 3.0 + _rng.randf() * 7.0
+		_splinters.append({"p": Vector3(bow.x, 1.0 + _rng.randf() * 1.5, bow.y), "v": Vector3(cos(ang) * sp, 5.0 + _rng.randf() * 9.0, sin(ang) * sp), "age": 0.0})
+	if _splinters.size() > SPLINTER_CAP:
+		_splinters = _splinters.slice(_splinters.size() - SPLINTER_CAP)
+	for s in [a, c]:
+		if s >= 0 and s < ships.size():
+			ships[s]["ram_t"] = _clock
+
+
+func _update_splinters(dt: float) -> void:
+	if splinters_mi == null:
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		var b := SeaShip.Buf.new()
+		b.box(Vector3.ZERO, 1.1, 0.25, 0.25, Color(0.66, 0.48, 0.26))
+		mm.mesh = b.mesh()
+		mm.instance_count = SPLINTER_CAP
+		mm.visible_instance_count = 0
+		mm.custom_aabb = AABB(Vector3(-100, -5, -100), Vector3(field.x + 200, 80, field.y + 200))
+		splinters_mi = MultiMeshInstance3D.new()
+		splinters_mi.multimesh = mm
+		var mat := ShaderMaterial.new()
+		mat.shader = SHIP_SHADER
+		splinters_mi.material_override = mat
+		splinters_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(splinters_mi)
+	var live: Array = []
+	for sp in _splinters:
+		sp["age"] += dt
+		var v: Vector3 = sp["v"]
+		v.y -= 22.0 * dt
+		sp["v"] = v
+		var p: Vector3 = sp["p"] + v * dt
+		if p.y < 0.0 or float(sp["age"]) > 1.8:
+			continue
+		sp["p"] = p
+		live.append(sp)
+	_splinters = live
+	var mm2: MultiMesh = splinters_mi.multimesh
+	for i in live.size():
+		var sp2: Dictionary = live[i]
+		var spin := float(sp2["age"]) * 9.0 + i
+		mm2.set_instance_transform(i, Transform3D(Basis(Vector3(1, 0.3, 0.2).normalized(), spin), sp2["p"]))
+	mm2.visible_instance_count = live.size()
 
 
 func update(delta: float) -> void:
@@ -510,6 +724,8 @@ func update(delta: float) -> void:
 	sync_camera()
 	for s in mini(sim.n_units, ships.size()):
 		_update_ship(s, delta)
+	_update_wakes()
+	_update_splinters(delta)
 	_draw_orders()
 
 
@@ -584,7 +800,7 @@ func _draw_orders() -> void:
 	L.mpp = metres_per_px()
 	L.y = ORDER_Y
 	var player: int = host.player_side
-	var vis: float = host.VIS
+	var vis: float = VIS3
 	for s in sim.n_units:
 		if sim.u_side[s] != player or sim.u_state[s] != SeaSim.S_SAIL:
 			continue

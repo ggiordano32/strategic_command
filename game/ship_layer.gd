@@ -14,6 +14,7 @@ const SiegeGearOb := preload("res://game/siege_gear_ob.gd")
 const BoardView := preload("res://game/board_view.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const CData := preload("res://campaign/cdata.gd")
+const SeaShip := preload("res://game/sea_ship3d.gd")
 
 const COL_SAIL := Color(0.96, 0.94, 0.86)     # (game/sea_battle.gd's colours)
 const COL_HULL := Color(0.42, 0.27, 0.16)
@@ -285,12 +286,20 @@ func _ship3d(s: int) -> void:
 	var pts: Array = []
 	for v in hull_shape(ln, bm, canoe):
 		pts.append(fwd * v.x + sd * v.y)
-	ob.prism(pts, -0.3, fb, COL_HULL.darkened(0.45 if st > 0 else 0.0), COL_DECK.darkened(0.3 if st > 0 else 0.0))
-	for i in pts.size():
-		var p: Vector2 = pts[i] * 0.97
-		var q: Vector2 = pts[(i + 1) % pts.size()] * 0.97
-		ob.bar(p, fb + 0.15, q, fb + 0.15, colors[s], 1.0)
-	if canoe and key != "piragua":
+	var modelled := SeaShip.has_model(key)
+	if modelled:
+		# The one ship look (docs/design/art_pipeline.md "The ship models and the one ship look"): the sea battle's model for this row
+		# (assets/battlekit_ob/ships3d.res) scaled to this ship's length and beam, one colour a triangle (the swatch under it times its
+		# occlusion; the faction's stripe in the owner's colour), shaded by the key light. The masts and furled sails are drawn below as ever.
+		_model3(key, ln, bm, fwd, sd, colors[s])
+		fb = SeaShip.model_fb(key) * (ln / SeaShip.model_len(key))
+	else:
+		ob.prism(pts, -0.3, fb, COL_HULL.darkened(0.45 if st > 0 else 0.0), COL_DECK.darkened(0.3 if st > 0 else 0.0))
+		for i in pts.size():
+			var p: Vector2 = pts[i] * 0.97
+			var q: Vector2 = pts[(i + 1) % pts.size()] * 0.97
+			ob.bar(p, fb + 0.15, q, fb + 0.15, colors[s], 1.0)
+	if canoe and key != "piragua" and not modelled:
 		for i in 5:
 			var f2 := (float(i) + 0.5) / 5.0 - 0.5
 			for sg2 in [-1.0, 1.0]:
@@ -314,6 +323,36 @@ func _ship3d(s: int) -> void:
 			ob.bar(mp - yd * half, yh, mp + yd * half, yh, COL_MAST, 1.6)
 			ob.bar(mp - yd * half * 0.9, yh - 0.45, mp + yd * half * 0.9, yh - 0.45, COL_SAIL, 5.0)
 	ob.end_at()
+
+
+## One modelled ship's triangles into the 3D mesh: the model's frame (x forward, y up, z starboard) scaled to this ship's length (x, y)
+## and beam (z), a colour a triangle.
+func _model3(key: String, ln: float, bm: float, fwd: Vector2, sd: Vector2, rail: Color) -> void:
+	var ob := _ob
+	var fl := SeaShip.model_flat(key)
+	var pv: PackedVector3Array = fl["p"]
+	var cv: PackedColorArray = fl["c"]
+	var mv: PackedFloat32Array = fl["m"]
+	var sx := ln / SeaShip.model_len(key)
+	var sz := bm / SeaShip.model_beam(key)
+	var fbm := SeaShip.model_fb(key)
+	for t in cv.size():
+		var w: Array = []
+		for k in 3:
+			var q := pv[t * 3 + k]
+			w.append(ob._p3(fwd * (q.x * sx) + sd * (q.z * sz), q.y * sx))
+		var c: Color = cv[t]
+		var m := mv[t]
+		if m > 0.55 and m < 0.85:
+			var l := c.r * 0.3 + c.g * 0.59 + c.b * 0.11
+			c = Color(rail.r * l / 0.6, rail.g * l / 0.6, rail.b * l / 0.6)
+		# (the key's shade by the face's outward lean: sides to the light read lighter, to the shadow darker)
+		var n: Vector3 = ((w[1] as Vector3) - (w[0] as Vector3)).cross((w[2] as Vector3) - (w[0] as Vector3)).normalized()
+		var ctr: Vector3 = ((w[0] as Vector3) + (w[1] as Vector3) + (w[2] as Vector3)) / 3.0 - ob._p3(Vector2.ZERO, fbm * 0.4 * sx)
+		if n.dot(Vector3(ctr.x - 0.0, 0.0, ctr.z)) < 0.0 and absf(n.y) < 0.8:
+			n = -n
+		var k := 0.62 + 0.38 * clampf(Vector2(n.x, n.z).dot(SiegeGearOb.LIGHT.normalized()) * 0.5 + 0.5, 0.0, 1.0)
+		ob._tri3(w[0], w[1], w[2], Color(c.r * k, c.g * k, c.b * k))
 
 
 func ci_poly(p: Array, col: Color) -> void:

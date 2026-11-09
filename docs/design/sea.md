@@ -1075,3 +1075,80 @@ sea view, shadows on High, the webcheck, the device pass (the phone and the Tab 
 built (`live_e2e` with windowed clients); D5 delete the 2D layers. Known in D1: the gun smoke, flashes, splashes and hits are not drawn
 (the audio and the messages still play); the deck inset stays 2D HUD; no wakes; the order lines have no dashes' phase animation; the
 follow camera eases at 6 / s with no zoom change; the opening fit makes a 1,400 m duel small (zoom in to read it: the plan's scale risk).
+
+
+### The sea battle in 3D, stage D2 (as built, 2026-11-09)
+
+Stage D2 is the look, view only, behind the same flag (`--sea-view=3d` / `?sea-view=3d`; nothing under `sim/`, `campaign/` or
+`game/net/` changed, no hash moves). The owner's answers of 2026-11-09 fixed two values: **toy scale, 2 x** (`SeaView3D.VIS3 := 2.0`;
+the 2D screen keeps its `VIS` 1.5) with oversize flags and masts a miniature's height, and **a live 3D swell** with a resin finish
+("moving but still has a resin feel, not so much a realistic one"). Parts 2 and 3 were rebuilt after that message (part 2's gentle bob
+became the swell's CPU twin; part 3's models were exported at 1.5 x and re-exported at 2 x).
+
+1. **The coast (S3).** `game/sea_coast3d.gd` builds the land from `SeaLook`'s baked fields (the signed distance, the steepness, the woods'
+   noise): a relief mesh on a 10 m grid (20 m on Low) over the field and the board's 300 m margin, cells that touch no land left out,
+   the beach rising from the drawn shore (4 m), a cliff where steep (14 m), hills inland (9 m), a skirt with strata down to the slab's
+   foot where land meets the cut edge. `game/sea_coast3d.gdshader` paints the 2D screen's own land fragment on it, lit by the painted key
+   only and alpha-cut at the drawn shore (so `shore_ok` holds: the water shows wherever the sim has no land, the land never covers sim
+   sea; the test checks the relief rises only inland of the drawn shore and no triangle stands over open sea). Trees as cards
+   (`sea_trees3d.gdshader`, 600 / 200 on Low, the oblique sheet's palms in the tropics, pines, broadleaf and scrub, 1.8 x oversize like
+   the flags); the rocks, Rome's ruined tower and the harbour forts (Havana's Morro and Fuerza, 2 of them in the Havana scenario) as
+   `kit3d.res` meshes in one MultiMesh a piece (`kit_mesh3d.gdshader`). Vertex budget 40,000 (the test); measured: the coast
+   scenario 10,488 vertices / 18,116 triangles + 123 rocks (32,160 triangles), Havana 9,883 / 17,038 + 2 forts (758). Trees and forts
+   cast no shadows (shadows are D4's, High only).
+2. **The swell, the ride, the foam and the wakes (S2).** `game/sea_swell3d.gd` is the one place for the balance between resin and motion:
+   `TRAINS` (two long trains before the wind: 64 m at 5.8 m/s, 0.85 m high, and 36 m at 4.4 m/s, 0.45 m), `CREST_LEAN`, `GLOSS`,
+   `SHININESS`, `SHADE`, `CELL` (the grid's 12 m cell), `TILT_MAX`, and the dev switch `--sea-swell=<0..2>` (web `?sea-swell=`), a
+   scale on every height (0 a still resin board, 1 default, 2 lively). The same formula runs in `sea_water3d.gdshader`'s vertex stage
+   (a displaced grid of 46,000 vertices on High; no vertex texture reads: the coast damping rides in the grid's COLOR.r, the board edge
+   taper in COLOR.g) and on the CPU (`Swell.ride`: a ship's lift, pitch and roll; the foam ring's and the wakes' height), so hull and
+   water agree. The fragment is the 2D screen's painted water (depth colours, painted crests, the shelf's turquoise) with the swell's
+   slope lighting it and one glossy highlight from the lamp (no sky reflection, no Fresnel, no simulated foam). Foam is geometry (no
+   depth texture in the compatibility renderer): a ring per hull at the waterline (`SeaWake.ring_mesh`) and fading ribbon strips from
+   28 wake points a ship (every 0.3 s, a wake about 8 s long) plus the bow wave's two moustaches, one ImmediateMesh for all ships,
+   rebuilt at 20 Hz, a bubbly tileable strip texture painted in code. Low: the flat quad, no swell, no bob, no rings, no wakes.
+   Quality Auto's first-3-s measurement now runs in the sea view (`SeaBattle._quality_measure`, after a 0.5 s warm-up; under 40 fps
+   it sets the session Low and `SeaView3D.apply_quality` drops the swell, bob, rings and wakes live).
+3. **Ship models (S4).** `tools/battlekit/export_ships.py` (Blender, `-b -P`) builds ten models, the rows whose plans gen_spec.py's
+   `ship_parts` / `galley_parts` draw for the overworld (sloop, brigantine, frigate, galleon, ship of the line, war canoe, lembos,
+   trireme, quinquereme, Punic quinquereme) as lofted hulls with real sections and sheer (26 stations), deck, bulwark, rail strake in the
+   faction's mask class, gunports with muzzles (one, two or three rows), stern castles with windows and gilt, the beakhead and bowsprit;
+   the galleys' outrigger rail with oar ports, stern post, bronze ram (and eyes) and cabin; the canoe's dugout with thwarts and a high
+   prow. 870-2,470 triangles each (14,438 in all). The models are at the sea screen's size at VIS 2 (dims as `SeaShip.dims`); masts,
+   yards and sails are NOT in them (the rig is dynamic), nor are the galleys' oars and corvus. The albedo is a 256 px atlas of
+   painted swatches (planks, deck, pale wood, gold, bronze, dark, window) painted in the script with numpy, with a baked ambient
+   occlusion in UV2.y (mathutils BVH rays against the model) and the mask class in UV2.x (1.0 none, 0.7 the faction's colour, 0.4 the
+   castle a treasure galleon gilds). `tools/battlekit/ships3d_res.gd` packs them into `assets/battlekit_ob/ships3d.res` and
+   `ships3d_albedo.png`. Rows without a model (fire ship, piragua, great canoe, corbita, fire canoe) keep `SeaShip.hull`'s procedural
+   solid. The land battle's shore ships (`ShipLayer._ship3d`) use the same models as flat triangles (one colour a triangle from the
+   swatch under it, the faction's stripe, the key's shade), so there is one ship look; their masts stay the ship layer's. Palette and
+   proportions follow the owner's reference photos (OcCre kits in `strategic_command_reference/Ships`, read-only, not copied):
+   the Endeavour (profile, stern, bow) for the frigate class and the line (mahogany below a black wale, yellow-ochre topsides, a blue
+   top strake as the faction stripe, brass fittings), the Santa Maria (profile, side) for the galleon / nao (the high stern castle,
+   the dark wales and ribs, the bulging hull), the schooners (Polaris, Albatros) for the sloop's low hull, the Black Swan and
+   the Buccaneer for the brigantine and the pirate hulls (the stern gallery, the gun deck). The look pass that makes them read as
+   hand-painted resin miniatures is a separate pass; the material setup (swatch albedo + faction mask + AO) is ready for it.
+   Rebuild: `~/.local/bin/blender -b --factory-startup -P tools/battlekit/export_ships.py -- --out DIR`, then
+   `godot --headless --path . --script res://tools/battlekit/ships3d_res.gd -- --frames=DIR`, then `godot --headless --import`.
+4. **Rome's galleys (S6).** `game/sea_oars3d.gd`: the oar banks as one MultiMesh of a shaft and a blade a galley (5, 8 or 9 a side), each
+   sweeping with the 2D screen's rule (rate 5.0 at ramming speed, 2.8 under way above 50 speed, a phase step of 0.55 an oar; the blade
+   bites on the pull and lifts on the recovery), held out level and still when resting or struck; the bronze ram and eyes are in the model;
+   the corvus (post and plank at the bow) stowed upright and swung down onto the grappled ship's rail (the target's bearing in the ship's
+   frame) when `s_grap >= 0`, the ship is the boarder and `tick - s_cv_t >= CORVUS_COOL`, rising again after; a ram blow
+   (`SeaSim.EV_RAM`, forwarded by `SeaBattle._events` to `SeaView3D.on_ram`) throws 20 splinters at the rammer's bow (the view's own RNG, a
+   pool of 60) and swells both hulls' foam rings for 1.2 s.
+5. **The tabletop pass and the budget (S14, S15).** The resin edge over the painted bed is D1's slab; the shelf's turquoise against the
+   deep and the painted crests are the baked fragment; the swell adds the resin's gloss; the brass compass for the wind rose is not
+   built (the rose is the HUD's 2D control). Order ribbons ride 1.9 m over the water (clear of the swell). Cost (1280 x 720, `tests/sea_shot.gd
+   --bench=8`, this machine, a loaded one; frame ms mean / GPU ms): duel High 1.71 / 0.75, Low 1.67 / 0.75, 2D 1.84 / 0.41; line of eight
+   High 2.87 / 0.88, Low 2.40 / 0.78, 2D 4.41 / 0.49; D1 (its summary, an unloaded run) duel 1.34 / 0.62, line 2.05 / 0.65, line Low 2.34.
+   The first line-battle build cost 5.9 ms CPU (per-vertex swell samples in the wake builder, 20 Hz and a sample a point cut it to
+   2.87). Triangles: the water grid about 92,000 on High (2 on Low), the coast 17-18 k, ships 0.9-2.5 k each plus sails; the grid is the
+   cost to watch on a phone (a 16 m cell would halve it; CELL is one constant). Shots in `~/.cache/sc_sea2/shots/set_*` (duel, line,
+   Havana, galleys, fire ship, coast at both sizes).
+
+Owed: D3 (smoke, flashes, splashes, hits, fires, sinking effects, weather at sea), D4 (the default, shadows on High, the device pass on the
+phone and the Tab S7: the swell grid, the 35 MB download), D5 (delete the 2D drawing); the hand-painted resin pass on the models; the
+fire ship, piragua, great canoe, corbita and fire canoe models; the brass compass; a shot with the Havana forts at the harbour's mouth; the
+swell's painted crests do not follow the displaced crests (the fragment's own trains are separate; a live-eye check at the owner's
+desk with `--sea-swell=`).

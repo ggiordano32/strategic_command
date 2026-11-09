@@ -17,6 +17,119 @@ const COL_PORT := Color(0.08, 0.06, 0.05)
 const BELOW := -1.2             # the hull's keel below the water (the water plane cuts it)
 
 
+const MODELS_PATH := "res://assets/battlekit_ob/ships3d.res"
+const MODELS_TEX := "res://assets/battlekit_ob/ships3d_albedo.png"
+const MODEL_VIS := 2.0            # the VIS the models were built at (tools/battlekit/export_ships.py)
+
+static var _m_done := false
+static var _m_src: ArrayMesh
+static var _m_tex: Texture2D
+static var _m_info := {}          # row key -> [surface, triangles, length m, beam m, freeboard m]
+static var _m_cache := {}         # row key -> its own one-surface ArrayMesh
+static var _m_flat := {}          # row key -> {"p": PackedVector3Array per corner, "c": base colour per triangle, "m": mask per triangle, "n": ...}
+
+
+## Loads the ship models once; false when assets/battlekit_ob/ships3d.res is missing (or `--no-ship-models`, a testing aid): every
+## row then keeps the procedural solid.
+static func models_ok() -> bool:
+	if not _m_done:
+		_m_done = true
+		if "--no-ship-models" in OS.get_cmdline_user_args():
+			return false
+		if ResourceLoader.exists(MODELS_PATH) and ResourceLoader.exists(MODELS_TEX):
+			_m_src = load(MODELS_PATH) as ArrayMesh
+			_m_tex = load(MODELS_TEX) as Texture2D
+			if _m_src != null and _m_tex != null and _m_src.has_meta("models"):
+				_m_info = _m_src.get_meta("models")
+	return not _m_info.is_empty()
+
+
+static func model_key(ty: int) -> String:
+	return str(ST.ROWS[ty]["key"])
+
+
+static func has_model(key: String) -> bool:
+	return models_ok() and _m_info.has(key)
+
+
+static func model_tris(key: String) -> int:
+	return int((_m_info[key] as Array)[1]) if has_model(key) else 0
+
+
+## The model's own one-surface mesh (cut out of the source once), or null.
+static func model(key: String) -> ArrayMesh:
+	if not has_model(key):
+		return null
+	if _m_cache.has(key):
+		return _m_cache[key]
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, _m_src.surface_get_arrays(int((_m_info[key] as Array)[0])))
+	am.surface_set_name(0, key)
+	_m_cache[key] = am
+	return am
+
+
+## The model's freeboard (the deck's height amidships, metres, at MODEL_VIS).
+static func model_len(key: String) -> float:
+	return float((_m_info[key] as Array)[2]) if has_model(key) else 1.0
+
+
+static func model_beam(key: String) -> float:
+	return float((_m_info[key] as Array)[3]) if has_model(key) else 1.0
+
+
+static func model_fb(key: String) -> float:
+	return float((_m_info[key] as Array)[4]) if has_model(key) else 0.0
+
+
+## The ship model's material: the swatch atlas and the faction's colour (`treasure` gilds a galleon's castle).
+static func model_material(rail: Color, treasure: bool) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = preload("res://game/sea_ship3d_model.gdshader")
+	m.set_shader_parameter("albedo_tex", _m_tex)
+	m.set_shader_parameter("faction", Vector3(rail.r, rail.g, rail.b))
+	m.set_shader_parameter("treasure", 1.0 if treasure else 0.0)
+	return m
+
+
+## The model as flat triangles for a one-colour-a-triangle consumer (the land battle's shore ships, game/ship_layer.gd): {"p": corner
+## positions in the model's frame (x forward, y up, z starboard; 3 a triangle), "c": the swatch's colour at the triangle's centre
+## times its occlusion, "m": the mask class}. Cached.
+static func model_flat(key: String) -> Dictionary:
+	if not has_model(key):
+		return {}
+	if _m_flat.has(key):
+		return _m_flat[key]
+	var arr: Array = _m_src.surface_get_arrays(int((_m_info[key] as Array)[0]))
+	var v: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var uv: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV]
+	var uv2: PackedVector2Array = arr[Mesh.ARRAY_TEX_UV2]
+	var ix: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	var img := _m_tex.get_image()
+	if img.is_compressed():
+		img.decompress()
+	var w := img.get_width()
+	var h := img.get_height()
+	var p := PackedVector3Array()
+	var c := PackedColorArray()
+	var mk := PackedFloat32Array()
+	for t in ix.size() / 3:
+		var a := ix[t * 3]
+		var b := ix[t * 3 + 1]
+		var d := ix[t * 3 + 2]
+		p.append(v[a])
+		p.append(v[b])
+		p.append(v[d])
+		var cuv := (uv[a] + uv[b] + uv[d]) / 3.0
+		var col := img.get_pixel(clampi(int(cuv.x * w), 0, w - 1), clampi(int(cuv.y * h), 0, h - 1))
+		var ao := (uv2[a].y + uv2[b].y + uv2[d].y) / 3.0
+		c.append(Color(col.r * ao, col.g * ao, col.b * ao))
+		mk.append((uv2[a].x + uv2[b].x + uv2[d].x) / 3.0)
+	var out := {"p": p, "c": c, "m": mk}
+	_m_flat[key] = out
+	return out
+
+
 ## A mesh builder: flat-normal triangles with a colour each.
 class Buf:
 	extends RefCounted

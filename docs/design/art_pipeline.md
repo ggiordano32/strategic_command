@@ -2302,3 +2302,15 @@ stand their boards in the same room: `Table3D.build_env(host, shadows)` (the env
 passes unchanged); nothing there reads a sim or BoardView. `board_slab3d.gdshader` gained `resin_k` / `resin_col`: 0 (the default) is the
 land board's foam layers, 1 a cast-resin board (the sea's: the layers above the MDF foot read as resin in its depth colour, lighter toward
 the top with a pale meniscus). The sea view's board is the field plus a 300 m margin at y 0 with a 3 m slab and the table 3x the field.
+
+
+### The ship models and the one ship look (as built, 2026-11-09, view only)
+
+`tools/battlekit/export_ships.py` (Blender) and `ships3d_res.gd` make `assets/battlekit_ob/ships3d.res` and `ships3d_albedo.png` (ten ship
+models, 14,438 triangles, a painted swatch atlas, a mask class in UV2.x and a baked occlusion in UV2.y; the kit3d pipeline's shape,
+without the Cycles bake: the swatches are painted with numpy, the occlusion is mathutils BVH rays). The sea battle's 3D view
+(`game/sea_ship3d.gd` `model()`, `sea_ship3d_model.gdshader`) draws the hull from them with the faction's colour through the mask; the
+land battle's shore ships (`game/ship_layer.gd` `_model3`) read the same model as flat triangles, so a ship looks the same in both. The
+sea view's scale is toy (2 x) and its water a live displaced swell with a resin finish (sea.md "stage D2"). Reference: the owner's OcCre kit
+photos (Endeavour for the frigate class, Santa Maria for the galleon, the schooners for the sloop, the Black Swan and Buccaneer for the
+brigantine). Command: see `tools/battlekit/README.md`.

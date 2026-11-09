@@ -52,6 +52,7 @@ extends Node2D
 
 signal exit_requested
 
+const Quality := preload("res://game/quality.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
 const ST := preload("res://sim/sea_types.gd")
 const FM := preload("res://sim/fixed_math.gd")
@@ -305,6 +306,8 @@ func _snap_prev() -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
+	if v3 != null and _q_state < 2:
+		_quality_measure(delta)
 	if coop != null:
 		_coop_step(delta)
 	else:
@@ -372,6 +375,33 @@ func _wind_to() -> Vector2:
 
 # ------------------------------------------------------------------- events ---
 
+## Quality Auto in the 3D view (the land's lives in terrain_layer.gd): after a half second's warm-up the first 3 s of frames are counted;
+## under Quality.AUTO_FPS on average turns Low on for the session (the setting stays Auto) and the view drops its swell, bob and wakes.
+var _q_state := 0
+var _q_t := 0.0
+var _q_frames := 0
+
+
+func _quality_measure(delta: float) -> void:
+	if Quality.load_pref() != "auto" or Quality.session_low or "--no-auto-measure" in OS.get_cmdline_user_args():
+		_q_state = 2
+		return
+	_q_t += delta
+	if _q_t < 0.5:
+		return
+	_q_state = 1
+	_q_frames += 1
+	if _q_t < 0.5 + Quality.MEASURE_S:
+		return
+	_q_state = 2
+	var fps := _q_frames / Quality.MEASURE_S
+	print("sea quality: first %.1f s averaged %.1f fps" % [Quality.MEASURE_S, fps])
+	if fps < Quality.AUTO_FPS:
+		Quality.session_low = true
+		v3.apply_quality()
+		_msg("Graphics set to Low for speed: change in Settings", Color(1, 0.9, 0.5))
+
+
 func _events() -> void:
 	var cap := SeaSim.EV_CAP
 	if sim.ev_n - _ev_seen > cap:
@@ -391,6 +421,9 @@ func _events() -> void:
 					_fx.append(["debris", _pos(a), 0.0, a, j])
 				_msg("%s blows up!" % _name(a), Color(1, 0.6, 0.3))
 				AudioFx.play("burst", 1.0, 0.0, "art")
+			SeaSim.EV_RAM:
+				if v3 != null:
+					v3.on_ram(a, c)
 			SeaSim.EV_GRAPPLE:
 				if sim.ev_d[i] == 1:
 					_msg("%s joins the boarding of %s!" % [_name(a), _name(c)], Color(1, 0.9, 0.5))

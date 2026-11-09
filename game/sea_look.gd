@@ -32,7 +32,7 @@ const GeoFields := preload("res://game/campaign/geo_fields.gd")
 const WATER_SHADER := preload("res://game/sea_water.gdshader")
 const LAND_SHADER := preload("res://game/sea_land.gdshader")
 const WATER3D_SHADER := preload("res://game/sea_water3d.gdshader")
-const LAND3D_SHADER := preload("res://game/sea_land3d.gdshader")
+const LAND3D_SHADER := preload("res://game/sea_coast3d.gdshader")
 
 const T := 10.0                  # metres a texel of the baked fields
 const SDF_LO := -80.0            # R = 0
@@ -548,6 +548,15 @@ func tick(clock: float, sim) -> void:
 		water3d_mat.set_shader_parameter("t", clock)
 		water3d_mat.set_shader_parameter("wdir", Vector2(cos(_wind_vis), sin(_wind_vis)))
 		water3d_mat.set_shader_parameter("wstr", clampf(float(sim.w_str) / 100.0, 0.1, 1.0))
+
+
+## The water's wind direction and strength as the shader has them now (the CPU twin of the waves reads these: the 3D view's bob).
+func _wind_dir() -> Vector2:
+	return Vector2(cos(_wind_vis), sin(_wind_vis))
+
+
+func _wstr(sim) -> float:
+	return clampf(float(sim.w_str) / 100.0, 0.1, 1.0)
 
 
 func wind_to(sim) -> Vector2:

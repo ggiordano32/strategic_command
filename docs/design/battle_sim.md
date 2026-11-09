@@ -4579,6 +4579,7 @@ it is now a rule of the battle sim and the sea sim, deterministic and in the has
   snow and the downpour 150 m: the look's fog (190 m) and blizzard (260 m) visibility are of that order, and at 100 m
   the musket (120 m) and bow (120-160 m) lines are shortened too, so fog shortens the fights; artillery (230-520 m) is
   cut hardest. A base of 300 m would leave every foot line untouched in fog (only scatter).
+- **Decision (2026-11-09, the owner):** the 200 m base and the fog cap stay, with the musket v bow flip accepted: "If you want an advantage of range with the archers, you will need scouts in the fog. This makes play the differentiator, not just the unit." A range edge in fog is earned by scouting, not owned by the unit.
 - **The AI.** No new behaviour. Its range reads are the sim's capped tables: `BattleAI` (`_sk_focus`'s range and the
   missile-target score), `SiegeAI` (every battery placement, reach and closing distance) and `ShipAI._focus` now read
   `sim.t_m_range[ty]` instead of `UT.stat(ty, "m_range")` (identical without weather), so it does not stand off out of

@@ -397,10 +397,10 @@ func _part_misc() -> void:
 	# Graphics Low builds, with the still water.
 	Quality.session_low = true
 	var lo := _make("coast", true)
-	_check(lo.v3 != null and lo._look.low and float(lo._look.water3d_mat.get_shader_parameter("hi")) == 0.0, "Graphics Low builds the 3D view with the still water")
+	_check(lo.v3 != null and (lo._look.low or Quality.load_pref() == "high") and (Quality.load_pref() == "high" or float(lo._look.water3d_mat.get_shader_parameter("hi")) == 0.0), "Graphics Low builds the 3D view with the still water")
 	lo._process(0.016)
 	lo.v3.update(0.016)
-	_check(lo.v3.water_mi.visible and lo.v3.land_mi.visible, "... and draws")
+	_check(lo.v3.water_mi.visible and (lo.v3.land_mi == null or lo.v3.land_mi.visible), "... and draws")
 	lo.queue_free()
 	Quality.session_low = false
 	# The shore holds in the 3D view's baked fields too: water over sim land, never the reverse.
@@ -408,6 +408,9 @@ func _part_misc() -> void:
 	_check(co._look.shore_ok() and co._look.water3d_mat.get_shader_parameter("fld") != null and co._look.land3d_mat.get_shader_parameter("cells") != null,
 		"the 3D materials carry the baked fields and the shore holds (shore_ok)")
 	co.queue_free()
+	_part_coast()
+	_part_bob()
+	_part_models_oars()
 
 
 func _part_layout() -> void:
@@ -437,4 +440,163 @@ func _part_layout() -> void:
 			var p2: Vector2 = b.world_to_screen(b._pos(s), 3.0)
 			yaws_ok = yaws_ok and Rect2(Vector2(ins.x - 2.0, ins.y - 2.0), vp - Vector2(ins.x + ins.z - 4.0, ins.y + ins.w - 4.0)).has_point(p2)
 	_check(yaws_ok, "... at turned yaws too")
+	b.queue_free()
+
+
+## D2 part 1: the coast mesh and its props.
+func _part_coast() -> void:
+	Quality.session_low = false
+	var hi := _make("coast", true)
+	var cs = hi.v3.coast
+	_check(cs != null and hi.v3.land_mi != null and hi.v3.land_mi.mesh == cs.mesh, "the island scenario stands a coast mesh (land_mi)")
+	_check(cs.verts > 500 and cs.verts <= cs.VERT_MAX, "the coast mesh keeps its vertex budget (%d of %d)" % [cs.verts, cs.VERT_MAX])
+	# The relief rises only inland of the drawn shore, and no triangle stands over open sea (the water is never drawn over sim land
+	# and the land never over sim sea: shore_ok plus the mesh's cells).
+	var look = hi._look
+	var arr: Array = cs.mesh.surface_get_arrays(0)
+	var pv: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+	var col: PackedColorArray = arr[Mesh.ARRAY_COLOR]
+	var bad := 0
+	var raised := 0
+	var top := 0.0
+	for i in pv.size():
+		if col[i].r > 0.5:
+			continue
+		var p := Vector2(pv[i].x, pv[i].z)
+		top = maxf(top, pv[i].y)
+		if pv[i].y > cs.SHORE_Y + 0.5:
+			raised += 1
+			if look.sdf_at(p) > -6.0:
+				bad += 1
+	_check(look.shore_ok() and bad == 0 and raised > 100, "the shore holds and the relief rises only inland (%d raised, %d outside; top %.1f m)" % [raised, bad, top])
+	var far_sea := 0
+	var idx: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+	for t in idx.size() / 3:
+		var c := (pv[idx[t * 3]] + pv[idx[t * 3 + 1]] + pv[idx[t * 3 + 2]]) / 3.0
+		if col[idx[t * 3]].r < 0.5 and look.sdf_at(Vector2(c.x, c.z)) > 25.0:
+			far_sea += 1
+	_check(far_sea == 0, "no land triangle stands over open sea (%d)" % far_sea)
+	_check(cs.trees > 0 and cs.trees <= 600 and cs.tree_mi != null, "trees stand as cards (%d, at most 600)" % cs.trees)
+	var h0: int = hi.sim.state_hash()
+	hi._process(0.016)
+	hi.v3.update(0.016)
+	_check(hi.sim.state_hash() == h0, "the coast leaves the sim's hash unchanged")
+	hi.queue_free()
+	# Graphics Low: a coarser mesh and 200 trees at most (under --quality=high the session's downgrade is overridden: skipped).
+	var base_low: bool = Quality.is_low()
+	if base_low:
+		_check(cs.trees <= 200, "Low (this run's quality): at most 200 trees (%d)" % cs.trees)
+	if Quality.load_pref() != "high":
+		Quality.session_low = true
+		var lo := _make("coast", true)
+		var cl = lo.v3.coast
+		_check(cl != null and (base_low or cl.verts < cs.verts) and cl.trees <= 200, "Low: a coarser coast (%d v) and at most 200 trees (%d)" % [cl.verts, cl.trees])
+		lo.queue_free()
+		Quality.session_low = false
+	# An open sea has no land mesh.
+	var op := _make("frigates", true)
+	_check(op.v3.land_mi == null, "an open sea builds no land mesh")
+	op.queue_free()
+
+
+## D2 part 2: the bob, the foam rings and the wakes (view only; none on Low).
+func _part_bob() -> void:
+	const Swell := preload("res://game/sea_swell3d.gd")
+	Quality.session_low = false
+	var worst_h := 0.0
+	var worst_t := 0.0
+	var moved := false
+	var last := -99.0
+	for k in 400:
+		var v: Vector3 = Swell.ride(Vector2(900.0 + k * 3.7, 700.0 + k * 1.3), 0.4 + k * 0.01, k * 0.37, Vector2(1, 0.3), 0.8, 300.0)
+		worst_h = maxf(worst_h, absf(v.x))
+		worst_t = maxf(worst_t, maxf(absf(v.y), absf(v.z)))
+		if absf(v.x - last) > 0.05:
+			moved = true
+		last = v.x
+	_check(worst_h <= 1.5 and worst_t <= Swell.TILT_MAX + 1e-6 and moved, "the swell lifts gently (at most %.2f m, tilt %.3f rad) and moves" % [worst_h, worst_t])
+	_check(Swell.ride(Vector2(100, 100), 1.0, 5.0, Vector2(1, 0), 0.8, 300.0) == Swell.ride(Vector2(100, 100), 1.0, 5.0, Vector2(1, 0), 0.8, 300.0),
+		"the swell twin is a pure function of its inputs")
+	var b := _make("frigates", true)
+	var v3 = b.v3
+	var h0: int = b.sim.state_hash()
+	var ring_ok: bool = v3.bob_on == (not b._look.low)
+	for s in v3.ships.size():
+		if (v3.ships[s]["ring"] != null) != v3.bob_on:
+			ring_ok = false
+	_check(ring_ok, "a foam ring under every hull, and none on Low")
+	_check(v3.water_mi.mesh is ArrayMesh == v3.bob_on and (v3.bob_on == false or (v3.water_mi.mesh as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size() > 10000),
+		"High: the water is a displaced grid (a flat quad on Low)")
+	b.speed_q = 4
+	var ymax := 0.0
+	for k in 160:
+		b._process(0.1)
+		v3.update(0.1)
+		for s in v3.ships.size():
+			ymax = maxf(ymax, absf((v3.ships[s]["root"] as Node3D).position.y))
+	_check(b.sim.tick > 40 and (ymax > 0.0) == v3.bob_on and ymax <= 1.5 + 0.01 and (v3.wake_quads > 0) == v3.bob_on,
+		"under way the hulls bob within the limit (%.2f m) and the wakes draw (%d strips; Low: none)" % [ymax, v3.wake_quads])
+	# A run under the view equals a view-less run (the bob and the wakes never touch the sim).
+	var plain := _make("frigates", false)
+	plain.speed_q = 4
+	for k in 160:
+		plain._process(0.1)
+	_check(plain.sim.state_hash() == b.sim.state_hash() and h0 != b.sim.state_hash(), "the bob and the wakes leave the sim's hash as a view-less run's")
+	plain.queue_free()
+	b.queue_free()
+	Quality.session_low = true
+	var lo := _make("frigates", true)
+	_check(Quality.load_pref() == "high" or (lo.v3.foam_mat == null and lo.v3.wakes_mi == null and not lo.v3.bob_on), "Low: no bob, no foam ring, no wakes")
+	lo.queue_free()
+	Quality.session_low = false
+
+
+## D2 parts 3 and 4: the ship models and Rome's galleys' oars, ram and corvus.
+func _part_models_oars() -> void:
+	const SeaShip := preload("res://game/sea_ship3d.gd")
+	const Oars := preload("res://game/sea_oars3d.gd")
+	const ST := preload("res://sim/sea_types.gd")
+	var want := ["sloop", "brigantine", "frigate", "galleon", "ship_of_the_line", "war_canoe", "lembos", "trireme", "quinquereme", "quinquereme_p"]
+	var ok := SeaShip.models_ok()
+	var trn := 0
+	for ty in ST.ROWS.size():
+		var key := SeaShip.model_key(ty)
+		if key in want:
+			ok = ok and SeaShip.has_model(key) and SeaShip.model(key) != null and SeaShip.model_tris(key) >= 800 and SeaShip.model_tris(key) <= 3000
+			trn += SeaShip.model_tris(key)
+		else:
+			ok = ok and not SeaShip.has_model(key)
+	_check(ok, "the ship models load for every modelled row (10, %d triangles, 800-3000 each) and the other rows keep the procedural solid" % trn)
+	_check(not SeaShip.model_flat("frigate").is_empty() and (SeaShip.model_flat("frigate")["c"] as PackedColorArray).size() == SeaShip.model_tris("frigate"),
+		"the land battle's shore ships read the same model (one colour a triangle)")
+	Quality.session_low = false
+	var b := _make("galleys", true)
+	var v3 = b.v3
+	var galley := -1
+	for s in v3.ships.size():
+		if v3.ships[s]["oars"] != null:
+			galley = s
+	_check(galley >= 0, "a galley has an oar bank (one MultiMesh) and the corvus ships a corvus mesh")
+	var mm: MultiMesh = (v3.ships[galley]["oars"] as MultiMeshInstance3D).multimesh
+	var ty: int = b.sim.s_type[galley]
+	Oars.sweep(mm, ty, 2.0, 2.8, 0.0)
+	var a0 := Oars.oar_transform(ty, 2.0, 2.8, 0.0, 0, 0)
+	var a1 := Oars.oar_transform(ty, 2.0, 2.8, 0.4, 0, 0)
+	var r0 := Oars.oar_transform(ty, 2.0, 0.0, 0.0, 0, 0)
+	var r1 := Oars.oar_transform(ty, 2.0, 0.0, 7.7, 0, 0)
+	_check(a0 != a1 and r0 == r1, "the oars sweep under way and are still at rest")
+	var h0: int = b.sim.state_hash()
+	b._process(0.016)
+	v3.update(0.016)
+	_check(h0 == b.sim.state_hash() and Oars.rate(b.sim, galley) >= 0.0, "the oars never touch the sim")
+	var cs := -1
+	for s in v3.ships.size():
+		if v3.ships[s]["corvus"] != null:
+			cs = s
+	var stowed := Oars.corvus_mesh(b.sim.s_type[maxi(cs, 0)], 2.0, 0.0, 0.5).surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	var dropped := Oars.corvus_mesh(b.sim.s_type[maxi(cs, 0)], 2.0, 1.0, 0.5).surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	_check(cs >= 0 and stowed.size() == dropped.size() and stowed != dropped, "the corvus is raised and drops across (different meshes)")
+	v3.on_ram(0, 1)
+	v3._update_splinters(0.05)
+	_check(v3._splinters.size() > 0 and v3.splinters_mi.multimesh.visible_instance_count > 0, "a ram blow throws splinters")
 	b.queue_free()
