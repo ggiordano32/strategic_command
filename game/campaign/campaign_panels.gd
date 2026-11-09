@@ -4308,7 +4308,7 @@ func _movement_rows6(box: VBoxContainer, a: Dictionary) -> void:
 
 ## A stance order (no points spent); back to the stance it had at the start
 ## of the turn removes the order.
-func _set_stance6(id: int, sv: int) -> void:
+func _set_stance6(id: int, sv: int, quiet: bool = false) -> void:
 	var base := CState.army(s.st, id)
 	var keep: Array = []
 	for o in s.orders:
@@ -4321,7 +4321,8 @@ func _set_stance6(id: int, sv: int) -> void:
 	if not base.is_empty() and CState.stance(base) != sv:
 		s.add_order({"t": "stance", "a": id, "s": sv})
 	s.save()
-	s.select_army(id)
+	if not quiet:
+		s.select_army(id)
 
 
 ## The besieged city's panel (version 6): who, how long, supplies; a

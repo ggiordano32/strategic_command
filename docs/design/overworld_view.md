@@ -629,3 +629,14 @@ agreement with Spain: the Havana - Veracruz lane pays nothing. Offer trade on th
 too)." (`MapOverlay.idle_info`, `CampaignScreen.idle_lane_text`), a port's "Sea lanes" note names the owners it lacks
 an agreement with, and the Diplomacy row of a faction at peace says what an agreement opens ("A trade agreement opens 3
 sea lanes: +12 a turn to us, +11 to them.", `CampaignPanels.lane_treaty_text` over `CLanes.treaty_value`).
+
+### Multi-select on the map (as built, 2026-11-09, view only)
+
+The overlay draws a set: `MapOverlay.extra_armies` / `extra_fleets` beside `selected_army` / `selected_fleet` give every
+selected army the halo (`_glow_body`), the lifted standard and gold rim (`_army_marker`'s glow) and every selected fleet
+its ring (`_fleet_marker`); a change of the set redraws the armies and the fleets (the `was_extra` check in
+`_refresh_map6`). The reach: `MapView.set_reach(rt, uni)` draws `uni` (the cells any army of the set reaches this turn)
+as a faint fill and outline under `rt` (the intersection: the cells all reach, the usual solid fill, edge and dashed
+second ring); `CampaignScreen._set_reach` builds both from `CRules.reach6` per free army (up to 12), the focus army's
+own reach first. A set of fleets shades the intersection of `CFleet.reach`. Gestures, bar and orders: ui.md "Multi-select
+on the campaign map (as built, 2026-11-09)".

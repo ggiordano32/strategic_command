@@ -51,6 +51,8 @@ const CARD_MIN_W := 56.0       # narrowest when the army is big
 const CARD_W_PHONE := 62.0
 const LEADER_W := 262.0
 const LEADER_W_PHONE := 196.0
+const SET_W := 300.0           # the set's summary card (multi-select)
+const SET_W_PHONE := 220.0
 const ACT_W := 64.0
 const ACT_H := 56.0
 const ACT_W_PHONE := 56.0
@@ -67,7 +69,7 @@ const FOLD_CARDS := 4          # the strip must hold this many cards (at their n
 const QUICK_MAX := 3           # quick recruit chips beside Recruit
 const COL_BG := Color(0.07, 0.085, 0.075, 0.95)
 const WARM_ACTIONS := ["assault", "build", "cancel", "close", "details", "disband", "embark", "exchange", "merge", "raid",
-	"raise", "recruit", "sally", "ship", "shipyard", "siege", "split", "view_map", "walls", "war", "withdraw", "more"]
+	"raise", "recruit", "sally", "ship", "shipyard", "siege", "split", "view_map", "walls", "war", "withdraw", "more", "plus", "units", "deselect"]
 const WARM_STATS := ["coin", "forage", "income", "men", "move", "units", "walls"]
 const STANCE_SHORT := {0: "March", 2: "Forced", 3: "Fortify", 4: "Raid"}
 
@@ -138,7 +140,10 @@ func refresh() -> bool:
 	_h = PHONE_H if phone else DESK_H
 	var kind := ""
 	var id := -1
-	if s.sel_army >= 0 and not CState.army(s.ps, s.sel_army).is_empty():
+	if s.set_size() > 1 and not s.set_detail:
+		kind = "s"   # (multi-select: the set's own bar; a tapped card makes the focus's bar show, the set kept)
+		id = s.sel_army if s.sel_army >= 0 else s.sel_fleet
+	elif s.sel_army >= 0 and not CState.army(s.ps, s.sel_army).is_empty():
 		kind = "a"
 		id = s.sel_army
 	elif s.sel_fleet >= 0 and CFleet.on(s.ps) and not CFleet.fleet(s.ps, s.sel_fleet).is_empty():
@@ -165,6 +170,8 @@ func refresh() -> bool:
 		return false
 	_key = "%s%d" % [kind, id]
 	match kind:
+		"s":
+			_build_set()
 		"a":
 			_build_army(id)
 		"f":
@@ -647,6 +654,8 @@ func _build_army(id: int) -> void:
 		var by := int(ch[0])
 		acts.append(_action("war", "Attack", "Attack them with your strongest army that reaches them this turn", func(): s.panels.attack_with(by, id),
 			str(ch[1]), "attack"))
+	if mine and s.set_size() > 1:
+		acts.insert(0, _set_back_action())
 	acts.append(_details_action())
 	# Cards.
 	var cw := _card_w(units.size() + arriving.size(), acts.size())
@@ -942,6 +951,172 @@ func _build_region(r: int) -> void:
 	_assemble(leader, cards, extra, acts, _quick_chips(r) if mine and grid and CRules.recruits_per_turn(ps, r) > 0 else null)
 
 
+# --------------------------------------------------------- multi-select ---
+
+func _commas(n: int) -> String:
+	var t := str(absi(n))
+	var out := ""
+	while t.length() > 3:
+		out = "," + t.substr(t.length() - 3) + out
+		t = t.substr(0, t.length() - 3)
+	return ("-" if n < 0 else "") + t + out
+
+
+## "3 armies, 36 units, 4,120 men; 1 fleet, 9 ships, room for 24 units" (the set's totals; armies first).
+func set_summary() -> String:
+	var ps: Dictionary = s.ps
+	var parts: Array = []
+	var arm: Array = s.set_armies()
+	if not arm.is_empty():
+		var units := 0
+		var men := 0
+		for id in arm:
+			var a := CState.army(ps, int(id))
+			units += CState.unit_count(a)
+			men += CState.men(a)
+		parts.append("%d arm%s, %d unit%s, %s men" % [arm.size(), "y" if arm.size() == 1 else "ies", units, "" if units == 1 else "s", _commas(men)])
+	var fls: Array = s.set_fleets()
+	if not fls.is_empty():
+		var ships := 0
+		var room := 0
+		for id in fls:
+			var fl := CFleet.fleet(ps, int(id))
+			ships += (fl["ships"] as Array).size()
+			room += CFleet.capacity(fl) - CFleet.carried_units(fl)
+		parts.append("%d fleet%s, %d ship%s, room for %d unit%s" % [fls.size(), "" if fls.size() == 1 else "s", ships, "" if ships == 1 else "s",
+			room, "" if room == 1 else "s"])
+	return "; ".join(parts)
+
+
+func _set_back_action() -> Button:
+	return _action("units", "Set (%d)" % s.set_size(), "Back to the whole selection (%s): orders go to all of it" % s.set_words(),
+		func():
+			s.set_detail = false
+			s._after_set_change(), "", "set_back")
+
+
+func _member_card(kind: String, id: int, cw: float) -> UnitCard:
+	var ps: Dictionary = s.ps
+	var c := UnitCard.new(cw, _card_h())
+	var focus: bool = (kind == "a" and id == s.sel_army) or (kind == "f" and id == s.sel_fleet)
+	c.name = ("member_army_%d" if kind == "a" else "member_fleet_%d") % id
+	c.selected = focus
+	c.no_pips = true
+	if kind == "a":
+		var a := CState.army(ps, id)
+		var af := int(a["f"])
+		var hero: Dictionary = CChars.in_slot(ps, id, CChars.SLOT_HERO)
+		c.glyph = "units"
+		c.title = str(hero.get("name", "")) if not hero.is_empty() else str(CData.REGIONS[int(a["r"])]["city"])
+		var full := 0
+		for u in a["units"]:
+			full += UT.size_of(CState.unit_type(u))
+		c.men = CState.men(a)
+		c.full = maxi(full, 1)
+		c.sub = "%d unit%s" % [CState.unit_count(a), "" if CState.unit_count(a) == 1 else "s"]
+		c.col = CData.faction_color(af)
+		c.tooltip_text = "%s: %s\n%d men, %d units, %s\nTap: its units and orders. Long press: take it out of the selection." % [
+			s.army_label(id).substr(0, 1).to_upper() + s.army_label(id).substr(1), str(_status(a)[0]), CState.men(a), CState.unit_count(a), _army_line(a).split(", ")[-1]]
+	else:
+		var fl := CFleet.fleet(ps, id)
+		var ff := int(fl["f"])
+		var hull := 0
+		for sh in fl["ships"]:
+			hull += int(sh["h"])
+		var ns := (fl["ships"] as Array).size()
+		c.glyph = "ship"
+		c.title = str(s.panels.sea_place(int(fl["x"]), int(fl["y"])))
+		c.men = hull
+		c.full = maxi(100 * ns, 1)
+		c.sub = "%d ship%s" % [ns, "" if ns == 1 else "s"]
+		c.col = CData.faction_color(ff)
+		c.tooltip_text = "Fleet of %d ship%s, %d of %d places taken.\nTap: its ships and orders. Long press: take it out of the selection." % [
+			ns, "" if ns == 1 else "s", CFleet.carried_units(fl), CFleet.capacity(fl)]
+	var k := kind
+	var i := id
+	c.pressed.connect(func(): s.set_focus(k, i))
+	c.long_pressed.connect(func(): s.add_to_set(k, i))
+	return c
+
+
+func _build_set() -> void:
+	var ps: Dictionary = s.ps
+	var fac: int = s.f
+	var v := Kit.vbox(3)
+	v.name = "leader_card"
+	v.custom_minimum_size.x = SET_W_PHONE if phone else SET_W
+	var head := Kit.hbox(8)
+	head.add_child(Kit.faction_mark(fac, 30.0 if phone else 36.0))
+	var tv := Kit.vbox(0)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var tl := Kit.label("%d selected" % s.set_size(), 15, CData.faction_color(fac).lightened(0.45)) if phone else Kit.title("%d selected" % s.set_size(), 18, CData.faction_color(fac).lightened(0.45))
+	tl.name = "leader_title"
+	tl.custom_minimum_size.x = 40
+	tv.add_child(tl)
+	var sl := Kit.label(s.set_words() + (". Adding: tap to add" if s.add_mode else ""), 12, Kit.COL_GOLD if s.add_mode else Kit.COL_DIM)
+	sl.name = "leader_sub"
+	sl.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	sl.custom_minimum_size.x = 40
+	tv.add_child(sl)
+	head.add_child(tv)
+	v.add_child(head)
+	var sm := Kit.label(set_summary(), 11, Kit.COL_TEXT, true)
+	sm.name = "set_summary"
+	sm.custom_minimum_size.x = (SET_W_PHONE if phone else SET_W) - 4.0   # (a wrapped label with a tiny minimum would claim a tall bar)
+	sm.tooltip_text = sm.text
+	v.add_child(sm)
+	# Cards: one leader card per army, then per fleet (a long row scrolls).
+	var members: Array = []
+	for id in s.set_armies():
+		members.append(["a", int(id)])
+	for id in s.set_fleets():
+		members.append(["f", int(id)])
+	var acts: Array = []
+	var arm: Array = s.set_armies()
+	var fls: Array = s.set_fleets()
+	if not arm.is_empty():
+		var fa := CState.army(ps, int(arm[0]))
+		var cur := CState.stance(fa)
+		var i := Panels.STANCE_ORDER.find(cur)
+		var nxt: int = Panels.STANCE_ORDER[(i + 1) % Panels.STANCE_ORDER.size()]
+		acts.append(_action(str(Panels.STANCE_ICONS[cur]), str(STANCE_SHORT.get(cur, "March")),
+			"Stance of every selected army: %s (the first one's). Tap for %s for all of them." % [CData.STANCE_NAMES[cur], CData.STANCE_NAMES[nxt]],
+			func(): s.stance_group(nxt), "", "stance"))
+	var planned := false
+	for id in arm:
+		if not s.plan6(int(id)).is_empty():
+			planned = true
+	for id in fls:
+		var vy: Array = s.planned_voyage(int(id))
+		if int(vy[0]) >= 0 or int(vy[1]) >= 0:
+			planned = true
+	acts.append(_action("cancel", "Hold", "Take back every planned march and voyage of the selection",
+		func(): s.hold_group(), "" if planned else "Nothing is planned to take back", "hold"))
+	if arm.size() > 1:
+		var tgt: int = int(arm[0])
+		acts.append(_action("merge", "Merge", "Merge the other selected armies into the first (%s), within %d units; armies further off march and merge on arriving" % [s.army_label(tgt), CData.ARMY_MAX],
+			func(): s.merge_group(s.set_armies(), tgt), "", "merge"))
+	if not arm.is_empty() and not fls.is_empty():
+		var room := 0
+		for id in fls:
+			var fl := CFleet.fleet(ps, int(id))
+			room += CFleet.capacity(fl) - CFleet.carried_units(fl)
+		acts.append(_action("embark", "Board", "Every selected army boards the selected fleets, first one then the next, until they are full (room for %d units)" % room,
+			func(): s.board_set(), "", "board"))
+	acts.append(_action("plus", "Add", "Tap armies and fleets on the map to add or remove them (Done ends it)",
+		func():
+			if s.add_mode:
+				s.end_add_mode()
+			else:
+				s.enter_add_mode(), "", "add_mode", s.add_mode))
+	acts.append(_action("deselect", "Clear", "Deselect everything", func(): s.deselect_all(), "", "clear"))
+	var cw := _card_w(members.size(), acts.size()) + 10.0 if not phone else CARD_W_PHONE
+	var cards: Array = []
+	for m in members:
+		cards.append(_member_card(str(m[0]), int(m[1]), clampf(cw, CARD_MIN_W + 6.0, 96.0) if not phone else CARD_W_PHONE))
+	_assemble(v, cards, [], acts)
+
+
 # ------------------------------------------------------------- fleet ---
 
 ## The fleet's summary: ships, troops aboard.
@@ -1062,6 +1237,8 @@ func _build_fleet(id: int) -> void:
 		if bool(yt[0]):
 			acts.append(_action("shipyard", CData.chain_short(CData.SHIPYARD, ff), "Build ships at %s" % CData.REGIONS[port]["city"],
 				func(): s.panels.show_raise(port, "ship"), str(yt[1]), "shipyard"))
+	if mine and s.set_size() > 1:
+		acts.insert(0, _set_back_action())
 	acts.append(_details_action())
 	var cw := _card_w(ships.size(), acts.size())
 	var cards: Array = []
@@ -1105,6 +1282,7 @@ class UnitCard extends Control:
 	var pips := 0              # filled tier pips
 	var ak := -1               # the special ammunition kind it carries (UT.AMMO row, -1 none): a badge on the symbol
 	var vet := 0               # veterancy level 0-3: brass stars on a plate at the symbol's upper right (2026-11-06)
+	var no_pips := false       # a set's member card: no tier pips
 	var vet_tip := ""          # ... their tap hint ("Seasoned: 2 stars, 11 battles")
 	var _press_t := -1.0
 	var _long_fired := false
@@ -1225,7 +1403,7 @@ class UnitCard extends Control:
 			# pattern; the tier pips stay on the left edge, the arrow badge on the lower right).
 			Kit.draw_vet_badge(self, vet_rect().get_center(), vet, 4.0 if compact else 4.5, a)  # (no tap hint: a finger lands on the card)
 		# Tier pips down the left edge (the tier; veterancy is the stars).
-		for k in 3:
+		for k in (0 if no_pips else 3):
 			var py := cy + (k - 1) * 8.0
 			var on := (2 - k) < pips
 			draw_circle(Vector2(6, py), 2.4, Color(1.0, 0.85, 0.3, a) if on else Color(1, 1, 1, 0.13))

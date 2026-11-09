@@ -140,6 +140,9 @@ const CLIFF_TICK_LEN := 3.8
 var _reach_node: Node2D = null  # the selected army's reach (its own node: a selection does not redraw the map)
 var _sel_node: Node2D = null    # the selected region's outline (over the edges, under the coast)
 var _reach_rt := PackedInt32Array()      # the reach set_reach last outlined
+var _union_rt := PackedInt32Array()      # ... and the union of a set's reaches
+var union_fill: Array = []               # multi-select: outer outlines of where any army of the set reaches (faint)
+var union_loops: Array = []
 var _owners_drawn := PackedInt32Array()   # the owners the map was last drawn for (refresh_state)
 var _edges: Node2D = null     # children drawn after the map's own drawing, redrawn a frame apart (see _process)
 var _edges_batch: InkLines = null   # the edges' ink mesh (_edges_ink) and what it was built for
@@ -773,10 +776,24 @@ func update_lod(z: float) -> void:
 		_coast_node.queue_redraw()
 
 
-func set_reach(rt: PackedInt32Array) -> void:
-	if rt == _reach_rt and (not rt.is_empty() or reach_loops.is_empty()):
+func set_reach(rt: PackedInt32Array, uni: PackedInt32Array = PackedInt32Array()) -> void:
+	if rt == _reach_rt and uni == _union_rt and (not rt.is_empty() or reach_loops.is_empty()):
 		return   # (the same reach: its outlines and fill are kept)
 	_reach_rt = rt
+	_union_rt = uni
+	union_fill = []
+	union_loops = []
+	if uni.size() == CGrid.count():
+		# a set of armies: the cells ANY of them reaches this turn, drawn faint under the cells ALL reach (rt)
+		var anyn := PackedByteArray()
+		anyn.resize(uni.size())
+		for c in uni.size():
+			if uni[c] == 0:
+				anyn[c] = 1
+		union_loops = outline(anyn)
+		for lp in union_loops:
+			if _area(lp) > 0.0 and not Geometry2D.triangulate_polygon(lp).is_empty():
+				union_fill.append(lp)
 	reach_rects = []
 	reach_loops = []
 	next_loops = []
@@ -2289,6 +2306,12 @@ static func draw_blocked_cross(ci: CanvasItem, c: Vector2, lw: float) -> void:
 ## Version 6: the selected army's reach (this turn filled, next turn a
 ## dashed outline).
 func _draw_reach(ci: CanvasItem, lw: float) -> void:
+	for lp in union_fill:
+		ci.draw_colored_polygon(lp, Color(COL_REACH, COL_REACH.a * 0.4))
+	for lp in union_loops:
+		var uc: PackedVector2Array = (lp as PackedVector2Array).duplicate()
+		uc.append(lp[0])
+		ci.draw_polyline(uc, Color(1.0, 0.98, 0.85, 0.35), 1.5 * lw, true)
 	if reach_loops.is_empty():
 		return
 	if reach_rects.is_empty():

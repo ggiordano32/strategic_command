@@ -67,6 +67,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CLanes := preload("res://campaign/clanes.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CChars := preload("res://campaign/cchars.gd")
 const MapKey := preload("res://game/campaign/map_key.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const StoryView := preload("res://game/campaign/story_view.gd")
@@ -777,6 +778,7 @@ func _set_planner(p_f: int, start: bool) -> void:
 		orders = (data["session"]["plans"][str(f)] as Array).duplicate(true)
 	_undo = []
 	sel_army = -1
+	_clear_more()
 	sel_region = -1
 	_replan()
 	if start:
@@ -1565,6 +1567,7 @@ func _build_ui() -> void:
 	dialog_buttons = Kit.hbox(8)
 	dialog_buttons.alignment = BoxContainer.ALIGNMENT_END
 	dv.add_child(dialog_buttons)
+	_build_msel_ui()
 	game_menu = GameMenu.new(self)   # the in-game Menu, over everything above
 	ui.add_child(game_menu)
 
@@ -1734,13 +1737,14 @@ func _refresh_bar() -> void:
 		# A tap often asks twice in one frame (show_side, then _refresh_map): the bar is built once per frame for
 		# the same selection, state and plan (a rebuild is the costly part of a tap: new controls, text, icons).
 		var sig := [Engine.get_process_frames(), sel_army, sel_fleet, sel_region, merge_tap, side.visible, orders.size(),
-			_vp(), str(panels._split_sel.get(sel_army, []))]
+			_vp(), str(panels._split_sel.get(sel_army, [])), str(sel_more_armies) + str(sel_more_fleets), set_detail, add_mode]
 		if sig != _bar_sig or not is_same(_bar_ps, ps) or not is_same(_bar_st, st):
 			cmd_bar.refresh()
 			_bar_sig = sig
 			_bar_ps = ps
 			_bar_st = st
 	_update_deselect()   # (show_side returns early while the bar shows the selection: the button follows here)
+	_update_capsule()
 	_layout_bottom()
 	ZProf.add("h_bar", t0)
 
@@ -1806,6 +1810,7 @@ func close_side() -> void:
 	side.visible = false
 	sel_army = -1
 	sel_fleet = -1
+	_clear_more()
 	merge_tap = -1
 	sel_region = -1
 	_refresh_map()
@@ -1909,6 +1914,26 @@ func _prune_selection() -> void:
 		merge_tap = -1
 	if sel_fleet >= 0 and (not CFleet.on(ps) or CFleet.fleet(ps, sel_fleet).is_empty()):
 		sel_fleet = -1
+	if not sel_more_armies.is_empty() or not sel_more_fleets.is_empty():
+		# (multi-select: what is gone drops out of the set; a gone focus passes to the next)
+		var arm: Array = []
+		for id in sel_more_armies:
+			if not CState.army(ps, int(id)).is_empty():
+				arm.append(int(id))
+		var fls: Array = []
+		for id in sel_more_fleets:
+			if CFleet.on(ps) and not CFleet.fleet(ps, int(id)).is_empty():
+				fls.append(int(id))
+		sel_more_armies = arm
+		sel_more_fleets = fls
+		if sel_army < 0 and sel_fleet < 0:
+			if not sel_more_armies.is_empty():
+				sel_army = int(sel_more_armies.pop_front())
+			elif not sel_more_fleets.is_empty():
+				sel_fleet = int(sel_more_fleets.pop_front())
+		if set_size() <= 1:
+			set_detail = false
+			add_mode = false
 
 
 func _refresh() -> void:
@@ -2047,6 +2072,20 @@ func _fit_hint_plate() -> void:
 	_hint_plate.size = Vector2(tw + 12.0, th + 8.0)
 
 
+func _set_hint() -> String:
+	var how := "Right-click" if last_mouse else "Tap"
+	if add_mode:
+		return "Adding: tap armies and fleets to add or remove them. Done, or a tap on the map, ends it."
+	var t := "%s selected: %s a spot to send them all" % [set_words(), how]
+	if not set_armies().is_empty() and not set_fleets().is_empty():
+		t += ", a fleet to board, another army to merge."
+	elif not set_armies().is_empty():
+		t += ", an enemy to attack, another army to merge."
+	else:
+		t += " (shore: land the troops)."
+	return t
+
+
 func _update_hint() -> void:
 	if st.is_empty() or f < 0:
 		hint.text = ""
@@ -2057,6 +2096,8 @@ func _update_hint() -> void:
 		hint.text = "Turn submitted. You can look around; Unsubmit to change your orders."
 	elif not replay.is_empty():
 		hint.text = "Replaying the turn: tap to skip."
+	elif set_size() > 1 and _g():
+		hint.text = _set_hint()
 	elif sel_fleet >= 0 and _g() and last_mouse:
 		hint.text = "Right-click the sea to sail there (shaded: this turn; " + CFleet.wind_words() + "), a lit beach to land the troops aboard, an enemy fleet to attack it, your own fleet to join it, an enemy lane (drawn bold) to raid it, an enemy harbour to blockade it (a left click only selects). Left-click empty sea to deselect. Board: select an army and tap one of your fleets; beside it the army boards now, else it marches to a lit cell and boards on arriving."
 	elif sel_army >= 0 and _g() and last_mouse:
@@ -2324,21 +2365,23 @@ func set_move6(army: int, c: int, tgt: int) -> void:
 ## arrival (a move with "join"; it keeps following it over the turns). Next
 ## to it already: a merge order now (the plan preview shows the merged
 ## army). The same target again cancels the march.
-func set_join(army: int, target: int) -> void:
+func set_join(army: int, target: int, quiet: bool = false) -> bool:
 	var a := CState.army(ps, army)
 	var t := CState.army(ps, target)
 	if a.is_empty() or t.is_empty():
-		return
+		return false
 	merge_tap = -1
 	if CGrid.cheb(CState.cell(a), CState.cell(t)) <= 1 and CRules.merge_check(ps, f, army, target) == "":
 		if add_order({"t": "merge", "army": army, "into": target}) == "":
 			_t("campaign_input", {"what": "merge"})
-			select_army(target)
-		return
+			if not quiet:
+				select_army(target)
+			return true
+		return false
 	var cur := plan6(army)
 	var same := not cur.is_empty() and int(cur.get("join", -1)) == target
 	if not same and _muster_guard(army, func(): set_join(army, target)):
-		return
+		return false
 	var had_order := false
 	for o in orders:
 		if str(o["t"]) == "move" and int(o["army"]) == army:
@@ -2356,7 +2399,7 @@ func set_join(army: int, target: int) -> void:
 		_replan()
 		save_plan()
 		_t("campaign_input", {"what": "move_cancel"})
-		return
+		return false
 	var mo := {"t": "move", "army": army, "join": target, "mode": CData.MODE_SIEGE, "persist": 1}
 	var pv := CTurn.preview(st, f, orders + [mo])
 	for e in pv["errors"]:
@@ -2364,12 +2407,13 @@ func set_join(army: int, target: int) -> void:
 			orders = before
 			_replan()
 			explain_refusal(army, maxi(CGrid.region(CState.cell(t)), 0), str(e[1]))
-			return
+			return false
 	orders.append(mo)
 	_undo.append(before)
 	_replan()
 	save_plan()
 	_t("campaign_input", {"what": "move", "join": target})
+	return true
 
 
 ## Version 6: army marches to the boarding cell of our fleet `fid` nearest it and boards on arriving (a move with
@@ -2443,6 +2487,9 @@ func set_board(army: int, fid: int) -> void:
 ## (its path, the caption, a toast with Merge / Select it); a second tap on
 ## it plans the merge.
 func _merge_tap_at(id: int) -> void:
+	if _free_set_armies().size() > 1:
+		_merge_set_at(id)
+		return
 	if merge_tap == id:
 		if _toast != null:   # the second tap (a double tap) is the answer: the Merge / Select popup goes away
 			_toast.queue_free()
@@ -2481,6 +2528,7 @@ func _refresh_map6() -> void:
 	var t_m6 := ZProf.begin()
 	# (what the overlay showed, to redraw only the parts a selection changed: see the end)
 	var was_sel := [overlay.selected_army, overlay.selected_fleet, overlay.merge_tap]
+	var was_extra := str(overlay.extra_armies) + "|" + str(overlay.extra_fleets)
 	var was_fleets: Array = overlay.fleet_paths
 	var was_sea := overlay.sea_reach_rt
 	# (a state changed in place, as the input tests do, is caught by a few of its counts)
@@ -2495,6 +2543,8 @@ func _refresh_map6() -> void:
 	overlay.grid = true
 	overlay.player = f
 	overlay.selected_army = sel_army
+	overlay.extra_armies = sel_more_armies.duplicate()
+	overlay.extra_fleets = sel_more_fleets.duplicate()
 	overlay.moves = []
 	overlay.paths = []
 	overlay.attack_moves = []
@@ -2535,9 +2585,14 @@ func _refresh_map6() -> void:
 		_map6_frame = Engine.get_process_frames()
 	elif not sa.is_empty():
 		var rt6 := PackedInt32Array()
+		var rt_union := PackedInt32Array()
 		if int(sa["f"]) == f:
 			var t_r6 := ZProf.begin()
 			rt6 = CRules.reach6(ps, sa, 1)
+			var both := _set_reach(rt6)   # (a set of armies: where all can get is solid, where any can faint)
+			if not both.is_empty():
+				rt6 = both[0]
+				rt_union = both[1]
 			ZProf.add("m6_reach6", t_r6)
 			if int(sa["busy"]) == 0:
 				if _marks_for != sel_army:
@@ -2554,7 +2609,7 @@ func _refresh_map6() -> void:
 						pe["preview"] = 1
 						paths.append(pe)
 		var t_sr := ZProf.begin()
-		map_view.set_reach(rt6)
+		map_view.set_reach(rt6, rt_union)
 		ZProf.add("m6_set_reach", t_sr)
 		var t_zl := ZProf.begin()
 		var px := float(CGrid.cell_px())
@@ -2591,7 +2646,15 @@ func _refresh_map6() -> void:
 			overlay.fleet_paths.append({"fleet": int(fl["id"]), "path": fp["path"], "t": fp["t"], "land": int(fp["land"]),
 				"attack": 1 if int(fp["tgt"]) >= 0 else 0, "join": 1 if int(fp.get("join", -1)) >= 0 else 0})
 		var sfl := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 else {}
-		overlay.set_sea_reach(CFleet.reach(ps, sfl, 0) if not sfl.is_empty() and int(sfl["f"]) == f else PackedInt32Array())
+		var sea_rt := CFleet.reach(ps, sfl, 0) if not sfl.is_empty() and int(sfl["f"]) == f else PackedInt32Array()
+		for oid in set_fleets().slice(1):
+			# (a set of fleets: the sea where every one of them can sail this turn)
+			var orr := CFleet.reach(ps, CFleet.fleet(ps, int(oid)), 0)
+			if orr.size() == sea_rt.size():
+				for c in sea_rt.size():
+					if orr[c] != 0 and sea_rt[c] == 0:
+						sea_rt[c] = -1
+		overlay.set_sea_reach(sea_rt)
 		if not sfl.is_empty():
 			var px2 := float(CGrid.cell_px())
 			for e in CFleet.fleets(ps):
@@ -2605,8 +2668,8 @@ func _refresh_map6() -> void:
 	# armies with the merge glyphs) and the map's reach / selected-region nodes (map_view.set_reach /
 	# set_selected_region): the map's territories and edges are not drawn again for a tap.
 	var p_paths := fresh or paths != overlay.paths6 or zones != overlay.zones or links != overlay.links
-	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap or int(was_sel[0]) != sel_army   # (the halo is its own node; the selected standard lifts and has a gold rim, so the armies redraw)
-	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed or raid_changed
+	var p_armies := fresh or marks != overlay.merge_marks or int(was_sel[2]) != merge_tap or int(was_sel[0]) != sel_army or was_extra != str(overlay.extra_armies) + "|" + str(overlay.extra_fleets)   # (the halo is its own node; the selected standard lifts and has a gold rim, so the armies redraw)
+	var p_fleets := fresh or int(was_sel[1]) != sel_fleet or was_extra != str(overlay.extra_armies) + "|" + str(overlay.extra_fleets) or overlay.fleet_paths != was_fleets or overlay.sea_reach_rt != was_sea or land_changed or raid_changed
 	overlay.paths6 = paths
 	overlay.zones = zones
 	overlay.links = links
@@ -2623,6 +2686,33 @@ func _refresh_map6() -> void:
 		overlay.redraw_parts(p_paths, p_fleets, p_armies)
 	_note_positions()
 	ZProf.add("h_map6", t_m6)
+
+
+## A set of armies' reach: [where every free army of the set can get this turn (0; a cell reached later by all keeps its
+## latest turn), where any can get this turn (0)], per cell as CRules.reach6; [] for a set of one. `first` is the focus's.
+func _set_reach(first: PackedInt32Array) -> Array:
+	var ids := _free_set_armies()
+	if ids.size() < 2 or first.is_empty():
+		return []
+	var inter := first.duplicate()
+	var uni := first.duplicate()
+	for id in ids.slice(0, 12):
+		if int(id) == sel_army:
+			continue
+		var r := CRules.reach6(ps, CState.army(ps, int(id)), 1)
+		if r.size() != inter.size():
+			continue
+		for c in inter.size():
+			var v := r[c]
+			if inter[c] < 0 or v < 0:
+				inter[c] = -1
+			else:
+				inter[c] = maxi(inter[c], v)
+			if uni[c] != 0 and v == 0:
+				uni[c] = 0
+			elif uni[c] != 0:
+				uni[c] = -1
+	return [inter, uni]
 
 
 ## Version 6: "" if our army sa may merge into our army id now, the checks a
@@ -2816,6 +2906,8 @@ func _step_replay(delta: float) -> void:
 
 
 func select_army(id: int) -> void:
+	if id != sel_army:
+		_clear_more()
 	sel_army = id
 	sel_fleet = -1
 	merge_tap = -1
@@ -2837,6 +2929,7 @@ func select_region(r: int) -> void:
 	sel_region = r
 	sel_army = -1
 	sel_fleet = -1
+	_clear_more()
 	show_side(func(box): panels.region_panel(box, r))
 	if f >= 0 and CState.owner(ps, r) == f:
 		Tips.show("town_opened")
@@ -2860,6 +2953,8 @@ func _can_raid_here(a: Dictionary) -> bool:
 func select_fleet(id: int) -> void:
 	if id != dock_mode:
 		dock_mode = -1
+	if id != sel_fleet:
+		_clear_more()
 	sel_fleet = id
 	sel_army = -1
 	sel_region = -1
@@ -3055,7 +3150,7 @@ func best_blockade(fl: Dictionary) -> int:
 ## Our fleet id joins our fleet into: within a cell now, an immediate merge
 ## (and the merged-into fleet is selected); farther, a voyage to it that
 ## merges on arriving (and goes on from turn to turn).
-func join_fleet(id: int, into: int) -> void:
+func join_fleet(id: int, into: int, quiet: bool = false) -> void:
 	var a := CFleet.fleet(ps, id)
 	var b := CFleet.fleet(ps, into)
 	if a.is_empty() or b.is_empty():
@@ -3063,12 +3158,13 @@ func join_fleet(id: int, into: int) -> void:
 	if CGrid.cheb(CFleet.cell(a), CFleet.cell(b)) <= 1:
 		if add_order({"t": "fmerge", "fleet": id, "into": into}) != "":
 			return   # (add_order flashed why)
-		_flash("Joining")
-		select_fleet(into)
+		if not quiet:
+			_flash("Joining")
+			select_fleet(into)
 		_t("campaign_input", {"what": "fleet_join"})
 		return
 	set_fmove(id, CFleet.cell(b), into)
-	if sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
+	if not quiet and sel_fleet >= 0 and not CFleet.fleet(ps, sel_fleet).is_empty():
 		show_side(func(box): panels.fleet_panel(box, sel_fleet))
 
 
@@ -3255,6 +3351,7 @@ func _tick(delta: float) -> void:
 		overlay.queue_redraw()
 	_keys(delta)
 	_place_key()
+	_long_press_tick()
 
 
 func _on_auto_done(outcome: Dictionary) -> void:
@@ -3791,6 +3888,12 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_dragging = false
 			_multi = false
 			_drag_army = -1
+			_boxing = false
+			_lp_fired = false
+			_lp_box = false
+			_lp_t0 = 0 if is_mouse else maxi(Time.get_ticks_msec(), 1)
+			_box_ok = is_mouse and _g() and f >= 0 and _shift_held() and overlay.army_at(e.position) < 0 and overlay.settlement_at(e.position) < 0 \
+				and (not CFleet.on(ps) or overlay.fleet_at(e.position) < 0)
 			if _g() and f >= 0:
 				# A drag that starts on one of our free armies plans its march.
 				var id := overlay.army_at(e.position)
@@ -3799,6 +3902,9 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 					_drag_army = id
 		else:
 			_multi = true
+			_lp_t0 = 0
+			_boxing = false
+			_box_panel.visible = false
 			_drag_army = -1
 			overlay.set_drop(-1)
 			_drag_preview(-1, -1)
@@ -3812,7 +3918,7 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 		_drag_preview(-1, -1)
 		var xt := _exchange_target(id2, e.position)
 		overlay.set_drop(-1)
-		if sel_army != id2:
+		if sel_army != id2 and not in_set("a", id2):
 			select_army(id2)
 		if xt >= 0:
 			# dropped on another army of ours standing with it: the Exchange dialog (the drag's march is not planned)
@@ -3838,6 +3944,15 @@ func _on_touch(e: InputEventScreenTouch) -> void:
 			_multi = false
 		elif _touches.size() >= 2:
 			_start_pinch()
+		return
+	_lp_t0 = 0
+	if _boxing:
+		_box_end(e.position)
+		_dragging = false
+		return
+	if _lp_fired:
+		_lp_fired = false   # (the long press was the gesture: no tap)
+		_dragging = false
 		return
 	if not _dragging:
 		if _press_mouse and _g():
@@ -3870,6 +3985,15 @@ func _on_drag(e: InputEventScreenDrag) -> void:
 		return
 	if not _dragging and e.position.distance_to(_press_pos) > DRAG_THRESHOLD:
 		_dragging = true
+		_lp_t0 = 0
+		if (_lp_box or _box_ok) and _drag_army < 0 and not _boxing:
+			# multi-select: a drag from empty ground (a real mouse's left button, or a touch after its long press) is the box
+			_boxing = true
+			_box_from = _press_pos
+			_box_add = add_mode or Input.is_key_pressed(KEY_CTRL)
+	if _boxing:
+		_box_update(e.position)
+		return
 	if _dragging and _drag_army >= 0:
 		var xt := _exchange_target(_drag_army, e.position)
 		overlay.set_drop(xt)
@@ -3913,6 +4037,11 @@ func _tap(p: Vector2) -> void:
 	if f < 0:
 		return
 	if _g():
+		if add_mode:
+			_tap_add(p)
+			return
+		if _double_tap(p):
+			return
 		_tap6(p)
 		return
 	var id := overlay.army_at(p)
@@ -3944,6 +4073,8 @@ func _tap(p: Vector2) -> void:
 ## it (siege, or inside our walls), any land a march there; otherwise a
 ## settlement or region opens its panel, the sea clears the selection.
 func _tap6(p: Vector2) -> void:
+	if set_size() > 1 and _tap_set(p):
+		return
 	if CFleet.on(ps) and _tap_fleets(p):
 		return
 	var id := overlay.army_at(p)
@@ -4121,13 +4252,21 @@ func _after_station() -> void:
 ## region selects it (another faction's army or fleet for viewing: the card, never an attack); with ours
 ## selected, a left click on our other army / fleet SELECTS it (merge and join are the right click's); empty map
 ## (sea, nothing pickable) deselects, and never orders. Shift keeps the selection. Orders are the right button's.
-func _left_click(p: Vector2) -> void:
+func _left_click(p: Vector2, additive: bool = false) -> void:
 	if f < 0:
 		return
 	var shift := Input.is_key_pressed(KEY_SHIFT)
+	var add := additive or shift or Input.is_key_pressed(KEY_CTRL)
+	if _g() and not add and _double_tap(p):
+		return
 	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	var multi := set_size() > 1
 	if fid >= 0:
-		if fid == sel_fleet:
+		if add and _own_fleet(fid):
+			add_to_set("f", fid)   # (multi-select: Shift / Ctrl adds the fleet or takes it out)
+			return
+		_clear_more()
+		if fid == sel_fleet and not multi:
 			close_side()
 		else:
 			select_fleet(fid)
@@ -4135,7 +4274,11 @@ func _left_click(p: Vector2) -> void:
 		return
 	var id := overlay.army_at(p)
 	if id >= 0:
-		if id == sel_army:
+		if add and _own_army(id):
+			add_to_set("a", id)
+			return
+		_clear_more()
+		if id == sel_army and not multi:
 			close_side()
 		else:
 			select_army(id)
@@ -4164,6 +4307,9 @@ func _left_click(p: Vector2) -> void:
 ## of ours selected, nothing.
 func _right_order(p: Vector2) -> void:
 	if f < 0:
+		return
+	if set_size() > 1:
+		_tap6(p)   # (multi-select: the order is the whole set's)
 		return
 	var sf := CFleet.fleet(ps, sel_fleet) if sel_fleet >= 0 and CFleet.on(ps) else {}
 	if not sf.is_empty():
@@ -4204,6 +4350,10 @@ func _plan_at(p: Vector2) -> void:
 	if int(tg[0]) < 0:
 		_flash("Not on land.")
 		return
+	var grp := _free_set_armies()
+	if grp.size() > 1:
+		move_group(grp, int(tg[0]), int(tg[1]))
+		return
 	set_move6(sel_army, int(tg[0]), int(tg[1]))
 	if sel_army >= 0 and not CState.army(ps, sel_army).is_empty():
 		show_side(func(box): panels.army_panel(box, sel_army))
@@ -4238,3 +4388,861 @@ func _drag_preview(c: int, tgt: int) -> void:
 			pe["drag"] = 1
 			overlay.drag = pe
 	overlay.redraw_parts(true, false, false)   # (the drag preview is drawn with the paths)
+
+
+# ---------------------------------------------------------------------------
+# Multi-select on the campaign map (2026-11-09, view only; ui.md "Multi-select on the campaign map"). The selection is a
+# set of our own armies and fleets: the focus is sel_army or sel_fleet (everything that reads those still works for a
+# set of one), the others are sel_more_armies / sel_more_fleets. A group order is one ordinary per-unit order each
+# (add_order / set_move6 / set_fmove / embark ...): the rules do not change.
+# ---------------------------------------------------------------------------
+
+const DOUBLE_TAP_MS := 380
+const LONG_PRESS_MS := 480
+const BOX_MIN := 14.0
+
+var sel_more_armies: Array = []   # the other selected armies (ids), the focus is sel_army
+var sel_more_fleets: Array = []   # the other selected fleets (ids)
+var add_mode := false             # touch: taps add or remove armies / fleets (the capsule's Done ends it)
+var set_detail := false           # a card of the set bar was tapped: the focus's own bar (unit cards), the set kept
+var _sel_capsule: PanelContainer = null
+var _capsule_label: Label = null
+var _box_panel: Panel = null
+var _box_ok := false              # the press now down began on empty ground (a drag from it is the box)
+var _boxing := false
+var _box_add := false
+var _box_from := Vector2.ZERO
+var _lp_t0 := 0                   # ticks (ms) of the touch now down (0 none): a long press adds / starts the box
+var _lp_fired := false
+var _lp_box := false              # the long press began on empty ground: the drag that follows is the box
+var _last_tap := {}
+var test_shift := false           # testing aid: Shift counts as held (the real mouse's box is Shift + left drag)
+
+
+func _shift_held() -> bool:
+	return test_shift or Input.is_key_pressed(KEY_SHIFT)
+
+
+func _own_army(id: int) -> bool:
+	var a := CState.army(ps, id)
+	return not a.is_empty() and int(a["f"]) == f
+
+
+func _own_fleet(id: int) -> bool:
+	if not CFleet.on(ps):
+		return false
+	var fl := CFleet.fleet(ps, id)
+	return not fl.is_empty() and int(fl["f"]) == f
+
+
+## The selected armies of ours (ids, the focus first).
+func set_armies() -> Array:
+	var out: Array = []
+	if sel_army >= 0 and _own_army(sel_army):
+		out.append(sel_army)
+	for id in sel_more_armies:
+		if _own_army(int(id)) and not out.has(int(id)):
+			out.append(int(id))
+	return out
+
+
+## The selected fleets of ours (ids, the focus first).
+func set_fleets() -> Array:
+	var out: Array = []
+	if sel_fleet >= 0 and _own_fleet(sel_fleet):
+		out.append(sel_fleet)
+	for id in sel_more_fleets:
+		if _own_fleet(int(id)) and not out.has(int(id)):
+			out.append(int(id))
+	return out
+
+
+func set_size() -> int:
+	return set_armies().size() + set_fleets().size()
+
+
+func in_set(kind: String, id: int) -> bool:
+	return set_armies().has(id) if kind == "a" else set_fleets().has(id)
+
+
+func _clear_more() -> void:
+	sel_more_armies = []
+	sel_more_fleets = []
+	set_detail = false
+	add_mode = false
+
+
+## Shift / Ctrl click, add mode's tap: add the army ("a") or fleet ("f") to the set, or take it out when it is in.
+## With no army or fleet of ours selected it is a plain select.
+func add_to_set(kind: String, id: int) -> void:
+	if f < 0 or not (_own_army(id) if kind == "a" else _own_fleet(id)):
+		return
+	if set_size() == 0:
+		if kind == "a":
+			select_army(id)
+		else:
+			select_fleet(id)
+		return
+	if in_set(kind, id):
+		_remove_from_set(kind, id)
+	elif kind == "a":
+		sel_more_armies.append(id)
+	else:
+		sel_more_fleets.append(id)
+	_after_set_change()
+
+
+func _remove_from_set(kind: String, id: int) -> void:
+	if (kind == "a" and id == sel_army) or (kind == "f" and id == sel_fleet):
+		var nk := ""
+		var nid := -1
+		if not sel_more_armies.is_empty():
+			nk = "a"
+			nid = int(sel_more_armies.pop_front())
+		elif not sel_more_fleets.is_empty():
+			nk = "f"
+			nid = int(sel_more_fleets.pop_front())
+		if nid < 0:
+			close_side()
+			return
+		if nk == "a":
+			sel_army = nid
+			sel_fleet = -1
+		else:
+			sel_fleet = nid
+			sel_army = -1
+	elif kind == "a":
+		sel_more_armies.erase(id)
+	else:
+		sel_more_fleets.erase(id)
+
+
+## A card on the set bar was tapped: that army / fleet is the focus, the set stays.
+func set_focus(kind: String, id: int) -> void:
+	if not in_set(kind, id):
+		return
+	var arm := set_armies()
+	var fls := set_fleets()
+	if kind == "a":
+		arm.erase(id)
+	else:
+		fls.erase(id)
+	if kind == "a":
+		sel_army = id
+		sel_fleet = -1
+		sel_more_armies = arm
+		sel_more_fleets = fls
+	else:
+		sel_fleet = id
+		sel_army = -1
+		sel_more_armies = arm
+		sel_more_fleets = fls
+	set_detail = true
+	_after_set_change()
+
+
+func _after_set_change() -> void:
+	sel_region = -1
+	merge_tap = -1
+	if set_size() > 1:
+		side.visible = false
+	else:
+		set_detail = false
+		add_mode = false
+	_defer_sel = true
+	_refresh_map()
+	_defer_sel = false
+	_update_hint()
+	_t("campaign_input", {"what": "set_change", "n": set_size()})
+
+
+## Select exactly these armies and fleets (ids; the first army, else the first fleet, is the focus).
+func select_set(armies: Array, fleets: Array) -> void:
+	var arm: Array = []
+	for id in armies:
+		if _own_army(int(id)) and not arm.has(int(id)):
+			arm.append(int(id))
+	var fls: Array = []
+	for id in fleets:
+		if _own_fleet(int(id)) and not fls.has(int(id)):
+			fls.append(int(id))
+	if arm.is_empty() and fls.is_empty():
+		return
+	if arm.size() + fls.size() == 1:
+		if arm.is_empty():
+			select_fleet(int(fls[0]))
+		else:
+			select_army(int(arm[0]))
+		return
+	var keep_add := add_mode
+	_clear_more()
+	add_mode = keep_add
+	dock_mode = -1
+	if not arm.is_empty():
+		sel_army = int(arm[0])
+		sel_fleet = -1
+		sel_more_armies = arm.slice(1)
+		sel_more_fleets = fls
+	else:
+		sel_fleet = int(fls[0])
+		sel_army = -1
+		sel_more_fleets = fls.slice(1)
+	_after_set_change()
+
+
+## Double tap: every army of ours in the tapped one's region (not busy in a battle), or every fleet of ours at the tapped
+## one's port or cell. False when it is not ours or alone there (then the tap is the ordinary one).
+func select_together(kind: String, id: int) -> bool:
+	if kind == "a":
+		var a := CState.army(ps, id)
+		if a.is_empty() or int(a["f"]) != f:
+			return false
+		var ids: Array = []
+		for o in CState.armies_of(ps, f):
+			if int(o["r"]) == int(a["r"]) and int(o["busy"]) == 0 and int(o["id"]) != id:
+				ids.append(int(o["id"]))
+		if ids.is_empty() or int(a["busy"]) != 0:
+			return false
+		ids.push_front(id)
+		select_set(ids, [])
+		return true
+	var fl := CFleet.fleet(ps, id) if CFleet.on(ps) else {}
+	if fl.is_empty() or int(fl["f"]) != f:
+		return false
+	var dk := CFleet.docked(fl)
+	var fids: Array = []
+	for o in CFleet.fleets_of(ps, f):
+		if int(o["id"]) == id:
+			continue
+		if CFleet.cell(o) == CFleet.cell(fl) or (dk >= 0 and CFleet.docked(o) == dk):
+			fids.append(int(o["id"]))
+	if fids.is_empty():
+		return false
+	fids.push_front(id)
+	select_set([], fids)
+	return true
+
+
+## Our armies / fleets whose markers lie inside the screen rectangle (a drag box). With `additive` the set so far stays.
+## Returns how many were picked up (the selection is unchanged when none).
+func select_in_rect(rect: Rect2, additive: bool = false) -> int:
+	if f < 0 or not _g():
+		return 0
+	var arm: Array = []
+	var fls: Array = []
+	var pos := overlay.army_positions()
+	for id in pos:
+		if rect.has_point(pos[id]) and _own_army(int(id)) and int(CState.army(ps, int(id))["busy"]) == 0:
+			arm.append(int(id))
+	if CFleet.on(ps):
+		var fpos := overlay.fleet_positions()
+		for id in fpos:
+			if rect.has_point(fpos[id]) and _own_fleet(int(id)):
+				fls.append(int(id))
+	arm.sort()
+	fls.sort()
+	var n := arm.size() + fls.size()
+	if n == 0:
+		return 0
+	if additive:
+		var a2 := set_armies()
+		for id in arm:
+			if not a2.has(id):
+				a2.append(id)
+		var f2 := set_fleets()
+		for id in fls:
+			if not f2.has(id):
+				f2.append(id)
+		arm = a2
+		fls = f2
+	select_set(arm, fls)
+	return n
+
+
+## Add mode (touch): taps add or remove armies and fleets until Done (or a tap on the map).
+func enter_add_mode(kind: String = "", id: int = -1) -> void:
+	if f < 0:
+		return
+	if kind != "" and id >= 0 and not in_set(kind, id):
+		add_to_set(kind, id)
+	if set_size() == 0:
+		return
+	add_mode = true
+	_refresh_bar()
+	_update_hint()
+	_t("campaign_input", {"what": "add_mode"})
+
+
+func end_add_mode() -> void:
+	if not add_mode:
+		return
+	add_mode = false
+	_refresh_bar()
+	_update_hint()
+
+
+## Add mode's tap: one of our markers adds / removes it, anything else ends the mode.
+func _tap_add(p: Vector2) -> void:
+	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	if fid >= 0 and _own_fleet(fid):
+		add_to_set("f", fid)
+		return
+	var id := overlay.army_at(p) if fid < 0 else -1
+	if id >= 0 and _own_army(id):
+		add_to_set("a", id)
+		return
+	end_add_mode()
+
+
+## "Selecting: 2 armies, 1 fleet" as words.
+func set_words() -> String:
+	var na := set_armies().size()
+	var nf := set_fleets().size()
+	var parts: Array = []
+	if na > 0:
+		parts.append("%d arm%s" % [na, "y" if na == 1 else "ies"])
+	if nf > 0:
+		parts.append("%d fleet%s" % [nf, "" if nf == 1 else "s"])
+	return ", ".join(parts)
+
+
+func _build_msel_ui() -> void:
+	_sel_capsule = Kit.panel(Color(0.12, 0.1, 0.08, 0.96), 6)
+	_sel_capsule.name = "select_capsule"
+	_sel_capsule.visible = false
+	var h := Kit.hbox(8)
+	_sel_capsule.add_child(h)
+	_capsule_label = Kit.label("", Kit.FONT, Color(1, 0.92, 0.8))
+	_capsule_label.name = "select_capsule_label"
+	h.add_child(_capsule_label)
+	var done := Kit.button("Done", func(): end_add_mode(), 64)
+	done.name = "select_done"
+	h.add_child(done)
+	ui.add_child(_sel_capsule)
+	_box_panel = Panel.new()
+	_box_panel.name = "select_box"
+	_box_panel.visible = false
+	_box_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1.0, 0.9, 0.5, 0.12)
+	sb.border_color = Color(1.0, 0.85, 0.3, 0.9)
+	sb.set_border_width_all(2)
+	_box_panel.add_theme_stylebox_override("panel", sb)
+	ui.add_child(_box_panel)
+
+
+## The capsule shows while add mode is on: just under the top bar, centred.
+func _update_capsule() -> void:
+	if _sel_capsule == null:
+		return
+	var on := add_mode and set_size() > 0 and _g()
+	_sel_capsule.visible = on
+	if not on:
+		return
+	_capsule_label.text = "Selecting: %s." % set_words()
+	_sel_capsule.reset_size()
+	var vp := _vp()
+	_sel_capsule.position = Vector2((vp.x - _sel_capsule.size.x) * 0.5, TOP_H + 8.0)
+	_place_capsule.call_deferred()
+
+
+func _place_capsule() -> void:
+	if _sel_capsule == null or not is_instance_valid(_sel_capsule) or not _sel_capsule.visible:
+		return
+	_sel_capsule.reset_size()
+	_sel_capsule.position = Vector2((_vp().x - _sel_capsule.size.x) * 0.5, TOP_H + 8.0)
+
+
+func _box_update(to: Vector2) -> void:
+	var r := Rect2(_box_from, to - _box_from).abs()
+	_box_panel.position = r.position
+	_box_panel.size = r.size
+	_box_panel.visible = true
+
+
+func _box_end(to: Vector2) -> void:
+	_boxing = false
+	_lp_box = false
+	_box_panel.visible = false
+	var r := Rect2(_box_from, to - _box_from).abs()
+	var n := select_in_rect(r, _box_add)
+	_t("campaign_input", {"what": "box_select", "n": n})
+	if n == 0 and not _box_add:
+		deselect_all()
+
+
+## Real mouse and touch: the second tap on the same marker within DOUBLE_TAP_MS selects everything of ours there.
+## A lone army (fleet) falls through to the ordinary tap; a merge preview's second tap is the merge's.
+func _double_tap(p: Vector2) -> bool:
+	var now := Time.get_ticks_msec()
+	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	var aid := overlay.army_at(p) if fid < 0 else -1
+	var kind := "f" if fid >= 0 else ("a" if aid >= 0 else "")
+	var id := fid if fid >= 0 else aid
+	var prev := _last_tap
+	_last_tap = {"ms": now, "pos": p, "kind": kind, "id": id}
+	if kind == "" or prev.is_empty() or str(prev["kind"]) != kind or int(prev["id"]) != id:
+		return false
+	if now - int(prev["ms"]) > DOUBLE_TAP_MS or p.distance_to(prev["pos"]) > 30.0:
+		return false
+	if kind == "a" and merge_tap == id:
+		return false
+	if select_together(kind, id):
+		_last_tap = {}
+		_t("campaign_input", {"what": "double_tap_select", "n": set_size()})
+		return true
+	return false
+
+
+## A touch held still on one of our markers (add mode starts with it) or on empty ground (the drag that follows is a
+## box). Called from _tick.
+func _long_press_tick() -> void:
+	if _lp_t0 == 0 or _lp_fired or _multi or _dragging or _touches.size() != 1 or f < 0 or not _g() or _blocked():
+		return
+	if Time.get_ticks_msec() - _lp_t0 < LONG_PRESS_MS:
+		return
+	_lp_t0 = 0
+	_lp_fired = long_press_at(_press_pos)   # (true: the long press was the gesture, the release taps nothing)
+
+
+## A long press at screen point p: on one of our markers it adds it and enters add mode (true); on empty ground it arms the
+## box for the drag that may follow (false: a release without a drag is the ordinary tap, however slow).
+func long_press_at(p: Vector2) -> bool:
+	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	if fid >= 0 and _own_fleet(fid):
+		_drag_army = -1
+		overlay.set_drop(-1)
+		enter_add_mode("f", fid)
+		return true
+	var id := overlay.army_at(p) if fid < 0 else -1
+	if id >= 0 and _own_army(id):
+		_drag_army = -1
+		overlay.set_drop(-1)
+		enter_add_mode("a", id)
+		return true
+	if fid < 0 and id < 0 and overlay.settlement_at(p) < 0:
+		_lp_box = true
+		_box_from = p
+		_box_add = add_mode
+	return false
+
+
+# ----------------------------------------------------------- group orders ---
+
+## The words of the army (the hero's name, else "the army at <town>").
+func army_label(id: int) -> String:
+	var hero := CChars.in_slot(ps, id, CChars.SLOT_HERO)
+	if not hero.is_empty():
+		return str(hero.get("name", "the army"))
+	var a := CState.army(ps, id)
+	return "the army at %s" % CData.REGIONS[int(a["r"])]["city"] if not a.is_empty() else "an army"
+
+
+func _toast_text() -> String:
+	if _toast == null or not is_instance_valid(_toast):
+		return ""
+	var ls := _toast.find_children("*", "Label", true, false)
+	return str((ls[0] as Label).text) if not ls.is_empty() else ""
+
+
+func _when_words(last: int) -> String:
+	return "this turn" if last <= 0 else ("next turn" if last == 1 else "in %d turns" % (last + 1))
+
+
+func _plural(n: int, one: String, many: String) -> String:
+	return "%d %s" % [n, one if n == 1 else many]
+
+
+## Our armies of the set that can take an order now (not in a battle).
+func _free_set_armies() -> Array:
+	var out: Array = []
+	for id in set_armies():
+		if int(CState.army(ps, int(id))["busy"]) == 0:
+			out.append(int(id))
+	return out
+
+
+## Group Move: every army of `ids` to cell c (after enemy army tgt): one ordinary move each, at its own pace. An army
+## already on that march keeps it; when every one already marches there the tap takes the marches back. The toast says
+## who arrives when and who cannot go and why.
+func move_group(ids: Array, c: int, tgt: int = -1) -> void:
+	var all_same := not ids.is_empty()
+	for id in ids:
+		var cur := plan6(int(id))
+		var same := not cur.is_empty() and ((tgt >= 0 and int(cur["tgt"]) == tgt) or (tgt < 0 and int(cur["tgt"]) < 0 and int(cur["cell"]) == c))
+		if not same:
+			all_same = false
+	if all_same:
+		for id in ids:
+			set_move6(int(id), c, tgt)
+		show_toast("Marches cancelled for %s." % _plural(ids.size(), "army", "armies"))
+		return
+	var ok: Array = []
+	var failed: Array = []
+	for id in ids:
+		var aid := int(id)
+		var a := CState.army(ps, aid)
+		var cur := plan6(aid)
+		if not cur.is_empty() and ((tgt >= 0 and int(cur["tgt"]) == tgt) or (tgt < 0 and int(cur["tgt"]) < 0 and int(cur["cell"]) == c)):
+			ok.append(aid)
+			continue
+		if a.is_empty() or int(a["busy"]) != 0:
+			failed.append([aid, "in a battle"])
+			continue
+		if not recruits_into(aid).is_empty():
+			failed.append([aid, "taking recruits this turn"])
+			continue
+		var rt := CRules.plan_path(ps, a, c, tgt, CData.MODE_SIEGE)
+		if rt.has("why"):
+			failed.append([aid, str(rt["why"])])
+			continue
+		set_move6(aid, c, tgt)
+		var now := plan6(aid)
+		if not now.is_empty() and int(now["cell"]) == c:
+			ok.append(aid)
+		else:
+			failed.append([aid, "refused"])
+	var where := str(CData.REGIONS[maxi(CGrid.region(c), 0)]["name"])
+	var text := ""
+	if not ok.is_empty():
+		var parts: Array = []
+		if ok.size() <= 4:
+			for id in ok:
+				var rt2 := route6(int(id))
+				var turns: Array = rt2.get("t", [])
+				parts.append("%s %s" % [army_label(int(id)), _when_words(int(turns[-1]) if not turns.is_empty() else 0)])
+		else:
+			var by := {}
+			for id in ok:
+				var rt3 := route6(int(id))
+				var tn: Array = rt3.get("t", [])
+				var k := int(tn[-1]) if not tn.is_empty() else 0
+				by[k] = int(by.get(k, 0)) + 1
+			var ks := by.keys()
+			ks.sort()
+			for k in ks:
+				parts.append("%d %s" % [int(by[k]), _when_words(int(k))])
+		text = "%s ordered %s: %s." % [_plural(ok.size(), "army", "armies"), "to attack" if tgt >= 0 else "to " + where, ", ".join(parts)]
+	if not failed.is_empty():
+		var fl: Array = []
+		for e in failed:
+			fl.append("%s (%s)" % [army_label(int(e[0])), str(e[1])])
+		text += (" " if text != "" else "") + "Cannot go: %s." % ", ".join(fl)
+	_t("campaign_input", {"what": "group_move", "ok": ok.size(), "failed": failed.size()})
+	show_toast(text)
+
+
+## Group sail / land: every fleet of `ids` to cell c (a sea cell: sail; a coast cell: land the troops aboard, an empty
+## fleet stays). One ordinary fmove each.
+func fmove_group(ids: Array, c: int) -> void:
+	var landing := not CFleet.is_sea(c)
+	var todo: Array = []
+	var skipped: Array = []
+	for id in ids:
+		var fl := CFleet.fleet(ps, int(id))
+		if landing and (fl["carry"] as Array).is_empty():
+			skipped.append(int(id))
+		else:
+			todo.append(int(id))
+	if todo.is_empty():
+		show_toast("No troops aboard to land: the %s stay." % _plural(skipped.size(), "fleet", "fleets"))
+		return
+	var all_same := true
+	for id in todo:
+		if int(planned_voyage(int(id))[0]) != c:
+			all_same = false
+	if all_same:
+		for id in todo:
+			set_fmove(int(id), c)
+		show_toast("Voyages cancelled for %s." % _plural(todo.size(), "fleet", "fleets"))
+		return
+	var ok: Array = []
+	var failed: Array = []
+	var units := 0
+	for id in todo:
+		var fid := int(id)
+		if int(planned_voyage(fid)[0]) == c:
+			ok.append(fid)
+			continue
+		var p := CFleet.plan(ps, f, fid, c, -1)
+		if p.has("why"):
+			failed.append([fid, str(p["why"])])
+			continue
+		set_fmove(fid, c)
+		if int(planned_voyage(fid)[0]) == c:
+			ok.append(fid)
+			units += CFleet.carried_units(CFleet.fleet(ps, fid))
+		else:
+			failed.append([fid, "refused"])
+	var text := ""
+	if not ok.is_empty():
+		text = "%s %s%s." % [_plural(ok.size(), "fleet", "fleets"), "land" if landing else "sail",
+			" (%s aboard)" % _plural(units, "unit", "units") if landing else ""]
+		text = text.replace(" fleet land", " fleet lands").replace(" fleet sail", " fleet sails")
+	if not failed.is_empty():
+		var fl2: Array = []
+		for e in failed:
+			fl2.append("fleet %d (%s)" % [int(e[0]), str(e[1])])
+		text += (" " if text != "" else "") + "Cannot go: %s." % ", ".join(fl2)
+	if not skipped.is_empty():
+		text += " %s stay%s (nothing aboard)." % [_plural(skipped.size(), "empty fleet", "empty fleets"), "s" if skipped.size() == 1 else ""]
+	_t("campaign_input", {"what": "group_fleet_move", "ok": ok.size(), "failed": failed.size()})
+	show_toast(text)
+
+
+## Embark all: every army of `army_ids` boards the first of `fleet_ids` that has room (selection order, fill one fleet
+## then the next); an army not beside any of them marches to board `approach` when it fits (the single tap's rule).
+## The toast names who did not fit and why (CFleet.embark_check's own words). Returns {boarded, marching, left}.
+func embark_group(army_ids: Array, fleet_ids: Array, approach: int = -1) -> Dictionary:
+	var boarded: Array = []
+	var marching: Array = []
+	var left: Array = []
+	var march_units := 0
+	for id in army_ids:
+		var aid := int(id)
+		var a := CState.army(ps, aid)
+		if a.is_empty():
+			continue
+		var done := false
+		var why := ""
+		for fid in fleet_ids:
+			var w := CFleet.embark_check(ps, f, aid, int(fid))
+			if w == "":
+				if add_order({"t": "embark", "army": aid, "fleet": int(fid)}) == "":
+					boarded.append([aid, int(fid)])
+					done = true
+					break
+				w = "the order was refused"
+			if why == "" or why.begins_with("not beside"):
+				why = w
+		if done:
+			continue
+		if approach >= 0 and why.begins_with("not beside"):
+			var afl := CFleet.fleet(ps, approach)
+			var bw := CFleet.board_order_check(ps, f, a, approach)
+			var room := CFleet.capacity(afl) - CFleet.carried_units(afl) - march_units
+			if bw == "" and CState.unit_count(a) > room:
+				bw = "not enough room aboard (%d of %d)" % [CFleet.carried_units(afl) + march_units, CFleet.capacity(afl)]
+			if bw == "":
+				var cur := plan6(aid)
+				if not cur.is_empty() and int(cur.get("fleet", -1)) == approach:
+					marching.append(aid)
+					march_units += CState.unit_count(a)
+					continue
+				set_board(aid, approach)
+				var now := plan6(aid)
+				if not now.is_empty() and int(now.get("fleet", -1)) == approach:
+					marching.append(aid)
+					march_units += CState.unit_count(a)
+					continue
+				bw = "no way to a cell beside the fleet"
+			why = bw
+		left.append([aid, why])
+	var text := ""
+	if not boarded.is_empty():
+		text = "%s of %d boarded." % [_plural(boarded.size(), "army", "armies"), army_ids.size()]
+	if not marching.is_empty():
+		text += (" " if text != "" else "") + "%s march%s to board on arriving." % [_plural(marching.size(), "army", "armies"), "es" if marching.size() == 1 else ""]
+	if not left.is_empty():
+		var lf: Array = []
+		for e in left:
+			lf.append("%s (%s)" % [army_label(int(e[0])), str(e[1])])
+		text += (" " if text != "" else "") + "Did not fit: %s." % ", ".join(lf)
+	if text == "":
+		text = "No army to board."
+	if left.is_empty() and boarded.is_empty() and marching.is_empty():
+		AudioFx.play("refused", 0.9, 0.0, "ui")
+	_t("campaign_input", {"what": "embark_group", "boarded": boarded.size(), "left": left.size()})
+	_prune_selection()
+	if set_size() == 0 and not boarded.is_empty():
+		select_fleet(int((boarded[0] as Array)[1]))
+	show_toast(text)
+	return {"boarded": boarded, "marching": marching, "left": left}
+
+
+## The set's Board button: armies and fleets both selected.
+func board_set() -> void:
+	var fls := set_fleets()
+	var arm := set_armies()
+	if fls.is_empty() or arm.is_empty():
+		show_toast("Select armies and a fleet to board them.")
+		return
+	embark_group(arm, fls, fls[0])
+
+
+## Merge all: every army of `ids` (not the target) into army `target`, within the unit cap; the rest are reported.
+## Armies beside it merge at once, further ones march and merge on arriving (set_join), each its own order.
+func merge_group(ids: Array, target: int) -> void:
+	var t := CState.army(ps, target)
+	if t.is_empty():
+		return
+	var total := CState.unit_count(t)
+	var ok: Array = []
+	var left: Array = []
+	for id in ids:
+		var aid := int(id)
+		if aid == target:
+			continue
+		var a := CState.army(ps, aid)
+		if a.is_empty():
+			continue
+		var n := CState.unit_count(a)
+		if total + n > CData.ARMY_MAX:
+			left.append([aid, "more than %d units" % CData.ARMY_MAX])
+			continue
+		var why := merge_why(a, target)
+		if why != "":
+			left.append([aid, why])
+			continue
+		if set_join(aid, target, true):
+			ok.append(aid)
+			total += n
+		else:
+			left.append([aid, "refused"])
+	var text := ""
+	if not ok.is_empty():
+		text = "%s merge%s into %s (%d units)." % [_plural(ok.size(), "army", "armies"), "s" if ok.size() == 1 else "", army_label(target), total]
+	if not left.is_empty():
+		var lf: Array = []
+		for e in left:
+			lf.append("%s (%s)" % [army_label(int(e[0])), str(e[1])])
+		text += (" " if text != "" else "") + "Not merged: %s." % ", ".join(lf)
+	_t("campaign_input", {"what": "merge_group", "ok": ok.size(), "left": left.size()})
+	_prune_selection()
+	merge_tap = -1
+	if set_size() == 0 or (set_armies().size() == 0 and set_fleets().is_empty()):
+		select_army(target)
+	_refresh_map()
+	show_toast(text)
+
+
+## The first tap of a group merge: preview in a toast; the second tap (or its Merge button) merges every selected army
+## into the tapped one.
+func _merge_set_at(id: int) -> void:
+	if merge_tap == id:
+		if _toast != null:
+			_toast.queue_free()
+			_toast = null
+		merge_group(set_armies(), id)
+		return
+	merge_tap = id
+	var t := CState.army(ps, id)
+	var total := CState.unit_count(t)
+	var fit := 0
+	for aid in set_armies():
+		var n := CState.unit_count(CState.army(ps, int(aid)))
+		if total + n <= CData.ARMY_MAX:
+			total += n
+			fit += 1
+	_refresh_map()
+	var other := id
+	show_toast("Merge %s into %s (%d units, at most %d). Tap it again, or Merge. Armies that do not fit stay out and are named." % [
+		_plural(fit, "army", "armies"), army_label(id), CState.unit_count(t), CData.ARMY_MAX],
+		[["Merge", func(): merge_group(set_armies(), other)], ["Select it", func(): select_army(other)]])
+	_t("campaign_input", {"what": "merge_group_preview"})
+
+
+## Hold: take every selected army's march and every selected fleet's voyage back (each its own cancel).
+func hold_group() -> void:
+	var n := 0
+	for id in set_armies():
+		if not plan6(int(id)).is_empty():
+			var cur := plan6(int(id))
+			set_move6(int(id), int(cur["cell"]), int(cur["tgt"]))
+			n += 1
+	for id in set_fleets():
+		var vy := planned_voyage(int(id))
+		if int(vy[0]) >= 0 or int(vy[1]) >= 0:
+			set_fmove(int(id), int(vy[0]), int(vy[1]))
+			n += 1
+	_t("campaign_input", {"what": "hold_group", "n": n})
+	show_toast("%s taken back: the selection holds." % _plural(n, "order", "orders") if n > 0 else "Nothing to hold: no march or voyage is planned.")
+
+
+## Stance for all: every selected army to stance `sv` (one stance order each).
+func stance_group(sv: int) -> void:
+	for id in set_armies():
+		panels._set_stance6(int(id), sv, true)
+	_refresh_map()
+	_t("campaign_input", {"what": "stance_group", "s": sv})
+
+
+## What a tap on screen point p orders for a set of more than one: armies to the spot (or after an enemy army), fleets
+## to the sea cell or the coast to land on, our fleet with armies selected is Embark all, our other army with armies
+## selected is Merge all. True when the tap was the set's.
+func _tap_set(p: Vector2) -> bool:
+	var arm := _free_set_armies()
+	var fls := set_fleets()
+	var fid := overlay.fleet_at(p) if CFleet.on(ps) else -1
+	if fid >= 0:
+		var fl := CFleet.fleet(ps, fid)
+		var ours := int(fl["f"]) == f
+		if ours and not arm.is_empty():
+			var order: Array = [fid]
+			for x in fls:
+				if int(x) != fid:
+					order.append(int(x))
+			embark_group(arm, order, fid)
+			return true
+		if ours and in_set("f", fid):
+			if fid == sel_fleet:
+				close_side()
+			else:
+				select_fleet(fid)
+			return true
+		if ours and not fl.has("flota"):
+			for x in fls:
+				join_fleet(int(x), fid, true)
+			_prune_selection()
+			show_toast("%s join%s." % [_plural(fls.size(), "fleet", "fleets"), "s" if fls.size() == 1 else ""])
+			return true
+		if not ours and CState.at_war(ps, f, int(fl["f"])) and not fls.is_empty():
+			for x in fls:
+				set_fmove(int(x), -1, fid)
+			show_toast("%s ordered to attack." % _plural(fls.size(), "fleet", "fleets"))
+			return true
+		select_fleet(fid)
+		return true
+	var id := overlay.army_at(p)
+	if id >= 0:
+		var e := CState.army(ps, id)
+		var ef := int(e["f"])
+		if ef == f:
+			if in_set("a", id):
+				if id == sel_army:
+					close_side()
+				else:
+					select_army(id)
+				return true
+			if arm.size() > 1:
+				_merge_set_at(id)
+				return true
+			select_army(id)
+			return true
+		if CState.friendly(ps, f, ef):
+			select_army(id)
+			return true
+		if not arm.is_empty() and CState.at_war(ps, f, ef):
+			move_group(arm, CState.cell(e), id)
+			return true
+		select_army(id)
+		return true
+	var mk := overlay.marker_at(p)
+	if not mk.is_empty():
+		_marker_toast(mk)
+		return true
+	var tsr := overlay.settlement_at(p)
+	var fc := MapOverlay.cell_of_point(_map_point(p))
+	if tsr >= 0:
+		fc = CGrid.site(tsr)
+	var tg := _target_at(p)
+	var did := false
+	if not fls.is_empty() and fc >= 0 and (CFleet.is_sea(fc) or CGrid.passable(fc)):
+		fmove_group(fls, fc)
+		did = true
+	if not arm.is_empty():
+		if int(tg[0]) >= 0:
+			move_group(arm, int(tg[0]), int(tg[1]))
+		elif not did:
+			_flash("Not on land.")
+	return true

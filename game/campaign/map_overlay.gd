@@ -94,6 +94,8 @@ var state: Dictionary = {}
 var xform := Transform2D.IDENTITY
 var zoom := 1.0
 var selected_army := -1
+var extra_armies: Array = []   # multi-select: the other selected armies (the halo and the lifted standard)
+var extra_fleets: Array = []
 var player := -1
 ## Planned moves of the player planning now: [[army id, to region], ...].
 var moves: Array = []
@@ -917,15 +919,19 @@ func _glow_body() -> void:
 		var dr := 24.0 * maxf(dm, 0.8) + 1.5 * sin(pulse * 6.0)
 		_ci.draw_circle(dc, dr, Color(Color(1.0, 0.85, 0.3), 0.22))
 		_ci.draw_arc(dc, dr, 0, TAU, 36, Color(Color(1.0, 0.85, 0.3), 0.95), 2.4, true)
-	var sel := selected_army
-	if sel < 0 or _army_epoch != _epoch or not _army_pos.has(sel):
+	if _army_epoch != _epoch:
 		return
-	var c: Vector2 = _army_pos[sel]
 	var m := _mk_of(_dz[P_ARMIES])
-	var hc := c + Vector2(-2.0, -2.0) * maxf(m, 0.8)
-	var hr := 21.0 * maxf(m, 0.8) + 1.5 * sin(pulse * 5.0)
-	_ci.draw_circle(hc, hr, Color(COL_SELECTED, 0.26))
-	_ci.draw_arc(hc, hr, 0, TAU, 32, Color(COL_SELECTED, 0.7), 1.6, true)
+	var sels: Array = [selected_army]
+	sels.append_array(extra_armies)
+	for sel in sels:
+		if int(sel) < 0 or not _army_pos.has(int(sel)):
+			continue
+		var c: Vector2 = _army_pos[int(sel)]
+		var hc := c + Vector2(-2.0, -2.0) * maxf(m, 0.8)
+		var hr := 21.0 * maxf(m, 0.8) + 1.5 * sin(pulse * 5.0)
+		_ci.draw_circle(hc, hr, Color(COL_SELECTED, 0.26))
+		_ci.draw_arc(hc, hr, 0, TAU, 32, Color(COL_SELECTED, 0.7), 1.6, true)
 
 
 func _tips_body() -> void:
@@ -1983,7 +1989,7 @@ func _fleet_marker(c: Vector2, fl: Dictionary) -> void:
 	var n := SeaWaves.normal(mp, tt)
 	var roll := clampf(n.x * a * 0.9, -0.22, 0.22)
 	var human := CState.is_human(state, f)
-	var sel := int(fl["id"]) == selected_fleet
+	var sel := int(fl["id"]) == selected_fleet or extra_fleets.has(int(fl["id"]))
 	var xf := Transform2D(roll, c + Vector2(0, bob))
 	var s := FLEET_W * 0.5 * m
 	if sel:
@@ -2073,7 +2079,7 @@ func _army_marker(c: Vector2, a: Dictionary) -> void:
 		men += int(u["n"])
 		full += preload("res://sim/unit_types.gd").size_of(CState.unit_type(u))
 	var frac := clampf(float(men) / maxf(full, 1), 0.0, 1.0)
-	var glow := 1.0 if int(a["id"]) == selected_army else 0.0   # (the selected standard lifts and has a gold rim; its halo pulses: its own part)
+	var glow := 1.0 if int(a["id"]) == selected_army or extra_armies.has(int(a["id"])) else 0.0   # (the selected standard lifts and has a gold rim; its halo pulses: its own part)
 	var rect := draw_banner(_ci, c, CData.faction_color(f), m, human, CState.unit_count(a), frac, glow,
 		int(a["moved"]) != 0 and human and not grid, CData.FACTIONS[f]["key"] if f >= 0 else "")
 	if grid:

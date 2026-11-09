@@ -164,6 +164,10 @@ selecting or ordering anything.
   line (box select only with an empty selection or Shift). Telemetry
   `tap_select_loose`: the loose radius, beyond the tight one, made the
   selection. Constants and rules: top of `game/battle.gd`.
+- Campaign map, multi-select (2026-11-09): Shift / Ctrl click adds or removes an army or fleet, Shift + left drag from empty
+  ground is a box, a double click takes a region's armies; touch: a long press on a marker is add mode (the
+  capsule, Done), a long press on empty ground then a drag is the box, a double tap takes the region; one tap or
+  right click then orders the whole set (see "Multi-select on the campaign map").
 - Campaign map, real mouse (2026-10-22, the Total War scheme as on the battle
   field; touch unchanged): a real left click is an emulated touch with
   `device == DEVICE_ID_EMULATION` (`_press_mouse`). Left click only selects
@@ -795,6 +799,84 @@ what the tap changed; the rest follows in later frames. Rules of the view
 Measure with `--prof-tap[=N]` (also `?prof-tap=N` in the web build's URL,
 e.g. `?campaign=rome&prof-tap=3`; `game/campaign/tap_prof.gd`) or
 `tests/tap_latency.gd` on a desktop; numbers in STATUS "Overworld tap latency".
+
+### Multi-select on the campaign map (as built, 2026-11-09, view only)
+
+The owner: "Ships need multi select options", right after "Loading three 12 stack armies into boats was struggle
+enough". View only (`game/campaign/campaign_screen.gd`, `command_bar.gd`, `map_overlay.gd`, `map_view.gd`,
+`campaign_panels.gd` one argument, `howto.gd` one line; nothing under `campaign/`, `sim/` or `game/net/`, no rules path,
+no hash moves). A group order is one ordinary per-unit order for each army or fleet (`set_move6`, `set_fmove`, the
+`embark`, `merge` and `stance` orders), so the rules, the order list and the online submission are unchanged.
+
+**The selection model.** The selection is a set of our own armies and fleets. The focus is still `sel_army` or
+`sel_fleet` (everything that reads them keeps working for a set of one); the others are `sel_more_armies` /
+`sel_more_fleets`. `set_armies()` / `set_fleets()` / `set_size()` read the set (focus first); `add_to_set(kind, id)`,
+`select_set(armies, fleets)`, `select_in_rect(rect)`, `select_together(kind, id)` change it. A plain select
+(`select_army`, `select_fleet`, a region, `close_side`) drops the rest; `_prune_selection` drops what a battle or a merge
+removed and passes the focus on.
+
+**Gestures.** *Desktop:* Shift-click or Ctrl-click on one of our armies or fleets adds it or takes it out of the set; a
+plain left click selects just that one; Shift + left drag from empty ground draws a box and selects every army and fleet of
+ours inside (Ctrl adds to the set; a box over nothing deselects; a plain left drag still pans, as the right and middle
+drags do, and the wheel zooms); a double click on an army takes every army of ours in its region (not in a battle), on a fleet every fleet
+of ours at its port or cell. A lone army or fleet falls through to the ordinary click, and the second tap of a merge
+preview stays the merge's. The right click is the set's order. *Touch:* a long press (480 ms, held still) on one of our
+markers enters **add mode**: a capsule under the top bar reads "Selecting: 2 armies, 1 fleet." with a Done button; taps
+add or remove armies and fleets; Done, or a tap on anything else, ends it and keeps the set. A long press on empty
+ground, then a drag, draws the box (two fingers stay the pan); a double tap (380 ms, 30 px) takes the region's armies or
+the port's fleets; the bar's **Add** button enters add mode without the long press; the two-finger tap and the Deselect
+button clear everything. The set's hint line says what a tap orders.
+
+**The bar.** For a set of more than one (`_build_set`): a summary card ("N selected", the words "3 armies, 1 fleet", and
+the totals line "3 armies, 36 units, 4,120 men; 1 fleet, 9 ships, room for 24 units", name `set_summary`), a row of leader
+cards (`member_army_<id>` / `member_fleet_<id>`: the army's hero or town, its strength bar and units; the fleet's place,
+hull bar and ships; the focus has the gold trim; the row scrolls), no unit strip. A tap on a card makes that one the focus
+and shows its own bar with its unit cards and orders while the set stays selected (`set_detail`; its **Set (n)** button
+returns); a long press on a card takes it out of the set. Actions: **Stance** (cycles the first army's stance, applies to
+all), **Hold** (takes every planned march and voyage back; greyed when none), **Merge** (two or more armies: into the
+first), **Board** (armies and fleets both selected), **Add**, **Clear**. Phone: the same cards in the single scrolling row.
+
+**The map.** Every selected army and fleet has the halo, the lifted standard and the gold rim. The reach shading is the
+intersection of the selected free armies' reach drawn solid (where all can get this turn; its dashed second ring is
+where all can by next turn) over the union drawn faint (where any can: `MapView.set_reach(rt, uni)`, `union_fill`,
+`union_loops`; up to 12 armies are counted); a set of fleets shades the sea every fleet can sail this turn.
+
+**Group orders.** All go through the tap on the map (`_tap_set`: the touch tap and the real mouse's right click) or the
+bar, and say what they did in a toast.
+- *Move* (`move_group`): a tap on land, an enemy army or a town orders every selected free army there, one `move` each at
+  its own pace; an army already marching there keeps its march; when all of them already do, the same tap takes all the
+  marches back. The toast says who arrives when ("3 armies ordered to Bluefields: Caesar this turn, the army at Veii in
+  2 turns", counted by turn when more than four) and names the armies that cannot go with the rule's reason ("no route",
+  "taking recruits this turn"). An army that cannot reach the spot this turn still marches. Fleets (`fmove_group`): a tap
+  on the sea sends every selected fleet (one `fmove` each); on a shore cell or a town it lands the troops aboard
+  (**Disembark all**: every loaded fleet, empty ones stay and are named). An enemy fleet at war is an attack by all, our
+  own fleet a join of all.
+- *Embark all* (`embark_group`): with armies selected, a tap on one of our fleets (or the Board button with fleets
+  selected) boards the armies in selection order onto the tapped fleet, then the next selected fleet, until the
+  capacity runs out; each is one `embark` order (`CFleet.embark_check`). An army not beside any of them marches to board
+  the tapped fleet when it fits (the single tap's `set_board`, room counted for the armies already marching). The toast
+  names who did not fit and why in the rule's words ("2 armies of 3 boarded. Did not fit: the army at Bluefields (not
+  enough room aboard (6 of 6))"); the boarded armies leave the set (the fleet stays selected).
+- *Merge all* (`merge_group`): a tap on another army of ours with two or more armies selected previews ("Merge 2
+  armies into ... Tap it again, or Merge"), the second tap merges every selected army into it within the 12-unit cap;
+  armies beside it merge at once, further ones march and merge on arriving (`set_join`, one order each); the rest are
+  named ("Not merged: ... (more than 12 units)").
+- *Hold* / *Stance for all*: one `cancel_move` / `fcancel` / `stance` order each.
+- *Undo* takes back one order at a time (each army's or fleet's own order, the last first): a group of three moves is
+  three Undo taps. (A grouped undo step is open.)
+
+**Tests.** `tests/multiselect_test.gd` (alone, `-- --shots=DIR` for the pictures) and the same cases as the step `_ms_run`
+of `campaign_input_test.gd`: Shift-add and remove, the focus passing on, add mode and its capsule, a real held touch, the
+box by rect and by a real emulated drag and by a held touch, the double tap on armies, fleets and a lone army, a group
+move (three `move` orders, cancel, Undo one at a time, a march past this turn), Hold, Stance for all, Embark all with
+room for two of three, two fleets filling in turn, Disembark all, a sea move, Merge all with the preview and with the cap,
+the bar's summary line and cards, the focus card and Set, the layout at 844 x 390 and 1280 x 720 (bar on screen and its
+real height, the capsule clear of it, no squeezed card, the End turn row clear).
+
+*Open:* group Raid / Blockade / Dock for fleets (a tap on a harbour or lane orders a plain voyage); the sea's faint
+union shading; the army reach is the intersection only when the focus is an army (a fleet focus shows the sea reach);
+a group order is not one Undo step; the strip of cards shows no stance or status per card (the tooltip has the status);
+no device check, no shot of the real touch gestures.
 
 ### Main menu (as built, 2026-10-21)
 

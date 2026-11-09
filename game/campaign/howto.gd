@@ -27,6 +27,7 @@ const T := {
 	"move_1": "Select an army and tap the ground to march there. The shaded area is how far it gets this turn; a farther spot takes more turns.",
 	"move_2": "Marching costs movement points, and the slowest company sets the pace. A tap on the same spot again cancels the march.",
 	"move_3": "You cannot march through the land of a nation you are at peace with, unless it has agreed to let you pass. In enemy land an army can raid, or lay siege to a town.",
+	"move_4": "To move several at once, select them: Shift-click each, or press and hold one (on a touch screen), tap the others and press Done; drag a box over empty ground (Shift + drag with a mouse, hold first on a touch screen), or double tap an army to take everyone in its region. One tap then sends them all, each at its own pace, and a tap on your fleet boards them all until it is full.",
 	# 5. Sieges
 	"siege_1": "To take a town you must be at war with its owner. March next to it and tap it to lay siege: the army camps by the walls and cuts the town off.",
 	"siege_2": "A besieged town has supplies for a few turns. When they run out the garrison weakens every turn, but so do the besiegers, so a siege is slow and not free.",
@@ -151,7 +152,7 @@ const SECTIONS := [
 	{"id": "map", "title": "The map and the turn", "lines": ["map_1", "map_2", "map_3"]},
 	{"id": "towns", "title": "Towns and buildings", "lines": ["towns_1", "towns_2", "towns_3"]},
 	{"id": "armies", "title": "Armies and recruiting", "lines": ["armies_1", "armies_2", "armies_3", "armies_4"]},
-	{"id": "move", "title": "Movement and supply", "lines": ["move_1", "move_2", "move_3"]},
+	{"id": "move", "title": "Movement and supply", "lines": ["move_1", "move_2", "move_3", "move_4"]},
 	{"id": "siege", "title": "Sieges", "lines": ["siege_1", "siege_2", "siege_3"]},
 	{"id": "battle", "title": "Battles and the chips", "lines": ["battle_1", "battle_2", "battle_3"]},
 	{"id": "weather", "title": "Weather", "lines": ["weather_1", "weather_2", "weather_3", "weather_4"]},
