@@ -1998,6 +1998,10 @@ The 3D battle view is the only view every player gets (docs/design/art_pipeline.
   picks a flat view.
 - **Not touched:** the campaign's city preview and the sea battle screen stay 2D (the sea screen moves to 3D in stage D).
 
+### The diag overlay (as built, 2026-11-09, developer aid)
+
+`?diag=1` on the web, `--diag` on the desktop: `game/diag_overlay.gd`, a small panel over the battle (top left, 430 px wide, readable at 844 x 390): the view, the 3D path, the quality tier, the last soldier probe's drawn count, the WebGL limits (MAX_TEXTURE_SIZE first), one line per texture the men sample (class, size, format, "TOO BIG" over MAX_TEXTURE_SIZE), the captured console lines, and buttons Send log (a `client_log` event now), Tex (reads each image back for its format and mipmaps) and Hide. Off otherwise; view only, no sim state, the tests' default runs never build it (`tests/diag_test.gd`). Docs/SERVER.md section 12 has the events. `?battle-view=oblique|top` on the web is a developer aid again until stage C (no Options row): on a device whose texture limit is below the 4096 x 5784 oblique sheets use `top`, which samples the small atlas.
+
 ### The weather chip and plate (as built, 2026-11-09)
 
 The owner: "The weather rules need to be clearly communicated to the player, so they know how weather affects the

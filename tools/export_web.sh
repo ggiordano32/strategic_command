@@ -21,6 +21,8 @@ godot --headless --export-release "Web" build/web/index.html
 # Install support: manifest + icons (no service worker, so never a stale build).
 godot --headless --script res://tools/make_web_icons.gd
 cp build_stamp.txt build/web/build_stamp.txt
+# The error / GL capture the export's head_include loads before the engine (docs/SERVER.md "client_log").
+cp tools/web_diag.js build/web/diag.js
 rm -f build/web/oblique.pck   # (the second pack of earlier builds: one download now)
 echo "Pack: index.pck $(wc -c < build/web/index.pck) bytes"
 echo "Exported to build/web ($(cat build_stamp.txt)). Serve with: tools/run_server.sh (or python3 tools/serve_web.py)"

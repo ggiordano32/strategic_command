@@ -142,6 +142,7 @@ func main() {
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a 3D battle draws its soldiers (both paths, the automatic switch)")
 	obliqueOnly := flag.Bool("oblique", false, "only check that the oblique sheets ride in the main download (no second pack)")
 	v3dOnly := flag.Bool("v3d", false, "the same as -soldiers (the 3D view is the default flow's battle view; kept so older scripts work)")
+	diagOnly := flag.Bool("diag", false, "only check the client_log capture: ?diag=1 on a battle, window.__scDiag has the GL parameters and the page's errors, and a client_log event is sent (read it from the server's playtest_logs; see checkDiag)")
 	ghostOnly := flag.Bool("ghost", false, "only check that the 3D ghost pass's stencil test works in WebGL (see checkGhost)")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
@@ -233,6 +234,15 @@ func main() {
 	}
 	if *v3dOnly || *soldiersOnly {
 		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
+	}
+	if *diagOnly {
+		checkDiag(ctxA, ca, phone, *url, check)
 		if fails == 0 {
 			fmt.Println("RESULT: PASS")
 			return
@@ -537,4 +547,32 @@ func checkGhost(ctx context.Context, c *console, phone chromedp.Action[chromedp.
 			break
 		}
 	}
+}
+
+// checkDiag: the device-diagnosis capture (tools/web_diag.js, game/telemetry.gd client_log). A battle with ?diag=1 on the
+// compatible path: the page's __scDiag holds the engine context's parameters (MAX_TEXTURE_SIZE, MAX_VARYING_VECTORS, STENCIL_BITS,
+// the extension flags ...), a deliberate console.error of the test lands in the captured lines, and the game's client_log events
+// (5 s after the session start, with the battle_view event 10 s into the battle) go to the server: the caller reads them from the
+// server's playtest_logs.
+func checkDiag(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url string, check func(bool, string)) {
+	c.reset()
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&soldiers=cpu&diag=1")); err != nil {
+		check(false, "diag: navigate: "+err.Error())
+		return
+	}
+	pr := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`), 240*time.Second)
+	check(pr != nil && pr[3] == "v3d-cpu" && atoi(pr[1]) >= 50, fmt.Sprintf("diag: the compatible path draws: %v", pr))
+	snap, err := chromedp.Run(ctx, chromedp.Evaluate[string](`console.error('DIAG_TEST marker error'); window.__scDiag ? window.__scDiag.snapshot(true) : ''`))
+	check(err == nil && snap != "", "diag: window.__scDiag answers a snapshot")
+	for _, want := range []string{`"MAX_TEXTURE_SIZE"`, `"MAX_VERTEX_TEXTURE_IMAGE_UNITS"`, `"MAX_VARYING_VECTORS"`, `"MAX_FRAGMENT_UNIFORM_VECTORS"`,
+		`"MAX_VERTEX_UNIFORM_VECTORS"`, `"MAX_RENDERBUFFER_SIZE"`, `"RENDERER"`, `"ext_n"`, `"EXT_color_buffer_float"`, `"OES_texture_float_linear"`,
+		`"EXT_texture_filter_anisotropic"`, `"DEPTH_BITS"`, `"STENCIL_BITS"`, `"SAMPLES"`} {
+		check(strings.Contains(snap, want), "diag: the GL parameters carry "+want)
+	}
+	check(strings.Contains(snap, "DIAG_TEST marker error"), "diag: a console.error is captured")
+	fmt.Println("  snapshot:", snap[:min(len(snap), 600)])
+	time.Sleep(34 * time.Second) // the battle_view event (10 s of frames, slow in headless) and its client_log, then a flush
+	again, _ := chromedp.Run(ctx, chromedp.Evaluate[string](`window.__scTele ? 'tele' : 'none'`))
+	check(again == "tele", "diag: the telemetry hooks are on the page")
+	time.Sleep(6 * time.Second)
 }

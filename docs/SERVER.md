@@ -424,6 +424,27 @@ Online dialog.
   `<log dir>/YYYY-MM-DD.jsonl` with `recv` (UTC, ms) and `ip` first (the
   socket peer, or `<first X-Forwarded-For> via <peer>`); `GET` returns the
   status object. Rate limited per IP (5/s, burst 30).
+- **`client_log` (device diagnosis, 2026-11-09).** `tools/web_diag.js` (copied
+  to `build/web/diag.js` by `tools/export_web.sh`, loaded by the export's
+  `head_include` before the engine) wraps `console.error`, GL-flavoured
+  `console.warn`, `window.onerror`, `unhandledrejection`, failed
+  `getShaderParameter(COMPILE_STATUS)` / `getProgramParameter(LINK_STATUS)`
+  (with the driver's info log) and keeps the last 40 lines (400 chars each, 16 KB
+  in all, a repeat counts `n` instead of a new line), and remembers the engine's
+  own WebGL context (`HTMLCanvasElement.prototype.getContext` is wrapped as a
+  reference taker; no context is created). `game/telemetry.gd` sends a
+  `client_log` event `{"reason", "log": {"seq", "lines": [{"t","l","n","m"}],
+  "gl": {...}}}` 5 s after the session starts, with every `battle_view`
+  event, on page hide (only when the log changed) and from the `?diag=1` panel's
+  "Send log" button; `gl` (MAX_TEXTURE_SIZE, MAX_TEXTURE_IMAGE_UNITS,
+  MAX_VERTEX_TEXTURE_IMAGE_UNITS, MAX_VARYING_VECTORS, MAX_FRAGMENT/VERTEX_UNIFORM_VECTORS,
+  MAX_RENDERBUFFER_SIZE, DEPTH/STENCIL_BITS, SAMPLES, RENDERER, the extension count and
+  EXT_color_buffer_float / OES_texture_float_linear / EXT_texture_filter_anisotropic,
+  the context attributes) rides in the first one. Line levels: E console.error (Godot's
+  shader errors land here), W GL-related warn, X page error / context lost, R rejection,
+  S failed compile / link. A `battle_tex` event (the men's textures: class, size, format)
+  follows each `battle_view`. Events are opaque JSON to the server (no Go change).
+  `webcheck -diag` checks it in headless Chromium.
 
 ## 13. Security and known limits
 

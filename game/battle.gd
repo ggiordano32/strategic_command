@@ -5,6 +5,7 @@ extends Node2D
 
 signal exit_requested
 
+const DiagOverlay := preload("res://game/diag_overlay.gd")
 const AudioFx := preload("res://game/audio.gd")
 const Tips := preload("res://game/campaign/tips.gd")
 const TutorCard := preload("res://game/campaign/tutor_card.gd")
@@ -170,6 +171,7 @@ var camera: Camera2D
 ## The 3D battle view (BoardView.v3d; game/view3d.gd), else null. Its camera follows `camera` every frame; the turn and the tilt
 ## are BoardView's yaw and elevation (set by `_v3d_turn`), the gestures in _update_pinch, _right_motion and _keys_held.
 var view3d: Node3D = null
+var probe_last := {}            # the last soldier probe's result (the diag overlay shows it)
 var _look_t := 0.0               # frames and seconds of the battle_view event's window (telemetry)
 var _look_n := 0
 var _look_sent := false
@@ -644,6 +646,10 @@ func _ld_hud() -> void:
 		wx_layer.setup(self, wx_spec, seed_value)
 	hud = Hud.new()
 	add_child(hud)
+	if DiagOverlay.wanted():
+		var dg := DiagOverlay.new()
+		dg.battle = self
+		add_child(dg)
 	hud.unit_faction = soldiers.unit_faction
 	if not side_name_fkeys.is_empty():
 		var nf: Array = []
@@ -1652,6 +1658,7 @@ func _finish_bench() -> void:
 ## the rendering path in use ("gpu" texture or "cpu" fed; a texture path
 ## that draws nothing switches to the CPU-fed one and probes again).
 func _on_soldier_probe(drawn: int, men: int, path: String) -> void:
+	probe_last = {"drawn": drawn, "men": men, "path": path, "tick": sim.tick}
 	print("SOLDIER_PROBE drawn=%d men=%d path=%s" % [drawn, men, path])
 	_t("soldier_probe", {"drawn": drawn, "men": men, "tick": sim.tick, "path": path})
 
@@ -1678,6 +1685,10 @@ func _reset_window() -> void:
 ## the footprints are off (the compatible 3D path). Tells which devices run which path and how fast (docs/design/art_pipeline.md).
 func _send_look() -> void:
 	_look_sent = true
+	if _tele != null and _tele.has_method("client_log"):   # (tests' stand-ins lack it)
+		_tele.client_log("battle_view")
+		if view3d != null and view3d.men_mat != null:
+			_t("battle_tex", {"tex": DiagOverlay.tex_text(view3d, DiagOverlay._gl_max(_tele.diag_snapshot(true)))})   # (the men's textures: class, size, format; docs/SERVER.md client_log)
 	var v3d_path := ""
 	if view3d != null and view3d.has_method("path_name"):
 		v3d_path = view3d.path_name()

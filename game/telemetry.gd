@@ -32,6 +32,10 @@ var _failures := 0
 var _flush_timer := 0.0
 var _js_tele: JavaScriptObject = null
 var _js_hide_cb: JavaScriptObject = null
+var _age := 0.0                 # seconds since the autoload started (the client_log at 5 s)
+var _log5_sent := false
+var _gl_sent := false           # the GL parameters ride in the first client_log only
+var _last_log_seq := -1         # tools/web_diag.js's line counter at the last client_log (an unchanged log is not resent)
 
 const JS_HOOKS := """
 (function () {
@@ -201,6 +205,10 @@ func event(kind: String, data: Dictionary = {}) -> void:
 func _process(delta: float) -> void:
 	if not enabled:
 		return
+	_age += delta
+	if not _log5_sent and _age >= 5.0:
+		_log5_sent = true
+		client_log("session_start_5s")
 	_flush_timer += delta
 	if _flush_timer >= FLUSH_SEC:
 		_flush_timer = 0.0
@@ -260,6 +268,7 @@ func _on_page_hide(_args) -> void:
 	if not enabled or _js_tele == null:
 		return
 	page_hiding.emit()  # let the battle add a last perf sample / snapshot
+	client_log("pagehide")
 	event("page_hide_flush", {})
 	_drain_js()
 	if _queue.is_empty():
@@ -267,6 +276,37 @@ func _on_page_hide(_args) -> void:
 	var body := JSON.stringify({"records": _queue})
 	_queue = []
 	_js_tele.beacon(_url, body)
+
+
+## The page's captured console errors / warnings / script errors, with the WebGL context's parameters in the first one
+## (tools/web_diag.js, loaded before the engine; docs/SERVER.md "client_log"). Web only. Sent at 5 s, with every battle_view
+## event, on page hide and by the diag overlay's button (`force`: always, with the parameters). Returns the parsed snapshot.
+func client_log(reason: String, force := false) -> Dictionary:
+	if not OS.has_feature("web") or _js_tele == null:
+		return {}
+	var d := diag_snapshot(force or not _gl_sent)
+	if d.is_empty():
+		if enabled:
+			event("client_log", {"reason": reason, "diag": "missing"})
+		return {}
+	var seq := int(d.get("seq", 0))
+	if enabled and (force or seq != _last_log_seq or not _gl_sent):
+		_last_log_seq = seq
+		if d.has("gl"):
+			_gl_sent = true
+		event("client_log", {"reason": reason, "log": d})
+	return d
+
+
+## The capture's current snapshot ({} off the web or without tools/web_diag.js); sends nothing (the diag overlay reads it).
+func diag_snapshot(with_gl: bool) -> Dictionary:
+	if not OS.has_feature("web"):
+		return {}
+	var s = JavaScriptBridge.eval("window.__scDiag ? window.__scDiag.snapshot(%s) : ''" % ("true" if with_gl else "false"), true)
+	if not (s is String) or s == "":
+		return {}
+	var d = JSON.parse_string(s)
+	return d if d is Dictionary else {}
 
 
 func _on_viewport_resized() -> void:

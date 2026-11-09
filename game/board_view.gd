@@ -93,7 +93,7 @@ static var _mats: Array = []         # weak refs of every material `apply` was c
 
 ## The battle view every player gets is "3d" (stage B, 2026-11-09): a saved [video] battle_view of top or oblique (an old
 ## settings file) reads as 3d and nothing in the Options sets another. Hidden developer aid until stage C deletes the flat views:
-## `--battle-view=top|oblique` on the command line and the tests' `force`. The web query parameter honours 3d only.
+## `--battle-view=top|oblique` on the command line and the tests' `force`. On the web `?battle-view=oblique|top` works the same way (developer aid, removed with stage C).
 static func pref() -> String:
 	if force == "top" or force == "oblique" or force == "3d":
 		return force
@@ -102,6 +102,15 @@ static func pref() -> String:
 			var v := str(a).get_slice("=", 1).to_lower()
 			if v == "top" or v == "oblique" or v == "3d":
 				return v
+	if OS.has_feature("web"):
+		# Developer aid only (re-enabled 2026-11-09 for the tablet black-screen diagnosis; removed again with stage C): the
+		# page's ?battle-view=oblique|top draws the flat views. Nothing in the Options sets it.
+		var q = JavaScriptBridge.eval("window.location.search", true)
+		if q is String:
+			if (q as String).contains("battle-view=oblique"):
+				return "oblique"
+			if (q as String).contains("battle-view=top"):
+				return "top"
 	return "3d"
 
 

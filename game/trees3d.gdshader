@@ -79,7 +79,7 @@ vec4 samp(vec2 uv) {
 }
 
 void fragment() {
-	vec4 r = rects[int(piece)];
+	vec4 r = rects[int(piece + 0.5)];   // (+ 0.5: an interpolated varying can land an ulp under the integer on some GPUs, truncating to the previous sprite)
 	vec2 uv = r.xy + clamp(q, vec2(0.0), vec2(1.0)) * r.zw;
 	vec4 alb = samp(uv);
 	float a = alb.a;
