@@ -1,0 +1,11 @@
+{
+ "probe": "campaign_sim",
+ "packs": [
+  "rome",
+  "west"
+ ],
+ "seeds": 72,
+ "turns": 60,
+ "shard": 6,
+ "args": ["--format=10"]
+}

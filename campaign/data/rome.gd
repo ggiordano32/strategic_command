@@ -287,6 +287,12 @@ const UNIT_NAMES := {
 		"dog_handlers": ["Roman Mastiffs", "Mastiffs", "Mastiffs of the legion's baggage: handlers with a pack of two dogs each."]},
 }
 
+## The campaign AI (CData.AI_LIVE_MIX; docs/AI.md 37 for the West, 76 here, 2026-11-09): recruiting picks among the mix
+## lines some recruiting centre can raise now, so a line no centre has the buildings for (stone throwers before a
+## Workshop 2, elephants before a Stables 3) gives its share to the others instead of taking the pick and falling back
+## to the first unit the centre allows (a third of Carthage's and Macedon's recruits were that fallback).
+const AI_LIVE_MIX := 1
+
 ## Key cities for the default victory condition.
 const KEY_CITIES: Array[String] = ["latium", "zeugitana", "macedonia", "sicilia_or", "attica"]
 

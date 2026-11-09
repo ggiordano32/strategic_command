@@ -248,7 +248,21 @@ const RETRAIN := SK_SUPPORT + 64
 ## yet (it starves on, the patience rule as before). 0: as before.
 const SIEGE_GUNS := SK_SUPPORT + 65
 const SIEGE_GUNS3 := SK_SUPPORT + 66
-const N_KNOBS := SK_SUPPORT + 67
+## (2026-11-09, docs/AI.md 76) The build order reaches the roster. TRAIN_WS: while the faction faces walls (an enemy
+## at war, or an independent, holds a settlement with walls 2+, or a siege of ours stands), the build-up's Workshop goal
+## is raised to the level of the faction's first wall-breaking gun row (CAI.train_row: Rome's stone throwers, the West's
+## culverins), up to this level, after the Workshop goal and saved for like it (0 off). GUN_MIX: while it faces walls,
+## the recruit mix gives that gun line at least this weight when a recruiting centre of ours can raise it (0 off).
+## BU_FUND_TURNS / BU_FUND_SAFE_PCT: the build-up's next Workshop step above BU_WORKSHOP (the siege train's level 2, the
+## mortars' level 3; while the siege train is wanted, every Workshop step on the way) whose price is at most
+## BU_FUND_TURNS turns of income is saved for out of recruiting: recruits keep the treasury above the full reserve plus
+## that price (the fund) while the faction is safe (at peace, or its strength at least BU_FUND_SAFE_PCT % of all its
+## enemies' at war together); 0 off.
+const TRAIN_WS := SK_SUPPORT + 67
+const GUN_MIX := SK_SUPPORT + 68
+const BU_FUND_TURNS := SK_SUPPORT + 69
+const BU_FUND_SAFE_PCT := SK_SUPPORT + 70
+const N_KNOBS := SK_SUPPORT + 71
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -448,6 +462,11 @@ const KNOBS: Array = [
 	[RETRAIN, 0, 1, 1],
 	[SIEGE_GUNS, 1, 2, 3],
 	[SIEGE_GUNS3, 1, 3, 3],
+	# The build order reaches the roster (docs/AI.md 76, 2026-11-09): Easy as before.
+	[TRAIN_WS, 0, 2, 2],
+	[GUN_MIX, 0, 5, 5],
+	[BU_FUND_TURNS, 0, 8, 8],
+	[BU_FUND_SAFE_PCT, 0, 150, 150],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:

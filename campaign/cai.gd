@@ -307,15 +307,20 @@ static func _reserve(st: Dictionary, f: int) -> int:
 	return CRules.upkeep(st, f) * CP.of(st, f)[CP.RESERVE_TURNS]
 
 
-static func _build(st: Dictionary, f: int) -> void:
+## Faction f's regions in build order: richest (BUILD_CAPITAL_W more for the capital) first, ties by index.
+static func _build_regions(st: Dictionary, f: int, kn: PackedInt32Array) -> Array[int]:
 	var regions := CState.regions_of(st, f)
-	var kn := CP.of(st, f)
 	var cap_w: int = kn[CP.BUILD_CAPITAL_W]
-	# Richest and capital first.
 	regions.sort_custom(func(a, b):
 		var va := region_value(st, a, f) + (cap_w if CData.is_capital(a) else 0)
 		var vb := region_value(st, b, f) + (cap_w if CData.is_capital(b) else 0)
 		return va > vb or (va == vb and a < b))
+	return regions
+
+
+static func _build(st: Dictionary, f: int) -> void:
+	var kn := CP.of(st, f)
+	var regions := _build_regions(st, f, kn)
 	var mix: Dictionary = CData.FACTIONS[f]["mix"]
 	var spent := 0
 	var budget := (int(st["factions"][f]["treasury"]) - _reserve(st, f)) * kn[CP.BUILD_BUDGET_PCT] / 100
@@ -402,6 +407,13 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 		goals.append([CData.RANGE, kn[CP.BU_RANGE]])
 	if kn[CP.BU_WORKSHOP] > 0 and (_wants_engines(mix) or (kn[CP.WAGON_MIN] > 0 and _missiles_of(st, f) >= kn[CP.WAGON_MIN])):
 		goals.append([CData.WORKSHOP, kn[CP.BU_WORKSHOP]])
+	if kn[CP.TRAIN_WS] > 0 and regions.size() >= kn[CP.BU_LINE_REGIONS] and faces_walls(st, f):
+		# (docs/AI.md 76) The siege train: the Workshop to the level of the first wall-breaking gun row (Rome's stone
+		# throwers at 2, the West's culverins at 2), saved for like the Workshop goal; a deeper one (the mortars' 3) is
+		# the pack line goals' (below).
+		var trow := train_row(f)
+		if not trow.is_empty() and int(trow[2]) <= kn[CP.TRAIN_WS]:
+			goals.append([CData.WORKSHOP, int(trow[2])])
 	if kn[CP.CHAR_HERO] > 0:
 		# Heroes (CData.CHAR_NEEDS) come from Barracks 2: a faction that
 		# raises them wants one at its military centre (after the above).
@@ -448,6 +460,67 @@ static func _buildup(st: Dictionary, f: int, regions: Array[int], mix: Dictionar
 			return [site, c, 1]  # (a line goal: built when affordable, no saving for it)
 		return [site, c]
 	return []
+
+
+## (docs/AI.md 76) Faction f faces walls: a settlement with walls 2 or more held by an enemy at war with f or by
+## no faction, or a siege of f's standing.
+static func faces_walls(st: Dictionary, f: int) -> bool:
+	for sg in st["sieges"]:
+		if int(sg["f"]) == f:
+			return true
+	for r in CData.region_count():
+		if CState.walls(st, r) < 2:
+			continue
+		var o := CState.owner(st, r)
+		if o < 0 or (o != f and CState.at_war(st, f, o)):
+			return true
+	return false
+
+
+## (docs/AI.md 76) Faction f's first wall-breaking gun row: [line, unit key, Workshop level] of the GUN_LINES row
+## (the first tier of each line its roster has) made at the lowest Workshop level ([] none; a row that needs
+## another chain first, as the landed naval guns' Shipyard, counts by its Workshop level).
+static func train_row(f: int) -> Array:
+	var best: Array = []
+	for line in GUN_LINES:
+		for tier in [1, 2, 3]:
+			var key := CState.roster_type(f, line, tier)
+			if key == "":
+				continue
+			var nd := CRules.needs(key)
+			if _wall_gun(UT.index_of(key)) and int(nd[0]) == CData.WORKSHOP \
+					and (best.is_empty() or int(nd[1]) < int(best[2])):
+				best = [line, key, int(nd[1])]
+			break
+	return best
+
+
+## (docs/AI.md 76, CP.BU_FUND_TURNS) The money recruiting leaves in the treasury this turn for the build-up's next
+## Workshop step above BU_WORKSHOP (the siege train, the mortars), on top of the recruiting reserve: that step's price
+## plus the rest of the full reserve (the build pays from the money above the reserve), when the price is at most
+## BU_FUND_TURNS turns of income, the step can be built but for the money, and the faction is safe (_fund_safe); else 0.
+static func _fund(st: Dictionary, f: int, kn: PackedInt32Array, inc: int) -> int:
+	if kn[CP.BU_FUND_TURNS] <= 0 or no_buildup or inc <= 0:
+		return 0
+	var bu := _buildup(st, f, _build_regions(st, f, kn), CData.FACTIONS[f]["mix"], kn)
+	if bu.is_empty() or int(bu[1]) != CData.WORKSHOP:
+		return 0
+	var bi := CRules.build_info(st, f, int(bu[0]), int(bu[1]))
+	if not bi.has("cost") or int(bi["cost"]) > inc * kn[CP.BU_FUND_TURNS]:
+		return 0
+	if int(bi["level"]) <= kn[CP.BU_WORKSHOP] and not (kn[CP.TRAIN_WS] > 0 and faces_walls(st, f) and not train_row(f).is_empty()):
+		return 0  # (the Workshop's first levels are saved for only on the way to the siege train)
+	if not _fund_safe(st, f, kn):
+		return 0
+	return int(bi["cost"]) + _reserve(st, f) - _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]
+
+
+## Faction f may save for a building: at peace, or its strength at least BU_FUND_SAFE_PCT % of all its enemies'.
+static func _fund_safe(st: Dictionary, f: int, kn: PackedInt32Array) -> bool:
+	var foes := 0
+	for g in wars(st, f):
+		foes += faction_strength(st, g)
+	return faction_strength(st, f) * 100 >= foes * kn[CP.BU_FUND_SAFE_PCT]
 
 
 ## (docs/AI.md 61) The pack's ambitions. The first region of f's ambition list f does not hold (-1: none, or
@@ -665,6 +738,13 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 		sc += threat(st, f, r) / kn[CP.RECRUIT_THREAT_DIV] + (kn[CP.RECRUIT_FRONTIER_W] if _frontier(st, f, r) else 0)
 		scored.append([sc, r])
 	scored.sort_custom(func(a, b): return a[0] > b[0] or (a[0] == b[0] and a[1] < b[1]))
+	if kn[CP.GUN_MIX] > 0 and not no_buildup and faces_walls(st, f):
+		# (docs/AI.md 76) The siege train: the first gun line a centre of ours can raise gets GUN_MIX in the mix.
+		var gl := _gun_line(st, f, scored)
+		if gl != "" and int(mix.get(gl, 0)) < kn[CP.GUN_MIX]:
+			mix = mix.duplicate()
+			mix[gl] = kn[CP.GUN_MIX]
+	var fund := _fund(st, f, kn, inc)  # (docs/AI.md 76) the build-up's Workshop step saved for
 	var marching := {}  # version 6: army id -> 1, planned to march this turn
 	if CState.grid_on(st):
 		for mv in moves:
@@ -692,7 +772,7 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 					continue
 				var ty := UT.index_of(key)
 				if up + CState.upkeep_of(ty) <= cap \
-						and int(fs["treasury"]) - UT.price_of(ty) >= _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV] \
+						and int(fs["treasury"]) - UT.price_of(ty) >= _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV] + fund \
 						and CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key, "army": id}) == "":
 					up += CState.upkeep_of(ty)
 				break
@@ -729,12 +809,28 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			var ty := UT.index_of(key)
 			if up + CState.upkeep_of(ty) > cap:
 				return
-			if int(fs["treasury"]) - CRules.unit_price(st, f, rr, key) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
+			if int(fs["treasury"]) - CRules.unit_price(st, f, rr, key) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV] + fund:
 				return
 			var o := _recruit_order(st, f, rr, key, marching, moves, kn, raised)
 			if o.is_empty() or CRules.apply_order(st, f, o) != "":
 				break
 			up += CState.upkeep_of(ty)
+
+
+## (docs/AI.md 76) The first GUN_LINES line of f's roster that a recruiting centre of `scored` has the buildings for
+## (some tier; a treaty line only with its treaty), "" none.
+static func _gun_line(st: Dictionary, f: int, scored: Array) -> String:
+	for line in GUN_LINES:
+		if CDip.line_why(st, f, line) != "":
+			continue
+		for tier in [1, 2, 3]:
+			var key := CState.roster_type(f, line, tier)
+			if key == "" or not _wall_gun(UT.index_of(key)):
+				continue
+			for e in scored:
+				if _has_buildings(st, int(e[1]), key):
+					return line
+	return ""
 
 
 ## The wall-breaking artillery lines, the first the faction's roster and the centre's buildings allow is taken.
@@ -757,11 +853,15 @@ static func gun_units(arr: Array) -> int:
 	var n := 0
 	for a in arr:
 		for u in a["units"]:
-			var ty := CState.unit_type(u)
-			if ty >= 0 and UT.cls(ty) == UT.CLS_ART and UT.stat(ty, "wagon") < 0 \
-					and (UT.stat(ty, "m_kind") == 2 or UT.stat(ty, "m_obj") >= 300):
+			if _wall_gun(CState.unit_type(u)):
 				n += 1
 	return n
+
+
+## Unit type ty is wall-breaking artillery (gun_units).
+static func _wall_gun(ty: int) -> bool:
+	return ty >= 0 and UT.cls(ty) == UT.CLS_ART and UT.stat(ty, "wagon") < 0 \
+			and (UT.stat(ty, "m_kind") == 2 or UT.stat(ty, "m_obj") >= 300)
 
 
 ## (docs/AI.md 75, CP.SIEGE_GUNS) Each army of f planned this turn to march on an enemy town that wants siege guns

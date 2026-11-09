@@ -83,6 +83,7 @@ var tier_all := {}            # "faction:unit key" -> recruits over the seeds (t
 var trace := -1              # --trace-faction=KEY: print that faction's diplomacy, losses and treasury per turn
 var ai_alliances := -1
 var vetm := {}               # this seed's veterancy tallies (the --json line's "vet"): units by level per faction at turns 30 and 60, retrains; and its end ("end": eliminated turn per faction, battles, field)
+var bldm := {}               # (2026-11-09, docs/AI.md 76) this seed's build order and roster (the --json line's "bld"): best chain levels per faction at turns 20 / 40 / 60, recruits per unit row, the first turn each roster row's buildings stood in a region of the faction, retrains, the siege-guns counters
 var dipm := {}               # this seed's diplomacy tallies (wars, calls, alliances, trust gains), in the --json line
 var _tr_allies: Array = []   # trace: the traced faction's allies at the end of the last turn
 var _tr_landed := {}         # trace: "f:r" -> turn of the last landing (a fleet's army put ashore) there
@@ -156,7 +157,7 @@ func _init() -> void:
 	for sd in range(seed0, seed0 + seeds):
 		var h1 := _run(sd, true)
 		if jf != null:
-			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm}))
+			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm, "bld": bldm}))
 			jf.flush()
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
@@ -196,6 +197,54 @@ func _init() -> void:
 	if twice:
 		print("determinism (each seed twice): %s" % ("OK" if ok else "FAILED"))
 	quit(0 if ok else 1)
+
+
+## (2026-11-09, docs/AI.md 76) The build order and the roster, per turn t (bldm): each faction's recruits per unit
+## row ("recruited" events) and retrains ("retrained": "from>to"); the first turn every roster row's buildings (CRules.needs
+## and UNIT_NEEDS, and a treaty line's treaty) stood in a region of the faction; and at turns 20 / 40 / 60 each faction
+## alive's best level of every chain. A summary, never state.
+func _build_tally(st: Dictionary, t: int) -> void:
+	for e in st["events"]:
+		if int(e["turn"]) != t or (str(e["k"]) != "recruited" and str(e["k"]) != "retrained") or int(e.get("f", -1)) < 0:
+			continue
+		var fk := str(CData.FACTIONS[int(e["f"])]["key"])
+		if str(e["k"]) == "recruited":
+			if not bldm["rec"].has(fk):
+				bldm["rec"][fk] = {}
+			for uk in e["units"]:
+				bldm["rec"][fk][str(uk)] = int(bldm["rec"][fk].get(str(uk), 0)) + 1
+		elif str(e["k"]) == "retrained":
+			if not bldm["ret"].has(fk):
+				bldm["ret"][fk] = {}
+			var rk := "%s>%s" % [str(e["from"]), str(e["t"])]
+			bldm["ret"][fk][rk] = int(bldm["ret"][fk].get(rk, 0)) + 1
+	for f in CState.nf():
+		if not CState.alive(st, f):
+			continue
+		var fk := str(CData.FACTIONS[f]["key"])
+		if not bldm["avail"].has(fk):
+			bldm["avail"][fk] = {}
+		var av: Dictionary = bldm["avail"][fk]
+		var ro: Dictionary = CData.roster(f)
+		for line in CData.LINE_ORDER:
+			if not ro.has(line):
+				continue
+			for key in ro[line]:
+				var k := str(key)
+				if k == "" or av.has(k) or CDip.line_why(st, f, line) != "":
+					continue
+				for r in CState.regions_of(st, f):
+					if CAI._has_buildings(st, r, k):
+						av[k] = int(st["turn"])
+						break
+		if [20, 40, 60].has(int(st["turn"])):
+			var tk := "t%d" % int(st["turn"])
+			if not bldm["lv"].has(tk):
+				bldm["lv"][tk] = {}
+			var lv: Array = []
+			for c in CData.CHAINS.size():
+				lv.append(_best(st, f, c))
+			bldm["lv"][tk][fk] = lv
 
 
 ## Veterancy: per faction key, its army units by level [0, 1, 2, 3] (xp 300 / 700 / 1,200; read inline so the
@@ -266,6 +315,7 @@ func _run(sd: int, verbose: bool) -> String:
 		var shore := {"contested": {}, "set": 0, "support": 0, "landed": 0, "lost": 0, "fired": 0, "inland": 0, "none": 0}
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
 		vetm = {"retrains": 0, "retrain_f": {}, "rt_why": {}}
+		bldm = {"lv": {}, "rec": {}, "avail": {}, "ret": {}, "aic": {}}
 		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
 			"alliances_left": 0, "kept_faith": 0, "town_gain": 0, "battle_gain": 0}
 		for t in turns:
@@ -304,6 +354,7 @@ func _run(sd: int, verbose: bool) -> String:
 					tr_max = maxi(tr_max, int(st["factions"][f]["treasury"]))
 			_count_sieges(st, t)
 			_tally(st, t)
+			_build_tally(st, t)
 			if t + 1 == 30 or t + 1 == 60:
 				vetm["t%d" % (t + 1)] = _vet_hist(st)
 			if CRules.vet_on(st):
@@ -533,6 +584,9 @@ func _run(sd: int, verbose: bool) -> String:
 				dg_all[int(f)][key] = int(dg_all[int(f)].get(key, 0)) + int(dg[int(f)].get(key, 0))
 			watch.append("%d | %s %s | %d / %d / %d | %s" % [1000 + sd * 77, short[int(f)], CP.SKILL_NAMES[int(skill_f[f])],
 				w_reg[f][0], w_reg[f][1], w_reg[f][2], str(w_dead[f]) if int(w_dead[f]) >= 0 else "-"])
+		for f in CState.nf():
+			var gk := str(CData.FACTIONS[f]["key"])
+			bldm["aic"][gk] = [CP.counter(CP.C_SIEGE_GUNS, f), CP.counter(CP.C_SIEGE_WAIT, f)]
 		var endm := {}
 		for f in CState.nf():
 			endm[str(CData.FACTIONS[f]["key"])] = int(dead_at.get(f, -1))

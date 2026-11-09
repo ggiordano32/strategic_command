@@ -4159,7 +4159,10 @@ func _ai_skilled() -> void:
 	# with no way in, a siege instead); were 62200135 / 520790384 and, Easy, 8e7bb4b5 / 1051292326.)
 	# (2026-11-06, veterancy and Retrain: the format 10 play's units earn experience, the strength term and the AI's
 	# VET_CARE and RETRAIN (Average's RNG draws move too); were 57eedaff / 3275932353 and, Easy, d3f33b3b.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "15853336" and int(g["rng"]) == 2309884102,
+	# (2026-11-09, the build order reaches the roster (docs/AI.md 76): with the build-up off here, only the Rome pack's
+	# live mix (CData.AI_LIVE_MIX 1: a mix line no centre can raise gives its share to the others) moves the play;
+	# were 15853336 / 2309884102 and, Easy, 427959d4 / 656603057.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "8f14231b" and int(g["rng"]) == 3981142049,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4170,7 +4173,9 @@ func _ai_skilled() -> void:
 	# Moved again 2026-10-23 with the port rule (HARBOUR_MAX 2); was 11d7ae9c, rng 1530193207.)
 	# (Moved 2026-11-01 with the attack fixes: the targets' cells kept out of a march and the zone lock
 	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "427959d4" and int(ge["rng"]) == 656603057,
+	# (Moved 2026-11-09 with the Rome pack's live mix, docs/AI.md 76: the Average factions around it; was 427959d4,
+	# rng 656603057.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "7a712c82" and int(ge["rng"]) == 4015190316,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false

@@ -59,9 +59,16 @@ def make_jobs(plan):
                 jobs.append((jid, "sea_probe", ["--seeds=%d" % seeds, "--layouts=%s" % lay, "--modes=%s" % mode] + extra, {}))
     elif probe == "campaign_sim":
         turns = int(plan.get("turns", 60))
+        shard = int(plan.get("shard", 0))  # seeds per process (0: one process a pack, as before)
         for pack in plan.get("packs", ["rome", "west"]):
-            jid = "cs|%s|n%d|t%d|%s" % (pack, seeds, turns, " ".join(extra))
-            jobs.append((jid, "campaign_sim", ["--pack=%s" % pack, "--seeds=%d" % seeds, "--turns=%d" % turns] + extra, {}))
+            if shard <= 0:
+                jid = "cs|%s|n%d|t%d|%s" % (pack, seeds, turns, " ".join(extra))
+                jobs.append((jid, "campaign_sim", ["--pack=%s" % pack, "--seeds=%d" % seeds, "--turns=%d" % turns] + extra, {}))
+                continue
+            for s0, n in chunks(seed0, seeds, shard):
+                jid = "cs|%s|s%d+%d|t%d|%s" % (pack, s0, n, turns, " ".join(extra))
+                jobs.append((jid, "campaign_sim", ["--pack=%s" % pack, "--seeds=%d" % n, "--seed0=%d" % s0,
+                                                   "--turns=%d" % turns] + extra, {}))
     else:
         sys.exit("unknown probe: %s" % probe)
     return jobs

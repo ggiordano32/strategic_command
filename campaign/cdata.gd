@@ -106,7 +106,7 @@ static var AI_BUILDUP_LINES: Array = []
 static var AI_SPECIALISTS: Array = []
 ## AI_LIVE_MIX (1: the West): recruiting skips the mix lines no recruiting
 ## centre can raise yet (cai.gd _next_line, CP.MIX_LIVE; docs/AI.md 37).
-static var AI_LIVE_MIX := 0
+static var AI_LIVE_MIX: int = _ROME.AI_LIVE_MIX
 ## View-only display names (west.gd UNIT_NAMES): faction key -> unit key -> [name, short].
 static var UNIT_NAMES: Dictionary = {}
 ## View-only building names (west.gd CHAIN_NAMES by culture, CHAIN_NAMES_F by faction key over it):

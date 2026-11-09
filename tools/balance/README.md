@@ -35,7 +35,7 @@ Before a lever, `ls tools/balance/out/<plan>/` shows the hashes on disk. To keep
   campaign_sim: each seed's hash against `pins.json` (`ok` / `DIFFERS`).
 - `plans/*.json`: the standard plans. `probe` is `town_balance`, `open_town`, `sea` or `campaign_sim`. Keys:
   `pack`, `towns` (`key` or `key:level`), `walls`, `seeds`, `seed0`, `chunk` (seeds per process, default 4),
-  `skills` (open_town), `layouts`, `modes` (sea), `packs`, `turns` (campaign_sim), `args` (extra probe flags,
+  `skills` (open_town), `layouts`, `modes` (sea), `packs`, `turns`, `shard` (campaign_sim: seeds per process, 0 or absent one process a pack), `args` (extra probe flags,
   e.g. `["--skill=1"]`), `parallelism`.
   - `rome_walls` (6 Rome towns x walls 1-3 x 16 seeds; `rome_walls_full` 32), `west_walls` (16 Spanish towns x
     walls 0-2 x 16), `west_named` (Havana, Cartagena, Port Royal, Veracruz, Santo Domingo, Natchez, Tayasal),

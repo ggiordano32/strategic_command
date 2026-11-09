@@ -4941,3 +4941,143 @@ spent on the works (66-84 wall shots a battle) kill nobody. The target (wins bac
 levers left: the guns outside the equal-force budget (the campaign's case when the AI buys them on top), a softer works
 share at walls 2-3, or the storm waiting for the breach. The formula follows the fought numbers (campaign_battles
 `--only=fit`: Rome walls 1 / 2 / 3 refit, docs/design/battle_sim.md).
+
+## 76. The build order reaches the roster (2026-11-09)
+
+The owner: spend a pass on the AI's build order "so it will work with all available units in the best way it knows
+how". Measured first (`tools/balance` plan `campaign_f10_72`: `campaign_sim --format=10`, 72 seeds x 60 turns a pack,
+every faction Average; the counters are the new `bld` field of campaign_sim's `--json` line: recruits per unit row,
+the first turn each roster row's buildings stood in a region of the faction, best chain levels at turns 20 / 40 / 60,
+the siege-guns counters per faction; `measure.py` shards a campaign_sim plan by its `shard` key). HEAD reproduced
+note 75 exactly (Rome eliminations 128, towns taken by siege 1.97, storms put off 32, marches held for guns 0).
+
+What stood between the AI and its roster (HEAD):
+
+- **Rome: no stone thrower in 72 campaigns, for any faction.** Workshop 2 at turn 60 in 0-10 % of the campaigns: the
+  Average build-up's Workshop goal is level 1 (`BU_WORKSHOP`) and nothing asked for a 2. Macedon and Syracuse carry
+  `stone` 5 in the mix, never raisable; Rome, Carthage and the Greeks have the row in the roster only. So the
+  siege-guns rule (note 75) never found a gun.
+- **Rome: the dead mix lines turned into the roster's first unit.** The Rome pack had no live mix (note 37 is the
+  West's): a line no centre could raise (stone throwers, elephants, the general) still took the pick and `_any_type`
+  gave the first row of `LINE_ORDER` instead: Rome's swords were 53 % of its recruits for a 45 weight, Carthage's 20 %
+  for 15, Macedon's light foot 24 % for 10. The low-weight lines that could be raised lost to them: Carthage, Macedon,
+  Epirus and Syracuse never raised a scorpion with a Workshop 1 in nearly every campaign.
+- **West: the Workshop 3 seldom paid off the Spanish.** The mortars were not 0 everywhere (New Spain 0.83, Tierra
+  Firme 0.97 a campaign, Workshop 3 at turn 60 in 89 / 82 %), but England 0.14 (19 %), France 0.01 (3 %), the Dutch 0
+  (1 %): the mortar's Workshop 3 is a pack line goal paid only from the money above the reserve (note 34), and
+  recruiting spends the treasury down to half the reserve every turn, so 2,000 above it seldom stood.
+- Not taken up: the elephants (Stables 3 never built by Carthage or Epirus); the Brethren's landed naval guns (mix 3,
+  their buildings stood in 27 campaigns, never raised).
+
+As built (`campaign/cai.gd`, `campaign/cai_profile.gd` ids `SK_SUPPORT + 67` .. `+ 70`, `N_KNOBS` `SK_SUPPORT + 71`;
+`campaign/data/rome.gd` `AI_LIVE_MIX`). No rule changed: nothing in `cturn` / `crules` / `cbattle` kept the AI from a
+row a human can recruit.
+
+- **Faces walls** (`faces_walls`): a settlement with walls 2 or more held by an enemy at war with the faction or by no
+  faction, or a siege of the faction's own standing.
+- **The siege train** (`TRAIN_WS`): while the faction faces walls and holds `BU_LINE_REGIONS` regions, the build-up
+  adds a Workshop goal at the level of its first wall-breaking gun row (`train_row`: the `GUN_LINES` rows that
+  `gun_units` counts, the lowest Workshop level; Rome's stone throwers and the West's culverins at 2; Tierra Firme's and
+  France's first is the mortar at 3, left to the line goal), right after the Workshop goal and saved for like it
+  (`BU_SAVE`), up to `TRAIN_WS`.
+- **The gun line in the mix** (`GUN_MIX`): while the faction faces walls, the first gun line a recruiting centre of its
+  has the buildings for gets at least this weight in the recruit mix (5: about one recruit in twenty; Rome's,
+  Carthage's and the Greeks' stone throwers were in no mix). The siege-guns rule (note 75) still tops an army up when
+  it marches from the Workshop town.
+- **The Workshop fund** (`BU_FUND_TURNS`, `BU_FUND_SAFE_PCT`): the build-up's next Workshop step above `BU_WORKSHOP`
+  (the siege train's 2, the mortars' 3; while the siege train is wanted, every Workshop step on the way), when its
+  price is at most `BU_FUND_TURNS` turns of income and it can be built but for the money, is saved for out of
+  recruiting: the mix recruits and the wagon keep the treasury above the full reserve plus the price (the build pays
+  from the money above the reserve) while the faction is safe: at peace, or its strength at least `BU_FUND_SAFE_PCT` %
+  of all its enemies' at war together. Note 40's whole-treasury Workshop step thinned the lines (paid below the
+  reserve, in war as in peace); the fund pauses recruits only while the faction is safe, and never takes the reserve.
+  The siege guns (note 75) are not held by the fund.
+- **The Rome pack's live mix** (`AI_LIVE_MIX` 1 in `rome.gd`, read by `CData`'s default as well as `use_pack`; knob
+  `MIX_LIVE` as in note 37, Average and Skilled): recruiting picks among the mix lines some recruiting centre can raise
+  now, so a line no centre has the buildings for gives its share to the others.
+
+| knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|
+| `TRAIN_WS` (`SK_SUPPORT + 67`) | 0 | 2 | 2 | the siege train's Workshop goal, up to this level (0 off) |
+| `GUN_MIX` (`SK_SUPPORT + 68`) | 0 | 5 | 5 | the gun line's least mix weight while facing walls (0 off) |
+| `BU_FUND_TURNS` (`SK_SUPPORT + 69`) | 0 | 8 | 8 | the Workshop fund for a step priced at most this many turns of income (0 off) |
+| `BU_FUND_SAFE_PCT` (`SK_SUPPORT + 70`) | 0 | 150 | 150 | ... while our strength is at least this % of all our enemies' at war |
+
+Easy builds and recruits as before (the live mix is off at Easy through `MIX_LIVE` 0). `CAI.no_buildup` (the
+campaign_test goldens) switches the siege train, the gun mix and the fund off; the Rome live mix stays, and moved the
+goldens.
+
+Decisions. The train goal is saved for (a Workshop 2 is 1,200, one of the core goals' size) but only while the faction
+faces walls, so a faction with no walled enemy builds as before. Its level stops at 2 (`TRAIN_WS`): a 2,000-gold
+Workshop 3 saved for in war is the measured failure of note 40; the mortars' 3 comes through the fund, in safe turns
+only. The gun line's weight is 5, the weight the Rome pack's own mixes give their engines (Macedon's and Syracuse's
+stones, Rome's bolts), a small share: the rule never makes guns the bulk of an army. Eight turns of income (a judgment, not
+measured against other values) keeps a poor faction from pausing its recruits for a building it would wait a
+campaign for; 150 % is "clearly winning" (the war AI's `WAR_RATIO` is 120). The live mix for Rome is the West's rule (note 37) applied to the pack it was left off; without
+it the stone line given weight by `GUN_MIX` lost every pick to the lines no centre could raise.
+
+Tried and not kept: a build-up goal sited at the first military centre whose settlement can hold the goal's level (a
+city for a level 3; a Workshop at a town stands at 2): 72 x 60, against the build as kept, England's Workshop 3 at
+turn 60 52 / 44 %, mortars and heavy guns 0.54 / 0.50 a campaign, the rest within a seed or two: no gain, removed. The
+fund extended to every Workshop step on the way to the siege train (as kept) against only the steps above
+`BU_WORKSHOP`: the same within the noise (Rome Workshop 2 at turn 60 20 / 22 %, England's Workshop 3 51 / 44 %).
+
+Ablations (72 x 60 each pack, one knob off at Average against the build as kept; Workshop at the gate level at turn
+60 / gun rows a campaign; Rome stone throwers, West mortars and heavy guns):
+
+| | as built | `BU_FUND_TURNS` 0 | `TRAIN_WS` 0 |
+|---|---|---|---|
+| Rome W2 / stone | 20 % / 0.14 | 27 % / 0.21 | 1 % / 0 |
+| Carthage W2 / stone | 38 % / 0.38 | 23 % / 0.14 | 0 % / 0 |
+| Greeks W2 / stone | 30 % / 0.15 | 30 % / 0.11 | 6 % / 0 |
+| England W3 / guns | 51 % / 0.50 | 27 % / 0.08 | 43 % / 0.39 |
+| France W3 / guns | 26 % / 0.38 | 5 % / 0.04 | 22 % / 0.26 |
+| Dutch W3 / guns | 19 % / 0.15 | 0 % / 0 | 18 % / 0.25 |
+| eliminations Rome / West | 118 / 19 | 139 / 29 | 140 / 19 |
+
+(The ablation columns were measured on the build with the fund for the steps above `BU_WORKSHOP` only; the train is
+Rome's lever, the fund the West's.)
+
+Measured, 72 x 60, format 10, HEAD -> as built (`python3 tools/balance/measure.py tools/balance/plans/campaign_f10_72.json`;
+the per-row tables were made from its `bld` field):
+
+| | Rome HEAD | Rome now | West HEAD | West now |
+|---|---|---|---|---|
+| battles a campaign | 38.1 +- 2.1 | 37.4 +- 2.0 | 43.4 +- 1.8 | 43.5 +- 1.9 |
+| field battles | 4.56 | 4.97 | 2.49 | 2.99 |
+| sieges started | 2.93 | 2.62 | 4.28 | 4.25 |
+| towns taken by siege (stormed + surrendered) | 1.97 +- 0.33 | 1.74 +- 0.31 | 2.81 +- 0.32 | 2.79 +- 0.29 |
+| marches held for siege guns (72 campaigns) | 0 | 0 | 1 | 0 |
+| storms put off for guns or a ram | 32 | 23 | 14 | 15 |
+| eliminations (72 campaigns) | 128 | 118 | 22 | 19 |
+
+Eliminations per faction, each inside its HEAD interval: Rome 8 -> 10, Carthage 2 -> 4, Macedon 29 -> 22, Epirus 43 ->
+44, the Greeks 3 -> 2, Syracuse 18 -> 16, the Iberians 13 -> 8, the Gauls 12 -> 12; New Spain 0 -> 0, Tierra Firme 0
+-> 0, England 0 -> 0, France 1 -> 1, the Dutch 0 -> 1, the Brethren 16 -> 14, the Itza 4 -> 2, the Miskito 1 -> 1.
+
+The roster (a campaign, HEAD -> now; Workshop at the row's level at turn 60 among the factions alive):
+
+| faction | row | raised | Workshop at its level |
+|---|---|---|---|
+| Rome | stone throwers | 0 -> 0.14 | 3 -> 21 % |
+| Carthage | stone throwers / scorpions | 0 -> 0.38 / 0 -> 0.75 | 10 -> 38 % |
+| Macedon | stone throwers / scorpions | 0 -> 0.08 / 0 -> 0.92 | 0 -> 14 % |
+| Greeks | stone throwers | 0 -> 0.15 | 3 -> 30 % |
+| Syracuse | stone throwers / scorpions | 0 -> 0.07 / 0 -> 0.14 | 2 -> 12 % |
+| New Spain | mortars / heavy guns | 0.83 -> 1.36 / 0.49 -> 0.19 | 89 -> 92 % |
+| Tierra Firme | mortars | 0.97 -> 2.14 | 82 -> 99 % |
+| England | mortars / heavy guns | 0.14 -> 0.42 / 0.07 -> 0.08 | 19 -> 51 % |
+| France | mortars | 0.01 -> 0.38 | 3 -> 27 % |
+| Dutch | mortars | 0 -> 0.14 | 1 -> 20 % |
+
+Units raised a campaign (the lines not thinned): Rome 30.0 -> 30.1, Carthage 35.1 -> 37.9, Macedon 14.4 -> 13.8, the
+Greeks 32.8 -> 30.8; England 21.7 -> 21.1 (grenadiers 1.35 -> 1.11, marines 1.29 -> 1.18), France 24.6 -> 24.0, the
+Dutch 16.0 -> 15.5, New Spain 40.3 -> 41.2, Tierra Firme 44.8 -> 46.7. The Rome pack's mixes now show in the recruits:
+Rome's swords 53 -> 42 % (weight 45), Carthage's 20 -> 11 % (15), Macedon's light foot 24 -> 6 % (10).
+
+Open: the siege-guns march (note 75) still never fires in Rome (0 in 72): the armies that march on a walls-2 town
+seldom stand at the Workshop town that turn; the stone throwers now come through the mix into whichever army
+musters there. Rome's Workshop 1 itself is late (at turn 40 in about half the campaigns), so the siege train is a
+turn-40-to-60 thing. Elephants (Stables 3) and the Brethren's landed naval guns are still about 0; the Iberians and
+Gauls now build a Workshop 2 in 5-12 % of the campaigns with nothing to raise from it (the ordinary build list; no
+goal asks for it).
