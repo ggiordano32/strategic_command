@@ -8549,15 +8549,26 @@ func _dip_west() -> void:
 
 ## AI-AI alliances: with the setting on some AI pair allies within a few
 ## turns in at least one of several seeds; with it 0 none.
+## (2026-11-09, docs/AI.md 78) The count is a chance outcome: a threatened AI
+## proposes ALLY_PROPOSE (15) % a turn to the neighbour it regards best (ties:
+## the lowest index), taken only with a common enemy; measured over 40 fresh
+## seeds x 40 turns about 1.2 alliances a seed on every rules state (46 before
+## lanes by agreement and the overland retreat, 49 / 47 with each, 47 with
+## both), but seeds 4242-4244 x 24 turns made 0 on the combined code (Rome and
+## Carthage shared an enemy for 12 turns and missed all 24 rolls). So: the
+## campaigns over 8 seeds x 40 turns (about 9 expected), and the mechanism
+## itself on a set-up state.
 func _dip_ai_alliances() -> void:
 	CData.use_pack("rome")
 	var made := 0
 	var made0 := 0
-	for sd in [4242, 4243, 4244]:
+	for sd in [4242, 4243, 4244, 4245, 4246, 4247, 4248, 4249]:
 		for setting in [1, 0]:
+			if setting == 0 and sd > 4244:
+				continue  # (none with the setting 0: 3 seeds are enough)
 			var st := CState.new_campaign("test", sd, [], {"ai_alliances": setting})
 			_check(st["settings"].has("ai_alliances") == (setting == 0), "ai_alliances stored only when 0")
-			for t in 24:
+			for t in (40 if setting == 1 else 24):
 				st = CTurn.resolve_turn(st, [])
 			var pairs := 0
 			for e in st.get("chronicle", []):
@@ -8567,9 +8578,28 @@ func _dip_ai_alliances() -> void:
 				made += pairs
 			else:
 				made0 += pairs
-	print("AI-AI alliances over 3 seeds x 24 turns: %d (setting 0: %d)" % [made, made0])
+	print("AI-AI alliances over 8 seeds x 40 turns: %d (setting 0, 3 seeds x 24 turns: %d)" % [made, made0])
 	_check(made > 0, "with ai_alliances on, AI factions make alliances (%d)" % made)
 	_check(made0 == 0, "with ai_alliances 0, none (%d)" % made0)
+	# The mechanism, no dice: Rome, threatened, sure to ask (ALLY_PROPOSE 100), regarding Carthage best; both at war
+	# with Syracuse: Carthage takes it. Without the common enemy it refuses; with ai_alliances 0 Rome asks no AI.
+	var rome := _f("rome")
+	var cart := _f("carthage")
+	var syr := _f("syracuse")
+	for k in 3:
+		var st := CState.new_campaign("test", 4242, [], {"ai_alliances": 0 if k == 2 else 1})
+		CState.set_dip(st, rome, cart, CState.PEACE)
+		CState.set_dip(st, rome, syr, CState.WAR)
+		CState.set_dip(st, cart, syr, CState.PEACE if k == 1 else CState.WAR)
+		CDip.add_regard(st, rome, cart, 10, "test")
+		var kn := CP.of(st, rome).duplicate()
+		kn[CP.ALLY_PROPOSE] = 100
+		CAI._seek_ally(st, rome, kn)
+		var want := k == 0
+		_check(CDip.allied(st, rome, cart) == want, ["at war with one enemy: Carthage allies with Rome",
+			"no common enemy: Carthage refuses (%s)" % CAI.why(st, rome, cart, "alliance"),
+			"ai_alliances 0: Rome asks no AI"][k])
+	CData.use_pack("rome")
 
 
 ## Deterrence (format 10): the AI weighs a target with the allies that a

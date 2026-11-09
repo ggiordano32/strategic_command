@@ -5165,3 +5165,39 @@ The lane gold left unsigned at mere peace: 0.2-6.1 a turn a faction (was 0.6-17 
 Open: Rome's Iberians come out a little poorer (regions at 60 6.2 -> 4.7, income 2,324 +- 135 -> 2,147 +- 137,
 eliminated 12 -> 18 of 72; the intervals overlap); the Itza 5.0 -> 4.4 regions. A raider on an idle lane takes
 nothing until its owners sign (the AI keeps its station there as before; a player sees no badge, the lane pays nothing).
+
+## 78. The AI alliances after the lanes and the retreat: a chance outcome, the test made robust (2026-11-09)
+
+On the combined code (lanes trade by agreement, note 77, then the overland retreat; pins of 53c2037) one check of
+`tests/campaign_test.gd` failed: `_dip_ai_alliances` counted 0 AI-AI alliances over seeds 4242-4244 x 24 turns (Rome,
+format 10, no players); each rule alone had passed with 2. Diagnosis (a probe that runs the test's campaigns and, each
+turn, for every threatened AI under `ALLY_MAX` lists the neighbours `_seek_ally` would consider, their regard, the
+dip and `why(... "alliance")`, plus a trace of the `ALLY_PROPOSE` roll and the picked target inside `_seek_ally`):
+
+- No starvation and no changed gate. `_seek_ally` runs every turn after `_lane_treaties` in `CAI.diplomacy` and
+  draws its own `CState.rand(100)` against `ALLY_PROPOSE` (15 % at Average); a trade proposal uses no shared slot. A
+  trade agreement changes no regard and `alliance_check` takes peace or trade alike. The lane treaties' extra draws
+  only shift the RNG stream, so which turns roll under 15 changes.
+- The opportunity is there, more than before. Over 12 seeds x 24 turns the faction-turns on which the target
+  `_seek_ally` would pick (the best regard, ties the lowest index) would accept: before both rules 28, the lanes 59,
+  the retreat 29, both 43. Repute-blocked candidates (a common enemy, regard at least 0, the proposer's repute below
+  0 after a treaty break) 47 / 99 / 76 / 39: the lanes' extra trade agreements do not make treaty breaks block it.
+- The failing seeds were luck. Seed 4242: Rome and Carthage both at war with Syracuse from turn 7 to 18, each would
+  have taken the other, and the 24 rolls (12 turns, both sides) all came 16 or more (P about 2 %); seeds 4243 and
+  4244 gave no common enemy at a picked target.
+- The rate stands. 40 fresh seeds (5000-5039) x 40 turns, the test's set-up: alliances before both rules 46, the
+  lanes 49, the retreat 47, both 47 (by turn 24: 35 / 36 / 32 / 29). `campaign_sim --format=10` 72 x 60: Rome
+  alliances made a campaign 1.60 (before both) / 1.54 (lanes) / 1.40 (retreat) / 1.35 (both), standing at turn 60
+  1.29 / 1.35 / 1.19 / 1.07; West 2.82 / 2.96 / 2.92 / 2.93, standing 3.81 / 3.89 / 3.83 / 3.89. Rome's small drift
+  is within about 1.5 standard errors; the retreat's longer wars (battles +45 %) are the likelier cause if it is real.
+
+No rule or AI change; no pin moved. The test: the alliances over 8 seeds (4242-4249) x 40 turns, about 9 expected (the
+combined code makes 3, the single-rule states 8-10); the setting 0 over 3 seeds x 24 turns as before; and the
+mechanism on a set-up state with no dice (Rome at war with Syracuse, `ALLY_PROPOSE` 100 in the knobs passed, regard
+for Carthage 10: Carthage at war with Syracuse allies; at peace with it refuses, "they do not trust you enough (0, 25
+needed)"; with `ai_alliances` 0 Rome asks no AI).
+
+Open (not changed here): the target is the best-regarded neighbour even when it would refuse and another would accept
+(12 seeds x 24 turns: 27 of 70 opportunity faction-turns picked a refuser on the combined code); with every regard 0
+early that is the lowest index. Picking by the alliance score (regard plus `COMMON_ENEMY`) would raise the rate; a
+balance question for a later pass.
