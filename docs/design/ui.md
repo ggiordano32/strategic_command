@@ -1924,3 +1924,43 @@ names avoid "Veteran" (the tier-2 rows use it). The owner's decision: the enemy 
 Known: no star burst animation on the result card (a line instead); the ribbons are drawn on the 2D standard, which the
 3D view shows through the overlay as before; the badge on a 56 px chit at three stars covers the symbol's upper right
 corner.
+
+### Targeting the works and the works' health counter (as built, 2026-11-07)
+
+The owner, playing a Rome siege on his phone in the 3D view: "It would be nice to be able to target walls and buildings
+with the cannons and rock throwers." and "Wall health should be displayed". The rules: battle_sim.md "Targeting the
+works, towers that fall, wall health (as built, 2026-11-07)".
+
+- **The order.** With only artillery of ours selected (an attacking side's batteries: not a tower's engine, not one
+  carrying gear; `Battle._art_work_units`; a mixed selection keeps every other meaning of the tap), a tap or a click on a
+  standing tower, a wall stretch (its body, walk or stair) or a building of the town that has no unit under the finger
+  sends each battery an attack order at it (`_art_work_tap`: `ORDER_ATTACK` with `"tower"`, `"wall"` or `"bld"`; a gate
+  keeps its own tap, `_tap_gate`); a flash says "Guns at the tower: they fire until it falls" (the wall: "they batter it
+  until it is breached"; the building: "until it falls") and a stretch flashes as the batter chip's does. The batter chip
+  (Target, Use now) still works as before; its tip names the plain tap. The order line is the fire dash to the aim
+  point with "SHOOT THE TOWER" / "BATTER THE WALL" / "SHOOT THE BUILDING" on the primary. A tap on a unit on the wall is
+  still an attack on the men.
+- **The counter** (`Overlay._draw_work_counters`, `_counter`): a small plastic counter, a dark chip with rounded ends and
+  a short bar of what is left (brass above 35 %, red below), stands on a wall stretch or tower that has lost more than
+  `COUNTER_HURT_PCT` 10 % of its hit points or that any side's battery is ordered at (an orange ring round it then); none
+  on a whole piece, no floating bars by default. Top view: just outside the piece's outer face; oblique and 3D views:
+  upright on the piece's top (a stretch's parapet, a tower's crown, `_work_lift`). Its width follows the zoom (34 px
+  over the zoom, between 3 and 9 m). `Overlay.counters_drawn` counts them a frame (tests).
+- **The plate** (a long press on a piece with no unit there, `Battle._inspect_at`, `Overlay.inspect_work`; also a long
+  press while guns are selected): for 4.5 s a dark plate over the piece reads "Wall, stone, 62 %" (or "Tower, stone,
+  80 %", "Building, timber, 40 %", "Gate, 75 %"; "Wall, breached", "Tower, fallen: a heap of rubble") and "Under fire
+  from: Stone Throwers, Bolt Throwers" (the batteries ordered at it, either side's) or "Not under fire"; live while shown.
+- **A tower falls**: a dust burst round its footprint (`EV_TOWER` in the destruction ring); the kit hides its pieces
+  and the rubble cells draw as a breach's heap (battlekit.gd `fallen`, `_tower_down`; the oblique drum and square tower
+  rows skip it).
+- **The unit book**'s siege page: the towers' hit points, the share a stone or ball does to walls and towers by level,
+  the tap and the counter.
+
+Tests: input_test `_step_aw_*` (windowed: our stone battery selected, a tap on a clear tower gives the attack order at
+the tower and the preview knows it, a tap on a clear stretch one at the stretch); battle_screen_test `_works_cases` in
+the three views (the tap, the plate's lines "Wall, stone, 60 %" and the battery's name, a fallen tower's kit pieces
+hidden and its cells drawn as rubble, two counters drawn).
+
+Known: the drag and the double tap on a piece do nothing new (the tap and the click do); bolt throwers can be ordered at
+a work and do almost nothing to it (their share of a gate's 80); the 3D view draws the heap flat as it draws a breach;
+the counter is not checked on a device.

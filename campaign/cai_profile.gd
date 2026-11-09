@@ -240,7 +240,15 @@ const SHORE_ATT := SK_SUPPORT + 62
 ## never (0).
 const VET_CARE := SK_SUPPORT + 63
 const RETRAIN := SK_SUPPORT + 64
-const N_KNOBS := SK_SUPPORT + 65
+## (Targeting the works, docs/AI.md 75, 2026-11-07: a wall now takes 6-10 volleys of three batteries.) SIEGE_GUNS /
+## SIEGE_GUNS3: an army about to march on an enemy town with walls 2 / walls 3 (or more) and no breach standing first
+## takes wall-breaking artillery units (the stone, mortar, culverin or naval gun lines, the best tier the buildings
+## allow) at a Workshop centre it stands at up to this many, while the treasury allows (the march waits that turn);
+## and a siege of such a town is not stormed on the odds alone while its besiegers have fewer and no ram is built
+## yet (it starves on, the patience rule as before). 0: as before.
+const SIEGE_GUNS := SK_SUPPORT + 65
+const SIEGE_GUNS3 := SK_SUPPORT + 66
+const N_KNOBS := SK_SUPPORT + 67
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -438,6 +446,8 @@ const KNOBS: Array = [
 	[SHORE_ATT, 0, 1, 1],
 	[VET_CARE, 0, 25, 50],
 	[RETRAIN, 0, 1, 1],
+	[SIEGE_GUNS, 1, 2, 3],
+	[SIEGE_GUNS3, 1, 3, 3],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -536,6 +546,8 @@ static func _build() -> void:
 const C_BAD_ODDS := "attacks_bad_odds"      # attacks / assaults launched with the defence above our strength
 const C_EMPTY_CITY := "cities_left_empty"   # threatened cities of ours left with no army in or near them
 const C_TWO_FRONTS := "two_front_wars"      # turns at war with two or more factions
+const C_SIEGE_GUNS := "siege_guns_marches"   # (docs/AI.md 75) marches held a turn to take siege guns first
+const C_SIEGE_WAIT := "siege_guns_waits"      # ... storms of a walled town put off for want of guns or a ram
 const C_TRICKLED := "armies_trickled"       # attacks by a single army while another army was a turn away
 # Deliberate mistakes made (M_*), in M_* order.
 const C_MK_EMPTY_CITY := "mk_empty_city"
@@ -563,7 +575,7 @@ const C_WAR_UNCOVERED := "wars_uncovered"    # war declarations called off: a re
 const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
 	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON,
 	C_SK_TWO_TO_ONE, C_SK_HUNT_DECLINED, C_SK_INTERCEPT, C_SK_TIMED, C_SK_MERGE, C_SK_RALLY, C_SK_FALLBACK,
-	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES, C_WAR_UNCOVERED]
+	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES, C_WAR_UNCOVERED, C_SIEGE_GUNS, C_SIEGE_WAIT]
 
 static var _counters := {}
 

@@ -102,7 +102,10 @@ const POLE_SETS := 2
 ## bonus alone gives them (open towns, low walls). The columns not measured
 ## keep the old table's relation to the fitted one (Rome walls 3, kit 0 / 1:
 ## x 262 / 158 and 178 / 158); West walls 3 is the walls 2 row + 4 as in Rome.
-const WALLS_PCT := [[93, 93, 93], [87, 87, 87], [96, 96, 96], [167, 114, 101]]
+## (2026-11-07, Targeting the works: Rome walls 1 / 2 / 3 refit to the fought 52.1 / 19.8 / 10.4 % (walls take 12-15 %
+## of a gate's blow, the attackers with two / three stone batteries; tests/campaign_battles.gd FIT_FOUGHT), walls 3's
+## kit 0 / 1 columns scaled with it; were 87 / 96 / [167, 114, 101].)
+const WALLS_PCT := [[93, 93, 93], [89, 89, 89], [106, 106, 106], [189, 129, 114]]
 const WALLS_PCT_WEST := [[92, 92, 92], [99, 99, 98], [103, 103, 101], [107, 107, 105]]
 ## The natives against walls (refit 2026-11-05, tests/campaign_battles.gd --only=fit, the native rows): an assault by
 ## a native army (its lead faction's key here: CData.POLE_FACTIONS) on a ring of walls (any town but a West fort

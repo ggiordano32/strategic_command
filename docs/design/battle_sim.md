@@ -868,6 +868,124 @@ are not in the obstacle grid and stop nothing (as before); houses do not stop a 
 before); a stone aimed at a point is decided at launch, so a gate opened while it flies still stops it; flat balls are
 still traced at landing (a scattered ball that strikes before its landing point is drawn flying on to it).
 
+### Targeting the works, towers that fall, wall health (as built, 2026-11-07)
+
+The owner, playing a Rome siege on his phone in the 3D view (stone throwers' dust flying off a corner tower): "It would
+be nice to be able to target walls and buildings with the cannons and rock throwers." "It appears that the wall sections
+are destroyable but not the towers themselves. The towers should also be destroyable." "Wall health should be
+displayed, I think the boulders do too much damage to wall 2. 3 stone throwers can take it down in 2 volleys."
+
+**What was there.** Wall stretches (`ws_*`, 1,200 / 2,000 / 3,000 hp by walls level), shut gates (`g_hp`) and the
+town's buildings (`ob_hp`) had hit points; an attacking battery could already be ordered at a stretch (`"wall"`, the
+siege AI's batter order), a gate (`"gate"`) or a building (`"bld"`) through the batter chip's Use now. Towers stood: a
+blow on a tower's cell went into the nearest stretch within `STRIKE_TOWER_R` 16 m. Every artillery blow on a stretch did
+what it did to a gate (`GATE_STONE` 360 a stone, `GATE_BOLT` 80 x `m_obj` a ball: a culverin 360, a heavy gun 560), so
+three stone batteries (nine onagers) at 150 m dropped a walls-2 stretch in 1.0-1.6 volleys.
+
+**The rule** (sim).
+- *Towers.* `_setup_towers`: the generator's `C_TOWER` cells flood-filled (8-connected, cell index order) into towers
+  (`tw_cell` per cell, `tw_x` / `tw_y` middle, `tw_r` reach, `tw_dir` outward: the nearest stretch's, else away from
+  the town's middle; the layout's ring towers, the gates' towers, a trace fort's drums), each with `TOWER_HP_PCT` 160 %
+  of a stretch's hit points at the town's walls level (`tw_hp` / `tw_hp0`, `tw_state`, `tw_hit_t`), and `ws_jt`, the
+  tower each stretch join passes through. A blow that strikes or lands on a tower's cell (`_works_strike`,
+  `_destr_hit`), and a bolt or stone that hits a tower engine (`_tower_hit`: the masonry round it too), does the tower
+  its share (`_tower_dmg`); the defenders' own shots never. At 0 it falls (`_tower_down`): its cells become rubble ground
+  (as a breach: passable at `RUBBLE_SPEED`, low cover), the street graph's pair of nodes through it (`_destr_graph`'s
+  `_destr_pair`, tagged after the stretches' pairs; `_node_open`) opens and the open ground on either side joins
+  (`tw_cmp`), the stretch joins through it end (`ws_join` returns -1: the walks end at the heap), `EV_TOWER` in the
+  destruction ring (the view's dust). **The men on it:** a tower engine standing on it is wrecked and its crew is lost
+  with it (they work on its deck: no way down); any other man on its cells (wall men crossing it) dies with
+  `TOWER_FALL_KILL_PCT` 60 % (the breach's `BREACH_KILL_PCT`; the sim's RNG, soldier index order) and the survivors are
+  thrown back onto their own walk at their unit's anchor (or the middle of their stretch), shaken (`DESTR_MORALE`),
+  because a unit cannot be split between the wall and the ground. `TOWERS_FALL` (static, 1) is the probes' switch.
+- *The works' share.* An artillery blow on a stretch or a tower does `WORKS_STONE_PCT` (a lobbed stone or shell)
+  or `WORKS_BALL_PCT` (a flat ball or bolt) % of its gate damage by walls level (`_works_dmg`): stones 15 / 13 / 12 %,
+  balls 13 / 11 / 10 % at walls 1 / 2 / 3 (walls 1 is the timber palisade); gates, buildings, the torch raiders' axes
+  and the ram as before.
+- *The order.* `ORDER_ATTACK` with `"tower": t` (a new key beside `"wall"`, `"gate"`, `"bld"`; the lockstep inputs carry
+  an order's keys as they are: `var_to_bytes` of the dictionary) from an attacking battery: `u_gtarget` `TWR_TGT` - t
+  (`TWR_TGT` -50,000, between the stretches' -2 - s and the buildings' `BLD_TGT` -100,000; `twr_tgt`); the battery faces
+  and shoots it (`_art_think`: `tw_aim`, a lobbed shot at its middle, a flat one `WS_AIM_OUT` outside its outer face, so
+  the line runs into the masonry) until it falls, then its order ends and it fires at will again. A stretch or building
+  order ends the same way (as before).
+
+**State.** `tw_hp`, `tw_state`, `tw_hit_t` (hashed from the first blow on a tower, `tw_used`, so towns where no tower is
+struck hash as before; in snapshots as every script variable); `tw_cell`, `tw_x`, `tw_y`, `tw_r`, `tw_dir`, `tw_cmp`,
+`ws_jt` static (setup, skipped in snapshots; `_destr_restore` puts a fallen tower's rubble back on `obs`). Stats
+`stat_tw_fallen`, `stat_tw_kill`, `stat_tw_dmg`, `stat_tw_shots` (the harness's `towers_fallen`, `tower_shots`).
+
+**Measured** (a scratch probe, `volley_probe.gd` (kept beside the hand-off): three batteries 150 m out from a stretch's
+middle or a tower at a stretch's end on a Rome level-1 town (level 0 walls 1: the palisade village), ordered at it, no
+AI, three town seeds; a volley = every engine fires once):
+
+| batteries (engines) | walls 1 | walls 2 | walls 3 | palisade village | tower w1 / w2 / w3 |
+|---|---|---|---|---|---|
+| Stone Throwers (9) | 0.9 -> 3.5 | 1.2 -> 6.5 | 1.5 -> 9.7 | 1.0 -> 4.1 | stood -> 6.0 / 9.6 / 14.3 |
+| Culverins (9) | 0.4 -> 3.0 | 0.8 -> 5.8 | 1.0 -> 9.3 | 0.4 -> 3.0 | stood -> 4.8 / 9.2 / ammo out (12) |
+| Heavy Guns (9) | 0.4 -> 1.9 | 0.4 -> 3.7 | 0.7 -> 6.0 | 0.4 -> 1.9 | stood -> 3.0 / 5.9 / 9.6 |
+| Landed Naval Guns (9) | 0.3 -> 2.4 | 0.6 -> 4.8 | 0.8 -> 7.8 | 0.3 -> 2.4 | stood -> 3.8 / 7.4 / ammo out (8) |
+| Mortars (9) | 0.4 -> 2.0 | 0.6 -> 3.7 | 0.8 -> 5.8 | 0.4 -> 2.5 | stood -> 4.1 / 7.1 / ammo out (8) |
+| Light Guns (12) | 0.7 -> 5.0 | 1.1 -> 9.8 | 1.7 -> ammo out (14) | 0.7 -> 5.0 | stood -> 8.0 / ammo out / ammo out |
+| Bolt Throwers (12) | 1.6 -> 10.2 | 2.5 -> ammo out (11) | 3.6 -> ammo out | 1.6 -> 10.3 | stood -> ammo out |
+
+(HEAD -> after; "stood": towers had no hit points; "ammo out": the three batteries' whole load did not do it.) At walls
+2 that is about 100 s of stones (15 s reloads), 240 s of culverins, 190 s of heavy guns. The owner's "2 volleys" is the
+1.0-1.6 of HEAD; the brief's 6-8 for three stone batteries at walls 2 is met at 6.5 (6.0-7.4 by seed), cannons a little
+faster (culverins 5.8, heavy guns 3.7), a tower about 1.5 x its stretch in volleys (1.6 x in hit points: a smaller
+target).
+
+**Balance** (`tools/balance` plans `tw_rome` (zeugitana, attica, sicilia_or, latium, massalia, arverni at walls 1-3) and
+`tw_west` (havana, cartagena, portobelo, san_juan, veracruz, st_augustine at walls 1-2), 12 seeds each: 72 battles a
+walls level; HEAD 7827a1e826 -> 4605663af2): Rome attacker wins walls 1 / 2 / 3 78 / 46 / 39 -> 74 / 28 / 29 % (walls 2
+beyond its interval; cells beyond: zeugitana w2 -33, latium w2 -83, massalia w2 -33, attica w3 -33, arverni w1 / w2
++42); breaches a siege 1.76 / 1.21 / 1.03 -> 1.00 / 0.00 / 0.00; gates broken 0.50 / 0.43 / 0.46 -> 1.15 / 1.43 / 1.32;
+wall damage a battle 3,101 / 3,706 / 5,048 -> 1,612 / 856 / 1,010; mean length 9.4 / 10.8 / 11.6 -> 11.1 / 11.4 / 11.9
+min; no tower fell. West identical (44 / 17 %, no breaches before or after; wall damage 255 / 382 -> 33 / 47). **Why it
+moved:** HEAD's breaches came mostly from stones aimed at the men on the walls striking the wall (8 aimed wall shots a
+battle against 1.2-1.8 breaches); the harness's Rome army has one stone battery (45 stones and a refill of 45), which at
+the works' share can batter a walls-1 stretch down but not a walls-2 or 3 one in a battle, so it shoots men and the gate
+falls instead, one way in for the storm. With `S_BATTER_POOL` 70 (the batter rule counting the side's shot together at
+70 % hitting) the battery battered walls 2 (57 wall shots, 0.71 breaches) and the attackers won 18 %: off. The levers
+left are the owner's: a Rome siege army with two or three stone batteries, or a softer share at walls 2-3. The
+auto-resolve formula has no wall hit point term (`tests/campaign_battles.gd --only=fit` PASS, unchanged: `campaign/` is
+untouched), but its fought reference for Rome sieges (walls 2 34.4 %, from `rome_walls`) predates this pass: a
+`rome_walls` measure and a refit are due if the owner keeps these numbers.
+
+**Second round (2026-11-07; the owner's volleys kept, the attackers' side changed; docs/AI.md 75).** The campaign AI
+brings wall-breaking guns (`SIEGE_GUNS` 1 / 2 / 3, `SIEGE_GUNS3` 1 / 3 / 3) and waits for them or a ram before storming
+on the odds; the siege AI's batteries pool their shot (`S_BATTER_POOL` 40). The harness's Rome army got two stone
+batteries at walls 1 and three at walls 2-3 (`tests/town_balance.gd` `_rome_extra`), measured once as `rome_walls` (6
+towns x 16 seeds, 96 battles a walls level; code 0ae0eb43cd): attacker wins 52 / 20 / 10 % (HEAD's tw_rome 78 / 46 / 39 %,
+beyond the interval at every level), breaches a siege 1.12 / 1.00 / 0.93 (HEAD 1.76 / 1.21 / 1.03), towers fallen 0.01
+at walls 2, wall shots 42 / 66 / 84 a battle, gates broken 0.64 / 0.49 / 0.76, men killed attackers 560 / 647 / 639,
+defenders 585 / 589 / 584. Breaches are back; the wins are not: the fair siege is equal-force, so the defenders' field
+army gains the guns' price in men. West unchanged (its walls-2 towns are fort towns whose fort the AI leaves be).
+**The formula refit** (`tests/campaign_battles.gd` FIT_FOUGHT, `campaign/cbattle.gd` WALLS_PCT kit 2 column): Rome walls 1
+/ 2 / 3 fought 58.3 / 34.4 / 25.0 % (2026-10-22) -> 52.1 / 19.8 / 10.4 %, rows 87 / 96 / 101 -> 89 / 106 / 114 (walls 3's
+kit 0 / 1 columns scaled: 189 / 129); the formula gives 52.6 / 20.0 / 10.6 %; walls 3's loss ratio is 31 % over the fought
+one (the formula's kills at a lopsided result), so that cell's loss gate is 35 %.
+
+**The siege AI** (docs/AI.md 75): `S_TOWER_HIT` (377) brings down the tower beside the breach near its assault point
+whose engine or wall men still cover it, when the side's wall-breaking batteries can; `S_BATTER_POOL` (378) lets the
+batter rule count every battering battery's shot together.
+
+**Tests.** determinism_test `_check_towers` (`--only=towers`, also in `--only=destr` and the full run: the tower by the
+main gate falls after ceil(hp / blow) stone-weight blows on three Rome walls-2 towns, its cells rubble ground, its
+engine wrecked with its crew gone, the joins through it ended, the way through it open and the ground either side one
+piece; three stone batteries ordered at a tower bring it down and their order ends; the run repeats exactly and a
+snapshot before the fall restores and plays to the same hash); `cit_ops` (the tower nearest gate 0 brought down at tick
+900 in the run: `tw_fallen`) and `gate_ops` (the bolts ordered at the tower beside the broken gate: `tw_shots`,
+`tw_dmg`); `_check_destr_ai` (one stone battery breaching walls 1, AI against AI) now allows 7,200 ticks (4,200) and
+two seeds of three (seed 42's battery fires 19 stones at the stretch, 906 of 1,200 hp); custom_battle_test
+the coverage runs siege_polis@ai, siege_punic@ai, siege_eq_ring3 and siege_eq_polis2~sa no longer need a breach (their
+batteries no longer breach walls 2-3: the balance below; breaches stay covered by siege_oppidum@ai and `--only=destr`);
+custom_battle_test `_check_strike` counts the tower's hit points with its stretch's (with every stone through, stones landing on the
+tower's cells hurt it a little: 46 against 322); lockstep_test; battle_screen_test and input_test (ui.md "Targeting the works and the works' health counter").
+
+**Known.** A gate's flanking towers are towers (they fall; the gate stands between the heaps); the ram, poles and the
+torch raiders do towers no harm; the 3D view draws the heap flat, as a breach; towers have no repair; Easy's AI never
+shoots a tower; a Rome army with one stone battery can no longer breach walls 2 or 3 in a battle by itself (the balance above).
+
 ### Buildings block a flat shot (as built, 2026-11-06)
 
 Why (the owner, a beauty pass on the battlefield): "I want to start to look at buildings being in the way when rounds

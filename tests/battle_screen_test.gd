@@ -298,6 +298,8 @@ func _process(_d: float) -> bool:
 		_rub = null
 	if _vet_b != null:
 		_vet_frame()
+	if _wk_b != null:
+		_works_frame()
 	if _roll_phase == 1:
 		_roll_frame()
 	if _wait > 0:
@@ -457,7 +459,13 @@ func _process(_d: float) -> bool:
 			if _roll_phase == 1:
 				_step -= 1  # (the stone's roll is drawn on the next frames: _roll_frame)
 				return false
+			if _wk_phase == 0 and _vet_b == null:
+				_works_cases()   # (its own battle once the others' frames are checked: one battle on the screen at a time)
+			if _wk_phase != 2:
+				_step -= 1
+				return false
 			_roll_phase = 0
+			_wk_phase = 0
 			if not _oblique or not _v3d:
 				# Again, in the oblique battle view, then in the 3D view.
 				_v3d = _oblique
@@ -1149,6 +1157,99 @@ func _vet_cases() -> void:
 	CData.use_pack(was)
 	_vet_b = b
 	_vet_frames = 0
+
+
+## Targeting the works, towers that fall, wall health (2026-11-07; docs/design/ui.md "Targeting the works" and "The works'
+## health counter"): a Rome walls-2 town (siege_test 31), our stone battery selected: a tap on the tower by the main
+## gate gives it an attack order at the tower ("tower"); a stretch at 60 % and the tower under the order carry a counter
+## (drawn on the next frames); a long press on the stretch reads "Wall, stone, 60 %" and on the tower names the battery
+## firing at it; another tower brought down is hidden in the kit (its instance fallen) and its cells are rubble there.
+var _wk_b = null
+var _wk_frames := 0
+var _wk_phase := 0   # 0 not begun in this view, 1 drawing, 2 checked
+func _works_cases() -> void:
+	_wk_phase = 1
+	const Terrain := preload("res://sim/terrain.gd")
+	const MapGen := preload("res://sim/mapgen.gd")
+	const Ov := preload("res://game/overlay.gd")
+	var sc := Scenarios.siege_test(31, 2, 2, MapGen.PAL_DRY, Terrain.K_FLAT)
+	sc["ai_sides"] = []
+	sc["orders"] = []
+	sc["deploy_zones"] = []
+	var b := Battle.new()
+	b.custom_scenario = sc
+	b.seed_value = 3
+	root.add_child(b)
+	b.paused = true
+	var s: BattleSim = b.sim
+	s.step()
+	var bat := -1
+	for u in s.n_units:
+		if s.u_side[u] == b.player_side and s.u_side[u] != s.city_def and UT.cls(s.u_type[u]) == UT.CLS_ART and not s.is_tower(u):
+			bat = u
+			break
+	var gf: Vector2i = s.gate_face(0)
+	var t := s.tw_near(gf.x, gf.y, 80 * 1024)
+	var t2 := -1
+	for k in s.tw_state.size():
+		if k != t and (t2 < 0 or absi(s.tw_x[k] - s.tw_x[t]) + absi(s.tw_y[k] - s.tw_y[t]) > absi(s.tw_x[t2] - s.tw_x[t]) + absi(s.tw_y[t2] - s.tw_y[t])):
+			t2 = k
+	if bat < 0 or t < 0 or t2 < 0:
+		_check(false, "works: a battery (%d) and two towers (%d, %d) in the walls-2 town" % [bat, t, t2])
+		b.queue_free()
+		_wk_phase = 2
+		return
+	b._select(bat)
+	var tw_px: Vector2 = b.overlay.to_px(s.tw_x[t], s.tw_y[t])
+	var used: bool = b._art_work_tap(tw_px)
+	for k in 3:
+		s.step()
+	_check(used and s.u_order[bat] == BattleSim.O_ATTACK and s.u_gtarget[bat] == BattleSim.TWR_TGT - t,
+		"works: a tap on the tower by the gate with our battery (the first, bolts) selected orders it at the tower (order %d, gtarget %d, phase %d)" % [s.u_order[bat], s.u_gtarget[bat], s.phase])
+	var sg := -1
+	var so := 0
+	for k in s.ws_state.size():
+		if s.ws_hp0[k] > 0 and (s.ws_fl[k] & MapGen.SEG_SEA) == 0 and (sg < 0 or s._seg_off(k, s.tw_x[t], s.tw_y[t]) < so):
+			sg = k
+			so = s._seg_off(k, s.tw_x[t], s.tw_y[t])
+	s.ws_hp[sg] = s.ws_hp0[sg] * 6 / 10
+	var wl: PackedStringArray = b.overlay.work_lines(Vector2i(Ov.WK_WALL, sg))
+	var tl: PackedStringArray = b.overlay.work_lines(Vector2i(Ov.WK_TOWER, t))
+	_check(wl[0] == "Wall, stone, 60 %" and tl[0].begins_with("Tower, stone, ") and tl[1] == "Under fire from: " + str(UT.TYPES[s.u_otype[bat]]["name"]),
+		"works: the inspect plate reads \"%s\" / \"%s\" and \"%s\" / \"%s\"" % [wl[0], wl[1], tl[0], tl[1]])
+	var mp := BattleSim.seg_pt(s, sg, BattleSim.seg_len(s, sg) / 2)
+	b._inspect_at(b.overlay.to_px(mp.x, mp.y))
+	s._tower_dmg(t2, s.tw_hp[t2] / 100 + 1, -1)
+	b.city.refresh()
+	var kit = b.city.kit
+	var hid := 0
+	if kit != null:
+		for i in kit.i_bld.size():
+			if kit.i_bld[i] == -2 - t2 and kit.fallen(i):
+				hid += 1
+	var cell := s.tw_cell.find(t2 + 1)
+	_check(s.tw_state[t2] != 0 and s.obs[cell] == MapGen.C_RUBBLE and (kit == null or (hid > 0 and kit._rubble_cells.has(cell))),
+		"works: a fallen tower is a heap of rubble: its cells rubble, its kit piece hidden (%d instance(s)), the rubble drawn there" % hid)
+	if b.dive_t >= 0.0:
+		b.dive_finish()
+	b._cam_to(b.overlay.to_px(s.tw_x[t], s.tw_y[t]))
+	b.camera.zoom = Vector2(0.5, 0.5)
+	b.camera.force_update_scroll()
+	b.overlay.queue_redraw()
+	_wk_b = b
+	_wk_frames = 0
+
+
+func _works_frame() -> void:
+	_wk_frames += 1
+	var ov = _wk_b.overlay
+	if ov.counters_drawn < 2 and _wk_frames < 8:
+		ov.queue_redraw()
+		return
+	_check(ov.counters_drawn >= 2, "works: the health counters drawn (%d: the hurt stretch and the tower under the order)" % ov.counters_drawn)
+	_wk_b.queue_free()
+	_wk_b = null
+	_wk_phase = 2
 
 
 func _vet_frame() -> void:

@@ -798,6 +798,9 @@ func _strike_run(sc: Dictionary, on: int, ticks: int) -> Dictionary:
 			sim.u_fire[o] = 0
 	var sg: int = int(sc["strike_sg"])
 	var hp0: int = sim.ws_hp[sg]
+	var tw0 := 0  # (Towers that fall, 2026-11-07: a blow on a tower is the tower's now, not its stretch's)
+	for t in sim.tw_hp.size():
+		tw0 += sim.tw_hp[t]
 	var arc: int = sim.art_arc_strike(0, 1)
 	var arc_k := -1
 	if arc >= 0:
@@ -818,12 +821,16 @@ func _strike_run(sc: Dictionary, on: int, ticks: int) -> Dictionary:
 					tower_strikes += 1
 			fxh = (fxh + 1) % BattleSim.FX_CAP
 	scr.set("ARC_STRIKE_ON", 1)
+	var tw1 := 0
+	for t in sim.tw_hp.size():
+		tw1 += sim.tw_hp[t]
 	return {"arc": arc, "arc_k": arc_k, "stones": sim.stat_stones, "strikes": sim.stat_strikes, "shatter": shatter,
-		"tower": tower_strikes, "dmg": (hp0 - sim.ws_hp[sg]) / 100, "lost": 60 - sim.u_alive[1], "hash": sim.state_hash()}
+		"tower": tower_strikes, "dmg": (hp0 - sim.ws_hp[sg] + tw0 - tw1) / 100, "lost": 60 - sim.u_alive[1], "hash": sim.state_hash()}
 
 
 func _check_strike() -> void:
-	# (1) A stone aimed past a walls-2 tower strikes the tower.
+	# (1) A stone aimed past a walls-2 tower strikes the tower. (2026-11-07: with every stone through, those landing
+	# on the tower's own cells still hurt it now that towers have hit points: less than the strikes do.)
 	var sc1 := _strike_sc(2, UT.STONE, true, 120, 14)
 	if sc1.is_empty():
 		_fail("strike: no walls-2 tower with open ground 14 m inside and 120 m out")
@@ -831,7 +838,7 @@ func _check_strike() -> void:
 	var on := _strike_run(sc1, 1, 700)
 	var off := _strike_run(sc1, 0, 700)
 	if int(on["arc"]) < 0 or int(on["arc_k"]) != MapGen.C_TOWER or int(on["strikes"]) < 3 or int(on["tower"]) < 3 \
-			or int(on["dmg"]) <= 0 or int(on["lost"]) >= int(off["lost"]) or int(off["strikes"]) != 0 or int(off["dmg"]) != 0:
+			or int(on["dmg"]) <= 0 or int(on["lost"]) >= int(off["lost"]) or int(off["strikes"]) != 0 or int(off["dmg"]) >= int(on["dmg"]):
 		_fail("strike: past a walls-2 tower (on %s, off %s)" % [str(on), str(off)])
 		return
 	var again := _strike_run(sc1, 1, 700)
@@ -894,7 +901,7 @@ func _check_strike() -> void:
 	if gst != BattleSim.GATE_CLOSED or s3.g_hp[g] >= hp_g0 or alive1 != alive0:
 		_fail("strike: a ball into the shut gate (state %d, hp %d -> %d, the defenders %d -> %d)" % [gst, hp_g0, s3.g_hp[g], alive0, alive1])
 		return
-	print("PASS strike: past a walls-2 tower %d stones, %d struck (%d on the tower), the stretch lost %d hp, %d men lost (every stone through: %d stones, %d struck, %d lost); over the palisade from 160 m %d stones, %d struck, %d lost; a ball into the shut gate %d -> %d hp, nobody behind hit" % [
+	print("PASS strike: past a walls-2 tower %d stones, %d struck (%d on the tower), the stretch and the tower lost %d hp, %d men lost (every stone through: %d stones, %d struck, %d lost); over the palisade from 160 m %d stones, %d struck, %d lost; a ball into the shut gate %d -> %d hp, nobody behind hit" % [
 		on["stones"], on["strikes"], on["tower"], on["dmg"], on["lost"], off["stones"], off["strikes"], off["lost"],
 		lob["stones"], lob["strikes"], lob["lost"], hp_g0 / 100, s3.g_hp[g] / 100])
 

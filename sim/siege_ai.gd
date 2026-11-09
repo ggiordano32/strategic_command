@@ -2696,6 +2696,16 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		return
 	if phase == SP_ASSAULT and not left and _batter_bld(sim, u, kn):
 		return  # (a held building on the storm's route: battered down, Use now; docs/AI.md 39)
+	if phase == SP_ASSAULT and not left and kn[AP.S_TOWER_HIT] != 0 and sim.u_ammo[u] > 0 and sim.TOWERS_FALL != 0:
+		# Towers that fall (docs/AI.md 75): the tower beside the breach that still covers it is brought down.
+		var tc := _tower_cover(sim, _wall_breach(sim, side))
+		if tc >= 0 and _tower_shot_ok(sim, u, kn, tc):
+			var ta: Vector2i = sim.tw_aim(tc, UT.stat(ty, "m_kind") != 1)
+			if BattleAI._d(ta.x - sim.u_cx[u], ta.y - sim.u_cy[u]) < UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100:
+				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != TWR_TGT - tc:
+					BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "tower": tc, "run": 0}, 0)
+					BattleAI._count(sim, side, AP.C_SIEGE)
+				return
 	if sim.fort_on != 0 and sim.ai_fort[side] == 1 and not left and sim.u_gtarget[u] < 0 and _town_gun(sim, u):
 		return
 	# No gate to shoot: fire at will from where it stands.
@@ -4388,6 +4398,7 @@ static func _att_mantlet(sim, u: int, phase: int) -> bool:
 # (ws_hp / ws_state / ws_hit_t, ob_hp, the units), so nothing new is kept.
 
 const WS_STANDING := 0           # (BattleSim.WS_STANDING)
+const TWR_TGT := -50000          # (BattleSim.TWR_TGT: u_gtarget of a battery ordered at a tower)
 const A_PLUG := 38               # defender holding a breach's inside edge (u_ai_x = the stretch + 1)
 const A_DCHARGE := 39            # defender charging shooters in the field (u_ai_x / u_ai_y = its post; docs/AI.md 41)
 const WALL_BOLT := 80            # (BattleSim.GATE_BOLT: a flat shot's wall damage, x m_obj %)
@@ -4504,10 +4515,78 @@ static func _batter_for(sim, u: int, g: int, kn: PackedInt32Array, cit: bool) ->
 	var sg := _batter_stretch(sim, side, g, cit)
 	if sg < 0:
 		return -1
-	var shots: int = sim.u_ammo[u] + sim.u_reserve[u]
-	if shots * _wall_dmg(sim, sim.u_type[u]) * BATTER_HIT_PCT / 100 < sim.ws_hp[sg] / 100:
+	# (2026-11-07: an artillery blow on a wall does WORKS_*_PCT % of a gate's, BattleSim._works_dmg; with
+	# S_BATTER_POOL the side's batteries that can batter count together: they focus on the one stretch.)
+	var shots: int = (sim.u_ammo[u] + sim.u_reserve[u]) * _wall_dmg(sim, sim.u_type[u]) * _works_pct(sim, sim.u_type[u]) / 100
+	if kn[AP.S_BATTER_POOL] != 0:
+		var lim := (n * kn[AP.S_BATTER_PCT] + 99) / 100
+		var r := 0
+		for o in sim.n_units:
+			if sim.u_side[o] != side or not _can_batter(sim, o, kn, heavy):
+				continue
+			if o != u and r < lim:
+				shots += (sim.u_ammo[o] + sim.u_reserve[o]) * _wall_dmg(sim, sim.u_type[o]) * _works_pct(sim, sim.u_type[o]) / 100
+			r += 1
+	var hit_pct: int = kn[AP.S_BATTER_POOL] if kn[AP.S_BATTER_POOL] > 0 else BATTER_HIT_PCT
+	if shots * hit_pct / 100 < sim.ws_hp[sg] / 100:
 		return -1  # (too weak to breach it in the battle's time: it shoots men)
 	return sg
+
+
+## The % of its gate damage an artillery blow of type ty does to a stretch or tower (BattleSim.WORKS_STONE_PCT /
+## WORKS_BALL_PCT by the walls level).
+static func _works_pct(sim, ty: int) -> int:
+	var lv := clampi(sim.city_walls, 0, 3)
+	return sim.WORKS_STONE_PCT[lv] if UT.stat(ty, "m_kind") == 2 else sim.WORKS_BALL_PCT[lv]
+
+
+## Towers that fall (docs/AI.md 75): battery u may shoot tower t: an engine that breaks walls (_can_batter) whose
+## shot left (with S_BATTER_POOL, the side's battering batteries' together at that % hitting; else its own at
+## BATTER_HIT_PCT) would bring the tower down; else it keeps shooting men (a tower it cannot fell is not worth a stone).
+static func _tower_shot_ok(sim, u: int, kn: PackedInt32Array, t: int) -> bool:
+	if not _can_batter(sim, u, kn, false):
+		return false
+	var side: int = sim.u_side[u]
+	var dmg := 0
+	for o in sim.n_units:
+		if sim.u_side[o] != side or (o != u and kn[AP.S_BATTER_POOL] == 0) or not _can_batter(sim, o, kn, false):
+			continue
+		dmg += (sim.u_ammo[o] + sim.u_reserve[o]) * _wall_dmg(sim, sim.u_type[o]) * _works_pct(sim, sim.u_type[o]) / 100
+	var hit_pct: int = kn[AP.S_BATTER_POOL] if kn[AP.S_BATTER_POOL] > 0 else BATTER_HIT_PCT
+	return dmg * hit_pct / 100 >= sim.tw_hp[t] / 100
+
+
+## Towers that fall (docs/AI.md 75, AP.S_TOWER_HIT): the standing tower next to breach sg (within TOWER_BREACH_R of its
+## middle, nearest first, ties by index) whose defence still covers the breach: a working tower engine on it, or a
+## defending wall unit with men within TOWER_COVER_R of it; -1 none.
+const TOWER_BREACH_R := 30 * M
+const TOWER_COVER_R := 12 * M
+static func _tower_cover(sim, sg: int) -> int:
+	if sg < 0 or sim.tw_state.is_empty():
+		return -1
+	var mp: Vector2i = sim.seg_pt(sim, sg, sim.seg_len(sim, sg) / 2)
+	var best := -1
+	var bd := TOWER_BREACH_R + 1
+	for t in sim.tw_state.size():
+		if sim.tw_state[t] != WS_STANDING:
+			continue
+		var d: int = BattleAI._d(sim.tw_x[t] - mp.x, sim.tw_y[t] - mp.y) - sim.tw_r[t]
+		if d >= bd:
+			continue
+		var cover := false
+		for o in sim.n_units:
+			if sim.u_side[o] != sim.city_def or sim.u_state[o] != U_READY or sim.u_alive[o] <= 0:
+				continue
+			if sim.is_tower(o) and sim.u_ammo[o] > 0 and sim.tw_at(sim.u_ax[o], sim.u_ay[o]) == t:
+				cover = true
+				break
+			if sim.u_wall[o] > 0 and BattleAI._d(sim.u_cx[o] - sim.tw_x[t], sim.u_cy[o] - sim.tw_y[t]) < sim.tw_r[t] + TOWER_COVER_R:
+				cover = true
+				break
+		if cover:
+			best = t
+			bd = d
+	return best
 
 
 ## Where battery u stands to batter stretch sg: `out` before its aim point

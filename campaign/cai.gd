@@ -670,6 +670,9 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 		for mv in moves:
 			if int(mv[2]) == f:
 				marching[int(mv[0])] = 1
+	# The siege guns (docs/AI.md 75): an army marching on a walls-2+ town first takes its batteries.
+	if (kn[CP.SIEGE_GUNS] > 0 or kn[CP.SIEGE_GUNS3] > 0) and CState.grid_on(st) and not no_buildup:
+		up = _siege_guns(st, f, moves, marching, kn, up, cap)
 	# The wagon (docs/AI.md 23): an army holding this turn with WAGON_MIN
 	# missile / artillery units and none gets one (the best tier the
 	# buildings allow) at a recruiting centre with a Workshop it stands at.
@@ -732,6 +735,84 @@ static func _recruit(st: Dictionary, f: int, moves: Array = []) -> void:
 			if o.is_empty() or CRules.apply_order(st, f, o) != "":
 				break
 			up += CState.upkeep_of(ty)
+
+
+## The wall-breaking artillery lines, the first the faction's roster and the centre's buildings allow is taken.
+const GUN_LINES: Array[String] = ["stone", "mortar", "field_gun", "naval_gun"]
+
+
+## The siege guns faction f wants against town t (CP.SIEGE_GUNS / SIEGE_GUNS3 by its walls; 0: walls below 2, a
+## breach standing, the knobs off).
+static func siege_guns_want(st: Dictionary, f: int, t: int) -> int:
+	var w := CState.walls(st, t)
+	if w < 2 or CState.breach(st, t) > 0:
+		return 0
+	var kn := CP.of(st, f)
+	return kn[CP.SIEGE_GUNS] if w == 2 else kn[CP.SIEGE_GUNS3]
+
+
+## Wall-breaking artillery units among armies `arr` (a type of GUN_LINES' kinds: artillery, not a wagon, doing at
+## least a stone's work to a wall: m_kind 2, or a flat gun of m_obj 300 or more).
+static func gun_units(arr: Array) -> int:
+	var n := 0
+	for a in arr:
+		for u in a["units"]:
+			var ty := CState.unit_type(u)
+			if ty >= 0 and UT.cls(ty) == UT.CLS_ART and UT.stat(ty, "wagon") < 0 \
+					and (UT.stat(ty, "m_kind") == 2 or UT.stat(ty, "m_obj") >= 300):
+				n += 1
+	return n
+
+
+## (docs/AI.md 75, CP.SIEGE_GUNS) Each army of f planned this turn to march on an enemy town that wants siege guns
+## (siege_guns_want), in move order, standing at a settlement of ours with a Workshop, short of them: the best gun of
+## GUN_LINES the centre allows is recruited into it, one at a time up to the want, within the upkeep cap and the
+## recruiting reserve; if any is, its march is taken back (the mustering rule: it marches next turn). Returns the upkeep.
+static func _siege_guns(st: Dictionary, f: int, moves: Array, marching: Dictionary, kn: PackedInt32Array, up: int,
+		cap: int) -> int:
+	var fs: Dictionary = st["factions"][f]
+	for k in range(moves.size() - 1, -1, -1):
+		var mv: Array = moves[k]
+		if int(mv[2]) != f or (int(mv[3]) != CData.MODE_SIEGE and int(mv[3]) != CData.MODE_ASSAULT):
+			continue
+		var t := CGrid.site_region(int(mv[1]))
+		if t < 0 or CState.owner(st, t) == f or not CState.at_war(st, f, CState.owner(st, t)):
+			continue
+		var want := siege_guns_want(st, f, t)
+		if want <= 0:
+			continue
+		var id := int(mv[0])
+		var a := CState.army(st, id)
+		if a.is_empty() or int(a["busy"]) != 0:
+			continue
+		var have := gun_units([a])
+		var r := CChars.city_of(st, a)
+		if have >= want or r < 0 or CState.owner(st, r) != f or CState.building(st, r, CData.WORKSHOP) <= 0 \
+				or not CState.battle_at(st, r).is_empty():
+			continue
+		var took := 0
+		while have + took < want:
+			var key := ""
+			for line in GUN_LINES:
+				key = _best_type(st, f, r, line)
+				if key != "" and CRules.army_recruit_check(st, f, r, id, key) == "":
+					break
+				key = ""
+			if key == "":
+				break
+			var ty := UT.index_of(key)
+			if up + CState.upkeep_of(ty) > cap \
+					or int(fs["treasury"]) - CRules.unit_price(st, f, r, key) < _reserve(st, f) / kn[CP.RECRUIT_RESERVE_DIV]:
+				break
+			if CRules.apply_order(st, f, {"t": "recruit", "r": r, "unit": key, "army": id}) != "":
+				break
+			up += CState.upkeep_of(ty)
+			took += 1
+		if took > 0:
+			CP.count(CP.C_SIEGE_GUNS, f)
+			moves.remove_at(k)
+			marching.erase(id)
+	return up
 
 
 ## Heroes and agents (CP.CHAR_HERO / CHAR_DIPLOMAT): characters waiting in a
@@ -3224,6 +3305,10 @@ static func _sieges_grid(st: Dictionary, f: int, free: Array, etas: Dictionary, 
 			var starving := int(sg["supply"]) <= 0
 			var kn := CP.of(st, f)
 			var storm := w >= _thr(st, kn, CP.ATTACK_WIN) or (starving and not relief.is_empty())
+			if storm and not (starving and not relief.is_empty()) and not no_buildup \
+					and gun_units(bs + join) < siege_guns_want(st, f, r) and int(sg["held"]) < CBattle.RAM_TURNS:
+				storm = false  # (docs/AI.md 75: no guns enough and no ram yet: it sits and starves them)
+				CP.count(CP.C_SIEGE_WAIT, f)
 			if not storm and kn[CP.SK_STORM_RELIEF_WIN] > 0 and w >= _thr(st, kn, CP.SK_STORM_RELIEF_WIN) \
 					and _relief_soon(st, f, r):
 				# Skilled (4.6): storm before a relief that arrives next turn.

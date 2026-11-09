@@ -441,7 +441,10 @@ const ART_ARC_PCT := 373       # a stone battery's target scan (BattleAI's artil
 const S_FORT_ANSWER := 372     # 1: the attackers of a West fort town answer the fort's walk: their storming shooters and guns take a fort wall unit in their reach and line as a target (FORT_ANSWER_PUSH farther than a street defender), so the walk over the plaza is shot at and suppressed; 0 they leave the fort be (the town is the prize), as before
 const S_FB_LINE_PCT := 375     # S_FORT_FALLBACK's trigger: the shooters fall back when the plaza's capture runs or this % of the street line is routing or gone (the sally's 50 % before)
 const S_FORT_LINE_PCT := 376   # a West fort town (walls 1-2): the defenders' line units hold the street this % of the way from its mouth to the plaza (SiegeAI._strongpoint); 0: SP_PAL_LINE_PCT (80, defence in depth)
-const N_KNOBS := 377
+# Targeting the works, towers that fall (docs/AI.md 75, 2026-11-07): ids 377-378.
+const S_TOWER_HIT := 377       # 1: a besieging battery in the storm, with a breach made near the assault point, shoots the standing tower beside that breach whose engine or wall men still cover it (SiegeAI._tower_cover) until it falls; 0: fire at will there as before
+const S_BATTER_POOL := 378     # > 0: the batter rule's "enough shot to breach it" (SiegeAI._batter_for) counts the shot of every battering battery of the side (they focus on one stretch) and this % of it hitting (an aimed stone hits a stretch 70-85 % of the time at 120 m, the volley probe); 0: this battery's alone at BATTER_HIT_PCT 40 %, as before (with the walls' share per blow of 2026-11-07 one battery never passes it at walls 2-3)
+const N_KNOBS := 379
 ## Knob ids with no row (reserved ranges between the competencies' blocks):
 ## [first, last + 1); they read 0.
 const KNOB_GAPS: Array = [[304, 311], [312, 320], [326, 330], [344, 350], [352, 360], [374, 375]]
@@ -777,6 +780,9 @@ const KNOBS: Array = [
 	[S_FORT_ANSWER, 0, 1, 1],
 	[S_FB_LINE_PCT, 50, 75, 75],
 	[S_FORT_LINE_PCT, 0, 40, 40],
+	# Targeting the works, towers that fall (docs/AI.md 75): Easy as before.
+	[S_TOWER_HIT, 0, 1, 1],
+	[S_BATTER_POOL, 0, 40, 40],   # (2026-11-07: 70 had the one Rome battery spend its load on a walls-2 stretch, attacker wins 46 -> 18 %; at 40 one battery alone does not batter walls 2, three together do)
 	[SALVO, 0, 1, 1],
 	[SALVO_RANGE_R, 60 * M, 60 * M, 60 * M],
 	[SALVO_FIRE_R, 25 * M, 25 * M, 25 * M],

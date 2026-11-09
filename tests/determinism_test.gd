@@ -374,11 +374,17 @@ func _init() -> void:
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
+	if "--only=towers" in OS.get_cmdline_user_args():
+		_check_towers()
+		print("RESULT: ", "PASS" if _ok else "FAIL")
+		quit(0 if _ok else 1)
+		return
 	if "--only=destr" in OS.get_cmdline_user_args():
 		_check_destr()
 		_check_destr_ai()
 		_check_preset_breach()
 		_check_fire()
+		_check_towers()
 		print("RESULT: ", "PASS" if _ok else "FAIL")
 		quit(0 if _ok else 1)
 		return
@@ -480,6 +486,7 @@ func _init() -> void:
 	_check_destr_ai()
 	_check_preset_breach()
 	_check_fire()
+	_check_towers()
 	_check_native()
 	_check_town()
 	_check_sea()
@@ -1197,7 +1204,9 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (480 hp of its 1,800 at seed 12345), so it falls at tick 1,143,
 			# before the heavy foot reach it at 1,203 (before: hacked from 1,203,
 			# broken at 1,220); gate_hack is cit_ops'.)
-			need = ["gate_close", "gate_open", "gate_art", "gate_broken", "paths"]
+			# (Targeting the works, 2026-11-07: after the gate falls the bolts are ordered at the tower beside it:
+			# tw_shots, tw_dmg; the bolts alone do not bring it down within the run.)
+			need = ["gate_close", "gate_open", "gate_art", "gate_broken", "paths", "tw_shots", "tw_dmg"]
 		"siege_castrum@ai":
 			# (No gate_broken since the 2026-10-09 siege rebalance: with fewer
 			# tower engines the batteries spend the run on them and the walls-3
@@ -1209,7 +1218,9 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# units stay up, nobody falls back to the acropolis within the
 			# run: stair moves and the shut gate are cit_ops' and punic's.)
 			# (Destruction AI: the way in is a breach by the gate.)
-			need = ["paths", "breaches", "obs_lof", "layout"]
+			# (No breaches since 2026-11-07, Targeting the works: a wall takes 13-15 % of a gate's blow from artillery and
+			# one battery no longer batters a walls-2/3 stretch down in a battle; breaches: siege_oppidum@ai, --only=destr.)
+			need = ["paths", "obs_lof", "layout"]
 		"siege_punic@ai":
 			# (No gate_close since 2026-10-09, ranks holding together: the
 			# defenders are not yet back in the citadel within the run; the
@@ -1226,13 +1237,17 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# at this seed the storm now takes the town by its breach before
 			# the batteries turn on the gate (winner 0 at 6500 ticks; battle
 			# seed 3 the same); gate_art is gate_ops'.)
-			need = ["paths", "breaches"]
+			# (No breaches since 2026-11-07, Targeting the works: a wall takes 13-15 % of a gate's blow from artillery and
+			# one battery no longer batters a walls-2/3 stretch down in a battle; breaches: siege_oppidum@ai, --only=destr.)
+			need = ["paths"]
 		"siege_oppidum@ai":
 			# (Part 2c: no wall unit routs off its stretch within the run.)
 			# (Destruction AI: the stones breach the wall by the gate first.)
 			need = ["paths", "breaches", "wall_shots", "layout"]
 		"cit_ops":
-			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture"]
+			# (Towers that fall, 2026-11-07: at CIT_TOWER_T the tower nearest the main gate is brought down
+			# in the run, _cit_tower_fall: tw_fallen.)
+			need = ["stair_down", "stair_up", "gate_close", "gate_open", "gate_hack", "gate_broken", "capture", "tw_fallen"]
 		"bench_2000~ee", "bench_2000@4~ea", "siege_city@ai~ea", "siege_city@ai~ae":
 			need = ["mistakes", "attacks"]
 		"bench_2000~ss", "bench_2000@4~sa", "ai_woods~as", "siege_city@ai~sa":
@@ -1252,9 +1267,13 @@ func _check_coverage(scen: String, st: Dictionary) -> void:
 			# (Destruction AI, 2026-10-23: the stones breach the wall by the gate
 			# early, the assault begins and the bolts shoot men, not the towers:
 			# tower hits are siege_hill's.)
-			need = ["pickups", "bolts", "stones", "wall_cover", "breaches"]
+			# (No breaches since 2026-11-07, Targeting the works: a wall takes 13-15 % of a gate's blow from artillery and
+			# one battery no longer batters a walls-2/3 stretch down in a battle; breaches: siege_oppidum@ai, --only=destr.)
+			need = ["pickups", "bolts", "stones", "wall_cover"]
 		"siege_eq_polis2~sa":
-			need = ["pickups", "tower_hits", "bolts", "skilled", "breaches"]
+			# (No breaches since 2026-11-07, Targeting the works: a wall takes 13-15 % of a gate's blow from artillery and
+			# one battery no longer batters a walls-2/3 stretch down in a battle; breaches: siege_oppidum@ai, --only=destr.)
+			need = ["pickups", "tower_hits", "bolts", "skilled"]
 	for k in need:
 		if int(st.get(k, 0)) <= 0:
 			_fail("%s: run never exercised %s (%s)" % [scen, k, str(st)])
@@ -1344,6 +1363,11 @@ func _script_orders(sim, scen: String) -> void:
 			"y": sim.g_oy[0] + (sim.g_oy[0] - sim.g_y[0]), "facing": (sim.g_dir[0] + 512) & 1023, "width": 10 * M, "run": 1})
 		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": gfoot, "target": -1, "gate": 0, "run": 0})
 		sim.queue_order({"tick": 700, "type": BattleSim.ORDER_ATTACK, "unit": bat, "target": -1, "gate": 0, "run": 0})
+		# Targeting the works (2026-11-07): the bolts at the tower beside gate 0 once the gate is down.
+		var gf: Vector2i = sim.gate_face(0)
+		var gtw: int = sim.tw_near(gf.x, gf.y, 40 * M)
+		if gtw >= 0:
+			sim.queue_order({"tick": 1250, "type": BattleSim.ORDER_ATTACK, "unit": bat, "target": -1, "tower": gtw, "run": 0})
 		return
 	if scen == "cit_ops":
 		_cit_orders(sim)
@@ -1411,6 +1435,23 @@ func _script_orders(sim, scen: String) -> void:
 	var w: int = missiles[missiles.size() - 1] if not missiles.is_empty() else u1
 	sim.queue_order(BattleSim.make_withdraw_order(200, w))
 	sim.queue_order(BattleSim.make_withdraw_all_order(1000, 0))
+
+
+## cit_ops (Towers that fall, 2026-11-07): at this tick the standing tower nearest gate 0 is brought down in the run
+## (its hit points at once, as the first attacking unit's blow: _tower_dmg), so the run carries the fall (its men,
+## the joins, the rubble, the paths) on through the defence of the citadel.
+const CIT_TOWER_T := 900
+static func _cit_tower_fall(sim) -> void:
+	var gf: Vector2i = sim.gate_face(0)
+	var t: int = sim.tw_near(gf.x, gf.y, 60 * M)
+	if t < 0:
+		return
+	var by := -1
+	for u in sim.n_units:
+		if sim.u_side[u] != sim.city_def:
+			by = u
+			break
+	sim._tower_dmg(t, sim.tw_hp[t] / 100 + 1, by)
 
 
 ## Scenario for a RUNS key: "id" or "id@kind" (forced generated terrain);
@@ -1481,6 +1522,8 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 	hashes.append(sim.state_hash())
 	var pike_wall := 0
 	for t in ticks:
+		if scen == "cit_ops" and t == CIT_TOWER_T:
+			_cit_tower_fall(sim)
 		sim.step()
 		hashes.append(sim.state_hash())
 		for u in sim.n_units:
@@ -1518,7 +1561,8 @@ func _run(scen: String, p_seed: int, ticks: int) -> Dictionary:
 		"ladder_up": sim.stat_ladder_up, "ram_blows": sim.stat_ram_blows, "tower_hits": sim.stat_tower_hits,
 		"unbar": sim.stat_unbar, "pickups": sim.stat_pickups, "planted": sim.stat_planted, "drops": sim.stat_drops,
 		"layout": sim.stat_ai[SiegeAI.A_MOUTH] + sim.stat_ai[SiegeAI.A_PLAZA],
-		"breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots}
+		"breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots,
+		"tw_shots": sim.stat_tw_shots, "tw_dmg": sim.stat_tw_dmg, "tw_fallen": sim.stat_tw_fallen}
 	if not sim.ai_mem.is_empty():
 		stats["skilled"] = _skilled(sim)
 	print("  %s seed %d: alive %d/%d after %d ticks, winner %d" % [scen, p_seed,
@@ -8215,6 +8259,192 @@ func _check_destr() -> void:
 			_fail(str(b))
 
 
+## Towers that fall, targeting the works (docs/design/battle_sim.md, as built 2026-11-07; "--only=towers", also in
+## "--only=destr" and the full run). (1) Rome walls 2, three city seeds: the tower nearest the main gate falls after
+## ceil(hp / blow) stone-weight blows from an attacking battery (_works_dmg's share), its cells are rubble ground, a tower
+## engine on it is wrecked and its crew gone, the stretch joins through it end (ws_join -1), the street graph's pair
+## through it opens and the ground either side is one piece. (2) Three stone batteries 120 m out ordered at a tower
+## ("tower": t) bring it down, the order ends with it; repeated, the run is identical, and a snapshot taken before the
+## fall restores and plays to the same hash.
+func _check_towers() -> void:
+	var bad: Array = []
+	var hits_txt: Array[String] = []
+	var crews := 0
+	var joins := 0
+	var ways := 0
+	for cs in [31, 32, 33]:
+		var sc := Scenarios.siege_test(cs, 2, 2, MapGen.PAL_DRY, Terrain.K_FLAT)
+		sc["ai_sides"] = []
+		sc["orders"] = []
+		sc["deploy_zones"] = []
+		var sim := BattleSim.new()
+		sim.setup(sc, 3)
+		var stone := -1
+		for u in sim.n_units:
+			if sim.u_side[u] != sim.city_def and UT.cls(sim.u_type[u]) == UT.CLS_ART and not sim.is_tower(u):
+				stone = u
+				break
+		for t in 20:
+			sim.step()
+		var gf: Vector2i = sim.gate_face(0)
+		var tw: int = sim.tw_near(gf.x, gf.y, 80 * M)
+		if tw < 0 or stone < 0:
+			bad.append("towers: seed %d: no tower by the gate (%d) or no battery (%d)" % [cs, tw, stone])
+			continue
+		var eng := -1
+		for u in sim.n_units:
+			if sim.is_tower(u) and sim.u_alive[u] > 0 and sim.tw_at(sim.u_ax[u], sim.u_ay[u]) == tw:
+				eng = u
+		var pair := PackedInt32Array()
+		var ns: int = sim.ws_x0.size()
+		for k in sim.ng_gate.size():
+			if sim.ng_gate[k] == -2 - (ns + tw):
+				pair.append(k)
+		var blow: int = sim._works_dmg(BattleSim.GATE_STONE, stone)
+		var want: int = (sim.tw_hp0[tw] / 100 + blow - 1) / blow
+		var n := 0
+		while sim.tw_state[tw] == BattleSim.WS_STANDING and n < 400:
+			sim._tower_dmg(tw, BattleSim.GATE_STONE, stone)
+			n += 1
+		hits_txt.append(str(n))
+		if n != want:
+			bad.append("towers: seed %d: fell after %d blows (want %d)" % [cs, n, want])
+		var cell: int = sim.tw_cell.find(tw + 1)
+		if cell < 0 or sim.obs[cell] != MapGen.C_RUBBLE or (sim.nav[cell] & MapGen.NAV_GROUND) == 0:
+			bad.append("towers: seed %d: the fallen tower is not rubble ground" % cs)
+		for t in 5:
+			sim.step()
+		if eng >= 0:
+			if sim.e_state[sim.u_eng0[eng]] == BattleSim.E_OK or sim.u_alive[eng] > 0:
+				bad.append("towers: seed %d: the tower's engine (%d) still works or its crew lives (%d)" % [cs, eng, sim.u_alive[eng]])
+			else:
+				crews += 1
+		for k in sim.ws_jt.size():
+			if sim.ws_jt[k] == tw:
+				if BattleSim.ws_join(sim, k / 2, k % 2) != -1:
+					bad.append("towers: seed %d: a join still runs through the fallen tower" % cs)
+				else:
+					joins += 1
+		if pair.size() == 2:
+			if not sim._node_open(pair[0]):
+				bad.append("towers: seed %d: the way through the fallen tower is shut" % cs)
+			elif sim.reach_at(sim.ng_x[pair[0]], sim.ng_y[pair[0]]) != sim.reach_at(sim.ng_x[pair[1]], sim.ng_y[pair[1]]):
+				bad.append("towers: seed %d: the ground either side of the fallen tower is not one piece" % cs)
+			else:
+				ways += 1
+	var tord := _towers_ordered()
+	if str(tord.get("bad", "")) != "":
+		bad.append(tord["bad"])
+	joins += int(tord.get("joins", 0))
+	if joins == 0:
+		bad.append("towers: no fallen tower ended a join")
+	if bad.is_empty():
+		print("PASS towers: fell after %s stone-weight blows (walls 2, three seeds), %d tower engines wrecked with their crews, %d joins ended, %d ways through opened; three stone batteries ordered at a tower brought it down at tick %d in %d shots and the order ended; identical on repeat and across snapshot / restore (hash %08x)" % [
+			"/".join(hits_txt), crews, joins, ways, int(tord["tick"]), int(tord["shots"]), int(tord["hash"]) & 0xFFFFFFFF])
+	else:
+		for b in bad:
+			_fail(str(b))
+
+
+## _check_towers (2): the ordered strike. A Rome level-1 town at walls 2 (seed 301), three stone throwers 120 m out from
+## the tower at a stretch's end, "tower" orders; run twice and from a snapshot at tick 300.
+func _towers_ordered() -> Dictionary:
+	var city := {"seed": 301, "level": 1, "walls": 2, "bld": [1, 2, 4], "towers": 0}
+	var terr := {"kind": Terrain.K_FLAT, "seed": 301 * 7 + 3, "forest": 0, "ground": 1}
+	var att := [[UT.STONE, UT.size_of(UT.STONE)]]
+	for k in 16:
+		att.append([UT.SPEAR, 160])
+	var r := Scenarios.settlement(city, terr, att, [[UT.SPEAR, 60]], 1, [])
+	var sc: Dictionary = r["scenario"]
+	sc.erase("deploy_zones")
+	var probe := BattleSim.new()
+	probe.setup(sc, 1)
+	var tw := -1
+	var bx := 0
+	var by := 0
+	var lx := 0
+	var ly := 0
+	var face := 0
+	for sg in probe.ws_x0.size():
+		if probe.ws_nb[sg * 2] < 0 or (probe.ws_fl[sg] & (MapGen.SEG_SEA | MapGen.SEG_CIT)) != 0:
+			continue
+		var t := probe.tw_at(probe.ws_jx[sg * 2], probe.ws_jy[sg * 2])
+		if t < 0:
+			continue
+		var dc := FM.cos_a(probe.ws_dir[sg])
+		var ds := FM.sin_a(probe.ws_dir[sg])
+		bx = probe.ws_jx[sg * 2] + dc * 120 * M / FM.TRIG_ONE
+		by = probe.ws_jy[sg * 2] + ds * 120 * M / FM.TRIG_ONE
+		if bx < 40 * M or by < 40 * M or bx > probe.field_w - 40 * M or by > probe.field_h - 40 * M:
+			continue
+		if probe.obs_kind(bx, by) != MapGen.C_OPEN:
+			continue
+		tw = t
+		lx = -ds
+		ly = dc
+		face = FM.atan2_a(-ds, -dc)
+		break
+	if tw < 0:
+		return {"bad": "towers: the ordered strike: no tower with open ground 120 m out", "tick": 0, "shots": 0, "hash": 0, "joins": 0}
+	var units: Array = []
+	for k in 3:
+		var o := (k - 1) * 28
+		units.append(Scenarios.unit(0, UT.STONE, UT.size_of(UT.STONE), (bx + lx * o * M / FM.TRIG_ONE) / M,
+			(by + ly * o * M / FM.TRIG_ONE) / M, face))
+	units.append(Scenarios.unit(1, UT.SPEAR, 60, 4, 4, 0))
+	sc["units"] = units
+	sc["orders"] = []
+	for k in 3:
+		sc["orders"].append({"type": BattleSim.ORDER_ATTACK, "tick": 1, "unit": k, "target": -1, "tower": tw, "run": 0})
+	var hashes := PackedInt64Array()
+	var fell := -1
+	var shots := 0
+	var snap := PackedByteArray()
+	var end_hash := 0
+	var joins := 0
+	var bad := ""
+	for run in 2:
+		var sim := BattleSim.new()
+		sim.setup(sc, 7)
+		sim.u_fire[3] = 0
+		while sim.tick < 3600:
+			sim.step()
+			if run == 0:
+				hashes.append(sim.state_hash())
+				if sim.tick == 300:
+					snap = sim.snapshot()
+				if fell < 0 and sim.tw_state[tw] != BattleSim.WS_STANDING:
+					fell = sim.tick
+			elif sim.state_hash() != hashes[sim.tick - 1]:
+				bad = "towers: the ordered strike diverged on repeat at tick %d" % sim.tick
+				break
+		if run == 0:
+			shots = sim.stat_tw_shots
+			end_hash = sim.state_hash()
+			for k in 3:
+				if sim.u_order[k] == BattleSim.O_ATTACK and sim.u_gtarget[k] == BattleSim.TWR_TGT - tw:
+					bad = "towers: battery %d still ordered at the fallen tower" % k
+			for k in sim.ws_jt.size():
+				if sim.ws_jt[k] == tw:
+					if BattleSim.ws_join(sim, k / 2, k % 2) != -1:
+						bad = "towers: a join still runs through the fallen tower (the ordered strike)"
+					else:
+						joins += 1
+	if fell < 0 and bad == "":
+		bad = "towers: three stone batteries ordered at tower %d did not bring it down in 3,600 ticks (%d shots)" % [tw, shots]
+	if bad == "":
+		var c := BattleSim.new()
+		c.setup(sc, 7)
+		if not c.restore(snap):
+			bad = "towers: the snapshot did not restore"
+		else:
+			while c.tick < 3600:
+				c.step()
+			if c.state_hash() != end_hash:
+				bad = "towers: the restored copy diverged"
+	return {"bad": bad, "tick": fell, "shots": shots, "hash": end_hash, "joins": joins}
+
+
 ## The campaign's breached walls (docs/design/campaign_rules.md "Breached walls on the campaign (as built)"): a
 ## scenario's "breaches": n opens with n stretches already down (rubble ground, nearest the main gate), no wall
 ## unit on them, no man lost, stat_breaches 0; the same scenario with no key opens with every stretch standing
@@ -8564,12 +8794,13 @@ func _fire_spread() -> Dictionary:
 ## attacked gate and breach it within DAI_BREACH_T; an attacking soldier then stands on the breach's rubble
 ## within DAI_ENTER_T (in through it); no defender unit is left on the stretch when it falls once one stood on it
 ## while it was battered (it went off below a third of its hit points).
-const DAI_BREACH_T := 4200
+const DAI_BREACH_T := 7200   # (4200 before 2026-11-07: a wall now takes 13-15 % of a gate's blow from artillery, battle_sim.md "Targeting the works")
 const DAI_ENTER_T := 1800
 
 
 func _check_destr_ai() -> void:
 	var bad: Array = []
+	var no_breach: Array[String] = []
 	var txt: Array[String] = []
 	var off_n := 0
 	for cs in [41, 42, 43]:
@@ -8628,7 +8859,9 @@ func _check_destr_ai() -> void:
 		off_n += on_sg - stayed
 		txt.append("seed %d: breach %d, in %d, %d units off" % [cs, b_tick, e_tick, on_sg - stayed])
 		if b_tick < 0:
-			bad.append("destr ai: seed %d: no stretch breached by tick %d (wall shots %d, damage %d)" % [cs, DAI_BREACH_T, sim.stat_wall_shots, sim.stat_wall_dmg])
+			# (2026-11-07, Targeting the works: one battery batters a walls-1 stretch for minutes now; two seeds of
+			# three must breach, battle_sim.md "Targeting the works": seed 42's battery fired 19 stones at it, 906 hp.)
+			no_breach.append("seed %d: no stretch breached by tick %d (wall shots %d, damage %d)" % [cs, DAI_BREACH_T, sim.stat_wall_shots, sim.stat_wall_dmg])
 			continue
 		if sim.stat_wall_shots == 0:
 			bad.append("destr ai: seed %d: the breach came with no battering order (shots 0)" % cs)
@@ -8636,10 +8869,12 @@ func _check_destr_ai() -> void:
 			bad.append("destr ai: seed %d: no attacker on the breach's rubble within %d ticks of it" % [cs, DAI_ENTER_T])
 		if stayed > 0:
 			bad.append("destr ai: seed %d: %d defender unit(s) still on the stretch when it fell" % [cs, stayed])
+	if no_breach.size() > 1:
+		bad.append_array(no_breach.map(func(x): return "destr ai: " + x))
 	if off_n == 0:
 		bad.append("destr ai: no defender unit stood on a battered stretch in any seed (the leave rule untested): %s" % "; ".join(txt))
 	if bad.is_empty():
-		print("PASS destruction AI: walls 1, stone throwers batter and breach, an attacker in through the breach, defenders off the battered stretch (%s)" % "; ".join(txt))
+		print("PASS destruction AI: walls 1, stone throwers batter and breach, an attacker in through the breach, defenders off the battered stretch (%s%s)" % ["; ".join(txt), ("; " + "; ".join(no_breach)) if not no_breach.is_empty() else ""])
 	else:
 		for b in bad:
 			_fail(str(b))

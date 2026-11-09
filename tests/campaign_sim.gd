@@ -519,6 +519,8 @@ func _run(sd: int, verbose: bool) -> String:
 		print("AI sea counters (all factions): sea garrisons %d, ferries refused %d, sorties %d" % [
 			ct[CP.COUNTER_KEYS.find(CP.C_SEA_HOLD)], ct[CP.COUNTER_KEYS.find(CP.C_FERRY_REFUSED)], ct[CP.COUNTER_KEYS.find(CP.C_SORTIES)]])
 		print("AI wars called off, a region of ours open to the enemy (docs/AI.md 43): %d" % ct[CP.COUNTER_KEYS.find(CP.C_WAR_UNCOVERED)])
+		print("AI siege guns (docs/AI.md 75): marches held a turn for guns %d, storms put off for want of guns or a ram %d" % [
+			ct[CP.COUNTER_KEYS.find(CP.C_SIEGE_GUNS)], ct[CP.COUNTER_KEYS.find(CP.C_SIEGE_WAIT)]])
 		for f in keys:
 			var mk: Array = []
 			for key in CP.COUNTER_KEYS:

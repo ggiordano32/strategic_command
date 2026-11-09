@@ -257,6 +257,7 @@ const CM_GAP_TOL := M / 10       # the countermarch's walk to the rear (s_rtw): 
 const CM_BACK_DONE := M * 3 / 10 # ... and level with his new place to this, he steps out of the gap into it
 const CM_WALK_T := 80            # ... for this long after its men walked a shot landing on the line strikes the man nearest (not by slot)
 const BLD_TGT := -100000         # u_gtarget at or below this: a building (BLD_TGT - b; the batter order)
+const TWR_TGT := -50000          # ... at or below this (above BLD_TGT): a wall tower (TWR_TGT - t; the attack order's "tower", 2026-11-07)
 const R_LINE := 0                # t_role: indices of UT.ROLE_ORDER
 const R_SKIRMISH := 1
 const R_HORSE_SKIRMISH := 5
@@ -590,6 +591,7 @@ const WS_BREACHED := 1           # (a building: fallen)
 const EV_BREACH := 0             # the destruction events ring (view): a stretch breached (ev_a: the stretch)
 const EV_COLLAPSE := 1           # ... a building fell (ev_a: the building)
 const EV_FIRE := 2               # ... a building caught fire (ev_a: the building)
+const EV_TOWER := 3              # ... a tower fell (ev_a: the tower, tw_*; 2026-11-07)
 const EV_N := 32
 # Burning buildings (docs/design/siege_and_towns.md "Fire (as built,
 # 2026-10-24)"): a fire missile striking a timber building may set it alight
@@ -629,7 +631,19 @@ const WALL_PARAPET := 614        # parapet top above the walkway (line of fire)
 static var ARC_STRIKE_ON := 1    # 0: stones fly through the works to their landing point as before (probes, before / after)
 const STONE_APEX_PCT := 28       # a lobbed engine stone's rise at mid-flight, % of the distance (the views' arc: hk 0.28)
 const ARC_STRIKE_STEP := 2 * M   # ... sampled this often (the obstacle grid's cell: a palisade or a gate is one or two cells)
-const STRIKE_TOWER_R := 16 * M   # a shot striking a tower (towers stand) goes into the stretch it joins: the nearest standing within this
+const STRIKE_TOWER_R := 16 * M   # (before 2026-11-07: a shot striking a tower went into the stretch it joins; towers now have hit points)
+## Targeting the works, towers that fall, wall health (docs/design/battle_sim.md, as built 2026-11-07; the owner: "It
+## appears that the wall sections are destroyable but not the towers themselves. The towers should also be
+## destroyable." and "I think the boulders do too much damage to wall 2. 3 stone throwers can take it down in 2
+## volleys"): every wall tower (a piece of the C_TOWER cells, tw_*) has hit points TOWER_HP_PCT % of a stretch's of the
+## same walls level, takes the blows that strike or land on it, and falls to a heap of rubble (passable, as a breach).
+## An artillery blow on a stretch or a tower does WORKS_STONE_PCT / WORKS_BALL_PCT % (by walls level) of what it does to a
+## gate (gates and buildings as before; the torch raiders' axes as before).
+const TOWER_HP_PCT := 160
+const TOWER_FALL_KILL_PCT := 60  # men on a falling tower's cells (not an engine's crew: lost with the engine) die with this chance
+static var WORKS_STONE_PCT: Array[int] = [100, 15, 13, 12]  # a lobbed stone or shell on a stretch or tower, % by walls level
+static var WORKS_BALL_PCT: Array[int] = [100, 13, 11, 10]   # a flat ball or bolt
+static var TOWERS_FALL := 1      # 0: towers stand and their blows go into the stretch beside (before; probes)
 const STRIKE_TOP := 2 * M        # a stone striking a work this near its top (or higher) hits the men on its walk or tower round the spot
 const CAPTURE_TICKS := 600       # attackers hold the plaza this long: the defenders break
 const CAPTURE_CLEAR := 12 * M    # ... with no defender unit this far beyond the plaza
@@ -1340,6 +1354,15 @@ var ws_hp := PackedInt32Array()
 var ws_hp0 := PackedInt32Array()
 var ws_state := PackedInt32Array()
 var ws_hit_t := PackedInt32Array()
+var tw_hp := PackedInt32Array()   # wall towers (2026-11-07): hit points (centi-hp, as ws_hp) ...
+var tw_hp0 := PackedInt32Array()
+var tw_state := PackedInt32Array()  # ... WS_STANDING / WS_BREACHED (fallen)
+var tw_hit_t := PackedInt32Array()
+var tw_used: int = 0                # a tower took a blow (hashed from then on: towns where none did hash as before)
+var stat_tw_fallen: int = 0         # towers brought down
+var stat_tw_kill: int = 0           # men lost on them
+var stat_tw_dmg: int = 0            # hit points done to towers
+var stat_tw_shots: int = 0          # shots aimed at a tower (the attack order)
 var ob_hp := PackedInt32Array()
 var ob_hp0 := PackedInt32Array()
 var ob_state := PackedInt32Array()
@@ -1366,6 +1389,13 @@ var ev_k := PackedInt32Array()
 var ev_a := PackedInt32Array()
 var ev_t := PackedInt32Array()
 var ev_n: int = 0
+var tw_cell := PackedInt32Array()  # per obstacle cell: the tower (piece of C_TOWER cells, 8-connected, index order) + 1, 0 none (static)
+var tw_x := PackedInt32Array()     # per tower: the middle of its cells, its reach from there, its outward direction (static)
+var tw_y := PackedInt32Array()
+var tw_r := PackedInt32Array()
+var tw_dir := PackedInt32Array()
+var tw_cmp := PackedInt32Array()   # per tower * 4: the pieces of open ground beside it (static; joined once it falls)
+var ws_jt := PackedInt32Array()    # per stretch end (seg * 2 + end): the tower its join (ws_nb) passes through, -1 none (static)
 var ws_cell := PackedInt32Array()
 var ob_cell := PackedInt32Array()
 var ws_cmp := PackedInt32Array()
@@ -3565,6 +3595,12 @@ func _works_strike(x: int, y: int, dmg: int, by: int, arc_pct: int) -> bool:
 		if g_hp[g] <= 0:
 			_break_gate(g)
 		return true
+	if k == MapGen.C_TOWER and TOWERS_FALL != 0 and tw_at(x, y) >= 0:
+		# (Towers that fall, 2026-11-07: the tower itself.)
+		if own or not _tower_dmg(tw_at(x, y), dmg, by):
+			return false
+		stat_strike_dmg += _works_dmg(dmg, by)
+		return true
 	if k == MapGen.C_TOWER:
 		if own or ws_state.is_empty():
 			return false
@@ -3579,16 +3615,17 @@ func _works_strike(x: int, y: int, dmg: int, by: int, arc_pct: int) -> bool:
 				best = sg
 		if best < 0:
 			return false
-		ws_hp[best] -= dmg * 100
+		var wd := _works_dmg(dmg, by)
+		ws_hp[best] -= wd * 100
 		ws_hit_t[best] = tick
-		stat_wall_dmg += dmg
-		stat_strike_dmg += dmg
+		stat_wall_dmg += wd
+		stat_strike_dmg += wd
 		if ws_hp[best] <= 0:
 			_breach(best, by)
 		return true
 	var hit := _destr_hit(x, y, dmg, by, arc_pct)
 	if hit:
-		stat_strike_dmg += dmg
+		stat_strike_dmg += _works_dmg(dmg, by)
 	return hit
 
 
@@ -5306,6 +5343,18 @@ func _roots() -> PackedInt32Array:
 				var rb := _find_root(b)
 				if ra != rb:
 					_croot[maxi(ra, rb)] = mini(ra, rb)
+		for t in tw_state.size():
+			if tw_state[t] == WS_STANDING:
+				continue
+			for m in range(1, 4):
+				var a := tw_cmp[t * 4]
+				var b := tw_cmp[t * 4 + m]
+				if a < 0 or b < 0:
+					continue
+				var ra := _find_root(a)
+				var rb := _find_root(b)
+				if ra != rb:
+					_croot[maxi(ra, rb)] = mini(ra, rb)
 	for k in n_cmp:
 		_croot[k] = _find_root(k)
 	_croot_ep = nav_epoch
@@ -6038,7 +6087,10 @@ func _ground_mask(u: int) -> int:
 func _node_open(k: int) -> bool:
 	var g := ng_gate[k]
 	if g <= -2:
-		return ws_state[-2 - g] != WS_STANDING  # (a breach's node: open once the stretch is down)
+		var w := -2 - g
+		if w >= ws_state.size():
+			return tw_state[w - ws_state.size()] != WS_STANDING  # (a fallen tower's node, 2026-11-07)
+		return ws_state[w] != WS_STANDING  # (a breach's node: open once the stretch is down)
 	return g < 0 or g_state[g] != GATE_CLOSED
 
 
@@ -7335,6 +7387,10 @@ static func ws_join(sim, sg: int, e: int) -> int:
 	var nb: int = sim.ws_nb[sg * 2 + e]
 	if nb >= 0 and nb / 2 < sim.ws_state.size() and sim.ws_state[nb / 2] != WS_STANDING:
 		return -1
+	if nb >= 0 and sg * 2 + e < sim.ws_jt.size():
+		var jt: int = sim.ws_jt[sg * 2 + e]
+		if jt >= 0 and sim.tw_state[jt] != WS_STANDING:
+			return -1  # (the tower it passes through has fallen, 2026-11-07)
 	return nb
 
 
@@ -8060,6 +8116,22 @@ func _setup_destr() -> void:
 	stat_bld_burnt = 0
 	stat_bld_fire_out = 0
 	stat_bld_spread = 0
+	tw_hp = PackedInt32Array()
+	tw_hp0 = PackedInt32Array()
+	tw_state = PackedInt32Array()
+	tw_hit_t = PackedInt32Array()
+	tw_cell = PackedInt32Array()
+	tw_x = PackedInt32Array()
+	tw_y = PackedInt32Array()
+	tw_r = PackedInt32Array()
+	tw_dir = PackedInt32Array()
+	tw_cmp = PackedInt32Array()
+	ws_jt = PackedInt32Array()
+	tw_used = 0
+	stat_tw_fallen = 0
+	stat_tw_kill = 0
+	stat_tw_dmg = 0
+	stat_tw_shots = 0
 	if city_on == 0 or obs_on == 0 or not map_info.has("city"):
 		return
 	obs0 = obs.duplicate()
@@ -8111,6 +8183,7 @@ func _setup_destr() -> void:
 					ws_in[sg] = a + M
 					break
 				a += M / 2
+	_setup_towers(nc)
 	# Buildings (every piece of the layout; Rome's houses too).
 	var lay: Dictionary = map_info["city"]
 	var blds: Array = lay.get("buildings", [])
@@ -8191,11 +8264,30 @@ func _setup_destr() -> void:
 	_fire_adj(blds.size(), nc)
 	ob_cmp.resize(blds.size())
 	ob_cmp.fill(-1)
-	# The pieces of open ground beside each stretch and building.
+	# The pieces of open ground beside each stretch, tower and building.
 	if n_cmp > 0:
 		for c in nc:
 			var sg := ws_cell[c] - 1
 			var b := ob_cell[c] - 1
+			var tq := tw_cell[c] - 1 if not tw_cell.is_empty() else -1
+			if tq >= 0:
+				var ti := c % ob_w
+				var tj := c / ob_w
+				for q in 4:
+					var ni2 := ti + (1 if q == 0 else (-1 if q == 1 else 0))
+					var nj2 := tj + (1 if q == 2 else (-1 if q == 3 else 0))
+					if ni2 < 0 or nj2 < 0 or ni2 >= ob_w or nj2 >= ob_h:
+						continue
+					var pc2 := cmp[nj2 * ob_w + ni2]
+					if pc2 < 0:
+						continue
+					for m in 4:
+						if tw_cmp[tq * 4 + m] == pc2:
+							break
+						if tw_cmp[tq * 4 + m] == -1:
+							tw_cmp[tq * 4 + m] = pc2
+							break
+				continue
 			if sg < 0 and b < 0:
 				continue
 			var i := c % ob_w
@@ -8218,6 +8310,247 @@ func _setup_destr() -> void:
 							ws_cmp[sg * 4 + m] = pc
 							break
 	_destr_graph()
+
+
+## The wall towers (2026-11-07, Towers that fall): the pieces of the generator's C_TOWER cells (8-connected, flood
+## filled in cell index order: the layout's towers, the gates' towers, a trace fort's corner towers), each with hit
+## points TOWER_HP_PCT % of a stretch's, its middle, reach and outward way (the nearest stretch's, else away from the
+## town's middle), and the tower each stretch join passes through (ws_jt). Static but the hit points and state.
+func _setup_towers(nc: int) -> void:
+	tw_cell.resize(nc)
+	tw_cell.fill(0)
+	var hp0: int = WS_HP[clampi(city_walls, 0, 3)] * TOWER_HP_PCT
+	if hp0 <= 0:
+		return
+	var sx := PackedInt64Array()
+	var sy := PackedInt64Array()
+	var sn := PackedInt32Array()
+	var stack := PackedInt32Array()
+	for c0 in nc:
+		if obs[c0] != MapGen.C_TOWER or tw_cell[c0] != 0:
+			continue
+		var t := sn.size()
+		sx.append(0)
+		sy.append(0)
+		sn.append(0)
+		tw_cell[c0] = t + 1
+		stack.append(c0)
+		while not stack.is_empty():
+			var c := stack[stack.size() - 1]
+			stack.resize(stack.size() - 1)
+			var i := c % ob_w
+			var j := c / ob_w
+			sx[t] += (i << 11) + 1024
+			sy[t] += (j << 11) + 1024
+			sn[t] += 1
+			for dj in range(-1, 2):
+				for di in range(-1, 2):
+					var ni := i + di
+					var nj := j + dj
+					if ni < 0 or nj < 0 or ni >= ob_w or nj >= ob_h:
+						continue
+					var c2 := nj * ob_w + ni
+					if obs[c2] == MapGen.C_TOWER and tw_cell[c2] == 0:
+						tw_cell[c2] = t + 1
+						stack.append(c2)
+	var nt := sn.size()
+	var lay: Dictionary = map_info["city"]
+	var cx := int(lay.get("cx", field_w / M / 2)) * M
+	var cy := int(lay.get("cy", field_h / M / 2)) * M
+	for t in nt:
+		tw_x.append(int(sx[t] / sn[t]))
+		tw_y.append(int(sy[t] / sn[t]))
+		tw_r.append(0)
+		tw_hp0.append(hp0)
+		tw_hp.append(hp0)
+		tw_state.append(WS_STANDING)
+		tw_hit_t.append(-1000)
+	for c in nc:
+		var t := tw_cell[c] - 1
+		if t < 0:
+			continue
+		var d := FM.approx_len(((c % ob_w) << 11) + 1024 - tw_x[t], ((c / ob_w) << 11) + 1024 - tw_y[t]) + M
+		if d > tw_r[t]:
+			tw_r[t] = d
+	for t in nt:
+		var best := -1
+		var bo := tw_r[t] + wall_t + 4 * M
+		for sg in ws_x0.size():
+			var o := _seg_off(sg, tw_x[t], tw_y[t])
+			if o < bo:
+				bo = o
+				best = sg
+		tw_dir.append(ws_dir[best] if best >= 0 else FM.atan2_a(tw_y[t] - cy, tw_x[t] - cx))
+	tw_cmp.resize(nt * 4)
+	tw_cmp.fill(-1)
+	ws_jt.resize(ws_nb.size())
+	ws_jt.fill(-1)
+	for k in ws_nb.size():
+		if ws_nb[k] >= 0:
+			ws_jt[k] = tw_at(ws_jx[k], ws_jy[k])
+
+
+## The tower whose cell is at (x, y) (standing or fallen), -1 none.
+func tw_at(x: int, y: int) -> int:
+	if tw_cell.is_empty() or x < 0 or y < 0:
+		return -1
+	var i := x >> 11
+	var j := y >> 11
+	if i >= ob_w or j >= ob_h:
+		return -1
+	return tw_cell[j * ob_w + i] - 1
+
+
+## The standing tower at (x, y), else the standing tower whose middle is nearest within r (sim units); -1 none.
+func tw_near(x: int, y: int, r: int) -> int:
+	var t := tw_at(x, y)
+	if t >= 0 and tw_state[t] == WS_STANDING:
+		return t
+	var best := -1
+	var bd := r + 1
+	for k in tw_x.size():
+		if tw_state[k] != WS_STANDING:
+			continue
+		var d := FM.approx_len(tw_x[k] - x, tw_y[k] - y) - tw_r[k]
+		if d < bd:
+			bd = d
+			best = k
+	return best
+
+
+## Where a battery aims at tower t: its middle (a lobbed shot), or WS_AIM_OUT outside its outer face at body height (a
+## flat one: the line runs on into the masonry and is stopped there, _land_bolt).
+func tw_aim(t: int, lob: bool) -> Vector2i:
+	if lob:
+		return Vector2i(tw_x[t], tw_y[t])
+	var out := tw_r[t] + WS_AIM_OUT
+	return Vector2i(tw_x[t] + FM.cos_a(tw_dir[t]) * out / FM.TRIG_ONE, tw_y[t] + FM.sin_a(tw_dir[t]) * out / FM.TRIG_ONE)
+
+
+## Battery u's tower target (an attack order at a tower: u_gtarget TWR_TGT - t), -1 none or fallen.
+func twr_tgt(u: int) -> int:
+	var gt := u_gtarget[u]
+	if gt > TWR_TGT or gt <= BLD_TGT:
+		return -1
+	var t := TWR_TGT - gt
+	return t if t < tw_state.size() and tw_state[t] == WS_STANDING else -1
+
+
+## An artillery blow of unit `by` on a stretch or a tower: dmg (a gate's hit points) x WORKS_STONE_PCT (a lobbed stone or
+## shell) or WORKS_BALL_PCT (a flat ball or bolt) % by the walls level; anything else (no unit) as it is.
+func _works_dmg(dmg: int, by: int) -> int:
+	if by < 0 or by >= n_units or t_cls[u_type[by]] != UT.CLS_ART:
+		return dmg
+	var lv := clampi(city_walls, 0, 3)
+	var pct: int = WORKS_STONE_PCT[lv] if t_m_kind[u_type[by]] == 2 else WORKS_BALL_PCT[lv]
+	return maxi(dmg * pct / 100, 1)
+
+
+## A blow of unit `by` on tower t: dmg (the gate's hit points it would do) as _works_dmg; the defenders' own shots do it
+## no harm. Falls at 0 (_tower_down). Returns true if it struck.
+func _tower_dmg(t: int, dmg: int, by: int) -> bool:
+	if t < 0 or t >= tw_state.size() or tw_state[t] != WS_STANDING or dmg <= 0:
+		return false
+	if by >= 0 and by < n_units and u_side[by] == city_def:
+		return false
+	var d := _works_dmg(dmg, by)
+	tw_hp[t] -= d * 100
+	tw_hit_t[t] = tick
+	tw_used = 1
+	stat_tw_dmg += d
+	stat_wall_dmg += d
+	if tw_hp[t] <= 0:
+		_tower_down(t, by)
+	return true
+
+
+## Tower t falls (a shot of unit `by`): its cells become rubble (ground, as a breach: the street graph's pair of nodes
+## through it opens, the pieces of open ground beside it join). A tower engine on it is wrecked and its crew is lost with
+## it (the rule for a wrecked tower engine: a fixed crew on the deck, _tower_fall). Any other man on its cells (wall men
+## crossing it) dies with TOWER_FALL_KILL_PCT (the sim's RNG, soldier index order); a unit cannot be split between the
+## wall and the ground, so the survivors land back on their unit's own walk at its anchor, shaken. The stretch joins
+## through it end there (ws_join).
+func _tower_down(t: int, by: int) -> void:
+	tw_state[t] = WS_BREACHED
+	tw_hp[t] = 0
+	tw_used = 1
+	stat_tw_fallen += 1
+	rub_n += 1
+	_destr_event(EV_TOWER, t)
+	var crew_u := PackedInt32Array()
+	for u in n_units:
+		if u_neng[u] <= 0 or t_fixed[u_type[u]] == 0 or t_ship[u_type[u]] != 0 or u_alive[u] <= 0:
+			continue
+		var e := u_eng0[u]
+		if tw_at(e_x[e], e_y[e]) == t or tw_at(u_ax[u], u_ay[u]) == t:
+			for k in u_neng[u]:
+				_wreck(e + k)
+			crew_u.append(u)  # (its crew on the deck: lost with the tower, below)
+	var men := PackedInt32Array()
+	var hit_u := PackedInt32Array()
+	for u in n_units:
+		if u_alive[u] <= 0 or t_fixed[u_type[u]] != 0:
+			continue
+		var any := false
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] < S_DEAD and tw_at(pos_x[i], pos_y[i]) == t:
+				men.append(i)
+				any = true
+		if any:
+			hit_u.append(u)
+	men.sort()
+	var lost := PackedInt32Array()
+	for i in men:
+		if _rand() % 100 < TOWER_FALL_KILL_PCT:
+			lost.append(i)
+	for c in tw_cell.size():
+		if tw_cell[c] == t + 1:
+			obs[c] = MapGen.C_RUBBLE
+			nav[c] = _nav_of(MapGen.C_RUBBLE)
+	for u in crew_u:
+		var cb := u_slot_base[u]
+		var cm := PackedInt32Array()
+		for s in u_alive[u]:
+			cm.append(slot_soldier[cb + s])
+		cm.sort()
+		for i in cm:
+			if state[i] < S_DEAD:
+				lost.append(i)
+	for i in lost:
+		if state[i] >= S_DEAD:
+			continue
+		_credit(by, unit_of[i])
+		_remove(i, GONE_KILLED)
+		stat_tw_kill += 1
+	for u in hit_u:
+		if u_alive[u] <= 0:
+			continue
+		var land := Vector2i(u_ax[u], u_ay[u])
+		if u_wall[u] > 0 and (tw_at(land.x, land.y) == t or obs_kind(land.x, land.y) != MapGen.C_WALK):
+			land = seg_pt(self, u_wall[u] - 1, seg_len(self, u_wall[u] - 1) / 2)
+		var base := u_slot_base[u]
+		for s in u_alive[u]:
+			var i := slot_soldier[base + s]
+			if state[i] >= S_DEAD or tw_at(pos_x[i], pos_y[i]) != t:
+				continue
+			pos_x[i] = land.x
+			pos_y[i] = land.y
+			prev_x[i] = land.x
+			prev_y[i] = land.y
+			target[i] = -1
+			if state[i] == S_FIGHTING:
+				state[i] = S_FORMED
+		u_dirty[u] = 1
+		u_settled[u] = 0
+		u_hit_t[u] = tick
+		u_morale[u] -= DESTR_MORALE
+	for u in n_units:
+		if u_wall[u] > 0 and u_alive[u] > 0:
+			u_dirty[u] = 1  # (a line spread through it over the join: on its own stretch again, ws_join)
+	nav_epoch += 1
+	_xf_restart()
 
 
 ## A scenario's "breaches": n (the campaign's breached walls, docs/design/campaign_rules.md "Breached walls on
@@ -8356,54 +8689,42 @@ func _destr_graph() -> void:
 			a += M / 2
 		if op.x < 0 or obs_kind(op.x, op.y) != MapGen.C_OPEN or obs_kind(ip.x, ip.y) != MapGen.C_OPEN:
 			continue
-		var ends: Array = []
-		for side0 in 2:
-			var p: Vector2i = ip if side0 == 0 else op
-			var near := PackedInt32Array()
-			var nd := PackedInt32Array()
-			for k in n0:
-				var dx := (ng_x[k] - p.x) / M
-				var dy := (ng_y[k] - p.y) / M
-				if absi(dx) > MapGen.EDGE_MAX or absi(dy) > MapGen.EDGE_MAX or dx * dx + dy * dy > MapGen.EDGE_MAX * MapGen.EDGE_MAX:
-					continue
-				if not MapGen._clear_fat(obs, ob_w, ob_h, p.x / M, p.y / M, ng_x[k] / M, ng_y[k] / M, -1):
-					continue
-				var d := dx * dx + dy * dy
-				var q := near.size()
-				near.append(k)
-				nd.append(d)
-				while q > 0 and (nd[q - 1] > d or (nd[q - 1] == d and near[q - 1] > k)):
-					near[q] = near[q - 1]
-					nd[q] = nd[q - 1]
-					q -= 1
-				near[q] = k
-				nd[q] = d
-			if near.size() > 4:
-				near.resize(4)
-			ends.append(near)
-		if (ends[0] as PackedInt32Array).is_empty() or (ends[1] as PackedInt32Array).is_empty():
-			continue
-		var base := nx.size()
-		if base + 2 >= 4096:
+		if not _destr_pair(ip, op, -2 - sg, n0, adj, nx, ny, ngt):
 			break
-		nx.append(ip.x)
-		ny.append(ip.y)
-		nx.append(op.x)
-		ny.append(op.y)
-		ngt.append(-2 - sg)
-		ngt.append(-2 - sg)
-		var wio := FM.isqrt(((op.x - ip.x) / M) * ((op.x - ip.x) / M) * 64 + ((op.y - ip.y) / M) * ((op.y - ip.y) / M) * 64)
-		adj.append([[base + 1, maxi(wio, 1)]])
-		adj.append([[base, maxi(wio, 1)]])
+	# Towers that fall (2026-11-07): a pair through each tower of the outer wall (not facing the sea), tagged -2 - (the
+	# stretches + the tower).
+	for t in tw_x.size():
+		var near := -1
+		var bo := tw_r[t] + wall_t + 4 * M
+		for sg in ns:
+			var o := _seg_off(sg, tw_x[t], tw_y[t])
+			if o < bo:
+				bo = o
+				near = sg
+		if near < 0 or (ws_fl[near] & MapGen.SEG_SEA) != 0:
+			continue
+		var dc := FM.cos_a(tw_dir[t])
+		var ds := FM.sin_a(tw_dir[t])
+		var tp := [Vector2i(-1, -1), Vector2i(-1, -1)]
 		for side in 2:
-			var me := base + side
-			var pp: Vector2i = ip if side == 0 else op
-			for k in (ends[side] as PackedInt32Array):
-				var dx := (ng_x[k] - pp.x) / M
-				var dy := (ng_y[k] - pp.y) / M
-				var wgt := maxi(FM.isqrt((dx * dx + dy * dy) * 64), 1)
-				(adj[me] as Array).append([k, wgt])
-				(adj[k] as Array).append([me, wgt])
+			var sgn := -1 if side == 0 else 1
+			var a := tw_r[t] / 2
+			while a <= tw_r[t] + wall_t + 8 * M:
+				var px := tw_x[t] + sgn * dc * a / FM.TRIG_ONE
+				var py := tw_y[t] + sgn * ds * a / FM.TRIG_ONE
+				var k := obs_kind(px, py)
+				if side == 1 and (k == MapGen.C_WATER or k == MapGen.C_DITCH):
+					break
+				if k == MapGen.C_OPEN and (nav_at(px, py) & MapGen.NAV_GROUND) != 0:
+					tp[side] = Vector2i(tw_x[t] + sgn * dc * (a + 2 * M) / FM.TRIG_ONE, tw_y[t] + sgn * ds * (a + 2 * M) / FM.TRIG_ONE)
+					break
+				a += M / 2
+		var tip: Vector2i = tp[0]
+		var top: Vector2i = tp[1]
+		if tip.x < 0 or top.x < 0 or obs_kind(tip.x, tip.y) != MapGen.C_OPEN or obs_kind(top.x, top.y) != MapGen.C_OPEN:
+			continue
+		if not _destr_pair(tip, top, -2 - (ns + t), n0, adj, nx, ny, ngt):
+			break
 	if nx.size() == n0:
 		return
 	var e0 := PackedInt32Array()
@@ -8423,6 +8744,61 @@ func _destr_graph() -> void:
 	ng_w = ww
 
 
+## _destr_graph: a closed pair of graph nodes at ip (inside) and op (outside), tagged `tag` (ng_gate), joined to each
+## other and to the four nearest of the n0 street nodes in clear sight on each side. False: the graph is full.
+func _destr_pair(ip: Vector2i, op: Vector2i, tag: int, n0: int, adj: Array, nx: PackedInt32Array, ny: PackedInt32Array,
+		ngt: PackedInt32Array) -> bool:
+	var ends: Array = []
+	for side0 in 2:
+		var p: Vector2i = ip if side0 == 0 else op
+		var near := PackedInt32Array()
+		var nd := PackedInt32Array()
+		for k in n0:
+			var dx := (ng_x[k] - p.x) / M
+			var dy := (ng_y[k] - p.y) / M
+			if absi(dx) > MapGen.EDGE_MAX or absi(dy) > MapGen.EDGE_MAX or dx * dx + dy * dy > MapGen.EDGE_MAX * MapGen.EDGE_MAX:
+				continue
+			if not MapGen._clear_fat(obs, ob_w, ob_h, p.x / M, p.y / M, ng_x[k] / M, ng_y[k] / M, -1):
+				continue
+			var d := dx * dx + dy * dy
+			var q := near.size()
+			near.append(k)
+			nd.append(d)
+			while q > 0 and (nd[q - 1] > d or (nd[q - 1] == d and near[q - 1] > k)):
+				near[q] = near[q - 1]
+				nd[q] = nd[q - 1]
+				q -= 1
+			near[q] = k
+			nd[q] = d
+		if near.size() > 4:
+			near.resize(4)
+		ends.append(near)
+	if (ends[0] as PackedInt32Array).is_empty() or (ends[1] as PackedInt32Array).is_empty():
+		return true
+	var base := nx.size()
+	if base + 2 >= 4096:
+		return false
+	nx.append(ip.x)
+	ny.append(ip.y)
+	nx.append(op.x)
+	ny.append(op.y)
+	ngt.append(tag)
+	ngt.append(tag)
+	var wio := FM.isqrt(((op.x - ip.x) / M) * ((op.x - ip.x) / M) * 64 + ((op.y - ip.y) / M) * ((op.y - ip.y) / M) * 64)
+	adj.append([[base + 1, maxi(wio, 1)]])
+	adj.append([[base, maxi(wio, 1)]])
+	for side in 2:
+		var me := base + side
+		var pp: Vector2i = ip if side == 0 else op
+		for k in (ends[side] as PackedInt32Array):
+			var dx := (ng_x[k] - pp.x) / M
+			var dy := (ng_y[k] - pp.y) / M
+			var wgt := maxi(FM.isqrt((dx * dx + dy * dy) * 64), 1)
+			(adj[me] as Array).append([k, wgt])
+			(adj[k] as Array).append([me, wgt])
+	return true
+
+
 ## restore(): the fallen pieces' cells as the restored state says (obs is
 ## static, skipped in snapshots: put back from obs0, then rubble).
 func _destr_restore() -> void:
@@ -8435,6 +8811,8 @@ func _destr_restore() -> void:
 			obs[c] = MapGen.C_RUBBLE if ws_state[sg] != WS_STANDING else obs0[c]
 		elif b >= 0:
 			obs[c] = MapGen.C_RUBBLE if ob_state[b] != WS_STANDING else obs0[c]
+		elif not tw_cell.is_empty() and tw_cell[c] > 0:
+			obs[c] = MapGen.C_RUBBLE if tw_state[tw_cell[c] - 1] != WS_STANDING else obs0[c]
 
 
 ## The stretch or building whose cell is at (x, y) and still stands:
@@ -8459,15 +8837,18 @@ func _destr_at(x: int, y: int) -> int:
 ## A shot of unit `by` strikes what stands at (x, y) for dmg (gate hit
 ## points; a building takes arc_pct % of it). Returns true if it struck.
 func _destr_hit(x: int, y: int, dmg: int, by: int, arc_pct: int) -> bool:
+	if TOWERS_FALL != 0 and not tw_cell.is_empty() and obs_kind(x, y) == MapGen.C_TOWER and tw_at(x, y) >= 0:
+		return _tower_dmg(tw_at(x, y), dmg, by)  # (a tower's cell, 2026-11-07)
 	var w := _destr_at(x, y)
 	if w == -1 or dmg <= 0:
 		return false
 	if w >= 0:
 		if by >= 0 and by < n_units and u_side[by] == city_def:
 			return false  # (the defenders' own shots: over their walls)
-		ws_hp[w] -= dmg * 100
+		var wd := _works_dmg(dmg, by)
+		ws_hp[w] -= wd * 100
 		ws_hit_t[w] = tick
-		stat_wall_dmg += dmg
+		stat_wall_dmg += wd
 		if ws_hp[w] <= 0:
 			_breach(w, by)
 		return true
@@ -10669,7 +11050,7 @@ static func wp_appends(sim, _u: int, d: Dictionary, o: Dictionary) -> bool:
 		return false
 	if typ == ORDER_ATTACK:
 		if int(o.get("target", -1)) < 0 or int(o.get("gate", -1)) >= 0 or int(o.get("wall", -1)) >= 0 \
-				or int(o.get("bld", -1)) >= 0:
+				or int(o.get("bld", -1)) >= 0 or int(o.get("tower", -1)) >= 0:
 			return false
 	elif typ != ORDER_MOVE:
 		return false
@@ -10926,6 +11307,18 @@ static func _order_rule(sim, u: int, d: Dictionary, o: Dictionary) -> void:
 			d["order"] = O_ATTACK
 			d["target"] = -1
 			d["gtarget"] = BLD_TGT - bt
+			d["run"] = 0
+			return
+		var twt := int(o.get("tower", -1))
+		if twt >= 0:
+			# At a wall tower (Targeting the works, 2026-11-07): an attacking battery shoots it until it falls
+			# (gtarget TWR_TGT - tower).
+			if not art or sim.city_on == 0 or twt >= sim.tw_state.size() or sim.u_side[u] == sim.city_def \
+					or sim.tw_state[twt] != WS_STANDING or TOWERS_FALL == 0:
+				return
+			d["order"] = O_ATTACK
+			d["target"] = -1
+			d["gtarget"] = TWR_TGT - twt
 			d["run"] = 0
 			return
 		var wt := int(o.get("wall", -1))
@@ -12747,6 +13140,19 @@ func _update_units() -> void:
 					if absi(FM.angle_diff(u_face[u], bbear)) > t_arc[ty]:
 						want_face = bbear
 						u_dface[u] = bbear
+			elif gt <= TWR_TGT:
+				# At a wall tower (2026-11-07): the same; done once it falls.
+				at = -1
+				var tq := twr_tgt(u)
+				if tq < 0:
+					u_order[u] = O_NONE
+					u_gtarget[u] = -1
+				else:
+					var ta := tw_aim(tq, t_m_kind[ty] != 1)
+					var tbear := FM.atan2_a(ta.y - u_cy[u], ta.x - u_cx[u])
+					if absi(FM.angle_diff(u_face[u], tbear)) > t_arc[ty]:
+						want_face = tbear
+						u_dface[u] = tbear
 			elif gt <= -2:
 				# Shooting at a wall stretch: the same; done once it is breached.
 				at = -1
@@ -17353,9 +17759,10 @@ func _update_artillery() -> void:
 			gt = -1
 		var wsg := wall_tgt(u) if gt <= -2 else -1
 		var bsg := bld_tgt(u) if gt <= BLD_TGT else -1
+		var twg := twr_tgt(u) if gt <= TWR_TGT else -1
 		if gt <= -2:
 			gt = -1
-		var aim := gt >= 0 or ft >= 0 or wsg >= 0 or bsg >= 0
+		var aim := gt >= 0 or ft >= 0 or wsg >= 0 or bsg >= 0 or twg >= 0
 		var tx := 0
 		var tyy := 0
 		if gt >= 0:
@@ -17370,6 +17777,10 @@ func _update_artillery() -> void:
 			var ba := ob_aim(bsg)
 			tx = ba.x
 			tyy = ba.y
+		elif twg >= 0:
+			var tg2 := tw_aim(twg, t_m_kind[ty] != 1)
+			tx = tg2.x
+			tyy = tg2.y
 		elif ft >= 0:
 			tx = u_cx[ft]
 			tyy = u_cy[ft]
@@ -17475,6 +17886,10 @@ func _update_artillery() -> void:
 				fired = _art_fire_at(e, u, ob_aim(bsg), ty)
 				if fired:
 					stat_bld_shots += 1
+			elif twg >= 0:
+				fired = _art_fire_at(e, u, tw_aim(twg, t_m_kind[ty] != 1), ty)
+				if fired:
+					stat_tw_shots += 1
 			else:
 				fired = _art_fire(e, u, ft, ty)
 			if fired:
@@ -18164,6 +18579,10 @@ func _land_bolt(p: int) -> void:
 		return
 	if sg_on != 0:
 		if _tower_hit(p, TOWER_BOLT_DMG * ob / 100 * mo / 100):
+			if TOWERS_FALL != 0 and pr_tu[p] >= 0:
+				var tq := tw_near(pr_x[p], pr_y[p], u_trad[pr_tu[p]] + M)
+				if tq >= 0:
+					_tower_dmg(tq, GATE_BOLT * ob / 100 * mo / 100, pr_unit[p])  # (and the tower itself, 2026-11-07)
 			return  # into the tower's masonry
 		if n_eq > 0:
 			_ram_hit(pr_x[p], pr_y[p], RAM_BOLT_DMG * ob / 100 * mo / 100)
@@ -18271,6 +18690,10 @@ func _land_stone(p: int) -> void:
 	var tw_hit := false
 	if sg_on != 0:
 		tw_hit = _tower_hit(p, TOWER_STONE_DMG * ob / 100)  # (and it smashes on among the crew)
+		if tw_hit and TOWERS_FALL != 0 and pr_tu[p] >= 0:
+			var tq := tw_near(pr_x[p], pr_y[p], u_trad[pr_tu[p]] + M)
+			if tq >= 0:
+				_tower_dmg(tq, GATE_STONE * ob / 100, pr_unit[p])  # (and the tower itself, 2026-11-07)
 		if n_eq > 0:
 			_ram_hit(pr_x[p], pr_y[p], RAM_STONE_DMG * ob / 100)
 	if not tw_hit and (wh > 0 or not obs0.is_empty()):
@@ -21435,6 +21858,7 @@ const _SNAP_SKIP := {"_lofc_w": true, "_nn_key": true, "_nn_head": true, "_nn_li
 	"_xf_live": true, "_xf_pend": true, "_xb_pass": true, "_xb_q": true, "_xb_f": true,
 	"_xb_i": true, "_xb_n": true, "_xb_cmp": true, "_xb_done": true, "_xb_gm": true,
 	"ws_cell": true, "ob_cell": true, "ws_cmp": true, "ob_cmp": true, "ws_in": true, "obs0": true,
+	"tw_cell": true, "tw_x": true, "tw_y": true, "tw_r": true, "tw_dir": true, "tw_cmp": true, "ws_jt": true,
 	"ob_timber": true, "ob_adj0": true, "ob_adj": true,
 	"harb": true, "quay": true, "a_body": true, "a_bp0": true, "a_up": true, "_aroot": true, "_aroot_ep": true, "aw_x": true, "aw_y": true,
 	"aw_e0": true, "aw_to": true, "aw_w": true, "_adist": true, "_adist_ep": true,
@@ -22068,6 +22492,10 @@ func state_hash() -> int:
 			for arr in [ws_hp, ws_state, ob_hp, ob_state]:
 				if not (arr as PackedInt32Array).is_empty():
 					ctx.update((arr as PackedInt32Array).to_byte_array())
+			if tw_used != 0:
+				# (Towers that fall, 2026-11-07: only once a tower took a blow.)
+				ctx.update(tw_hp.to_byte_array())
+				ctx.update(tw_state.to_byte_array())
 			if ob_fire_n > 0 or ob_fstruck > 0:
 				# (Burning buildings, 2026-10-24: only once one was struck by fire, so towns without fire hash as before.)
 				ctx.update(ob_fire.to_byte_array())

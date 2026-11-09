@@ -399,6 +399,14 @@ func _destr_events() -> void:
 				var b: Array = blds[a]
 				pts.append(Vector2(float(int(b[0]) + int(b[2])), float(int(b[1]) + int(b[3]))) * 0.5 * px_per_m)
 				rad = maxf(float(int(b[2]) - int(b[0])), float(int(b[3]) - int(b[1]))) * 0.5 * px_per_m
+		elif sim.ev_k[r] == BattleSim.EV_TOWER and a < sim.tw_x.size():
+			# (A tower fell, 2026-11-07: dust round its footprint.)
+			var tc := to_px(sim.tw_x[a], sim.tw_y[a])
+			var trad := float(sim.tw_r[a]) / M * px_per_m
+			pts.append(tc)
+			for q in 3:
+				pts.append(tc + Vector2(cos(q * TAU / 3.0), sin(q * TAU / 3.0)) * trad * 0.6)
+			rad = trad
 		elif sim.ev_k[r] == BattleSim.EV_FIRE:
 			# (A building caught fire: a burst of sparks; the flames themselves are _draw_bld_fires.)
 			var bf: Array = (sim.map_info.get("city", {}) as Dictionary).get("buildings", [])
@@ -985,6 +993,9 @@ func _draw_city_marks(lw: float) -> void:
 			var txt := "BROKEN" if st == BattleSim.GATE_BROKEN else "OPEN"
 			_dstr(c + Vector2(-bw * 0.3, bh), txt, HORIZONTAL_ALIGNMENT_LEFT, -1,
 				_font_size(12.0), Color(1, 0.85, 0.5) if st == BattleSim.GATE_BROKEN else Color(0.75, 1, 0.75))
+	_draw_work_counters(lay, lw)
+	if _insp_k != WK_NONE and Time.get_ticks_msec() < _insp_until:
+		_draw_inspect()
 	if sim.cap_t > 0:
 		var pl: Array = lay["plaza"]
 		var pc := Vector2(pl[0], pl[1]) * k
@@ -999,6 +1010,220 @@ func _draw_city_marks(lw: float) -> void:
 		var txt2 := "%s held %d / %d s" % [where, sim.cap_t / 10, BattleSim.CAPTURE_TICKS / 10]
 		var tw2 := ThemeDB.fallback_font.get_string_size(txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 		_dstr(pc + Vector2(-tw2 * 0.5, -r - fs * 0.5), txt2, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col2.lightened(0.3))
+
+
+# ---------------------------------------------------------- the works' health ---
+# Targeting the works, towers that fall, wall health (2026-11-07; docs/design/ui.md "The works' health counter"): the
+# owner: "Wall health should be displayed". A small plastic counter (a dark chip with a short bar) stands over a wall
+# stretch or a tower that has lost more than COUNTER_HURT_PCT % of its hit points, or that a battery is ordered at (any
+# side's); a long press on a piece shows its plate ("Wall, stone, 62 %" and what is firing at it). View only.
+const WK_NONE := 0
+const WK_TOWER := 1
+const WK_WALL := 2
+const WK_BLD := 3
+const WK_GATE := 4
+const COUNTER_HURT_PCT := 10
+const INSPECT_MS := 4500
+var _insp_k := WK_NONE
+var _insp_i := -1
+var _insp_until := 0
+var counters_drawn := 0   # (tests) counters drawn last frame
+
+
+## The work a battery's gtarget names: (WK_*, index); (WK_NONE, -1) none or down.
+func work_of_gtarget(gt: int) -> Vector2i:
+	if gt >= 0:
+		return Vector2i(WK_GATE, gt) if gt < sim.n_gates and sim.g_state[gt] == BattleSim.GATE_CLOSED else Vector2i(WK_NONE, -1)
+	if gt <= BattleSim.BLD_TGT:
+		var b := BattleSim.BLD_TGT - gt
+		return Vector2i(WK_BLD, b) if b < sim.ob_state.size() and sim.ob_state[b] == BattleSim.WS_STANDING else Vector2i(WK_NONE, -1)
+	if gt <= BattleSim.TWR_TGT:
+		var t := BattleSim.TWR_TGT - gt
+		return Vector2i(WK_TOWER, t) if t < sim.tw_state.size() and sim.tw_state[t] == BattleSim.WS_STANDING else Vector2i(WK_NONE, -1)
+	if gt <= -2:
+		var sg := -2 - gt
+		return Vector2i(WK_WALL, sg) if sg < sim.ws_state.size() and sim.ws_state[sg] == BattleSim.WS_STANDING else Vector2i(WK_NONE, -1)
+	return Vector2i(WK_NONE, -1)
+
+
+## Where a battery aims at work wk (sim units).
+func work_aim(wk: Vector2i, lob: bool) -> Vector2i:
+	match wk.x:
+		WK_TOWER:
+			return sim.tw_aim(wk.y, lob)
+		WK_WALL:
+			return sim.ws_aim(wk.y, lob)
+		WK_BLD:
+			return sim.ob_aim(wk.y)
+		WK_GATE:
+			return sim.gate_face(wk.y)
+	return Vector2i.ZERO
+
+
+## The share of hit points work wk has left (0..1), -1 none.
+func work_frac(wk: Vector2i) -> float:
+	match wk.x:
+		WK_TOWER:
+			return float(sim.tw_hp[wk.y]) / maxf(float(sim.tw_hp0[wk.y]), 1.0) if sim.tw_state[wk.y] == BattleSim.WS_STANDING else 0.0
+		WK_WALL:
+			return float(sim.ws_hp[wk.y]) / maxf(float(sim.ws_hp0[wk.y]), 1.0) if sim.ws_state[wk.y] == BattleSim.WS_STANDING else 0.0
+		WK_BLD:
+			return float(sim.ob_hp[wk.y]) / maxf(float(sim.ob_hp0[wk.y]), 1.0) if sim.ob_state[wk.y] == BattleSim.WS_STANDING else 0.0
+		WK_GATE:
+			return float(sim.g_hp[wk.y]) / maxf(float(sim.g_hp0[wk.y]), 1.0) if sim.g_state[wk.y] == BattleSim.GATE_CLOSED else 0.0
+	return -1.0
+
+
+## The batteries (either side's) ordered at work wk, in unit order.
+func work_fire(wk: Vector2i) -> Array[int]:
+	var out: Array[int] = []
+	for u in sim.n_units:
+		if sim.u_state[u] >= BattleSim.U_DESTROYED or sim.u_order[u] != BattleSim.O_ATTACK or UT.cls(sim.u_type[u]) != UT.CLS_ART:
+			continue
+		if work_of_gtarget(sim.u_gtarget[u]) == wk:
+			out.append(u)
+	return out
+
+
+## The plate's lines for work wk: "Wall, stone, 62 %" and what is firing at it.
+func work_lines(wk: Vector2i) -> PackedStringArray:
+	var lay: Dictionary = sim.map_info.get("city", {})
+	var timber := int(lay.get("palisade", 0)) != 0
+	var head := ""
+	var pct := int(round(work_frac(wk) * 100.0))
+	match wk.x:
+		WK_TOWER:
+			head = "Tower, %s, %d %%" % ["timber" if timber else "stone", pct] if sim.tw_state[wk.y] == BattleSim.WS_STANDING \
+				else "Tower, fallen: a heap of rubble"
+		WK_WALL:
+			var cit: bool = wk.y < sim.ws_fl.size() and (sim.ws_fl[wk.y] & MapGen.SEG_CIT) != 0
+			var mat := "timber" if timber and not cit else "stone"
+			head = "Wall, %s, %d %%" % [mat, pct] if sim.ws_state[wk.y] == BattleSim.WS_STANDING else "Wall, breached"
+		WK_BLD:
+			var mat2 := "timber" if wk.y < sim.ob_timber.size() and sim.ob_timber[wk.y] != 0 else "stone"
+			head = "Building, %s, %d %%" % [mat2, pct] if sim.ob_state[wk.y] == BattleSim.WS_STANDING else "Building, fallen"
+		WK_GATE:
+			var st: int = sim.g_state[wk.y]
+			head = "Gate, %d %%" % pct if st == BattleSim.GATE_CLOSED else ("Gate, broken" if st == BattleSim.GATE_BROKEN else "Gate, open")
+	var names: Array[String] = []
+	for u in work_fire(wk):
+		names.append(str(UT.TYPES[sim.u_otype[u]].get("name", "?")))
+	var fire := "Under fire from: " + ", ".join(names) if not names.is_empty() else "Not under fire"
+	return PackedStringArray([head, fire])
+
+
+## Show work wk's plate (a long press on it) for INSPECT_MS.
+func inspect_work(wk: Vector2i) -> void:
+	_insp_k = wk.x
+	_insp_i = wk.y
+	_insp_until = Time.get_ticks_msec() + INSPECT_MS
+	queue_redraw()
+
+
+## Where work wk's counter / plate stands (world px): in the top view over its outer face; in the oblique and 3D
+## views on the piece itself (its middle; _work_lift raises it to the piece's top).
+func _work_spot(wk: Vector2i, lay: Dictionary) -> Vector2:
+	var k := px_per_m
+	if BoardView.oblique and (wk.x == WK_TOWER or wk.x == WK_WALL):
+		if wk.x == WK_TOWER:
+			return to_px(sim.tw_x[wk.y], sim.tw_y[wk.y])
+		var mw: Vector2i = BattleSim.seg_pt(sim, wk.y, BattleSim.seg_len(sim, wk.y) / 2)
+		return to_px(mw.x, mw.y)
+	match wk.x:
+		WK_TOWER:
+			var dd := Vector2(cos(sim.tw_dir[wk.y] * TAU / 1024.0), sin(sim.tw_dir[wk.y] * TAU / 1024.0))
+			return to_px(sim.tw_x[wk.y], sim.tw_y[wk.y]) + dd * (float(sim.tw_r[wk.y]) / M + 2.0) * k
+		WK_WALL:
+			var mp: Vector2i = BattleSim.seg_pt(sim, wk.y, BattleSim.seg_len(sim, wk.y) / 2)
+			var dw := Vector2(cos(sim.ws_dir[wk.y] * TAU / 1024.0), sin(sim.ws_dir[wk.y] * TAU / 1024.0))
+			return to_px(mp.x, mp.y) + dw * (float(lay.get("t", 4)) * 0.5 + 3.0) * k
+		WK_BLD:
+			var ba: Vector2i = sim.ob_aim(wk.y)
+			return to_px(ba.x, ba.y)
+		WK_GATE:
+			return to_px(sim.g_x[wk.y], sim.g_y[wk.y])
+	return Vector2.ZERO
+
+
+## How far up (px, upright) work wk's counter stands in the oblique and 3D views: on its top (a stretch's parapet,
+## a tower's crown); 0 in the top view.
+func _work_lift(wk: Vector2i) -> float:
+	if not BoardView.oblique or (wk.x != WK_TOWER and wk.x != WK_WALL):
+		return 0.0
+	var hm := float(sim.wall_h) / M + (5.0 if wk.x == WK_TOWER else 2.0)
+	return hm * px_per_m * BoardView.OBLIQUE_SIN
+
+
+## One counter: a dark plastic chip (rounded ends) with a bar of the hit points left, standing upright on the board
+## (on the piece's top in the oblique and 3D views: `lift` px up).
+func _counter(c: Vector2, f: float, aimed: bool, lift: float = 0.0) -> void:
+	var w := clampf(34.0 / zoom, 3.0 * px_per_m, 9.0 * px_per_m)
+	var h := w * 0.28
+	_up(c)
+	var top := c - Vector2(w * 0.5, h * 1.6 + lift)
+	draw_rect(Rect2(top, Vector2(w, h)), Color(0.08, 0.07, 0.06, 0.88))
+	draw_circle(top + Vector2(0, h * 0.5), h * 0.5, Color(0.08, 0.07, 0.06, 0.88))
+	draw_circle(top + Vector2(w, h * 0.5), h * 0.5, Color(0.08, 0.07, 0.06, 0.88))
+	var col := Color(0.93, 0.78, 0.36) if f > 0.35 else Color(1.0, 0.36, 0.26)
+	var pad := h * 0.22
+	draw_rect(Rect2(top + Vector2(pad, pad), Vector2((w - pad * 2.0) * clampf(f, 0.0, 1.0), h - pad * 2.0)), col)
+	if aimed:
+		draw_rect(Rect2(top - Vector2(h * 0.5, 0), Vector2(w + h, h)), Color(1.0, 0.5, 0.3, 0.9), false, maxf(1.0, h * 0.12))
+	_flat()
+
+
+## The works' counters: every standing stretch and tower below 100 - COUNTER_HURT_PCT % or under a battery's order.
+func _draw_work_counters(lay: Dictionary, _lw: float) -> void:
+	counters_drawn = 0
+	if sim.ws_hp.is_empty() and sim.tw_hp.is_empty():
+		return
+	var aimed := {}
+	for u in sim.n_units:
+		if sim.u_order[u] == BattleSim.O_ATTACK and sim.u_gtarget[u] <= -2 and sim.u_state[u] < BattleSim.U_DESTROYED:
+			aimed[work_of_gtarget(sim.u_gtarget[u])] = true
+	var vr := _view_rect().grow(px_per_m * 20.0)
+	for sg in sim.ws_hp.size():
+		if sim.ws_state[sg] != BattleSim.WS_STANDING or sim.ws_hp0[sg] <= 0:
+			continue
+		var wk := Vector2i(WK_WALL, sg)
+		var hurt: bool = sim.ws_hp[sg] * 100 < sim.ws_hp0[sg] * (100 - COUNTER_HURT_PCT)
+		if not hurt and not aimed.has(wk):
+			continue
+		var c := _work_spot(wk, lay)
+		if vr.has_point(c):
+			_counter(c, work_frac(wk), aimed.has(wk), _work_lift(wk))
+			counters_drawn += 1
+	for t in sim.tw_hp.size():
+		if sim.tw_state[t] != BattleSim.WS_STANDING:
+			continue
+		var wk2 := Vector2i(WK_TOWER, t)
+		var hurt2: bool = sim.tw_hp[t] * 100 < sim.tw_hp0[t] * (100 - COUNTER_HURT_PCT)
+		if not hurt2 and not aimed.has(wk2):
+			continue
+		var c2 := _work_spot(wk2, lay)
+		if vr.has_point(c2):
+			_counter(c2, work_frac(wk2), aimed.has(wk2), _work_lift(wk2))
+			counters_drawn += 1
+
+
+## The long-pressed piece's plate: its lines on a dark plate over it, live (the hit points and the batteries change).
+func _draw_inspect() -> void:
+	var lay: Dictionary = sim.map_info.get("city", {})
+	var wk := Vector2i(_insp_k, _insp_i)
+	var ln := work_lines(wk)
+	var c := _work_spot(wk, lay)
+	var fs := _font_size(14.0)
+	var font := ThemeDB.fallback_font
+	var tw := 0.0
+	for l in ln:
+		tw = maxf(tw, font.get_string_size(l, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x)
+	var at := c + Vector2(-tw * 0.5, -fs * 4.2 - _work_lift(wk))
+	_up(c)
+	draw_rect(Rect2(at + Vector2(-fs * 0.5, -fs * 1.1), Vector2(tw + fs, fs * 2.7)), Color(0.07, 0.06, 0.05, 0.82))
+	draw_rect(Rect2(at + Vector2(-fs * 0.5, -fs * 1.1), Vector2(tw + fs, fs * 2.7)), Color(0.85, 0.68, 0.35, 0.9), false, maxf(1.0, fs * 0.08))
+	_dstr(at, ln[0], HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 0.93, 0.78))
+	_dstr(at + Vector2(0, fs * 1.25), ln[1], HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(fs - 2, 8), Color(0.95, 0.8, 0.6))
+	_flat()
 
 
 ## Slice 2c: the buildings held (their outline in the holder's colour, the
@@ -1879,6 +2104,15 @@ func _draw_selected(u: int, lw: float, r: float, primary: bool) -> void:
 		if primary:
 			_dstr(to_px(gf.x, gf.y) + Vector2(r, r), "SHOOT THE GATE",
 				HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
+	elif order == BattleSim.O_ATTACK and _v(u, "gtarget") <= -2 and UT.cls(ty) == UT.CLS_ART:
+		# A battery shooting at a wall stretch, a tower or a building (Targeting the works, 2026-11-07).
+		var wk := work_of_gtarget(_v(u, "gtarget"))
+		if wk.x != WK_NONE:
+			var wa := work_aim(wk, sim.t_m_kind[ty] != 1)
+			_dd(a, to_px(wa.x, wa.y), COL_FIRE, lw, 8.0 / zoom)
+			if primary:
+				_dstr(to_px(wa.x, wa.y) + Vector2(r, r), ["", "SHOOT THE TOWER", "BATTER THE WALL", "SHOOT THE BUILDING"][wk.x],
+					HORIZONTAL_ALIGNMENT_LEFT, -1, _font_size(13.0), COL_FIRE)
 	elif order == BattleSim.O_WITHDRAW:
 		_draw_withdraw(u, a, COL_WITHDRAW, lw)
 	if orders != null:

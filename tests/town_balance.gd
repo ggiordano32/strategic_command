@@ -107,7 +107,7 @@ func _initialize() -> void:
 					"started_att": int(res["sides"][0]["started"]), "started_def": int(res["sides"][1]["started"]),
 					"remaining_att": int(res["sides"][0]["remaining"]), "remaining_def": int(res["sides"][1]["remaining"]),
 					"gate_tick": gate_tick, "gates_broken": sim.stat_gate_broken,
-					"breach_tick": breach_tick, "breaches": sim.stat_breaches, "wall_shots": sim.stat_wall_shots, "burnt": sim.stat_bld_burnt,
+					"breach_tick": breach_tick, "breaches": sim.stat_breaches, "towers_fallen": sim.stat_tw_fallen, "tower_shots": sim.stat_tw_shots, "wall_shots": sim.stat_wall_shots, "burnt": sim.stat_bld_burnt,
 					"wall_dmg": sim.stat_wall_dmg}))
 		print("TOWNBAL %s %s walls %d: attacker %d / %d (%d %%), draws %d, %.1f min, killed att %.0f def %.0f (plan maps %d)" % [
 			set_name, "old" if old else "plan", walls, aw, seeds, aw * 100 / maxi(seeds, 1), dr, t_sum / maxi(seeds, 1),
@@ -156,10 +156,22 @@ func _scenario(set_name: String, walls: int, s: int, old: bool) -> Dictionary:
 	# Rome: fair_siege's city with the plan of a town of its culture.
 	var plan := MapGen.PLAN_POLIS if set_name == "polis" else MapGen.PLAN_CASTRUM
 	var eq2 := {"ladders": 3, "ram": 1, "mantlets": 4, "towers": 1 if walls >= 2 else 0,
-		"extra": [[UT.index_of("scorpions"), 12]]}
+		"extra": _rome_extra(walls)}
 	if old:
 		return Scenarios.fair_siege(700 + s * 41, walls, plan, eq2)
 	return Scenarios.fair_siege(700 + s * 41, walls, plan, eq2, _tp("rome", "attica" if plan == MapGen.PLAN_POLIS else "latium", 2, walls))
+
+
+## The Rome siege army's extra units: the scorpions, and (2026-11-07, docs/AI.md 75: the campaign AI brings
+## SIEGE_GUNS batteries against walls 2-3) stone batteries to 2 in all at walls 1 and 3 at walls 2-3
+## (SIEGE_ARMY has one); --old-guns: the scorpions only, as before.
+func _rome_extra(walls: int) -> Array:
+	var ex: Array = [[UT.index_of("scorpions"), 12]]
+	if "--old-guns" in OS.get_cmdline_user_args():
+		return ex
+	for k in (2 if walls >= 2 else 1):
+		ex.append([UT.STONE, 18])
+	return ex
 
 
 ## A campaign town on its own plan (--town=pack:key[:level]).
@@ -172,7 +184,7 @@ func _town_scenario(spec: String, walls: int, s: int, old: bool) -> Dictionary:
 	var cul := CData.region_culture(r)
 	if pack == "rome":
 		var eq2 := {"ladders": 3, "ram": 1, "mantlets": 4, "towers": 1 if walls >= 2 else 0,
-			"extra": [[UT.index_of("scorpions"), 12]]}
+			"extra": _rome_extra(walls)}
 		var tp_r: Dictionary = {} if old else _tp("rome", key, 2, walls)
 		return Scenarios.fair_siege(700 + s * 41, walls, cul, eq2, tp_r)
 	var st0 := CState.new_campaign("bal", 5, [], {}, [], pack)

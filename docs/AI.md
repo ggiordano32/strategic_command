@@ -4888,3 +4888,56 @@ Merging moves whole armies (`_merge`): there is no unit choice in it, so the lev
 (`MIX_LIVE`) is untouched. Both knobs are inert without veterancy (no `xp` in the state: format 6 and 8 campaigns, the
 setting off). Measured: campaign_rules.md "Veterancy and Retrain", the measure table (retrains a campaign, the levels by
 faction).
+
+## 75. Targeting the works and towers that fall: the siege AI (2026-11-07)
+
+The battle rule is docs/design/battle_sim.md "Targeting the works, towers that fall, wall health (as built,
+2026-11-07)": towers have hit points (160 % of their stretch's) and fall to a rubble heap that is a way in, and an
+artillery blow on a stretch or a tower does 15 / 13 / 12 % (stones) or 13 / 11 / 10 % (balls) of its gate damage at walls
+1 / 2 / 3, so three stone batteries need about 6.5 volleys for a walls-2 stretch (1.2 before). Two knobs (`N_KNOBS` 379,
+no gap):
+
+| id | knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|---|
+| 377 | `S_TOWER_HIT` | 0 | 1 | 1 | in the storm (`SP_ASSAULT`), an attacking battery that breaks walls (`_can_batter`) shoots the standing tower within 30 m of the breach by its assault point (`_wall_breach`) whose defence still covers that breach (a working tower engine on it, or a defending wall unit within 12 m of it: `_tower_cover`), when the shot left would bring it down (`_tower_shot_ok`: its own at `BATTER_HIT_PCT` 40 %, or the side's pooled with `S_BATTER_POOL`) and it is within `S_ART_REACH_PCT` of its range: an attack order `"tower"`, kept until it falls; otherwise the section rule as before |
+| 378 | `S_BATTER_POOL` | 0 | 40 | 40 | > 0: the batter rule's "shot enough to breach it" (`_batter_for`) and `_tower_shot_ok` count every battering battery of the side at this % hitting; 0: the battery's own shot at 40 % (as before) |
+
+`_batter_for` now counts the works' share (`_works_pct`), so a battery batters only a stretch its load can breach: a
+Rome stone battery (three onagers, 45 stones and a refill of 45) at walls 1 (1,944 hp at 40 % against 1,200) but not at
+walls 2 or 3; the light guns of the West armies as before (forts are left be). The defenders' AI is unchanged.
+
+Measured (`tools/balance` `tw_rome` / `tw_west`, 72 battles a walls level, battle_sim.md's balance paragraph): with
+`S_BATTER_POOL` 70 at Average the one Rome stone battery battered walls 2 (57 wall shots, 0.71 breaches a siege) and
+the attackers won 18 % (46 before); off, it batters only walls 1 (35 wall shots, 1.00 breaches) and the attackers win
+74 / 28 / 29 % at walls 1 / 2 / 3 (78 / 46 / 39 before), breaches 1.76 / 1.21 / 1.03 -> 1.00 / 0 / 0, the gate falling
+instead (1.15 / 1.43 / 1.32 a siege). `S_TOWER_HIT` never fired in the 216 Rome battles (no breach at walls 2-3, where
+the towers stand; at walls 1 its battery has no shot left for a tower) and no tower fell: it is for armies with more
+batteries and the player's orders. West unchanged (44 / 17 %).
+
+**The campaign AI brings the guns (2026-11-07, second round; the coordinator: keep the owner's volleys, fix the
+attackers).** Two campaign knobs (`campaign/cai_profile.gd`, `N_KNOBS` `SK_SUPPORT + 67`):
+
+| knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|
+| `SIEGE_GUNS` (`SK_SUPPORT + 65`) | 1 | 2 | 3 | `_siege_guns` (in `_recruit`, after the moves are planned): an army planned this turn to march (siege or assault) on an enemy town with walls 2 and no breach standing, standing at a settlement of ours with a Workshop, takes wall-breaking guns (`GUN_LINES`: the stone, mortar, culverin, naval gun lines, the best tier the buildings allow; `gun_units` counts artillery doing a stone's work: `m_kind` 2 or `m_obj` 300+) up to this many, within the upkeep cap and the recruiting reserve; if it took any its march is taken back (the mustering rule); and `_sieges_grid` does not storm such a siege on the odds alone while its besiegers have fewer and the siege has held under `CBattle.RAM_TURNS` (no ram yet): it starves on (a starving town with a relief near, and the patience rule, as before) |
+| `SIEGE_GUNS3` (`SK_SUPPORT + 66`) | 1 | 3 | 3 | the same at walls 3 |
+
+Off with `CAI.no_buildup` (the campaign_test goldens). Counters `siege_guns_marches`, `siege_guns_waits`
+(campaign_sim prints them). Measured (`campaign_sim --format=10`, Rome, 72 seeds x 60 turns, HEAD -> after, with the
+formula refit below): towns taken by siege a campaign 2.17 +- 0.38 -> 1.97 +- 0.33, sieges started 3.04 -> 2.93, town
+battles won 31.5 -> 31.2, battles 38.4 -> 38.1; eliminations 139 -> 128 (Carthage 6 -> 2, Epirus 44 -> 43, Gauls 13
+-> 12, Greeks 3 -> 3, Iberians 14 -> 13, Macedon 26 -> 29, Rome 9 -> 8, Syracuse 24 -> 18: each within its interval);
+marches held for guns 0 (a Rome stone battery needs a Workshop 2, which the AI's build-up seldom raises; and about one
+attack in thirty is on a walls-2 town), storms put off 32. The rule is there for the West (culverins at a Workshop 1)
+and for a richer Rome; its storm wait is what moves the play now.
+
+The harness army (`tests/town_balance.gd` `_rome_extra`: Rome's equal-force siege army gets stone batteries to two at
+walls 1 and three at walls 2-3; `--old-guns` the scorpions only): `rome_walls` (16 seeds a town) attacker wins walls 1 /
+2 / 3 52 / 20 / 10 %, breaches a siege 1.12 / 1.00 / 0.93 (with `S_BATTER_POOL` 0: 51 / 17 / 20 %, breaches 1.00 /
+0.10 / 0, the extra batteries never battering). Against HEAD's tw_rome (12 seeds, one battery) 78 / 46 / 39 %: below
+the before intervals at every level: in the equal-force siege the defenders' field army gets the guns' price in men
+(SIEGE_ARMY less the garrison), so every battery the attackers bring is a company more on the walls, and the stones
+spent on the works (66-84 wall shots a battle) kill nobody. The target (wins back in the intervals) is not met; the
+levers left: the guns outside the equal-force budget (the campaign's case when the AI buys them on top), a softer works
+share at walls 2-3, or the storm waiting for the breach. The formula follows the fought numbers (campaign_battles
+`--only=fit`: Rome walls 1 / 2 / 3 refit, docs/design/battle_sim.md).

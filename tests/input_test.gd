@@ -341,6 +341,10 @@ func _initialize() -> void:
 		_step_eq_plant,
 		_step_eq_tap_planted,
 		_step_eq_check_planted,
+		_step_aw_tap_tower,
+		_step_aw_check_tower,
+		_step_aw_tap_wall,
+		_step_aw_check_wall,
 		_step_en_drop,
 		_step_en_check_drop,
 		_step_en_tap,
@@ -3316,6 +3320,73 @@ func _step_eq_check_planted() -> void:
 var _en_bat := -1
 var _en_foot := -1
 var _en_g := -1
+
+
+## Targeting the works (2026-11-07; docs/design/ui.md "Targeting the works"): our stone battery alone selected, a tap
+## on a tower (one with no unit's marker over it) gives it an attack order at the tower ("tower"), a tap on a wall
+## stretch one at the stretch ("wall").
+var _aw_bat := -1
+var _aw_tw := -1
+var _aw_sg := -1
+var _aw_pt := Vector2i(-1, -1)
+
+
+func _aw_clear(_sim, x: int, y: int) -> bool:
+	return battle._pick_unit(Vector2(x, y) / 1024.0 * Battle.PX_PER_M) < 0
+
+
+func _step_aw_tap_tower() -> void:
+	var sim := battle.sim
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	sim.q_state[0] = BattleSim.Q_GROUND
+	battle.camera.zoom = Vector2(1, 1)
+	for u in sim.n_units:
+		if sim.u_side[u] == 0 and UT.cls(sim.u_type[u]) == UT.CLS_ART and not sim.is_tower(u):
+			_aw_bat = u
+			break
+	for t in sim.tw_state.size():
+		if sim.tw_state[t] == BattleSim.WS_STANDING and _aw_clear(sim, sim.tw_x[t], sim.tw_y[t]):
+			_aw_tw = t
+			break
+	_check(_aw_bat >= 0 and _aw_tw >= 0, "targeting the works: our battery (%d) and a clear tower (%d)" % [_aw_bat, _aw_tw])
+	if _aw_bat < 0 or _aw_tw < 0:
+		return
+	battle._select(_aw_bat)
+	_focus(sim.tw_x[_aw_tw], sim.tw_y[_aw_tw])
+	_gd_tap(Vector2(sim.tw_x[_aw_tw], sim.tw_y[_aw_tw]) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_aw_check_tower() -> void:
+	var ao := _eq_orders(BattleSim.ORDER_ATTACK)
+	_check(ao.size() == 1 and int(ao[0]["unit"]) == _aw_bat and int(ao[0].get("tower", -1)) == _aw_tw,
+		"targeting the works: a tap on a tower with our stone battery selected orders it at the tower (%s)" % str(ao))
+	_check(battle.orders.value(_aw_bat, "gtarget") == BattleSim.TWR_TGT - _aw_tw, "the preview knows the tower target")
+	var sim := battle.sim
+	sim.pending_orders.clear()
+	battle.orders.refresh()
+	for sg in sim.ws_x0.size():
+		var mp: Vector2i = BattleSim.seg_pt(sim, sg, BattleSim.seg_len(sim, sg) / 2)
+		if sim.obs_kind(mp.x, mp.y) == MapGen.C_WALK and _aw_clear(sim, mp.x, mp.y):
+			_aw_sg = sg
+			_aw_pt = mp
+			break
+	_check(_aw_sg >= 0, "targeting the works: a clear wall stretch (%d)" % _aw_sg)
+	if _aw_sg >= 0:
+		_focus(_aw_pt.x, _aw_pt.y)
+
+
+func _step_aw_tap_wall() -> void:
+	if _aw_sg >= 0:
+		_gd_tap(Vector2(_aw_pt.x, _aw_pt.y) / 1024.0 * Battle.PX_PER_M)
+
+
+func _step_aw_check_wall() -> void:
+	var ao := _eq_orders(BattleSim.ORDER_ATTACK)
+	_check(ao.size() == 1 and int(ao[0]["unit"]) == _aw_bat and int(ao[0].get("wall", -1)) == _aw_sg,
+		"targeting the works: a tap on a wall stretch with our stone battery selected orders it at the stretch (%s)" % str(ao))
+	battle.sim.pending_orders.clear()
+	battle.orders.refresh()
 
 
 func _step_en_drop() -> void:

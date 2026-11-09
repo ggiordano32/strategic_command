@@ -3744,6 +3744,89 @@ func _wall_click(sg: int, w: Vector2, double: bool) -> void:
 		overlay.flash(why if why != "" else "These men cannot go onto the wall", w)
 
 
+## Targeting the works (2026-11-07; docs/design/ui.md "Targeting the works"; the owner: "It would be nice to be able
+## to target walls and buildings with the cannons and rock throwers."): the selection's ready guns of ours (an
+## attacking side's batteries; not a tower's engine, not one carrying), when every ready unit of ours selected is one.
+func _art_work_units() -> Array[int]:
+	var out: Array[int] = []
+	if sim.city_on == 0 or sim.phase != BattleSim.PHASE_BATTLE:
+		return out
+	for u in selection:
+		if sim.u_state[u] != BattleSim.U_READY or not _mine(u):
+			continue
+		if UT.cls(sim.u_type[u]) != UT.CLS_ART or sim.u_side[u] == sim.city_def or sim.is_tower(u) \
+				or BattleSim.carrying(sim, u) != 0:
+			return [] as Array[int]   # (a mixed selection: the tap keeps its other meanings)
+		out.append(u)
+	return out
+
+
+## The work under world point w (px) as (Overlay.WK_*, index): a standing tower, a standing wall stretch (its body,
+## walk, stair or a tower's cell joined to it), a standing building of the town; a shut gate (WK_GATE). The none kind if
+## nothing stands there.
+func _work_at(w: Vector2) -> Vector2i:
+	if sim.city_on == 0:
+		return Vector2i(Overlay.WK_NONE, -1)
+	var x := int(w.x / PX_PER_M * M)
+	var y := int(w.y / PX_PER_M * M)
+	# (The piece under the point itself first: a gate's widened doorway must not steal a tap on its own towers.)
+	var t: int = sim.tw_at(x, y)
+	if t >= 0 and sim.tw_state[t] == BattleSim.WS_STANDING:
+		return Vector2i(Overlay.WK_TOWER, t)
+	var k: int = sim.obs_kind(x, y)
+	var sg := BattleSim.wall_stretch_at(sim, x, y)
+	if sg >= 0 and k != MapGen.C_TOWER and not MapGen.is_gate(k):
+		return Vector2i(Overlay.WK_WALL, sg)
+	var g := _gate_doorway(w)
+	if g >= 0:
+		return Vector2i(Overlay.WK_GATE, g)
+	if x >= 0 and y >= 0 and (x >> 11) < sim.ob_w and (y >> 11) < sim.ob_h and not sim.ob_cell.is_empty():
+		var b: int = sim.ob_cell[(y >> 11) * sim.ob_w + (x >> 11)] - 1
+		if b >= 0 and sim.ob_state[b] == BattleSim.WS_STANDING and sim.ob_hp0[b] > 0:
+			return Vector2i(Overlay.WK_BLD, b)
+	return Vector2i(Overlay.WK_NONE, -1)
+
+
+## The work a tap at w would order the selected guns at (_work_at, gates left to _tap_gate), none if no guns.
+func _art_work_at(w: Vector2) -> Vector2i:
+	if _art_work_units().is_empty():
+		return Vector2i(Overlay.WK_NONE, -1)
+	var wk := _work_at(w)
+	if wk.x == Overlay.WK_GATE:
+		return Vector2i(Overlay.WK_NONE, -1)
+	return wk
+
+
+## A tap on a wall stretch, a tower or a building with only guns selected: each gets an attack order at it (ORDER_ATTACK
+## with "wall": stretch, "tower": tower or "bld": building, as the lockstep inputs carry any order's keys); the sim aims at
+## it until it is breached or falls, then the battery goes back to fire at will. True if the tap was used.
+func _art_work_tap(w: Vector2) -> bool:
+	var wk := _art_work_at(w)
+	if wk.x == Overlay.WK_NONE:
+		return false
+	var key: String = ["", "tower", "wall", "bld"][wk.x]
+	var sent := 0
+	for u in _art_work_units():
+		_queue({"type": BattleSim.ORDER_ATTACK, "unit": u, "target": -1, key: wk.y, "run": 0})
+		sent += 1
+	_count("art_work_" + key)
+	if wk.x == Overlay.WK_WALL:
+		overlay.flash_stretch(wk.y)
+	overlay.flash(["", "Guns at the tower: they fire until it falls", "Guns at the wall: they batter it until it is breached",
+		"Guns at the building: they fire until it falls"][wk.x] if sent > 0 else "Cannot", w)
+	return true
+
+
+## A long press on a piece of the town (no unit there): its plate (overlay.inspect_work). True if there was one.
+func _inspect_at(w: Vector2) -> bool:
+	var wk := _work_at(w)
+	if wk.x == Overlay.WK_NONE:
+		return false
+	_count("inspect_work")
+	overlay.inspect_work(wk)
+	return true
+
+
 func _withdraw() -> void:
 	for u in selection:
 		_queue(BattleSim.make_withdraw_order(0, u))
@@ -3806,6 +3889,8 @@ func _tap(screen_pos: Vector2, double: bool, long_press := false) -> void:
 	if char_armed != 0:
 		_char_tap(w)
 		return
+	if not _wp_append() and _pick_unit(w) < 0 and _art_work_tap(w):
+		return   # (guns selected, a tower, wall or building tapped: they shoot it; before the gate's widened doorway)
 	var door := _gate_doorway(w)
 	if door >= 0 and _tap_gate(door, w):
 		return
@@ -4522,6 +4607,12 @@ func _left_click(pos: Vector2, double: bool, long_press: bool) -> void:
 		else:
 			_select(u)
 		return
+	if not _shift_held() and not add_mode and _art_work_at(w).x != Overlay.WK_NONE:
+		if long_press:
+			_inspect_at(w)
+		else:
+			_tap(pos, double, long_press)  # (a click on a wall, tower or building with guns selected: they shoot it)
+		return
 	if _wall_click_at(w) >= 0 and not _shift_held() and not add_mode:
 		_tap(pos, double, long_press)  # a click on a wall mans it
 		return
@@ -4676,6 +4767,8 @@ func _keys_held(delta: float) -> void:
 		var u := _pick_unit(_screen_to_world(_press_pos))
 		if u >= 0:
 			_open_book(sim.u_otype[u], "book_open_longpress", sim.u_vet[u] if sim.vet_on != 0 else 0)  # (veterancy: either side's: the enemy sees it)
+		else:
+			_inspect_at(_screen_to_world(_press_pos))  # (a piece of the town: its plate, 2026-11-07)
 
 
 func _on_touch(e: InputEventScreenTouch) -> void:

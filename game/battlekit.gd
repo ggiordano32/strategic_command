@@ -152,7 +152,7 @@ var i_cul := PackedInt32Array()     # culture of the instance (palette)
 var shadow_cell := 0.5              # metres per cell of the baked shadow
 var tropic := false                 # palms and the Caribbean palette (pack "west")
 var i_flash := PackedFloat32Array()
-var i_bld := PackedInt32Array()     # the layout building the instance draws (-1 none): hidden once it has fallen
+var i_bld := PackedInt32Array()     # the layout building the instance draws (-1 none; a wall tower t: -2 - t, 2026-11-07): hidden once it has fallen
 var _drums: Array = []               # a trace fort's corner towers [x, y, r] (m): drum rows in the oblique view
 var _drum_inst := {}                 # their sprite instances (the top view's): left out of the oblique sort
 var _cur_bld := -1                  # (set while a building's pieces are added)
@@ -386,7 +386,7 @@ func _build_instances() -> void:
 	for tw in MapGen.fort_towers(lay.get("fort", {})):
 		q += 1
 		_drum_inst[i_piece.size()] = 1
-		_drums.append([float(tw[0]), float(tw[1]), float(tw[2])])
+		_drums.append([float(tw[0]), float(tw[1]), float(tw[2]), _sim_tower(tw)])
 		_tower(tw, q, hs)
 	var sea: Dictionary = lay.get("sea", {})
 	if not sea.is_empty() and not (sea["gate"] as Array).is_empty():
@@ -792,9 +792,25 @@ static func all_towers(p_lay: Dictionary) -> Array:
 	return out
 
 
+## The sim's tower (BattleSim.tw_*) under a layout tower's middle, -1 none (Towers that fall, 2026-11-07).
+func _sim_tower(tw: Array) -> int:
+	if sim == null or not ("tw_cell" in sim):
+		return -1
+	return sim.tw_at(int(tw[0]) * 1024 + 512, int(tw[1]) * 1024 + 512)
+
+
 func _tower(tw: Array, q: int, hs: float) -> void:
 	var r := float(tw[2])
 	var pos := Vector2(float(tw[0]), float(tw[1]))
+	var keep_bld := _cur_bld
+	var st := _sim_tower(tw)
+	if st >= 0:
+		_cur_bld = -2 - st   # (the instance hides once the tower falls: fallen())
+	_tower_add(tw, q, hs, r, pos)
+	_cur_bld = keep_bld
+
+
+func _tower_add(tw: Array, q: int, hs: float, r: float, pos: Vector2) -> void:
 	if _timber:
 		var a := float((q * 37) % 100) * 0.0628
 		_add("tower_timber", pos, Vector2(cos(a), sin(a)), r / 6.5, r / 6.5, hs)
@@ -1311,11 +1327,13 @@ func _ob_walls() -> void:
 		_ob_gate_rows(float(_rings[0][1]), float(_rings[0][2]))
 		for q in _sq_inst:
 			var sqt: Array = _sq_inst[q]
-			if not _ob_is_mesh(q):
+			if not _ob_is_mesh(q) or fallen(q):
 				continue
 			_ob_sqtower(Vector2(float(sqt[0]), float(sqt[1])), float(sqt[2]), float(sqt[3]), float(_rings[0][2]))
 	if not _rings.is_empty() and _ob_drums_on():
 		for dr in _drums:
+			if (dr as Array).size() > 3 and _tower_down(int(dr[3])):
+				continue   # (fallen: its rubble is drawn instead)
 			_ob_drum(Vector2(float(dr[0]), float(dr[1])), float(dr[2]), float(_rings[0][2]))
 	if not _rings.is_empty():
 		_ob_stairs(float(_rings[0][2]))
@@ -2132,7 +2150,14 @@ func _ob_gate_flash(g: int, hit: int) -> void:
 ## Instance i draws a building that has fallen (sim.ob_state).
 func fallen(i: int) -> bool:
 	var b := i_bld[i] if i < i_bld.size() else -1
+	if b <= -2:
+		return _tower_down(-2 - b)   # (a wall tower, 2026-11-07)
 	return b >= 0 and b < sim.ob_state.size() and sim.ob_state[b] != 0
+
+
+## Wall tower t (BattleSim.tw_*) has fallen.
+func _tower_down(t: int) -> bool:
+	return t >= 0 and t < sim.tw_state.size() and sim.tw_state[t] != 0
 
 
 ## A stretch was breached or a building fell: the rubble cells again, the fallen buildings' pieces
