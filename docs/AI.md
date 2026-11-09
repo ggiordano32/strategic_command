@@ -5081,3 +5081,87 @@ musters there. Rome's Workshop 1 itself is late (at turn 40 in about half the ca
 turn-40-to-60 thing. Elephants (Stables 3) and the Brethren's landed naval guns are still about 0; the Iberians and
 Gauls now build a Workshop 2 in 5-12 % of the campaigns with nothing to raise from it (the ordinary build list; no
 goal asks for it).
+
+## 77. Lanes trade by agreement: the AI seeks the treaties its lanes pay for (2026-11-09)
+
+The owner: "Trade lines should only show ships moving along them when trade is active between the owners of the
+regions." The rule (campaign_rules.md "Lanes trade by agreement (as built, 2026-11-09)"): in a format 10 campaign a
+port lane between two owners pays only with a trade agreement or an alliance; at mere peace nothing. Before, the AI
+proposed trade only to land neighbours (`TRADE_ASK_TURNS`, `TRADE_ASK_CHANCE`; the kin treaty of note 61), so the
+lanes across the sea would simply have gone quiet.
+
+Measured first (`campaign_sim --format=10`, 72 seeds x 60 turns a pack, every faction Average; the new `lane` field of
+the `--json` line: per faction its lane income, total income, the lane income its ports drew from a port of another
+owner at mere peace, and that income's potential; trade agreements and alliances standing at turns 20 / 40 / 60;
+agreements made; the AI's trade proposals and acceptances, counters `trade_asks` / `trade_deals` / `lane_trade_asks` /
+`lane_trade_deals` in cai_profile.gd; per faction its partners, the wars declared on it and by it, its regions at 60).
+`--lanes-at-peace` (the test tool `CLanes.at_peace` and the three knobs below at 0) plays the old rule and reproduced
+the HEAD hashes of all 144 campaigns. What the rule takes: 1-17 gold a turn a faction (England 15.3 of its 78 lane
+gold, New Spain 16.8 of 158, Carthage 4.6 of 48), under 1 % of anyone's income; a trade agreement itself pays
+`TRADE_BASE` 80 + 15 a region (cap 260) a turn, so the treaty is worth far more than the lanes it opens.
+
+As built (`campaign/cai.gd` `_lane_treaties` and `why("trade")`; `campaign/cai_profile.gd` ids `SK_SUPPORT + 71` ..
+`+ 73`, `N_KNOBS` `SK_SUPPORT + 74`):
+
+- **Proposing** (`_lane_treaties`, in `diplomacy` after the neighbours' trade and the kin treaty): for each live faction
+  at mere peace with it for `TRADE_ASK_TURNS`, not friendly, whose lanes with its ports would bring it
+  `LANE_TREATY_MIN` gold a turn (`CLanes.treaty_value`), neighbours or not: to another AI `LANE_TREATY_ASK` % a turn, to
+  a player `TRADE_ASK_CHANCE` % (the proposal waits for the answer; `_propose` never asks twice). Pirates make none
+  (their diplomacy is their own).
+- **Answering** (`why("trade")`, the one place, so the Diplomacy page's "Would accept" reads it too): a trade agreement
+  whose lanes bring the AI asked `LANE_TREATY_MIN` a turn is taken `LANE_TREATY_TRUST` below the trust floor
+  (`CDip.FLOOR_TRADE`) and without the strength test (`TRADE_ACCEPT_PCT`: a strong faction refused a much weaker one);
+  `TRADE_ACCEPT_TURNS` of peace still needed. Both sides are valued: the asker by its gold, the answer by its own.
+- Treaty breaks cost what they did (`REP_TREATY_BREAK`, `TRADE_WAR_DIV`, `WAR_PARTNER_*`): nothing new.
+
+| knob | Easy | Average | Skilled | what |
+|---|---|---|---|---|
+| `LANE_TREATY_MIN` (`SK_SUPPORT + 71`) | 8 | 4 | 4 | the lane gold a turn that makes a treaty worth seeking or taking (0 off) |
+| `LANE_TREATY_ASK` (`SK_SUPPORT + 72`) | 20 | 40 | 60 | % a turn an AI proposes it to another AI |
+| `LANE_TREATY_TRUST` (`SK_SUPPORT + 73`) | 0 | 10 | 10 | the trust floor lowered by this for such a treaty |
+
+- **The raid valuation** (`CLanes.raid_state`, read by `CAIFleet._lane_gold`): a lane idle for want of an agreement is
+  valued as if its owners traded (at war still nothing). A raider holds a lane to deny its trade, and an idle lane may
+  trade again the turn its owners sign.
+
+Why the raid valuation (found by ablation after the first build, 2026-11-09). Built first with the raids valued by
+the lane's payment now, the West moved: England's income 2,798 -> 2,185 a turn, its regions at 60 5.0 -> 3.8, New
+Spain's 10.8 -> 12.8, the Miskito eliminated in 7 of 72 campaigns (was 0), the Dutch richer (2,021 -> 2,479). The rule
+alone (`LANE_TREATY_MIN` 0) did the same, and England's lane gold lost was 15 a turn, so it was a decision, not the
+money. The rule draws no `CState.rand`: a side-by-side probe (12 West seeds, old rule against new, AI lane knobs 0)
+diverged at turn 1 in every seed with the RNG in step until the fleets' orders: the fleets of New Spain, Tierra Firme
+and England sailed differently, and with the raid valuation pinned to the old payment the turn-1 RNG and every fleet
+move were identical. The cause: New Spain and Tierra Firme start at mere peace, so the Carrera de Indias (Havana -
+Portobelo 28, Havana - Cartagena 24, Havana - New Orleans and New Orleans - Veracruz 12) and England's Port Royal -
+Portobelo / Cartagena (20 each) were idle from turn 1, worth nothing to a raider: the English raiders (the weaker navy)
+left the lanes by Jamaica and ranged out, wars on England rose (Tierra Firme 38 -> 39-46, New Spain 16 -> 24-29 over
+72 campaigns), England's own wars fell (France 35 -> 16-17, the Brethren 38 -> 24-25), and the Spanish turned on the
+Miskito (Tierra Firme's wars on them 24 -> 34-43). The diplomacy was not it: no war or peace decision reads lane
+income or the number of partners (the treaty terms, `TRADE_WAR_DIV`, `WAR_PARTNER_*`, `REP_TREATY_BREAK`, read only a
+dip of TRADE), and with the raid valuation pinned the AI's extra treaties change England by nothing measurable.
+Ablations, West, 72 x 60 (income a turn / regions at 60 / eliminated): England 2,799 / 5.0 / 1 at HEAD, the rule alone
+2,071 / 3.4 / 6, the rule alone with the raids pinned 2,866 / 5.3 / 0; the built AI 2,185 / 3.8 / 2, with the raids
+valued as now 2,907 / 5.1 / 2; Miskito 2,491 / 5.8 / 0, 2,379 / 5.3 / 2, 2,469 / 5.6 / 2, 2,389 / 5.0 / 7, 2,512 / 5.6 / 1.
+
+Measured after (before -> after, the same 72 seeds a pack; the raid valuation as built):
+
+| | Rome | West |
+|---|---|---|
+| trade agreements standing at turns 20 / 40 / 60 | 9.0 / 6.6 / 5.8 -> 9.0 / 8.0 / 6.6 | 10.1 / 9.4 / 8.9 -> 10.8 / 10.0 / 10.0 |
+| alliances standing at 20 / 40 / 60 | 0.7 / 1.1 / 1.3 -> 0.8 / 1.2 / 1.4 | 3.3 / 3.6 / 3.8 -> 3.4 / 3.8 / 3.9 |
+| agreements made a campaign (all AI-to-AI trade proposals taken) | 16.1 of 32.4 -> 17.8 of 35.2 | 15.6 of 34.9 -> 18.4 of 37.0 |
+| ... of which lane treaties proposed / taken | 0 -> 12.3 / 5.4 | 0 -> 16.6 / 8.2 |
+| eliminations a campaign | 2.0 +- 0.3 -> 1.7 +- 0.3 | 0.3 +- 0.1 -> 0.4 +- 0.1 |
+| eliminations in turns 1-20 / 21-40 / 41-60 | 0.28 / 1.00 / 0.68 -> 0.22 / 0.75 / 0.76 | 0.00 / 0.08 / 0.21 -> 0.01 / 0.12 / 0.22 |
+| battles a campaign | 40.4 +- 2.0 -> 38.0 +- 1.9 | 44.4 +- 1.7 -> 43.6 +- 1.9 |
+| wars declared a campaign | 9.0 +- 0.5 -> 9.3 +- 0.5 | 9.0 +- 0.5 -> 8.4 +- 0.5 |
+
+Per faction (lane gold a turn, income a turn, regions at 60): the Dutch 41.8 -> 40.6, 2,015 -> 2,026, 5.0 -> 5.2;
+Carthage 48.0 -> 44.4, 3,408 -> 3,389, 8.8 -> 8.5; Syracuse 21.7 -> 22.4, 1,805 -> 2,009, 2.4 -> 3.4; the Brethren 5.7
+-> 4.7, 491 -> 498; England 77.7 -> 74.3, 2,798 -> 2,901, 5.0 -> 5.1; New Spain 10.8 -> 11.1 regions; the Miskito
+eliminated in 0 -> 1 of 72, regions 5.8 -> 5.6; the Itza 5.0 -> 4.4 regions. None gutted, the West's shape as before.
+The lane gold left unsigned at mere peace: 0.2-6.1 a turn a faction (was 0.6-17 paid).
+
+Open: Rome's Iberians come out a little poorer (regions at 60 6.2 -> 4.7, income 2,324 +- 135 -> 2,147 +- 137,
+eliminated 12 -> 18 of 72; the intervals overlap); the Itza 5.0 -> 4.4 regions. A raider on an idle lane takes
+nothing until its owners sign (the AI keeps its station there as before; a player sees no badge, the lane pays nothing).

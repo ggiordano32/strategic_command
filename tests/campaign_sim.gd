@@ -52,6 +52,7 @@ const CP := preload("res://campaign/cai_profile.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CDip := preload("res://campaign/cdip.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 var seeds := 4
@@ -85,6 +86,7 @@ var ai_alliances := -1
 var vetm := {}               # this seed's veterancy tallies (the --json line's "vet"): units by level per faction at turns 30 and 60, retrains; and its end ("end": eliminated turn per faction, battles, field)
 var bldm := {}               # (2026-11-09, docs/AI.md 76) this seed's build order and roster (the --json line's "bld"): best chain levels per faction at turns 20 / 40 / 60, recruits per unit row, the first turn each roster row's buildings stood in a region of the faction, retrains, the siege-guns counters
 var dipm := {}               # this seed's diplomacy tallies (wars, calls, alliances, trust gains), in the --json line
+var lanem := {}              # (2026-11-09, lanes trade by agreement) this seed's lane trade (the --json line's "lane"): per faction key [lane income, total income, turns alive, lane income from ports of another owner at peace without a treaty (paid), its potential (the halves), paying lanes] summed over the turns; trade agreements and alliances standing at turns 20 / 40 / 60; trade agreements made and ended; the AI's trade proposals and acceptances (CP counters)
 var _tr_allies: Array = []   # trace: the traced faction's allies at the end of the last turn
 var _tr_landed := {}         # trace: "f:r" -> turn of the last landing (a fleet's army put ashore) there
 var _trace_key := ""        # --ai-alliances=0|1: the creation setting (format 10; -1 the default)
@@ -114,6 +116,11 @@ func _init() -> void:
 			pack = a.get_slice("=", 1)
 		elif a == "--twice":
 			twice = true
+		elif a == "--lanes-at-peace":
+			CLanes.at_peace = true  # (2026-11-09 ablation) the lanes pay at mere peace and the AI seeks no lane treaty: as before lanes traded by agreement
+			for lv in 3:
+				for kk in [CP.LANE_TREATY_MIN, CP.LANE_TREATY_ASK, CP.LANE_TREATY_TRUST]:
+					knobs.append([lv, kk, 0])
 		elif a == "--no-beasts":
 			CAI.no_beasts = true  # (the AI recruits none of CAI.BEAST_LINES)
 		elif a == "--no-buildup":
@@ -157,7 +164,7 @@ func _init() -> void:
 	for sd in range(seed0, seed0 + seeds):
 		var h1 := _run(sd, true)
 		if jf != null:
-			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm, "bld": bldm}))
+			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm, "bld": bldm, "lane": lanem}))
 			jf.flush()
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
@@ -247,6 +254,95 @@ func _build_tally(st: Dictionary, t: int) -> void:
 			bldm["lv"][tk][fk] = lv
 
 
+## (2026-11-09, lanes trade by agreement) The lane trade of the turn just resolved (turn t; lanem): per faction alive
+## its lane income and total income (CRules.income), the lane income its ports draw from a port of another owner at
+## mere peace (dip PEACE, not one team: paid before the rule, nothing after) and that income's potential (the lane's
+## halves), its paying lanes; the trade agreements and alliances standing at turns 20 / 40 / 60; agreements made and
+## ended this turn; per faction key (fx) its trade partners and allies at turns 20 / 40 / 60, the wars declared on
+## it and by it, its regions at turn 60; every war [by, on, turn, why]; lane raids "raider>owner" (the lane_raided rows, each
+## end owner); per faction [lane gold lost to raids, blockades and sieges, its raiders' take, lanes it raids] summed
+## over the turns. A summary, never state.
+func _lane_tally(st: Dictionary, t: int) -> void:
+	for e in st["events"]:
+		if int(e["turn"]) != t:
+			continue
+		if str(e["k"]) == "war" and int(e.get("a", -1)) >= 0 and int(e.get("b", -1)) >= 0:
+			lanem["wars"].append([str(CData.FACTIONS[int(e["a"])]["key"]), str(CData.FACTIONS[int(e["b"])]["key"]), t + 1, str(e.get("why", ""))])
+			for side in 2:
+				var wk := str(CData.FACTIONS[int(e["b" if side == 0 else "a"])]["key"])
+				var wx: Array = lanem["fx"].get(wk, [0, 0, 0, 0, 0, 0])
+				wx[3 + side] = int(wx[3 + side]) + 1
+				lanem["fx"][wk] = wx
+		if str(e["k"]) == "trade":
+			lanem["trade_made"] = int(lanem["trade_made"]) + 1
+		if str(e["k"]) == "lane_raided":
+			for side in ["from", "to"]:
+				if int(e.get(side, -1)) >= 0 and int(e["f"]) >= 0:
+					var rk := "%s>%s" % [str(CData.FACTIONS[int(e["f"])]["key"]), str(CData.FACTIONS[int(e[side])]["key"])]
+					lanem["raids"][rk] = int(lanem["raids"].get(rk, 0)) + 1
+		elif str(e["k"]) == "trade_end":
+			lanem["trade_end"] = int(lanem["trade_end"]) + 1
+	var n := CState.nf()
+	var peace_paid: Array = []
+	var peace_pot: Array = []
+	for f in n:
+		peace_paid.append(0)
+		peace_pot.append(0)
+	if CState.grid_on(st) and not CData.SEA_LANES.is_empty():
+		var rt := CLanes.raiders(st)
+		for id in CLanes.count():
+			var ls := CLanes.lane_state(st, id, rt)
+			var oa := int(ls["oa"])
+			var ob := int(ls["ob"])
+			if oa < 0 or ob < 0 or oa == ob or CState.same_team(st, oa, ob) or CState.dip(st, oa, ob) != CState.PEACE:
+				continue
+			var v := int(ls["v"])
+			peace_paid[oa] = int(peace_paid[oa]) + int(ls["pa"])
+			peace_paid[ob] = int(peace_paid[ob]) + int(ls["pb"])
+			peace_pot[oa] = int(peace_pot[oa]) + v / 2
+			peace_pot[ob] = int(peace_pot[ob]) + v - v / 2
+	for f in n:
+		if not CState.alive(st, f):
+			continue
+		var fk := str(CData.FACTIONS[f]["key"])
+		var inc := CRules.income(st, f)
+		var row: Array = lanem["f"].get(fk, [0, 0, 0, 0, 0, 0])
+		row[0] = int(row[0]) + int(inc.get("lanes", 0))
+		row[1] = int(row[1]) + int(inc["total"])
+		row[2] = int(row[2]) + 1
+		row[3] = int(row[3]) + int(peace_paid[f])
+		row[4] = int(row[4]) + int(peace_pot[f])
+		row[5] = int(row[5]) + int(inc.get("lanes_n", 0))
+		lanem["f"][fk] = row
+		var lr: Array = lanem["lost"].get(fk, [0, 0, 0])
+		lr[0] = int(lr[0]) + int(inc.get("lanes_lost", 0))
+		lr[1] = int(lr[1]) + int(inc.get("lane_take", 0))
+		lr[2] = int(lr[2]) + int(inc.get("lane_raided", 0))
+		lanem["lost"][fk] = lr
+	var tix := [20, 40, 60].find(int(st["turn"]))
+	if tix >= 0:
+		for f in n:
+			if not CState.alive(st, f):
+				continue
+			var fk2 := str(CData.FACTIONS[f]["key"])
+			var fx: Array = lanem["fx"].get(fk2, [0, 0, 0, 0, 0, 0])
+			for g in n:
+				if g != f and CState.alive(st, g) and not CState.same_team(st, f, g) and CState.dip(st, f, g) >= CState.TRADE:
+					fx[tix] = int(fx[tix]) + 1
+			if tix == 2:
+				fx[5] = CState.regions_of(st, f).size()
+			lanem["fx"][fk2] = fx
+		for f in n:
+			for g in range(f + 1, n):
+				if not CState.alive(st, f) or not CState.alive(st, g) or CState.same_team(st, f, g):
+					continue
+				var d := CState.dip(st, f, g)
+				if d == CState.TRADE:
+					lanem["trade_t"][tix] = int(lanem["trade_t"][tix]) + 1
+				elif d == CState.ALLIED:
+					lanem["allied_t"][tix] = int(lanem["allied_t"][tix]) + 1
+
+
 ## Veterancy: per faction key, its army units by level [0, 1, 2, 3] (xp 300 / 700 / 1,200; read inline so the
 ## script runs on a build without veterancy too).
 func _vet_hist(st: Dictionary) -> Dictionary:
@@ -315,6 +411,7 @@ func _run(sd: int, verbose: bool) -> String:
 		var shore := {"contested": {}, "set": 0, "support": 0, "landed": 0, "lost": 0, "fired": 0, "inland": 0, "none": 0}
 		var was_afloat := {}  # army id -> 1: afloat at the end of the last turn
 		vetm = {"retrains": 0, "retrain_f": {}, "rt_why": {}}
+		lanem = {"f": {}, "trade_t": [0, 0, 0], "allied_t": [0, 0, 0], "trade_made": 0, "trade_end": 0, "elim_t": {}, "fx": {}, "wars": [], "raids": {}, "lost": {}}
 		bldm = {"lv": {}, "rec": {}, "avail": {}, "ret": {}, "aic": {}}
 		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
 			"alliances_left": 0, "kept_faith": 0, "town_gain": 0, "battle_gain": 0}
@@ -355,6 +452,7 @@ func _run(sd: int, verbose: bool) -> String:
 			_count_sieges(st, t)
 			_tally(st, t)
 			_build_tally(st, t)
+			_lane_tally(st, t)
 			if t + 1 == 30 or t + 1 == 60:
 				vetm["t%d" % (t + 1)] = _vet_hist(st)
 			if CRules.vet_on(st):
@@ -469,6 +567,11 @@ func _run(sd: int, verbose: bool) -> String:
 			if dead_at.has(f):
 				ek.append(str(CData.FACTIONS[f]["key"]))
 		dipm["alliances_t60"] = standing
+		for f in CState.nf():
+			if dead_at.has(f):
+				lanem["elim_t"][str(CData.FACTIONS[f]["key"])] = int(dead_at[f])
+		for ck in [CP.C_TRADE_ASKS, CP.C_TRADE_DEALS, CP.C_LANE_ASKS, CP.C_LANE_DEALS]:
+			lanem[ck] = int(CP.totals()[CP.COUNTER_KEYS.find(ck)])
 		dipm["elim"] = ek
 		dipm["battles"] = int(st["stats"]["battles"])
 		dipm["field"] = int(sg["field"])

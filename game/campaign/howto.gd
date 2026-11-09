@@ -40,7 +40,7 @@ const T := {
 	"sea_2": "Select the fleet and tap the sea to sail: the shaded water is how far it gets this turn, and the wind matters. Tap a lit beach to land the troops aboard.",
 	"sea_3": "Enemy fleets can fight yours at sea, and a fleet that lies off an enemy harbour blockades its trade.",
 	# 8. Diplomacy and goals
-	"dip_1": "Open Diplomacy to see every nation. You can propose trade or an alliance, give a gift, or declare war. The answer comes when the turn ends.",
+	"dip_1": "Open Diplomacy to see every nation. You can propose trade or an alliance, give a gift, or declare war. The answer comes when the turn ends. A sea lane between your port and another nation's pays, and carries ships, only while you trade with that nation or are allied.",
 	"dip_2": "Trust matters: nations that trust you accept more, and breaking a treaty or attacking a friend costs you trust.",
 	"dip_3": "Goals shows how to win: hold enough regions and great cities. Realm sums up your gold, income and upkeep, and the chronicle records what happened.",
 

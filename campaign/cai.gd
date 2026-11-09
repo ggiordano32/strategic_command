@@ -95,6 +95,7 @@ const CGrid := preload("res://campaign/cgrid.gd")
 const CP := preload("res://campaign/cai_profile.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CSea := preload("res://campaign/csea.gd")
+const CLanes := preload("res://campaign/clanes.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
 const CDip := preload("res://campaign/cdip.gd")
 
@@ -2086,6 +2087,9 @@ static func why(st: Dictionary, from: int, to: int, what: String, vs: int = -1) 
 	var sc := CDip.score(st, to, from)
 	# (docs/AI.md 61) The ambition's treaty: the kin's trade agreement is taken below the floor, whatever the strengths.
 	var kin_t := kn[CP.AMB_TREATY] > 0 and CData.kin(from, to) and CData.ambition_treaty(to) == "kin"
+	# (docs/AI.md 77) Lanes trade by agreement: a trade agreement whose lanes bring `to` LANE_TREATY_MIN a turn.
+	var lane_t := what == "trade" and kn[CP.LANE_TREATY_MIN] > 0 and CLanes.by_agreement(st) \
+			and int(CLanes.treaty_value(st, to, from)[0]) >= kn[CP.LANE_TREATY_MIN]
 	match what:
 		"peace":
 			if CSea.pirate(to) and st.has("fleets") and not _losing_war(st, to):
@@ -2100,13 +2104,13 @@ static func why(st: Dictionary, from: int, to: int, what: String, vs: int = -1) 
 				return ""
 			return "they expect to win (the war is %d of %d turns old)" % [since, kn[CP.PEACE_ACCEPT_LONG]]
 		"trade":
-			var tsc := sc + (kn[CP.AMB_TREATY] if kin_t else 0)
+			var tsc := sc + (kn[CP.AMB_TREATY] if kin_t else 0) + (kn[CP.LANE_TREATY_TRUST] if lane_t else 0)
 			if CDip.on(st) and tsc < CDip.FLOOR_TRADE:
 				return "they do not trust you (%d, %d needed)" % [tsc, CDip.FLOOR_TRADE]
 			var since2 := CState.dip_since(st, from, to)
 			if since2 < kn[CP.TRADE_ACCEPT_TURNS]:
 				return "at peace only %d of %d turns" % [since2, kn[CP.TRADE_ACCEPT_TURNS]]
-			if kin_t or mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]:
+			if kin_t or lane_t or mine * 100 < theirs * kn[CP.TRADE_ACCEPT_PCT]:
 				return ""
 			return "they see themselves as the stronger"
 		"cancel_trade":
@@ -2271,6 +2275,8 @@ static func diplomacy(st: Dictionary, f: int) -> void:
 			_propose(st, f, g, "trade")
 	if kn[CP.AMB_TREATY] > 0 and CData.ambition_treaty(f) == "kin":
 		_kin_treaty(st, f)
+	if kn[CP.LANE_TREATY_MIN] > 0 and CLanes.by_agreement(st) and CState.grid_on(st) and not CData.SEA_LANES.is_empty():
+		_lane_treaties(st, f, kn)
 	if CDip.on(st) and kn[CP.ALLY_PROPOSE] > 0:
 		_seek_ally(st, f, kn)
 	if st.has("fleets"):
@@ -2616,6 +2622,29 @@ static func _kin_treaty(st: Dictionary, f: int) -> void:
 			_propose(st, f, g, "trade")
 
 
+## (docs/AI.md 77, 2026-11-09) Lanes trade by agreement: AI f proposes a trade agreement to each live faction at
+## mere peace with it for TRADE_ASK_TURNS whose lanes with f's ports would bring f LANE_TREATY_MIN gold a turn or
+## more (CLanes.treaty_value), neighbours or not: to another AI LANE_TREATY_ASK % a turn (it answers by why(), which
+## takes a treaty its own lanes pay for below the trust floor and without the strength test), to a player
+## TRADE_ASK_CHANCE % (the proposal waits for the answer: _propose never asks twice).
+static func _lane_treaties(st: Dictionary, f: int, kn: PackedInt32Array) -> void:
+	for g in CState.nf():
+		if g == f or not CState.alive(st, g) or CState.dip(st, f, g) != CState.PEACE or CState.friendly(st, f, g):
+			continue
+		if CState.dip_since(st, f, g) < kn[CP.TRADE_ASK_TURNS]:
+			continue
+		if int(CLanes.treaty_value(st, f, g)[0]) < kn[CP.LANE_TREATY_MIN]:
+			continue
+		var human := CState.is_human(st, g)
+		if CState.rand(st, 100) >= (kn[CP.TRADE_ASK_CHANCE] if human else kn[CP.LANE_TREATY_ASK]):
+			continue
+		if not human:
+			CP.count(CP.C_LANE_ASKS, f)
+		_propose(st, f, g, "trade")
+		if not human and CState.dip(st, f, g) == CState.TRADE:
+			CP.count(CP.C_LANE_DEALS, f)
+
+
 static func _neighbours(st: Dictionary, f: int, g: int) -> bool:
 	for r in CState.regions_of(st, f):
 		for e in CData.adjacent(r):
@@ -2638,7 +2667,11 @@ static func _propose(st: Dictionary, f: int, g: int, what: String) -> void:
 		(st["proposals"] as Array).append({"id": id, "from": f, "to": g, "what": what, "turn": int(st["turn"])})
 		CRules.event(st, {"k": "proposal", "from": f, "to": g, "what": what, "id": id})
 		return
+	if what == "trade":
+		CP.count(CP.C_TRADE_ASKS, f)
 	if accepts(st, f, g, what):
+		if what == "trade":
+			CP.count(CP.C_TRADE_DEALS, f)
 		CRules.apply_agreement(st, f, g, what)
 
 

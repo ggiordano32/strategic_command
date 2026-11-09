@@ -262,7 +262,17 @@ const TRAIN_WS := SK_SUPPORT + 67
 const GUN_MIX := SK_SUPPORT + 68
 const BU_FUND_TURNS := SK_SUPPORT + 69
 const BU_FUND_SAFE_PCT := SK_SUPPORT + 70
-const N_KNOBS := SK_SUPPORT + 71
+## (2026-11-09, docs/AI.md 77) Lanes trade by agreement (format 10: a sea lane between ports of two owners pays only
+## with a trade agreement or an alliance; CLanes.treaty_value). LANE_TREATY_MIN: the gold a turn the lanes between our
+## ports and a faction's at mere peace would bring us for a trade agreement to be worth seeking (0 off: no lane
+## proposals, no lane terms in the answer); LANE_TREATY_ASK: the % chance a turn an AI proposes it to another AI so
+## worth it (to a player: TRADE_ASK_CHANCE), after TRADE_ASK_TURNS of peace, neighbours or not; LANE_TREATY_TRUST: an
+## AI asked for a trade agreement whose lanes bring it at least LANE_TREATY_MIN takes it this much below the trust
+## floor (CDip.FLOOR_TRADE) and without the strength test (TRADE_ACCEPT_PCT).
+const LANE_TREATY_MIN := SK_SUPPORT + 71
+const LANE_TREATY_ASK := SK_SUPPORT + 72
+const LANE_TREATY_TRUST := SK_SUPPORT + 73
+const N_KNOBS := SK_SUPPORT + 74
 
 # Deliberate mistakes (docs/AI.md 4, "Deliberate mistakes (campaign)"),
 # rolled with CState.rand at the decision point (cai.gd _mistake); each is a
@@ -467,6 +477,10 @@ const KNOBS: Array = [
 	[GUN_MIX, 0, 5, 5],
 	[BU_FUND_TURNS, 0, 8, 8],
 	[BU_FUND_SAFE_PCT, 0, 150, 150],
+	# Lanes trade by agreement (docs/AI.md 77, 2026-11-09): Easy asks less often, for richer lanes, and trusts no less.
+	[LANE_TREATY_MIN, 8, 4, 4],
+	[LANE_TREATY_ASK, 20, 40, 60],
+	[LANE_TREATY_TRUST, 0, 10, 10],
 ]
 
 ## Personality offsets [knob, CAUTIOUS, BALANCED, AGGRESSIVE] (docs/AI.md 5:
@@ -591,10 +605,16 @@ const C_FERRY_REFUSED := "ferries_refused"   # transports called off: a city of 
 const C_SORTIES := "sorties"                 # docked fleets sent out of port against an enemy fleet lying off it
 # Wars the AI can cover (docs/AI.md 43).
 const C_WAR_UNCOVERED := "wars_uncovered"    # war declarations called off: a region of ours open to the enemy
+# Trade agreements (2026-11-09, lanes trade by agreement; docs/AI.md 77).
+const C_TRADE_ASKS := "trade_asks"           # trade agreements an AI proposed to another AI
+const C_TRADE_DEALS := "trade_deals"         # ... of those, accepted by the AI asked at once
+const C_LANE_ASKS := "lane_trade_asks"       # trade agreements proposed for the lane income they unlock (LANE_TREATY_*)
+const C_LANE_DEALS := "lane_trade_deals"     # ... of those, accepted at once
 const COUNTER_KEYS: Array[String] = [C_BAD_ODDS, C_EMPTY_CITY, C_TWO_FRONTS, C_TRICKLED,
 	C_MK_EMPTY_CITY, C_MK_BAD_ODDS, C_MK_OVER_RECRUIT, C_MK_UNWISE_WAR, C_MK_NO_GARRISON,
 	C_SK_TWO_TO_ONE, C_SK_HUNT_DECLINED, C_SK_INTERCEPT, C_SK_TIMED, C_SK_MERGE, C_SK_RALLY, C_SK_FALLBACK,
-	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES, C_WAR_UNCOVERED, C_SIEGE_GUNS, C_SIEGE_WAIT]
+	C_SK_STORM_RELIEF, C_SEA_HOLD, C_FERRY_REFUSED, C_SORTIES, C_WAR_UNCOVERED, C_SIEGE_GUNS, C_SIEGE_WAIT,
+	C_TRADE_ASKS, C_TRADE_DEALS, C_LANE_ASKS, C_LANE_DEALS]
 
 static var _counters := {}
 

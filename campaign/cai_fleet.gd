@@ -925,7 +925,7 @@ static func _raid(st: Dictionary, f: int, fl: Dictionary, taken: Dictionary, rt:
 
 ## What lane id pays now to the ports of its owners at war with f.
 static func _lane_gold(st: Dictionary, f: int, id: int) -> int:
-	var ls := CLanes.lane_state(st, id, {})
+	var ls := CLanes.raid_state(st, id, {})
 	var v := 0
 	if int(ls["oa"]) >= 0 and CState.at_war(st, f, int(ls["oa"])):
 		v += int(ls["pa"])

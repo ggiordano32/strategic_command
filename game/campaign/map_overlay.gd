@@ -1512,6 +1512,17 @@ func raided_info(id: int, rt: Dictionary) -> Dictionary:
 	return {"f": int(ls["rf"]), "fleet": fl, "seen": seen}
 
 
+## (2026-11-09, lanes trade by agreement) Lane id pays nothing for want of a trade agreement (CLanes.idle) and the
+## player owns one of its ports (every such lane when there is no player): a tap on it says why.
+func idle_info(id: int) -> bool:
+	if not CLanes.idle(state, id) or MapView.lane_poly(id).size() < 2:
+		return false
+	if player < 0:
+		return true
+	var e: Array = CLanes.ends(id)
+	return CState.same_team(state, player, CState.owner(state, int(e[0]))) or CState.same_team(state, player, CState.owner(state, int(e[1])))
+
+
 ## The raiding fleets' ids (fleets named by raided_info), for the "raider" tag on their pennants.
 func raider_fleet_ids() -> Dictionary:
 	var out := {}
@@ -1529,7 +1540,7 @@ func lane_at_info(p: Vector2) -> int:
 	var ids: Array = []
 	var rt := CLanes.raiders(state)
 	for id in CLanes.count():
-		if CLanes.at_war(state, id) or not raided_info(id, rt).is_empty():
+		if CLanes.at_war(state, id) or not raided_info(id, rt).is_empty() or idle_info(id):
 			ids.append(id)
 	return lane_at(p, ids)
 

@@ -2,8 +2,11 @@ extends Node2D
 ## Small merchant sails on the sea lanes that carry trade this turn (view only; docs/design/overworld_view.md "Lane
 ## traders, the ambient ships retired"). Reads the campaign state as the lane rules define it (CLanes.lane_state):
 ## a lane whose ports both pay gets two sails, one each way along its curve; a lane paying one end only gets one,
-## sailing towards that end; a raided lane gets one; a blockaded or besieged end, a lane between ports at war, an
-## exit lane (the flota's: its token stays) get none. The sails move by the frames' time from a per-lane phase, on a
+## sailing towards that end (one owner and an unowned port: an independent's town, never paid); a raided lane gets
+## one; a blockaded or besieged end, a lane between ports at war, a lane between ports of two owners with no trade
+## agreement or alliance (2026-11-09, lanes trade by agreement: mere peace pays nothing in a format 10 campaign;
+## CLanes.trades), an exit lane (the flota's: its token stays) get none. One owner at both ends, or one team, trades
+## as always. sails() is the count, read from lane_state alone. The sails move by the frames' time from a per-lane phase, on a
 ## constant speed in map px, looping with a fade at each port. One node between the sea part and the fleets, drawn
 ## in screen space from the overlay's current transform every frame (so nothing lags or pops while panning) and as
 ## ONE triangle array (no node, no draw call per ship). Dead simple to delete: remove this file, its three lines in
@@ -59,9 +62,9 @@ func _rebuild() -> void:
 		var ls := CLanes.lane_state(st, id, rt)
 		var pa := int(ls["pa"])
 		var pb := int(ls["pb"])
-		if int(ls["la"]) > 0 or int(ls["lb"]) > 0 or pa + pb <= 0:
-			continue   # a blockaded or besieged end, no trade, or at war
-		var raided := int(ls["cuta"]) + int(ls["cutb"]) > 0
+		var n := sails(ls)
+		if n == 0:
+			continue   # a blockaded or besieged end, no trade (at war, or no agreement), or a lane worth nothing
 		var met := _metric(id, poly)
 		var cum: PackedFloat32Array = met[1]
 		var e: Array = CLanes.ends(id)
@@ -73,7 +76,7 @@ func _rebuild() -> void:
 		var a_to_b := 1 if fwd else -1   # +1: towards the curve's end, -1: towards its start
 		var ships: Array = []
 		var ph := float((id * 37 + 11) % 100) / 100.0   # per-lane phase, so the lanes do not move as one
-		if pa > 0 and pb > 0 and not raided:
+		if n == 2:
 			ships.append([a_to_b, ph])
 			ships.append([-a_to_b, fmod(ph + 0.37, 1.0)])
 		elif pa > 0 and pb > 0:
@@ -81,6 +84,18 @@ func _rebuild() -> void:
 		else:
 			ships.append([-a_to_b if pa > 0 else a_to_b, ph])   # goods flow to the end that is paid
 		_lanes.append([poly, cum, float(cum[cum.size() - 1]), ships])
+
+
+## The sails a port lane carries, from its CLanes.lane_state `ls` alone: 0 (a blockaded or besieged end, or nothing paid:
+## at war, no trade agreement, a lane worth nothing), 2 (both ends paid, not raided), else 1.
+static func sails(ls: Dictionary) -> int:
+	var pa := int(ls["pa"])
+	var pb := int(ls["pb"])
+	if int(ls["la"]) > 0 or int(ls["lb"]) > 0 or pa + pb <= 0:
+		return 0
+	if pa > 0 and pb > 0 and int(ls["cuta"]) + int(ls["cutb"]) == 0:
+		return 2
+	return 1
 
 
 func _metric(id: int, poly: PackedVector2Array) -> Array:

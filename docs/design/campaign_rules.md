@@ -2324,3 +2324,53 @@ battle (as built, 2026-11-09)", the words to the player ui.md "The weather chip 
   reload between turns).
 - Tests: campaign_test (`_battles`: the key on a version 10 battle, the same on a second resolve, in the scenario; the
   season mapping; an older battle with no key fought on a clear day; version 8 makes none), pack_test.
+
+### Lanes trade by agreement (as built, 2026-11-09)
+
+The owner: "Trade lines should only show ships moving along them when trade is active between the owners of the
+regions." Until now a port lane paid both ends' owners whenever they were not at war (docs/CAMPAIGN.md "Lane trade,
+raids and blockades"; the war rule of 2026-10-23), so two nations merely at peace traded along it.
+
+- **The rule** (`campaign/clanes.gd` `trades`, `idle`, `lane_state`): a port lane between ports of two different owners
+  pays, and carries the merchant sails on the map, only while the owners have a trade agreement or an alliance (dip
+  TRADE or ALLIED) or are on one team. At mere peace it pays neither end (an *idle* lane, `CLanes.idle`); at war nothing,
+  as before (`CLanes.at_war`; a lane is at war or idle, never both). One owner at both ends pays the whole value as
+  before. Blockades, sieges, raids (a raid on a lane that pays nothing cuts nothing, as on a lane at war), the exit lanes
+  and the flota are unchanged; every income and view reader goes through `lane_state`, so nothing else computes a
+  lane's payment. The AI's raid valuation (`cai_fleet._lane_gold`, `CLanes.raid_state`) values an idle lane as if its
+  owners traded (a raider holds a lane to deny its trade, and an idle lane may trade again the turn they sign): valued
+  by the payment, the idle Carrera de Indias at the start (New Spain and Tierra Firme begin at mere peace) took the
+  English raiders' targets away from turn 1 and moved the West's pacing (docs/AI.md 77).
+- **Unowned ends.** An independent's town (owner -1) is unowned: never paid, and it does not stop the owned end's half
+  (as before). The West's tribes (the Itza, the Miskito) and the Brethren are factions, so their ports need the
+  agreement like anyone's (the Brethren seldom sign one: the pirates make no proposals; they may take one).
+- **Formats.** The rule reads existing keys and is gated on the format 10 diplomacy (`CLanes.by_agreement`: the trust
+  arrays, `CDip.on`): formats 6 and 8 (and older), where a trade agreement exists too but the AI's diplomacy is the old
+  one, keep trading at mere peace, exactly as before (their campaign_sim pins unchanged). No `CState.VERSION` bump.
+- **What a treaty opens** (`CLanes.treaty_value(st, f, g)`: [gold to f, gold to g, lanes]): the halves of every port
+  lane between f's ports and g's at their value now, a blockaded or besieged end's half not counted, raids not. The
+  Diplomacy row of a faction shows it ("A trade agreement opens 3 sea lanes: +12 a turn to us, +11 to them."; trading:
+  "3 sea lanes trade with them: +12 a turn."; at war: "3 sea lanes idle while at war (+12 a turn with a trade
+  agreement)."), beside the agreement's own trade income (`TRADE_BASE` 80 + 15 a region of the smaller partner, cap 260,
+  unchanged).
+- **Telling the player.** A tap on an idle lane with a port of the player's: "No trade agreement with Spain: the Havana -
+  Veracruz lane pays nothing. Offer trade on the Diplomacy page (an alliance trades too)."; a port's "Sea lanes" note
+  names the owners it lacks an agreement with ("... pay this port 12 a turn of 36 (no trade agreement with France)");
+  How to play's Diplomacy line: "A sea lane between your port and another nation's pays, and carries ships, only while
+  you trade with that nation or are allied." The sails: overworld_view.md "Lane traders".
+- **The AI** (docs/AI.md 77): it proposes a trade agreement where the lanes between its ports and a faction's at mere
+  peace would bring it `LANE_TREATY_MIN` gold a turn, neighbours or not, and takes one its own lanes pay for below the
+  trust floor (`LANE_TREATY_TRUST`) and without the strength test.
+- **Measured** (campaign_sim `--format=10`, 72 seeds x 60 turns a pack, every faction Average; the counters in the
+  `--json` line's `lane` field; `--lanes-at-peace` plays the old rule exactly): the income the rule takes is small, 1-17
+  gold a turn a faction (under 1 % of income); trade agreements standing rise (Rome 9.0 / 6.6 / 5.8 -> 9.0 / 8.0 / 6.6
+  at turns 20 / 40 / 60, West 10.1 / 9.4 / 8.9 -> 10.8 / 10.0 / 10.0); the lane-living factions keep their trade (lane
+  gold a turn: the Dutch 42 -> 41, Carthage 48 -> 44, Syracuse 22 -> 22, the Brethren 6 -> 5); eliminations (Rome 2.0 ->
+  1.7, West 0.3 -> 0.4) and battles (40.4 -> 38.0, 44.4 -> 43.6) within their intervals; the West's England (income
+  2,798 -> 2,901, regions at 60 5.0 -> 5.1), New Spain (10.8 -> 11.1) and the Miskito (eliminated 0 -> 1 of 72) as
+  before. Open: Rome's Iberians a little poorer (regions at 60 6.2 -> 4.7, the intervals overlap).
+- **Pins.** The format 10 play moves (campaign_sim format 10 Rome and West every seed, the AI goldens, pack_test ROME_20 /
+  _V8 / _V7: STATUS "Verification pins"); format 6 and 8 rows unchanged. The rules hash moves (online players reload
+  between turns).
+- Tests: campaign_test `_lanes_by_agreement` (`--only=lanes`: one owner, mere peace, a treaty, an alliance, war, an
+  unowned end, format 8, the sails, the diplomacy text, the AI's proposal and answer, no draw where no lane joins).

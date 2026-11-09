@@ -4021,7 +4021,24 @@ func _lane_tap(p: Vector2) -> bool:
 		show_toast("No trade on the %s lane: %s and %s are at war." % [lname,
 			CData.faction_name(CState.owner(ps, int(e[0]))), CData.faction_name(CState.owner(ps, int(e[1])))])
 		return true
+	if CLanes.idle(ps, id):
+		show_toast(idle_lane_text(ps, f, id))
+		return true
 	return false
+
+
+## (2026-11-09, lanes trade by agreement) Why lane id carries no trade: "No trade agreement with Spain: the Havana -
+## Veracruz lane pays nothing. Offer trade on the Diplomacy page." when `me` owns one end, else names both owners.
+static func idle_lane_text(lst: Dictionary, me: int, id: int) -> String:
+	var e := CLanes.ends(id)
+	var oa := CState.owner(lst, int(e[0]))
+	var ob := CState.owner(lst, int(e[1]))
+	var lname := CLanes.lane_name(id)
+	var other := ob if CState.same_team(lst, me, oa) else (oa if CState.same_team(lst, me, ob) else -1)
+	if me >= 0 and other >= 0:
+		return "No trade agreement with %s: the %s lane pays nothing. Offer trade on the Diplomacy page (an alliance trades too)." % [
+			CData.faction_name(other), lname]
+	return "No trade on the %s lane: %s and %s have no trade agreement." % [lname, CData.faction_name(oa), CData.faction_name(ob)]
 
 
 ## Fog of war: what a tap on a faded last-seen marker says.

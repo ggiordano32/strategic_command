@@ -82,6 +82,7 @@ const SeaScreen := preload("res://game/campaign/sea_screen.gd")
 const UiIcons := preload("res://game/ui_icons.gd")
 const CDip := preload("res://campaign/cdip.gd")
 const Tutorial := preload("res://game/campaign/tutorial.gd")
+const LaneTraders := preload("res://game/campaign/lane_traders.gd")
 
 var fails := 0
 
@@ -89,6 +90,13 @@ var fails := 0
 func _init() -> void:
 	if OS.get_cmdline_user_args().has("--only=vet"):
 		_vet()
+		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
+		quit(0 if fails == 0 else 1)
+		return
+	if OS.get_cmdline_user_args().has("--only=lanes"):
+		# (2026-11-09) The lane trade and lanes trade by agreement alone.
+		_sea_lanes()
+		_lanes_by_agreement()
 		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 		quit(0 if fails == 0 else 1)
 		return
@@ -183,6 +191,7 @@ func _init() -> void:
 	_detour_rule()
 	_west_roads()
 	_sea_lanes()
+	_lanes_by_agreement()
 	_amphibious()
 	_rome_fleets()
 	_sea_cq()
@@ -2692,6 +2701,7 @@ func _grid_stances() -> void:
 func _grid_raiding() -> void:
 	var rome := _f("rome")
 	var st := _empty6()
+	st["fleets"] = []   # (2026-11-09: no fleet raids a lane of ours during the turn, so the income is the stance's alone)
 	var ep := _f("epirus")
 	var ap := _r("apulia")
 	var inc0 := CRules.income(st, ep)
@@ -2708,7 +2718,7 @@ func _grid_raiding() -> void:
 		"the raider's realm gains it (%d)" % int(mine1["raid"]))
 	_check(int(inc1["regions"]) < int(inc0["regions"]), "the owner's income falls (%d -> %d)" % [int(inc0["regions"]), int(inc1["regions"])])
 	var s1 := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [])])
-	_check(int(s1["factions"][rome]["income"]) == int(mine1["total"]), "the end of turn pays it")
+	_check(int(s1["factions"][rome]["income"]) == int(mine1["total"]), "the end of turn pays it (%d, %d)" % [int(s1["factions"][rome]["income"]), int(mine1["total"])])
 
 
 func _grid_migration() -> void:
@@ -4205,7 +4215,9 @@ func _ai_skilled() -> void:
 	# were 15853336 / 2309884102 and, Easy, 427959d4 / 656603057.)
 	# (2026-11-09, the weather rules (campaign/cweather.gd): each pending battle draws its weather from the state's RNG;
 	# were 8f14231b / 3981142049 and, Easy, 7a712c82 / 4015190316.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "be3d9f7e" and int(g["rng"]) == 3934412497,
+	# (2026-11-09, lanes trade by agreement (docs/AI.md 77): a lane at mere peace pays nothing, the AI proposes the
+	# treaties its lanes pay for (LANE_TREATY_*, RNG draws); were be3d9f7e / 3934412497 and, Easy, b4041bcf / 1610855359.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "13bb0173" and int(g["rng"]) == 1949347644,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4219,7 +4231,8 @@ func _ai_skilled() -> void:
 	# (Moved 2026-11-09 with the Rome pack's live mix, docs/AI.md 76: the Average factions around it; was 427959d4,
 	# rng 656603057.)
 	# (Moved 2026-11-09 with the weather rules: the battles' weather drawn from the RNG; was 7a712c82, rng 4015190316.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "b4041bcf" and int(ge["rng"]) == 1610855359,
+	# (Moved 2026-11-09 with lanes trade by agreement, docs/AI.md 77; was b4041bcf, rng 1610855359.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "a4b575d5" and int(ge["rng"]) == 2539462672,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -5462,6 +5475,104 @@ func _ai_sea_garrison() -> void:
 	CData.use_pack("rome")
 
 
+## Lanes trade by agreement (2026-11-09; campaign_rules.md "Lanes trade by agreement (as built, 2026-11-09)", docs/AI.md
+## 77): in a format 10 state a lane between ports of two owners pays, and carries sails, only with a trade agreement
+## or an alliance; at mere peace nothing (idle); one owner pays as before; at war nothing; an unowned end leaves the
+## owned end's half; formats 6 and 8 trade at peace as before. The AI proposes a treaty its lanes pay for, and takes
+## one below the strength test.
+func _lanes_by_agreement() -> void:
+	CData.use_pack("west")
+	var eng := _f("england")
+	var ns := _f("new_spain")
+	var st := CState.new_campaign("w", 11, [eng], {}, [], "west")
+	st["fleets"] = []
+	var hv := CLanes.lane_between(_r("havana"), _r("veracruz"))
+	var v := CLanes.base_value(st, hv)
+	var ls0 := CLanes.lane_state(st, hv, {})
+	_check(CDip.on(st) and CLanes.by_agreement(st) and int(ls0["oa"]) == ns and int(ls0["ob"]) == ns and int(ls0["pa"]) + int(ls0["pb"]) == v
+		and not CLanes.idle(st, hv) and LaneTraders.sails(ls0) == 2,
+		"lanes by agreement: one owner at both ends (Havana - Veracruz, New Spain) pays its whole value %d and carries two sails" % v)
+	var sp := CState.copy(st)
+	sp["regions"][_r("veracruz")]["owner"] = eng
+	CState.set_dip(sp, eng, ns, CState.PEACE)
+	var e_peace := int(CRules.income(sp, eng)["lanes"])
+	var lp := CLanes.lane_state(sp, hv, {})
+	_check(CLanes.idle(sp, hv) and not CLanes.at_war(sp, hv) and int(lp["pa"]) == 0 and int(lp["pb"]) == 0 and LaneTraders.sails(lp) == 0
+		and int(lp["v"]) == v,
+		"lanes by agreement: at mere peace (England's Veracruz, New Spain's Havana) the lane pays neither port and draws no sail")
+	var tv := CLanes.treaty_value(sp, eng, ns)
+	_check(int(tv[0]) + int(tv[1]) >= v and int(tv[2]) >= 1 and int(tv[0]) >= v - v / 2 - 1,
+		"lanes by agreement: treaty_value names what an agreement opens (England +%d, New Spain +%d, %d lanes)" % [int(tv[0]), int(tv[1]), int(tv[2])])
+	var lt := Panels.lane_treaty_text(sp, eng, ns)
+	_check(lt.begins_with("A trade agreement opens") and lt.contains("+%d a turn to us" % int(tv[0])),
+		"lanes by agreement: the diplomacy row says what a trade agreement opens (%s)" % lt)
+	var stt := CState.copy(sp)
+	CRules.apply_agreement(stt, eng, ns, "trade")
+	var lt2 := CLanes.lane_state(stt, hv, {})
+	_check(not CLanes.idle(stt, hv) and int(lt2["pa"]) == v / 2 and int(lt2["pb"]) == v - v / 2 and LaneTraders.sails(lt2) == 2
+		and int(CRules.income(stt, eng)["lanes"]) == e_peace + int(tv[0]),
+		"lanes by agreement: a trade agreement pays both ends (%d + %d) and two sails; England's lane income %d -> %d" % [
+		int(lt2["pa"]), int(lt2["pb"]), e_peace, int(CRules.income(stt, eng)["lanes"])])
+	var sal := CState.copy(sp)
+	CState.set_dip(sal, eng, ns, CState.ALLIED)
+	var la := CLanes.lane_state(sal, hv, {})
+	_check(int(la["pa"]) + int(la["pb"]) == v and LaneTraders.sails(la) == 2, "lanes by agreement: an alliance trades too")
+	var sw := CState.copy(sp)
+	CState.set_dip(sw, eng, ns, CState.WAR)
+	var lw := CLanes.lane_state(sw, hv, {})
+	_check(not CLanes.idle(sw, hv) and CLanes.at_war(sw, hv) and int(lw["pa"]) + int(lw["pb"]) == 0 and LaneTraders.sails(lw) == 0,
+		"lanes by agreement: at war nothing (the lane is at war, not idle)")
+	var su := CState.copy(sp)
+	su["regions"][_r("veracruz")]["owner"] = -1
+	var lu := CLanes.lane_state(su, hv, {})
+	_check(not CLanes.idle(su, hv) and int(lu["pa"]) == v / 2 and int(lu["pb"]) == 0 and LaneTraders.sails(lu) == 1,
+		"lanes by agreement: an unowned (independent) end leaves the owned end's half (%d) and one sail" % int(lu["pa"]))
+	var s8 := CState.as_format(sp, 8)
+	var l8 := CLanes.lane_state(s8, hv, {})
+	_check(not CLanes.by_agreement(s8) and not CLanes.idle(s8, hv) and int(l8["pa"]) + int(l8["pb"]) == v and Panels.lane_treaty_text(s8, eng, ns) == "",
+		"lanes by agreement: a format 8 state trades at mere peace as before")
+	# The AI: two AIs at mere peace for a while, the lanes between them worth it: a proposal, taken at once.
+	var sa := CState.new_campaign("w", 11, [], {}, [], "west")
+	sa["fleets"] = []
+	sa["regions"][_r("veracruz")]["owner"] = eng
+	CState.set_dip(sa, eng, ns, CState.PEACE)
+	sa["turn"] = int(sa["turn"]) + 6
+	var kn := CP.of(sa, eng)
+	var tva := CLanes.treaty_value(sa, eng, ns)
+	_check(int(tva[0]) >= kn[CP.LANE_TREATY_MIN] and int(CLanes.treaty_value(sa, ns, eng)[0]) >= CP.of(sa, ns)[CP.LANE_TREATY_MIN]
+		and CAI.why(sa, eng, ns, "trade") == "",
+		"lanes by agreement, the AI: New Spain would take England's trade agreement its lanes pay for (England +%d, New Spain +%d)" % [int(tva[0]), int(tva[1])])
+	CP.reset_counters()
+	var asked := 0
+	for i in 30:
+		if CState.dip(sa, eng, ns) != CState.PEACE:
+			break
+		CAI._lane_treaties(sa, eng, kn)
+		asked += 1
+	_check(CState.dip(sa, eng, ns) == CState.TRADE and CP.counter(CP.C_LANE_ASKS, eng) >= 1 and CP.counter(CP.C_LANE_DEALS, eng) >= 1,
+		"lanes by agreement, the AI: England proposes the trade agreements its lanes pay for (New Spain among them) and they are taken (%d turns; dip %d, asks %d, deals %d)" % [
+		asked, CState.dip(sa, eng, ns), CP.counter(CP.C_LANE_ASKS, eng), CP.counter(CP.C_LANE_DEALS, eng)])
+	# No proposal (and no draw) to a faction no lane joins.
+	var sc := CState.new_campaign("w", 11, [], {}, [], "west")
+	var pf := -1
+	var pg := -1
+	for a in CState.nf():
+		for b in CState.nf():
+			if pf < 0 and a != b and int(CLanes.treaty_value(sc, a, b)[2]) == 0 and not CSea.pirate(a):
+				pf = a
+				pg = b
+	for b in CState.nf():
+		if b != pf and b != pg and CState.dip(sc, pf, b) == CState.PEACE:
+			CState.set_dip(sc, pf, b, CState.WAR)   # (only pg is at peace with pf)
+	CState.set_dip(sc, pf, pg, CState.PEACE)
+	sc["turn"] = int(sc["turn"]) + 6
+	var before_sc := CState.hash_text(sc)
+	CAI._lane_treaties(sc, pf, CP.of(sc, pf))
+	_check(pf >= 0 and CState.dip(sc, pf, pg) == CState.PEACE and CState.hash_text(sc) == before_sc,
+		"lanes by agreement, the AI: no lane proposal (and no draw) where no lane joins their ports (%s, %s)" % [CData.faction_name(pf), CData.faction_name(pg)])
+	CData.use_pack("rome")
+
+
 func _sea_lanes() -> void:
 	CData.use_pack("west")
 	var eng := _f("england")
@@ -5494,7 +5605,7 @@ func _sea_lanes() -> void:
 	var en0 := int(CRules.income(st, eng)["lanes"])
 	var sp := CState.copy(st)
 	sp["regions"][_r("veracruz")]["owner"] = eng
-	CState.set_dip(sp, eng, ns, CState.PEACE)   # (at war the lane pays nothing: checked below)
+	CState.set_dip(sp, eng, ns, CState.TRADE)   # (at war the lane pays nothing: checked below; at mere peace too: _lanes_by_agreement)
 	var ns1 := int(CRules.income(sp, ns)["lanes"])
 	var en1 := int(CRules.income(sp, eng)["lanes"])
 	var vb := CLanes.lane_state(sp, hv, {})
@@ -5508,7 +5619,7 @@ func _sea_lanes() -> void:
 	_check(CLanes.at_war(spw, hv) and int(vw["pa"]) == 0 and int(vw["pb"]) == 0 and not CLanes.at_war(st, hv) and not CLanes.at_war(spw, CLanes.count()),
 		"lane at war: Havana (New Spain) - Veracruz (England) pays neither port; an all-Spanish lane and an exit are not at war")
 	var vpp := CLanes.lane_state(sp, hv, {})
-	_check(not CLanes.at_war(sp, hv) and int(vpp["pa"]) + int(vpp["pb"]) == vtot, "lane at war: pays both ports again at peace (%d)" % vtot)
+	_check(not CLanes.at_war(sp, hv) and int(vpp["pa"]) + int(vpp["pb"]) == vtot, "lane at war: pays both ports again with a trade agreement (%d)" % vtot)
 	var inc_total: Dictionary = CRules.income(st, ns)
 	_check(inc_total.has("lanes_n") and int(inc_total["lanes_n"]) > 0 and int(inc_total["total"]) >= int(inc_total["lanes"]),
 		"lane trade: the income carries the 'lanes' part and its count")

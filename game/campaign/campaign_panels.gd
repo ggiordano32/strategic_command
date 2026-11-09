@@ -240,6 +240,8 @@ func _lane_note(box: VBoxContainer, r: int) -> void:
 	var base := 0
 	var n := 0
 	var raided := 0
+	var idle: Array[String] = []   # (2026-11-09) the owners of the other ports of lanes idle for want of a trade agreement
+	var at_war := 0
 	for id in CLanes.count():
 		var e := CLanes.ends(id)
 		if int(e[0]) != r and int(e[1]) != r:
@@ -251,9 +253,24 @@ func _lane_note(box: VBoxContainer, r: int) -> void:
 		n += 1
 		if int(ls["rid"]) >= 0:
 			raided += 1
+		if CLanes.idle(ps, id):
+			var other := CData.faction_name(int(ls["ob"]) if int(e[0]) == r else int(ls["oa"]))
+			if not idle.has(other):
+				idle.append(other)
+		elif CLanes.at_war(ps, id):
+			at_war += 1
 	var t := "Sea lanes: %d lane%s pay this port %d a turn" % [n, "" if n == 1 else "s", paid]
 	if paid < base:
-		t += " of %d (%s)" % [base, "a blockade or siege stops them" if raided == 0 else "%d lane%s raided" % [raided, "" if raided == 1 else "s"]]
+		var whys: Array[String] = []
+		if not idle.is_empty():
+			whys.append("no trade agreement with %s" % ", ".join(idle))
+		if at_war > 0:
+			whys.append("%d lane%s at war" % [at_war, "" if at_war == 1 else "s"])
+		if raided > 0:
+			whys.append("%d lane%s raided" % [raided, "" if raided == 1 else "s"])
+		if whys.is_empty():
+			whys.append("a blockade or siege stops them")
+		t += " of %d (%s)" % [base, "; ".join(whys)]
 	t += "."
 	var ll := Kit.label(t, Kit.FONT_SMALL, Kit.COL_BAD if paid < base and CState.owner(ps, r) == s.f else Kit.COL_DIM, true)
 	ll.name = "lane_note"
@@ -2785,6 +2802,13 @@ func _dip_detail(ps: Dictionary, f: int, g: int, d: int, team: bool) -> Control:
 			wb.add_theme_color_override("font_color", Kit.COL_BAD)
 			Kit.tint_icon(wb, Kit.COL_BAD)
 			acts.add_child(wb)
+	# (2026-11-09, lanes trade by agreement) The sea lanes between our ports and theirs: what a trade agreement would
+	# open, or what they pay now.
+	var lt := lane_treaty_text(ps, f, g)
+	if lt != "":
+		var lane_l := Kit.label(lt, Kit.FONT_SMALL, Kit.COL_GOLD if d == CState.PEACE else Kit.COL_DIM, true)
+		lane_l.name = "dip_lanes_%s" % gk
+		box.add_child(lane_l)
 	# Gifts.
 	if CDip.on(ps) and d != CState.WAR:
 		var gl := Kit.flow(6)
@@ -2860,6 +2884,27 @@ func _confirm_leave_alliance(g: int) -> void:
 	s.show_dialog("Leave alliance", l, [["Give notice", func():
 		s.add_order({"t": "leave_alliance", "with": g})
 		show_diplomacy(g)], ["Back", func(): show_diplomacy(g)]], 460)
+
+
+## (2026-11-09, lanes trade by agreement) The diplomacy row's lane line for f and g ("" when no lane joins their
+## ports, or in a state where mere peace still trades): at peace "A trade agreement opens 3 sea lanes: +12 a turn
+## to us, +11 to them."; trading or allied "3 sea lanes trade with them: +12 a turn."; at war "3 sea lanes idle
+## while at war (+12 a turn with a trade agreement)." (CLanes.treaty_value: the lanes' halves now, a blockaded or
+## besieged port's half not counted).
+static func lane_treaty_text(ps: Dictionary, f: int, g: int) -> String:
+	if not CState.grid_on(ps) or CData.SEA_LANES.is_empty() or not CLanes.by_agreement(ps) or CState.same_team(ps, f, g):
+		return ""
+	var tv := CLanes.treaty_value(ps, f, g)
+	var n := int(tv[2])
+	if n == 0:
+		return ""
+	var lanes := "%d sea lane%s" % [n, "" if n == 1 else "s"]
+	var d := CState.dip(ps, f, g)
+	if d == CState.WAR:
+		return "%s idle while at war (+%d a turn with a trade agreement)." % [lanes, int(tv[0])]
+	if d == CState.PEACE:
+		return "A trade agreement opens %s: +%d a turn to us, +%d to them." % [lanes, int(tv[0]), int(tv[1])]
+	return "%s %s with them: +%d a turn." % [lanes, "trades" if n == 1 else "trade", int(tv[0])]
 
 
 ## What an AI faction would answer to the proposal this row offers (the same

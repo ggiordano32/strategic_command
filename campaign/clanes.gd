@@ -18,7 +18,12 @@ extends RefCounted
 ## LANE_BASE gold a turn (a SEA_LANE_TRADE row overrides), half to each end
 ## port's owner (the whole value to one owner holding both); a besieged or
 ## blockaded port's half is not paid; a lane between ports whose owners are at
-## war pays neither (2026-10-23, no trade with the enemy). A fleet at war with an end port's owner
+## war pays neither (2026-10-23, no trade with the enemy); (2026-11-09, lanes trade by agreement, state
+## format 10 only: by_agreement) a lane between ports of two owners pays, and carries sails on the map, only
+## while they have a trade agreement or an alliance (dip TRADE or ALLIED; one team trades as always): at mere
+## peace it pays neither (idle). An unowned end (an independent's town, owner -1) is never paid and does not
+## stop the owned end's half, as before; the tribes and the Brethren are factions and need the agreement like
+## anyone. Formats 6 and 8 (no "regard") keep the old rule: any two owners not at war trade. A fleet at war with an end port's owner
 ## lying on one of the lane's cells at the end of the turn RAIDS it: each half
 ## still paid is cut by LANE_RAID_PCT %, and the raider's owner takes
 ## LANE_RAID_TAKE % of what it cut from owners it is at war with. Everything is
@@ -29,6 +34,7 @@ const CData := preload("res://campaign/cdata.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const CState := preload("res://campaign/cstate.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CDip := preload("res://campaign/cdip.gd")
 
 const COAST_PEN_1 := 20   # a sea cell next to land
 const COAST_PEN_2 := 10   # ... two cells off the land
@@ -433,11 +439,85 @@ static func at_war(st: Dictionary, id: int) -> bool:
 	return oa >= 0 and ob >= 0 and oa != ob and CState.at_war(st, oa, ob)
 
 
+## (2026-11-09) The lanes trade by agreement: a format 10 state (the diplomacy's trust arrays, CDip.on). Older
+## formats trade at mere peace as they always did.
+static func by_agreement(st: Dictionary) -> bool:
+	return CDip.on(st) and not at_peace
+
+
+## Test tool (tests/campaign_sim.gd --lanes-at-peace, with the LANE_TREATY_* knobs at 0: the rules before
+## 2026-11-09 exactly): the lanes pay at mere peace in every format. Never set by the rules or the game.
+static var at_peace := false
+
+
+## Owners oa and ob (both >= 0) trade along a lane between their ports: one owner or one team, else not at war
+## and (by_agreement) a trade agreement or an alliance between them.
+static func trades(st: Dictionary, oa: int, ob: int) -> bool:
+	if oa == ob or CState.same_team(st, oa, ob):
+		return true
+	if CState.at_war(st, oa, ob):
+		return false
+	return not by_agreement(st) or CState.dip(st, oa, ob) >= CState.TRADE
+
+
+## Port lane id joins ports of two owners at peace with no trade agreement or alliance (by_agreement): it pays
+## nothing and carries no sail until they sign one (an exit, an unowned end, one owner, at war: never).
+static func idle(st: Dictionary, id: int) -> bool:
+	if is_exit(id) or not by_agreement(st):
+		return false
+	_ensure_tab()
+	var oa := CState.owner(st, _ea[id])
+	var ob := CState.owner(st, _eb[id])
+	return oa >= 0 and ob >= 0 and not CState.at_war(st, oa, ob) and not trades(st, oa, ob)
+
+
+## What the port lanes between f's ports and g's are worth a turn to each: [gold to f, gold to g, lanes] (each
+## lane's halves at its value now, a blockaded or besieged port's half not counted, raids not; whatever their
+## diplomacy). What a trade agreement opens at mere peace, what the lanes pay while trading; the AI's treaty
+## valuation (CAI) and the diplomacy row read it.
+static func treaty_value(st: Dictionary, f: int, g: int) -> Array:
+	var out := [0, 0, 0]
+	if CData.SEA_LANES.is_empty() or f < 0 or g < 0 or f == g:
+		return out
+	_ensure_tab()
+	for id in count():
+		var oa := CState.owner(st, _ea[id])
+		var ob := CState.owner(st, _eb[id])
+		if not ((oa == f and ob == g) or (oa == g and ob == f)):
+			continue
+		var v := base_value(st, id)
+		if v <= 0:
+			continue
+		var ha := v / 2
+		var hb := v - v / 2
+		if int(st["regions"][_ea[id]].get("bk", -1)) >= 0 or not CState.siege_at(st, _ea[id]).is_empty():
+			ha = 0
+		if int(st["regions"][_eb[id]].get("bk", -1)) >= 0 or not CState.siege_at(st, _eb[id]).is_empty():
+			hb = 0
+		out[0] = int(out[0]) + (ha if oa == f else hb)
+		out[1] = int(out[1]) + (hb if oa == f else ha)
+		out[2] = int(out[2]) + 1
+	return out
+
+
 ## What lane id pays now: {v (its value), oa, ob (the end owners), pa, pb (what
 ## each end's owner receives), cuta, cutb (cut by a raid), la, lb (lost to a
 ## blockade or siege of that port), rid (the raider's fleet id, -1), rf (its
 ## faction), take (what the raider's owner takes)}. `rt`: raiders(st).
 static func lane_state(st: Dictionary, id: int, rt: Dictionary) -> Dictionary:
+	return _lane_state(st, id, rt, by_agreement(st))
+
+
+## lane_state as the AI's raid valuation reads it (CAIFleet._lane_gold): a lane idle for want of a trade agreement is
+## valued as if its owners traded (war still pays nothing). A raider holds a lane to deny its trade, and an idle lane
+## may trade again the turn its owners sign. (2026-11-09, docs/AI.md 77: valued by the payment, the idle Carrera de
+## Indias lanes drew the English and pirate raiders off from turn 1, England's fleets ranged out instead, and the
+## West's pacing moved: England's income -22 %, the Miskito eliminated in 7 of 72; valued so, it is back.)
+static func raid_state(st: Dictionary, id: int, rt: Dictionary) -> Dictionary:
+	return _lane_state(st, id, rt, false)
+
+
+static func _lane_state(st: Dictionary, id: int, rt: Dictionary, agree: bool) -> Dictionary:
 	_ensure_tab()
 	var a := _ea[id]
 	var b := _eb[id]
@@ -446,8 +526,8 @@ static func lane_state(st: Dictionary, id: int, rt: Dictionary) -> Dictionary:
 	var ob := CState.owner(st, b) if b >= 0 else -1
 	var pa := v / 2 if oa >= 0 else 0
 	var pb := (v - v / 2) if ob >= 0 else 0
-	if oa >= 0 and ob >= 0 and CState.at_war(st, oa, ob):
-		pa = 0   # no trade with the enemy: a lane between ports at war pays nothing
+	if oa >= 0 and ob >= 0 and (CState.at_war(st, oa, ob) or (agree and not trades(st, oa, ob))):
+		pa = 0   # no trade with the enemy (at war), nor (format 10) without a trade agreement or an alliance
 		pb = 0
 	var la := 0
 	var lb := 0

@@ -613,3 +613,19 @@ Shots (393 x 851, dpr 3 pattern, `tests/ships_shot.gd`: all factions at trade, o
 the state): the session scratchpad `ships/`. Known: the sails are a shade larger than 2-3 x the 1.5 px lane stroke
 (legibility on a phone); the trade direction is a reading, not a state (the rules keep no goods); the owner's eye on
 sail size, speed and whether one sail per direction is right.
+
+**Lanes trade by agreement (2026-11-09).** The owner: "Trade lines should only show ships moving along them when trade is
+active between the owners of the regions." The rule moved, not the view: in a format 10 campaign `CLanes.lane_state`
+pays nothing on a lane between ports of two owners at mere peace (no trade agreement, no alliance; campaign_rules.md
+"Lanes trade by agreement (as built, 2026-11-09)"), so the traders follow through `lane_state` with no view rule of
+their own. The cases, now `LaneTraders.sails(ls)` (a static count read from `lane_state` alone, which the
+campaign_test checks): two sails when both ends are paid and the lane is not raided (one owner at both ends, one team,
+or two owners with a trade agreement or an alliance); one when one end only is paid (one owner and an unowned
+independent's port) or when the lane is raided; none for a blockaded or
+besieged end, a lane at war, a lane idle for want of an agreement (`CLanes.idle`), a lane worth nothing, or an exit.
+Formats 6 and 8 trade at mere peace as before, so their lanes keep their sails. The idle lane keeps its pale dashes
+(no new colour: the sails' absence is the sign); a tap on an idle lane with a port of the player's says "No trade
+agreement with Spain: the Havana - Veracruz lane pays nothing. Offer trade on the Diplomacy page (an alliance trades
+too)." (`MapOverlay.idle_info`, `CampaignScreen.idle_lane_text`), a port's "Sea lanes" note names the owners it lacks
+an agreement with, and the Diplomacy row of a faction at peace says what an agreement opens ("A trade agreement opens 3
+sea lanes: +12 a turn to us, +11 to them.", `CampaignPanels.lane_treaty_text` over `CLanes.treaty_value`).
