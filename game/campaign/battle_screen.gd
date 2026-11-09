@@ -736,7 +736,15 @@ static func outcome_line(snap: Dictionary, outcome: Dictionary, st: Dictionary) 
 			t = "The defenders of %s are beaten, but no attacking army is left to take it." % city
 	else:
 		t = "%s is held; the attackers fall back." % city
-	if draw:
+	if draw and CState.grid_on(st) and int(st.get("version", 0)) >= 10:
+		# (2026-11-09, the overland retreat) a draw moves nobody
+		if kind in ["sally", "relief"]:
+			t = "Neither side broke: the siege of %s continues and both sides stay where they fought." % city
+		elif kind == "field":
+			t = "Neither side broke: both armies stay where they fought."
+		else:
+			t = "Neither side broke: %s is held and the attackers stay where they fought." % city
+	elif draw:
 		t = "Neither side broke. " + t
 	# Armies of either side that no longer exist.
 	for sd in 2:

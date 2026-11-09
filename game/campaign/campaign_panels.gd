@@ -3507,9 +3507,25 @@ func _event_text0(e: Dictionary, f: int) -> String:
 			return "A %s army marching through %s was stopped by %s's army in the field." % [CData.FACTIONS[int(e["f"])]["adj"],
 				CData.REGIONS[int(e["r"])]["name"], CData.faction_name(int(e["by"]))]
 		"retreat":
+			var rhow := str(e.get("how", ""))
+			var radj: String = CData.FACTIONS[int(e["f"])]["adj"]
+			var rname: String = CData.REGIONS[maxi(int(e["to"]), 0)]["name"]
+			if rhow == "fleet":
+				return "A %s army re-embarked on its fleet off %s: no ground to fall back on overland." % [radj, rname]
+			if rhow == "held":
+				return "A %s army held its ground in %s: nowhere to fall back overland." % [radj, rname]
+			if rhow == "home":
+				return "A %s army left lands at peace and went home to %s." % [radj, rname]
+			if rhow != "":
+				return "A %s army fell back to %s." % [radj, rname]
 			if e.has("x"):
 				return "A %s army fell back in %s." % [CData.FACTIONS[int(e["f"])]["adj"], CData.REGIONS[maxi(int(e["to"]), 0)]["name"]]
 			return "A %s army fell back from %s to %s." % [CData.FACTIONS[int(e["f"])]["adj"], city.call(e["r"]), city.call(e["to"])]
+		"position_fixed":
+			if f >= 0 and int(e["f"]) != f:
+				return ""
+			return "A %s army's position was corrected to %s, where it stands (was %s)." % [CData.FACTIONS[int(e["f"])]["adj"],
+				CData.REGIONS[int(e["r"])]["name"], CData.REGIONS[maxi(int(e["was"]), 0)]["name"]]
 		"destroyed":
 			return "A %s army of %d men was destroyed at %s with nowhere to retreat." % [CData.FACTIONS[int(e["f"])]["adj"], int(e["men"]), city.call(e["r"])]
 		"war":

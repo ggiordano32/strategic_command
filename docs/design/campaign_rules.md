@@ -2325,6 +2325,74 @@ battle (as built, 2026-11-09)", the words to the player ui.md "The weather chip 
 - Tests: campaign_test (`_battles`: the key on a version 10 battle, the same on a second resolve, in the scenario; the
   season mapping; an older battle with no key fought on a clear day; version 8 makes none), pack_test.
 
+### The overland retreat (as built, 2026-11-09)
+
+The owner: "If my army runs into a defeat or a draw on the Cartagena or Santa Cruz de Mompox, they fall back to Yaviza,
+which there is no land bridge to walk there. This shouldn't happen. Loading three 12 stack armies into boats was struggle
+enough, having a draw and they teleport to Yaviza is not a fun experience."
+
+- **The bug.** The version 6 retreat (`CRules._retreat6`) searched the cells within 5 of the beaten army over land steps,
+  but `block_mask` still blocked the 3 x 3 ring of the battle being applied (it is in `st["battles"]` until
+  `apply_outcome` ends). A beaten defender stands on the battle's cell, and an attacker beside it often has no step out
+  of the ring, so the search found nothing. With `far` (a field battle, a broken siege, the owner's field armies beaten
+  at the walls) it then fell back to `_nearest_friendly`, a breadth-first search over the region links,
+  `CData.adjacent`, which holds the sea lanes as well as the land routes, and put the army on that region's field cell:
+  from Cartagena by the Portobelo lane to the Darien (Yaviza), to Port Royal or Bluefields, from Sicily to Bruttium. A
+  draw counted as the defender's win (`apply_outcome`'s header: "a draw counts as 1"), so a drawn attacker did the
+  same. Its region and cell were always written together (`CState.place`); the "one army, two positions" the owner saw
+  on the map is the grid's South American land at the head of the Gulf of Uraba: the cells x 100, y 115-117 belong to
+  Cartagena and Mompox but lie on the painted Darien shore beside Yaviza, and a retreat that takes the farthest cell
+  within 5 could end there, its march shading then starting on the Mompox side.
+- **The rule (state version 10; formats 6 and 8 keep the old one exactly).** `CRules._retreat10`:
+  1. The cells searched are the march's land steps (`CGrid.step_cost`: one landmass, rivers only at crossings, no sea
+     lane, no water step even for an amphibious army) through cells its side may enter (`block_mask`, the battle being
+     applied excepted: `block_mask(st, f, skip_cell)`), within `RETREAT_R` 5 (Chebyshev) of where it stands; a
+     destination is never across water: the straight line from the army to it crosses no sea cell (`_line_dry`,
+     integer Bresenham; a bay or the Gulf of Uraba is not jumped). The choice as before: at least 2 from the battle, in
+     no enemy zone, not a settlement; farthest from the battle, friendly land +40, toward where an attacker came from +20.
+  2. With `far` and no such cell: the nearest friendly region it can walk to (`_nearest_friendly_overland`, a flood
+     over the same land steps from its cell, the first friendly field cell met), never by a sea lane.
+  3. Still none: **the sea retreat.** A fleet of its own faction beside it (`CFleet.near_fleet`, not in a battle) with
+     room for all its units takes it aboard (the first in the fleets' order). The fleet is not marked as moved: it
+     sails next turn as it would have; the army has moved.
+  4. Still none: with `far` it **holds its ground** where it fought (moved, no points left this turn; the state has no
+     morale or "shaken" mark, so that is all); without `far` (an assault's attackers, a relief beaten off, the old
+     side's armies in a captured city) it is destroyed, as before.
+  The AI's armies follow the same rule. Event retreat gains `how`: `land`, `far`, `fleet` (with `fleet`), `held`; the
+  report says "A English army fell back to Cartagena.", "... re-embarked on its fleet off Cartagena: no ground to fall
+  back on overland.", "... held its ground in Cartagena: nowhere to fall back overland." The peace rule
+  (`_check_trespass6`: armies left in lands at peace go home, by the region links) is not a beaten army's retreat and is
+  unchanged; its event is marked `how` `home` ("left lands at peace and went home to ...").
+- **A draw moves nobody** (version 10 on the grid). Nothing in the design said a draw sends the attacker back; it was
+  the formula's "a draw counts as 1". Now both sides of a drawn field battle, assault, sally or relief stay where they
+  fought (a drawn sortie already left the besiegers in place). The battle's own result is unchanged (the defender holds
+  a settlement; the events, regard and veterancy read the draw as before). The battle screen's line: "Neither side
+  broke: both armies stay where they fought." The formula (AI against AI) never draws; a fought battle or a human's
+  auto-resolve (the real sim) can.
+- **The repair.** `CRules.fix_positions` at the start of `resolve_turn` (version 10 on the grid; no RNG, armies in
+  index order): an army whose cell lies in another region than its `r` gets the cell's region (the cell is where it
+  stands, what the map draws and where its marches start); afloat armies (a sea cell) keep the region they left. Event
+  `position_fixed` {f, army, r, was}, in the chronicle: "A English army's position was corrected to Magdalena, where it
+  stands (was Darien)." Every writer of the position goes through `CState.place`, so it finds nothing in play today (0
+  army-turns in the measure before and after); it is a guard for older saves and needs no ordering against the rule.
+- No VERSION bump (no key's meaning changes). The rules hash moves (online players reload between turns).
+- **Measure** (campaign_sim `--format=10`, 72 seeds x 60 turns each pack; the probe's `rt` tallies in its `--json`
+  line; ~/.cache/sc_retreat/measure.md). Retreats that changed landmass (the teleport): West 112 -> 0, Rome 185 -> 0
+  (the before counts include the peace homecomings, tagged `home` after: 684 / 618). Destroyed with nowhere to go
+  308 -> 24, 531 -> 9: the battle's own ring had shut most beaten armies in. So more armies live and fight again:
+  battles a campaign 44.4 -> 64.4 (West), 40.4 -> 59.6 (Rome); eliminations within the intervals except the Brethren's
+  14 -> 38 % (Macedon 47 -> 35 and Syracuse 22 -> 32 at the edge). Re-embarked 1 (West) / 0, held 14 / 58. No army's
+  cell lay outside its region, before or after. Armies on a landmass where their side owns nothing and no own fleet is
+  beside them (ordinary sieges and landings, not stranded retreats): 1299 -> 2895 army-turns (longest 44 -> 48) West,
+  1072 -> 3263 (37 -> 32) Rome, up with the armies no longer destroyed.
+- **Pins.** campaign_sim format 10 Rome and West (every seed), the AI goldens, pack_test ROME_20 (STATUS "Verification
+  pins"); format 6 and 8 rows unchanged (all 24 seeds re-run).
+- Tests: campaign_test `_overland_retreat` (`-- --only=retreat`): no land step from Cartagena to the Darien; the old
+  fallback names Yaviza; beaten at Cartagena and at Mompox the army falls back over land near where it fought; a draw
+  moves nobody; a beachhead with its fleet beside re-embarks, without one holds; the repair once with its chronicle line;
+  Rome, beaten on Sicily with no friendly land there, stays on Sicily (the old fallback named Bruttium).
+- Open: the owner's follow-up: embarking three full armies onto fleets is a struggle, an "embark all" or a drag of
+  several armies onto a fleet is wanted. The grid's land at the head of the Gulf of Uraba stays walkable as a march.
 ### Lanes trade by agreement (as built, 2026-11-09)
 
 The owner: "Trade lines should only show ships moving along them when trade is active between the owners of the

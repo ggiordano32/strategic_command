@@ -139,6 +139,7 @@ static func resolve_turn(st_in: Dictionary, submissions: Array) -> Dictionary:
 				continue
 			keep.append(e)
 	st["events"] = keep
+	CRules.fix_positions(st)  # (2026-11-09) an army's region follows its cell (repairs older saves)
 	var subs: Array = []
 	for s in submissions:
 		if int(s.get("turn", -1)) == turn and CState.is_human(st, int(s["f"])) and CState.alive(st, int(s["f"])):

@@ -107,6 +107,12 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 		quit(0 if fails == 0 else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=retreat"):
+		# (2026-11-09) The overland retreat alone.
+		_overland_retreat()
+		print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
+		quit(0 if fails == 0 else 1)
+		return
 	_data()
 	_vet()
 	_round_trip()
@@ -208,6 +214,7 @@ func _init() -> void:
 	_sortie()
 	_sight()
 	_town_plan()
+	_overland_retreat()
 	print("RESULT: %s" % ("PASS" if fails == 0 else "FAIL (%d)" % fails))
 	quit(0 if fails == 0 else 1)
 
@@ -4215,9 +4222,10 @@ func _ai_skilled() -> void:
 	# were 15853336 / 2309884102 and, Easy, 427959d4 / 656603057.)
 	# (2026-11-09, the weather rules (campaign/cweather.gd): each pending battle draws its weather from the state's RNG;
 	# were 8f14231b / 3981142049 and, Easy, 7a712c82 / 4015190316.)
-	# (2026-11-09, lanes trade by agreement (docs/AI.md 77): a lane at mere peace pays nothing, the AI proposes the
-	# treaties its lanes pay for (LANE_TREATY_*, RNG draws); were be3d9f7e / 3934412497 and, Easy, b4041bcf / 1610855359.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "13bb0173" and int(g["rng"]) == 1949347644,
+	# (2026-11-09, the overland retreat: a version 10 beaten army retreats over land only, the battle's own ring no
+	# longer shuts it in, it re-embarks or holds, a draw moves nobody; were be3d9f7e / 3934412497 and, Easy,
+	# b4041bcf / 1610855359.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "fa27f1f1" and int(g["rng"]) == 3934412497,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4231,8 +4239,8 @@ func _ai_skilled() -> void:
 	# (Moved 2026-11-09 with the Rome pack's live mix, docs/AI.md 76: the Average factions around it; was 427959d4,
 	# rng 656603057.)
 	# (Moved 2026-11-09 with the weather rules: the battles' weather drawn from the RNG; was 7a712c82, rng 4015190316.)
-	# (Moved 2026-11-09 with lanes trade by agreement, docs/AI.md 77; was b4041bcf, rng 1610855359.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "a4b575d5" and int(ge["rng"]) == 2539462672,
+	# (Moved 2026-11-09 with the overland retreat; was b4041bcf, rng 1610855359.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "5a7dee1f" and int(ge["rng"]) == 3343726202,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
@@ -9139,3 +9147,241 @@ func _vet() -> void:
 			if str(o.get("t", "")) == "retrain" and int(o["army"]) == rid and int(o["unit"]) == 0:
 				has = true
 		_check(has == (skill == CP.AVERAGE), "retrain: the AI at %s %s" % [CP.SKILL_NAMES[skill], "retrains its Seasoned unit" if has else "does not retrain"])
+
+
+# ------------------------------------------------- the overland retreat ---
+# (2026-11-09; campaign_rules.md "The overland retreat (as built, 2026-11-09)") The owner: "If my army runs into a
+# defeat or a draw on the Cartagena or Santa Cruz de Mompox, they fall back to Yaviza, which there is no land bridge
+# to walk there." A version 10 retreat walks over land only (the march's steps, the battle's own ring not blocking),
+# never ends across water, never falls back by a sea lane; with no ground it re-embarks on its fleet or holds; a draw
+# moves nobody; an army whose cell and region disagree is repaired at the start of the turn.
+
+## A new army of faction f on cell c with `n` units of the faction's first army's first unit type.
+var _rt_types := {}  # faction -> the first unit type of its first starting army (_rt_state)
+
+
+func _rt_put(st: Dictionary, f: int, c: int, n: int) -> Dictionary:
+	var t := str(_rt_types.get(f, _rt_types.get(-1, "")))
+	var us: Array = []
+	for k in n:
+		us.append(t)
+	return _put(st, f, c, us)
+
+
+## A West (or Rome) format 10 state with faction f at war with g, every army gone, f owning only `own` (regions of f
+## elsewhere handed to g).
+func _rt_state(pack: String, f: int, g: int, own: Array) -> Dictionary:
+	CData.use_pack(pack)
+	var st := CState.new_campaign("rt", 7, [f], {}, [], pack)
+	_rt_types.clear()
+	for a in st["armies"]:
+		if CState.unit_count(a) > 0 and not _rt_types.has(int(a["f"])):
+			_rt_types[int(a["f"])] = str(a["units"][0]["t"])
+			if not _rt_types.has(-1):
+				_rt_types[-1] = str(a["units"][0]["t"])
+	st["armies"] = []
+	st["fleets"] = [] if CFleet.on(st) else st.get("fleets", [])
+	for r in CData.region_count():
+		if CState.owner(st, r) == f:
+			st["regions"][r]["owner"] = g
+	for r in own:
+		st["regions"][r]["owner"] = f
+	for a in CState.nf():
+		for b in CState.nf():
+			if a != b:
+				CState.set_dip(st, a, b, CState.PEACE)
+	CState.set_dip(st, f, g, CState.WAR)
+	return st
+
+
+## A cell of region r at Chebyshev distance d from its settlement, from which a land step reaches a cell of r nearer
+## the settlement (the enemy's); [mine, enemy's] or [] none. coast: the army's cell borders the sea.
+func _rt_pair(r: int, d: int, coast: bool) -> Array:
+	var s := CGrid.site(r)
+	for c in CGrid.cells_of(r):
+		if CGrid.cheb(c, s) != d:
+			continue
+		var wet := false
+		for k in 8:
+			var j := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+			if j >= 0 and CFleet.is_sea(j):
+				wet = true
+		if coast and not wet:
+			continue
+		for k in 8:
+			var e := CGrid.at(CGrid.cx(c) + CGrid.DX[k], CGrid.cy(c) + CGrid.DY[k])
+			if e >= 0 and CGrid.region(e) == r and CGrid.step_cost(c, e) > 0 and CGrid.cheb(e, s) < d and e != s:
+				return [c, e]
+	return []
+
+
+## Army p attacks army e (a field battle at e's cell) and the outcome is applied: winner (0 p, 1 e), draw.
+func _rt_fight(st: Dictionary, p: Dictionary, e: Dictionary, winner: int, draw: bool = false) -> Dictionary:
+	var b := CRules.start_field_battle(st, int(e["r"]), [p], [e])
+	b["x"] = int(e["x"])
+	b["y"] = int(e["y"])
+	b["app"] = CGrid.sector(CState.cell(e), CState.cell(p))
+	b.erase("new")
+	var out := {"mode": "fought", "winner": winner, "units": []}
+	if draw:
+		out["draw"] = 1
+	return CTurn.apply_battle(st, int(b["id"]), out)
+
+
+## The cells army a's side can walk to from cell c over land steps (no block, no zones): a byte per cell.
+func _rt_land(c: int) -> PackedByteArray:
+	var seen := PackedByteArray()
+	seen.resize(CGrid.count())
+	seen.fill(0)
+	seen[c] = 1
+	var q: Array[int] = [c]
+	var qi := 0
+	while qi < q.size():
+		var u := q[qi]
+		qi += 1
+		for k in 8:
+			var v := CGrid.at(CGrid.cx(u) + CGrid.DX[k], CGrid.cy(u) + CGrid.DY[k])
+			if v >= 0 and seen[v] == 0 and CGrid.step_cost(u, v) > 0:
+				seen[v] = 1
+				q.append(v)
+	return seen
+
+
+func _rt_retreat_ev(st: Dictionary, id: int) -> Dictionary:
+	for e in st["events"]:
+		if str(e["k"]) == "retreat" and int(e["army"]) == id:
+			return e
+	return {}
+
+
+func _overland_retreat() -> void:
+	CData.use_pack("west")
+	var en := _f("england")
+	var tf := _f("tierra_firme")
+	var dar := _r("darien")
+	var car := _r("cartagena")
+	var mom := _r("mompox")
+	CGrid.ensure()
+	CFleet.ensure()
+	# 0. The geography: Cartagena's and Mompox's cells reach the Darien by no land step (the Darien gap), but the
+	#    region links (land routes and sea lanes) join them through Portobelo: the old fallback's graph.
+	var reach_c := _rt_land(CGrid.site(car))
+	var dar_land := false
+	for c in CGrid.cells_of(dar):
+		if reach_c[c] != 0:
+			dar_land = true
+	_check(not dar_land and reach_c[CGrid.site(mom)] != 0, "overland retreat: no land step joins Cartagena to the Darien (Yaviza); Mompox is overland from Cartagena")
+	for key in ["cartagena", "mompox"]:
+		var r := _r(key)
+		for mode in ["lost", "draw"]:
+			var st := _rt_state("west", en, tf, [dar])
+			var pr: Array = _rt_pair(r, 3, false)
+			if pr.is_empty():
+				_check(false, "overland retreat: a test cell in %s" % key)
+				continue
+			var p := _rt_put(st, en, int(pr[0]), 12)
+			var e := _rt_put(st, tf, int(pr[1]), 12)
+			_rt_put(st, tf, CState.field_cell(r), 12)  # the city's field army (its zone)
+			var pid := int(p["id"])
+			var start := CState.cell(p)
+			if mode == "lost":
+				# The cause: the old fallback (_nearest_friendly, the region graph with its sea lanes) names Yaviza.
+				_check(CRules._nearest_friendly(st, en, r) == dar,
+					"overland retreat: the old far fallback from %s (region links with sea lanes) names the Darien, Yaviza (%s)" % [key,
+					CData.REGIONS[CRules._nearest_friendly(st, en, r)]["key"] if CRules._nearest_friendly(st, en, r) >= 0 else "none"])
+			var s2 := _rt_fight(st, p, e, 1, mode == "draw")
+			var a2 := CState.army(s2, pid)
+			if mode == "draw":
+				_check(not a2.is_empty() and CState.cell(a2) == start and int(a2["r"]) == r and _rt_retreat_ev(s2, pid).is_empty()
+					and not CState.army(s2, int(e["id"])).is_empty() and CState.cell(CState.army(s2, int(e["id"]))) == int(pr[1]),
+					"overland retreat: a draw at %s moves nobody (attacker and defender stay where they fought)" % key)
+				continue
+			var ev := _rt_retreat_ev(s2, pid)
+			var c2 := CState.cell(a2) if not a2.is_empty() else -1
+			_check(not a2.is_empty() and c2 != start and reach_c[c2] != 0 and int(a2["r"]) != dar and CGrid.region(c2) == int(a2["r"])
+				and CRules._line_dry(start, c2) and CGrid.cheb(c2, start) <= CRules.RETREAT_R and str(ev.get("how", "")) == "land",
+				"overland retreat: beaten at %s the army falls back over land near where it fought, not to Yaviza (%d,%d -> %s, how %s)" % [key,
+				CGrid.cx(start), CGrid.cy(start), "%d,%d %s" % [CGrid.cx(c2), CGrid.cy(c2), CData.REGIONS[int(a2["r"])]["key"]] if c2 >= 0 else "gone",
+				str(ev.get("how", ""))])
+			_check(Panels.new(null).event_text(ev, en).begins_with("A English army fell back to "),
+				"overland retreat: the report says where it fell back to (%s)" % Panels.new(null).event_text(ev, en))
+	# 1. A beachhead with no ground to fall back on: enemy zones over every cell within reach. With its own fleet
+	#    beside it (room aboard) the army re-embarks; with none it holds its ground; never a teleport to Yaviza.
+	for with_fleet in [true, false]:
+		var st := _rt_state("west", en, tf, [dar])
+		var pr: Array = _rt_pair(car, 3, true)
+		var p := _rt_put(st, en, int(pr[0]), 6)
+		var e := _rt_put(st, tf, int(pr[1]), 12)
+		var start := CState.cell(p)
+		for c in CGrid.disc(start, CRules.RETREAT_R + 2):
+			if c != start and c != int(pr[1]) and CGrid.passable(c) and CGrid.cheb(c, start) % 3 == 0 and CGrid.site_region(c) < 0:
+				_rt_put(st, tf, c, 1)
+		var fid := -1
+		if with_fleet:
+			for k in 8:
+				var j := CGrid.at(CGrid.cx(start) + CGrid.DX[k], CGrid.cy(start) + CGrid.DY[k])
+				if j >= 0 and CFleet.is_sea(j) and fid < 0:
+					fid = int(_dk_fleet(st, en, j, ["frigate", "frigate"])["id"])
+		var pid := int(p["id"])
+		var s2 := _rt_fight(st, p, e, 1)
+		var ev := _rt_retreat_ev(s2, pid)
+		if with_fleet:
+			var fl := CFleet.fleet(s2, fid)
+			var aboard := false
+			for x in fl.get("carry", []):
+				aboard = aboard or int(x["id"]) == pid
+			_check(fid >= 0 and CState.army(s2, pid).is_empty() and aboard and str(ev.get("how", "")) == "fleet" and int(ev.get("fleet", -1)) == fid
+				and int(fl["moved"]) == 0,
+				"overland retreat: no ground overland and its fleet beside it with room: the army re-embarks (the fleet not marked moved) (how %s)" % str(ev.get("how", "")))
+			_check(Panels.new(null).event_text(ev, en).contains("re-embarked"), "overland retreat: the report says it re-embarked")
+		else:
+			var a2 := CState.army(s2, pid)
+			_check(not a2.is_empty() and CState.cell(a2) == start and int(a2["r"]) == car and str(ev.get("how", "")) == "held"
+				and int(a2["moved"]) == 1 and int(a2["mp"]) == 0,
+				"overland retreat: no ground overland and no fleet: the army holds its ground where it fought (how %s)" % str(ev.get("how", "")))
+			_check(Panels.new(null).event_text(ev, en).contains("held its ground"), "overland retreat: the report says it held its ground")
+	# 2. The repair: an army whose region is the Darien while its cell lies in Mompox (one army, two positions) is
+	#    set to the cell's region at the start of the turn, once, with a chronicle line.
+	var sr := _rt_state("west", en, tf, [dar])
+	var pr2: Array = _rt_pair(mom, 3, false)
+	var pa := _rt_put(sr, en, int(pr2[0]), 4)
+	pa["r"] = dar
+	var s3 := CTurn.resolve_turn(sr, [])
+	var a3 := CState.army(s3, int(pa["id"]))
+	var fixed := 0
+	for e in s3["events"]:
+		if str(e["k"]) == "position_fixed" and int(e["army"]) == int(pa["id"]):
+			fixed += 1
+	var in_ch := false
+	for e in s3.get("chronicle", []):
+		in_ch = in_ch or str(e["k"]) == "position_fixed"
+	_check(not a3.is_empty() and int(a3["r"]) == CGrid.region(CState.cell(a3)) and fixed == 1 and in_ch,
+		"overland retreat: an army whose region disagrees with its cell is repaired at the start of the turn from the cell, one chronicle line")
+	var s4 := CTurn.resolve_turn(s3, [])
+	var again := 0
+	for e in s4["events"]:
+		if str(e["k"]) == "position_fixed" and int(e["turn"]) == int(s3["turn"]):
+			again += 1
+	_check(again == 0, "overland retreat: the repair logs once (nothing to fix the next turn)")
+	_check(Panels.new(null).event_text({"k": "position_fixed", "f": en, "army": 1, "r": mom, "was": dar, "turn": 0}, en)
+		== "A English army's position was corrected to Magdalena, where it stands (was Darien).", "overland retreat: the repair's chronicle line")
+	# 3. Rome: a Roman army beaten on Sicily, Rome owning nothing there: never a teleport to the mainland.
+	CData.use_pack("rome")
+	var rome := _f("rome")
+	var syr := _f("syracuse")
+	var so := _r("sicilia_or")
+	var stR := _rt_state("rome", rome, syr, [_r("latium"), _r("bruttium")])
+	stR["regions"][so]["owner"] = syr
+	stR["regions"][_r("sicilia_occ")]["owner"] = syr
+	var prR: Array = _rt_pair(so, 3, false)
+	var pR := _rt_put(stR, rome, int(prR[0]), 8)
+	var eR := _rt_put(stR, syr, int(prR[1]), 12)
+	var oldR := CRules._nearest_friendly(stR, rome, so)
+	var sR := _rt_fight(stR, pR, eR, 1)
+	var aR := CState.army(sR, int(pR["id"]))
+	var lR := -1 if aR.is_empty() else int(CData.REGIONS[CGrid.region(CState.cell(aR))]["land"])
+	_check(oldR >= 0 and int(CData.REGIONS[oldR]["land"]) == 0 and not aR.is_empty() and lR == int(CData.REGIONS[so]["land"])
+		and _rt_land(int(prR[0]))[CState.cell(aR)] != 0,
+		"overland retreat (Rome): beaten on Sicily with no friendly land there, the army stays on Sicily (the old fallback named %s on the mainland; now %s)" % [
+		CData.REGIONS[oldR]["key"] if oldR >= 0 else "none", str(_rt_retreat_ev(sR, int(pR["id"])).get("how", ""))])
+	CData.use_pack("rome")

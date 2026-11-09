@@ -2241,9 +2241,12 @@ static func apply_outcome(st: Dictionary, bid: int, outcome: Dictionary) -> void
 	var app := int(b.get("app", -1))
 	if app >= 0 and loser == 1:
 		app = (app + 4) % 8  # the defenders fall back away from the attackers
+	# (2026-11-09, version 10 on the grid) A draw moves nobody: both sides stay where they fought (it used to count as
+	# the defender's win, so the attacker fell back; a drawn sortie already left the besiegers in place).
+	var drawn := int(outcome.get("draw", 0)) != 0 and CState.grid_on(st) and int(st.get("version", 0)) >= 10
 	for a in arm[loser]:
 		a["busy"] = 0
-		if (b["reinf"] as Array).has(int(a["id"])):
+		if (b["reinf"] as Array).has(int(a["id"])) or drawn:
 			continue
 		if CState.grid_on(st) and not open_field and not field and loser == 1 and not inside(st, a):
 			# Version 6: the owner's field armies beaten at the walls fall back.
@@ -3589,7 +3592,7 @@ const CHRONICLE_KINDS := ["battle", "captured", "destroyed", "eliminated", "war"
 	"char_captured", "char_wounded", "ransom", "sea_battle", "flota", "flota_arrived", "sack", "marque", "marque_end",
 	"blockade", "storm", "storm_hit", "storm_end", "captain_rise", "captain_fame", "captain_fate", "galleon_taken",
 	"galleon_lost", "flota_held", "lane_raided", "story", "fleet_taken",
-	"alliance", "alliance_notice", "alliance_left", "passage", "call_answered", "call_sat_out", "gold_gift"]
+	"alliance", "alliance_notice", "alliance_left", "passage", "call_answered", "call_sat_out", "gold_gift", "position_fixed"]
 const CHRONICLE_TURNS := 60
 
 
@@ -3710,8 +3713,9 @@ static func on_ring(st: Dictionary, r: int, f: int, side: bool = false) -> Array
 ## Cells faction f may not enter this phase (1): lands of factions at peace
 ## with it, hostile settlement cells (a path stops on the ring), the cell
 ## and ring of a battle pending from an earlier turn, the ring of a
-## settlement besieged by a third party.
-static func block_mask(st: Dictionary, f: int) -> PackedByteArray:
+## settlement besieged by a third party. skip_cell: the battle on that cell
+## blocks nothing (the overland retreat: the battle being applied).
+static func block_mask(st: Dictionary, f: int, skip_cell: int = -1) -> PackedByteArray:
 	var n := CGrid.count()
 	var m := PackedByteArray()
 	m.resize(n)
@@ -3731,7 +3735,10 @@ static func block_mask(st: Dictionary, f: int) -> PackedByteArray:
 				m[c] = 1
 	for b in st["battles"]:
 		if int(b.get("new", 0)) == 0 and b.has("x") and not b.has("sea"):
-			for c in CGrid.disc(CGrid.at(int(b["x"]), int(b["y"])), 1):
+			var bcell := CGrid.at(int(b["x"]), int(b["y"]))
+			if bcell == skip_cell:
+				continue
+			for c in CGrid.disc(bcell, 1):
 				m[c] = 1
 	return m
 
@@ -4556,6 +4563,9 @@ static func reach6(st: Dictionary, a: Dictionary, turns: int = 0) -> PackedInt32
 ## first; for an attacker toward where it came from); else the nearest
 ## friendly region's field cell if `far`; else it is destroyed.
 static func _retreat6(st: Dictionary, a: Dictionary, battle_cell: int, app: int, far: bool) -> void:
+	if int(st.get("version", 0)) >= 10:
+		_retreat10(st, a, battle_cell, app, far)
+		return
 	var f := int(a["f"])
 	var start := CState.cell(a)
 	var bc := battle_cell if battle_cell >= 0 else start
@@ -4601,6 +4611,177 @@ static func _retreat6(st: Dictionary, a: Dictionary, battle_cell: int, app: int,
 	if CState.stance(a) == CData.ST_FORTIFY:
 		a["stance"] = CData.ST_DEFAULT
 	event(st, {"k": "retreat", "f": f, "r": from, "to": int(a["r"]), "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"])})
+
+
+## (2026-11-09, the overland retreat; campaign_rules.md "The overland retreat (as built, 2026-11-09)") Version 10
+## retreat of a beaten army. Only over land: the cells the search walks are the march's land steps (CGrid.step_cost:
+## one landmass, rivers only at crossings, no sea lane, no water step even for an amphibious army) through cells its
+## side may enter (block_mask, the battle being applied excepted), and a destination is never across water: the
+## straight line from the army to it crosses no sea cell (_line_dry; a bay or the Gulf of Uraba is not jumped).
+## 1. As _retreat6 otherwise: the best such cell within RETREAT_R (Chebyshev) of where it stands, at least 2 from the
+##    battle, in no enemy zone, not a settlement (farthest from the battle, friendly land +40, toward where an
+##    attacker came from +20).
+## 2. far: the nearest friendly region's field cell it can walk to (a flood over the same land steps, in breadth
+##    first order from its cell), never by sea lanes (the old fallback, _nearest_friendly, crossed the sea).
+## 3. A fleet of its own beside it (CFleet.near_fleet, not in a battle) with room: it re-embarks (the fleet is not
+##    marked as moved: it sails next turn as it would have).
+## 4. far: it holds its ground where it fought (no points left this turn); otherwise it is destroyed, as before.
+## Event retreat {f, r, to, army, x, y, how: "land" | "far" | "fleet" (+ fleet) | "held"}.
+const RETREAT_R := 5
+
+
+static func _retreat10(st: Dictionary, a: Dictionary, battle_cell: int, app: int, far: bool) -> void:
+	var f := int(a["f"])
+	var start := CState.cell(a)
+	var bc := battle_cell if battle_cell >= 0 else start
+	var blk := block_mask(st, f, bc)
+	var zm := zone_mask(st, f)
+	var best := -1
+	var best_s := -(1 << 30)
+	var seen := PackedByteArray()
+	seen.resize(CGrid.count())
+	seen.fill(0)
+	seen[start] = 1
+	var q: Array[int] = [start]
+	var qi := 0
+	while qi < q.size():
+		var u := q[qi]
+		qi += 1
+		for k in 8:
+			var v := CGrid.at(CGrid.cx(u) + CGrid.DX[k], CGrid.cy(u) + CGrid.DY[k])
+			if v < 0 or seen[v] != 0 or CGrid.step_cost(u, v) <= 0 or blk[v] != 0 or CGrid.cheb(v, start) > RETREAT_R:
+				continue
+			seen[v] = 1
+			q.append(v)
+			if zm[v] != 0 or CGrid.cheb(v, bc) < 2 or CGrid.site_region(v) >= 0 or not _line_dry(start, v):
+				continue
+			var sc := CGrid.d2(v, bc) * 4
+			if CState.friendly(st, f, CState.owner(st, CGrid.region(v))):
+				sc += 40
+			if app >= 0 and CGrid.sector(bc, v) == app:
+				sc += 20
+			if sc > best_s:
+				best_s = sc
+				best = v
+	var from := int(a["r"])
+	var how := "land"
+	if best < 0 and far:
+		best = _nearest_friendly_overland(st, f, start, from, blk)
+		how = "far"
+	if best < 0:
+		var fl := _retreat_fleet(st, a)
+		if not fl.is_empty():
+			var i := CState.army_index(st, int(a["id"]))
+			(st["armies"] as Array).remove_at(i)
+			_drop_march(a)
+			a["stance"] = CData.ST_DEFAULT
+			a["moved"] = 1
+			a["mp"] = 0
+			(fl["carry"] as Array).append(a)
+			event(st, {"k": "retreat", "f": f, "r": from, "to": from, "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"]),
+				"how": "fleet", "fleet": int(fl["id"])})
+			return
+		if not far:
+			event(st, {"k": "destroyed", "f": f, "r": from, "army": int(a["id"]), "men": CState.men(a)})
+			st["armies"].erase(a)
+			return
+		best = start
+		how = "held"
+	CState.place(a, best)
+	a["moved"] = 1
+	a["mp"] = 0
+	_drop_march(a)
+	if CState.stance(a) == CData.ST_FORTIFY:
+		a["stance"] = CData.ST_DEFAULT
+	event(st, {"k": "retreat", "f": f, "r": from, "to": int(a["r"]), "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"]),
+		"how": how})
+
+
+## The straight line from cell a to cell b (Bresenham, integer) crosses no sea cell.
+static func _line_dry(a: int, b: int) -> bool:
+	var x0 := CGrid.cx(a)
+	var y0 := CGrid.cy(a)
+	var x1 := CGrid.cx(b)
+	var y1 := CGrid.cy(b)
+	var dx := absi(x1 - x0)
+	var dy := -absi(y1 - y0)
+	var sx := 1 if x0 < x1 else -1
+	var sy := 1 if y0 < y1 else -1
+	var err := dx + dy
+	while true:
+		if CGrid.region(CGrid.at(x0, y0)) == -1:
+			return false
+		if x0 == x1 and y0 == y1:
+			return true
+		var e2 := 2 * err
+		if e2 >= dy:
+			err += dy
+			x0 += sx
+		if e2 <= dx:
+			err += dx
+			y0 += sy
+	return true
+
+
+## The field cell (CState.field_cell) of the first region that _retreat_ok allows (friendly, no battle or siege, not
+## `from`) met by a breadth-first flood over land steps from cell `start` through cells not in `blk`; -1 none.
+static func _nearest_friendly_overland(st: Dictionary, f: int, start: int, from: int, blk: PackedByteArray) -> int:
+	var goal := {}
+	for r in CData.region_count():
+		if _retreat_ok(st, f, r, from):
+			var fc := CState.field_cell(r)
+			if not goal.has(fc):
+				goal[fc] = r
+	if goal.is_empty():
+		return -1
+	var seen := PackedByteArray()
+	seen.resize(CGrid.count())
+	seen.fill(0)
+	seen[start] = 1
+	var q: Array[int] = [start]
+	var qi := 0
+	while qi < q.size():
+		var u := q[qi]
+		qi += 1
+		for k in 8:
+			var v := CGrid.at(CGrid.cx(u) + CGrid.DX[k], CGrid.cy(u) + CGrid.DY[k])
+			if v < 0 or seen[v] != 0 or CGrid.step_cost(u, v) <= 0:
+				continue
+			seen[v] = 1
+			if goal.has(v):
+				return v
+			if blk[v] != 0:
+				continue
+			q.append(v)
+	return -1
+
+
+## A fleet of army a's own faction it may re-embark on after a beaten battle: beside it (CFleet.near_fleet), not in a
+## battle, with room for all its units; the first in the fleets' order; {} none.
+static func _retreat_fleet(st: Dictionary, a: Dictionary) -> Dictionary:
+	if not CFleet.on(st):
+		return {}
+	for fl in CFleet.fleets_of(st, int(a["f"])):
+		if fl.has("busy") or not CFleet.near_fleet(a, fl):
+			continue
+		if CFleet.carried_units(fl) + CState.unit_count(a) <= CFleet.capacity(fl):
+			return fl
+	return {}
+
+
+## (2026-11-09, version 10) The repair of an army whose cell lies in another region than its "r" (a save made before
+## the overland retreat, or any older writer): the cell is trusted (it is where the army stands, what the map draws and
+## what its marches start from) and "r" is set from it; event position_fixed {f, army, r, was} (in the chronicle). Armies
+## afloat (a sea cell) keep "r" (the region they left). Run at the start of resolve_turn; no RNG.
+static func fix_positions(st: Dictionary) -> void:
+	if not CState.grid_on(st) or int(st.get("version", 0)) < 10:
+		return
+	for a in st["armies"]:
+		var r := CGrid.region(CState.cell(a))
+		if r >= 0 and r != int(a["r"]):
+			var was := int(a["r"])
+			a["r"] = r
+			event(st, {"k": "position_fixed", "f": int(a["f"]), "army": int(a["id"]), "r": r, "was": was})
 
 
 ## Version 6 stance order: CData.ST_* (no points spent; a fortified army
@@ -4683,7 +4864,10 @@ static func _check_trespass6(st: Dictionary) -> void:
 				continue
 			CState.place(a, CState.field_cell(t))
 			_drop_march(a)
-			event(st, {"k": "retreat", "f": af, "r": r, "to": t, "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"])})
+			var tev := {"k": "retreat", "f": af, "r": r, "to": t, "army": int(a["id"]), "x": int(a["x"]), "y": int(a["y"])}
+			if int(st.get("version", 0)) >= 10:
+				tev["how"] = "home"  # (2026-11-09) peace sends it home (not a beaten army's retreat; may cross the sea)
+			event(st, tev)
 
 
 ## Version 6 move_targets: regions whose settlement army a can march to (a

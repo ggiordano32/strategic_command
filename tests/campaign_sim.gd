@@ -53,6 +53,8 @@ const CChars := preload("res://campaign/cchars.gd")
 const CAI := preload("res://campaign/cai.gd")
 const CDip := preload("res://campaign/cdip.gd")
 const CLanes := preload("res://campaign/clanes.gd")
+const CGrid := preload("res://campaign/cgrid.gd")
+const CFleet := preload("res://campaign/cfleet.gd")
 const UT := preload("res://sim/unit_types.gd")
 
 var seeds := 4
@@ -85,6 +87,7 @@ var trace := -1              # --trace-faction=KEY: print that faction's diploma
 var ai_alliances := -1
 var vetm := {}               # this seed's veterancy tallies (the --json line's "vet"): units by level per faction at turns 30 and 60, retrains; and its end ("end": eliminated turn per faction, battles, field)
 var bldm := {}               # (2026-11-09, docs/AI.md 76) this seed's build order and roster (the --json line's "bld"): best chain levels per faction at turns 20 / 40 / 60, recruits per unit row, the first turn each roster row's buildings stood in a region of the faction, retrains, the siege-guns counters
+var rtm := {}                # (2026-11-09, the overland retreat) this seed's retreats in the --json line "rt": by how (land, far, fleet, held; "sea" an old-rule retreat that changed landmass), destroyed, army-turns with the cell outside the region ("mismatch"), army-turns on a landmass where the faction owns nothing and no own fleet is beside ("stranded"), the longest such run
 var dipm := {}               # this seed's diplomacy tallies (wars, calls, alliances, trust gains), in the --json line
 var lanem := {}              # (2026-11-09, lanes trade by agreement) this seed's lane trade (the --json line's "lane"): per faction key [lane income, total income, turns alive, lane income from ports of another owner at peace without a treaty (paid), its potential (the halves), paying lanes] summed over the turns; trade agreements and alliances standing at turns 20 / 40 / 60; trade agreements made and ended; the AI's trade proposals and acceptances (CP counters)
 var _tr_allies: Array = []   # trace: the traced faction's allies at the end of the last turn
@@ -164,7 +167,7 @@ func _init() -> void:
 	for sd in range(seed0, seed0 + seeds):
 		var h1 := _run(sd, true)
 		if jf != null:
-			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm, "bld": bldm, "lane": lanem}))
+			jf.store_line(JSON.stringify({"probe": "campaign_sim", "pack": pack, "seed": 1000 + sd * 77, "hash": h1, "fmt": fmt, "dip": dipm, "vet": vetm, "bld": bldm, "lane": lanem, "rt": rtm}))
 			jf.flush()
 		if twice and _run(sd, false) != h1:
 			print("NOT DETERMINISTIC: seed %d" % (1000 + sd * 77))
@@ -415,9 +418,12 @@ func _run(sd: int, verbose: bool) -> String:
 		bldm = {"lv": {}, "rec": {}, "avail": {}, "ret": {}, "aic": {}}
 		dipm = {"wars": 0, "wars_called": 0, "calls_answered": 0, "calls_refused": 0, "calls_sat_out": 0, "alliances_made": 0,
 			"alliances_left": 0, "kept_faith": 0, "town_gain": 0, "battle_gain": 0}
+		rtm = {"land": 0, "far": 0, "fleet": 0, "held": 0, "sea": 0, "destroyed": 0, "mismatch": 0, "stranded": 0, "stranded_run": 0, "position_fixed": 0}
+		var strand_run := {}
 		for t in turns:
 			var t0 := Time.get_ticks_usec()
 			st = CTurn.resolve_turn(st, [])
+			_retreat_tally(st, t, strand_run)
 			for e in st["events"]:
 				if int(e["turn"]) != t:
 					continue
@@ -732,6 +738,54 @@ static func _faction(v: String) -> int:
 ## Battles and captures of the watched factions in the turn just resolved
 ## (events of turn t).
 ## Army id -> landmass of its region (sea crossings in the report).
+func _retreat_tally(st: Dictionary, t: int, run: Dictionary) -> void:
+	if not CState.grid_on(st):
+		return
+	for e in st["events"]:
+		if int(e["turn"]) != t:
+			continue
+		var k := str(e["k"])
+		if k == "retreat":
+			var how := str(e.get("how", ""))
+			if how == "":
+				var l0 := int(CData.REGIONS[int(e["r"])]["land"])
+				var l1 := int(CData.REGIONS[maxi(int(e["to"]), 0)]["land"])
+				how = "land" if l0 == l1 else "sea"
+			rtm[how] = int(rtm.get(how, 0)) + 1
+		elif k == "destroyed" or k == "position_fixed":
+			rtm[k] += 1
+	var owns := {}  # "f:land" -> 1
+	for r in CData.region_count():
+		var o := CState.owner(st, r)
+		if o >= 0:
+			owns["%d:%d" % [o, int(CData.REGIONS[r]["land"])]] = 1
+	var now := {}
+	for a in st["armies"]:
+		var c := CState.cell(a)
+		var r := CGrid.region(c)
+		if r < 0:
+			continue
+		if r != int(a["r"]):
+			rtm["mismatch"] += 1
+		var f := int(a["f"])
+		if owns.has("%d:%d" % [f, int(CData.REGIONS[r]["land"])]):
+			continue
+		var boat := false
+		for fl in CFleet.fleets_of(st, f):
+			if CFleet.near_fleet(a, fl):
+				boat = true
+				break
+		if boat:
+			continue
+		rtm["stranded"] += 1
+		var id := int(a["id"])
+		now[id] = int(run.get(id, 0)) + 1
+		rtm["stranded_run"] = maxi(int(rtm["stranded_run"]), int(now[id]))
+	run.clear()
+	for id in now:
+		run[id] = now[id]
+
+
 func _army_lands(st: Dictionary) -> Dictionary:
 	var out := {}
 	for a in st["armies"]:
