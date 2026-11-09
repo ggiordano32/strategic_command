@@ -403,11 +403,9 @@ func _ob_params(mat: ShaderMaterial, figures: bool) -> void:
 		return
 	BoardView.apply(mat)
 	if figures and SpriteOb.source != "":
-		mat.set_shader_parameter("ob_shade", SpriteOb.shade)
-		mat.set_shader_parameter("ob_mask", SpriteOb.mask)
+		SpriteOb.apply_sheets(mat)
 		mat.set_shader_parameter("ob_tab", SpriteOb.tab)
 		mat.set_shader_parameter("ob_cell", SpriteOb.cells)
-		mat.set_shader_parameter("ob_sheet", SpriteOb.sheet)
 		mat.set_shader_parameter("ob_k", px_per_m / SpriteOb.ppm)
 		mat.set_shader_parameter("ob_maxf", float(SpriteOb.max_frames))
 	elif figures:

@@ -30,9 +30,6 @@ func _initialize() -> void:
 			cav = true
 	BoardView.force = "oblique" if view == "oblique" else "top"
 	SpriteOb.ensure()
-	SpriteOb.shade = _file_tex("res://assets/sprites_ob/atlas_shade.png")   # (see _fresh_atlas)
-	SpriteOb.mask = _file_tex("res://assets/sprites_ob/atlas_mask.png")
-	SpriteOb.sheet = SpriteOb.shade.get_size()
 	var units: Array = [
 		Scenarios.unit(0, UT.index_of("principes"), 40, 90, 120, Scenarios.FACE_RIGHT, 10),
 		Scenarios.unit(1, UT.index_of("hoplites"), 40, 130, 120, Scenarios.FACE_LEFT, 10)]
@@ -83,9 +80,6 @@ func _fresh_atlas(n: Node) -> void:
 		if m.get_shader_parameter("atlas_shade") != null:
 			for p in ["shade", "mask"]:
 				m.set_shader_parameter("atlas_" + p, _file_tex("res://assets/sprites/atlas_%s.png" % p))
-		if m.get_shader_parameter("ob_shade") != null:
-			for p in ["shade", "mask"]:
-				m.set_shader_parameter("ob_" + p, _file_tex("res://assets/sprites_ob/atlas_%s.png" % p))
 	for c in n.get_children():
 		_fresh_atlas(c)
 

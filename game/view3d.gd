@@ -414,11 +414,9 @@ func _men_params(mat: ShaderMaterial, sl) -> void:
 	mat.set_shader_parameter("proc_tex", sl._atlas)
 	mat.set_shader_parameter("anim_on", 1.0 if sl.animate else 0.0)
 	if SpriteOb.source != "":
-		mat.set_shader_parameter("ob_shade", SpriteOb.shade)
-		mat.set_shader_parameter("ob_mask", SpriteOb.mask)
+		SpriteOb.apply_sheets(mat)
 		mat.set_shader_parameter("ob_tab", SpriteOb.tab)
 		mat.set_shader_parameter("ob_cell", SpriteOb.cells)
-		mat.set_shader_parameter("ob_sheet", SpriteOb.sheet)
 		mat.set_shader_parameter("ob_maxf", float(SpriteOb.max_frames))
 		mat.set_shader_parameter("sheet_ppm", SpriteOb.ppm)
 	else:

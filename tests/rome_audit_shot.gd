@@ -34,9 +34,6 @@ func _initialize() -> void:
 		if a.begins_with("--out="):
 			out = a.get_slice("=", 1).trim_suffix("/") + "/"
 	SpriteOb.ensure()
-	SpriteOb.shade = _file_tex("res://assets/sprites_ob/atlas_shade.png")   # (see _fresh_atlas)
-	SpriteOb.mask = _file_tex("res://assets/sprites_ob/atlas_mask.png")
-	SpriteOb.sheet = SpriteOb.shade.get_size()
 	var units: Array = []
 	var keys := ["principes", "triarii", "hoplites", "cav", "cav2", "cav3", "equites", "equites_extra", "bodyguard", "scorpions", "tower_bolt", "tower_stone"]
 	for k in keys:
@@ -175,9 +172,6 @@ func _fresh_atlas(n: Node) -> void:
 		if m.get_shader_parameter("atlas_shade") != null:
 			for p in ["shade", "mask"]:
 				m.set_shader_parameter("atlas_" + p, _file_tex("res://assets/sprites/atlas_%s.png" % p))
-		if m.get_shader_parameter("ob_shade") != null:
-			for p in ["shade", "mask"]:
-				m.set_shader_parameter("ob_" + p, _file_tex("res://assets/sprites_ob/atlas_%s.png" % p))
 	for c in n.get_children():
 		_fresh_atlas(c)
 

@@ -34,12 +34,20 @@ static var _done := false
 static var source := ""            # "sprites_ob", "standin" or "" (flat)
 static var shade: Texture2D
 static var mask: Texture2D
+## The sheets are two pages (no side over 4096, game/sprite_pages_ob.gdshaderinc): shade / mask are page 0, these page 1
+## (the same textures when there is one page), `split` the stacked row where page 1 starts, `sheet1` its size.
+static var shade1: Texture2D
+static var mask1: Texture2D
+static var split := 1048576.0
+static var sheet1 := Vector2(1.0, 1.0)
+const MANIFEST_VERSION := 2
 static var tab: ImageTexture
 static var cells := PackedVector4Array()
 static var max_frames := 8
 static var ppm := 24.0
 static var elevation := 40.0
-static var sheet := Vector2(1.0, 1.0)
+static var sheet := Vector2(1.0, 1.0)      # page 0's size
+static var load_error := ""
 
 
 ## Forgets a failed decision so the next `ensure` looks again (game/oblique_pack.gd mounted the pack).
@@ -122,6 +130,17 @@ static func _build(entries: Dictionary) -> void:
 	tab = ImageTexture.create_from_image(img)
 
 
+## The sheet uniforms of a soldier material (both pages, the split and the sizes).
+static func apply_sheets(mat: ShaderMaterial) -> void:
+	mat.set_shader_parameter("ob_shade", shade)
+	mat.set_shader_parameter("ob_mask", mask)
+	mat.set_shader_parameter("ob_shade1", shade1)
+	mat.set_shader_parameter("ob_mask1", mask1)
+	mat.set_shader_parameter("ob_sheet", sheet)
+	mat.set_shader_parameter("ob_sheet1", sheet1)
+	mat.set_shader_parameter("ob_split", split)
+
+
 ## The sheets' folder: assets/sprites_ob, or --sprites-ob-dir=PATH (a testing aid: a folder of the same layout).
 static func _dir() -> String:
 	for a in OS.get_cmdline_user_args():
@@ -130,17 +149,37 @@ static func _dir() -> String:
 	return OB_DIR
 
 
-static func _load_ob() -> bool:
-	var dir := _dir()
+static func _load_ob(dir_in := "") -> bool:
+	var dir := dir_in if dir_in != "" else _dir()
 	var man := _json(dir + "manifest.json")
 	if man.is_empty():
 		return false
+	if int(man.get("version", 0)) != MANIFEST_VERSION:
+		load_error = "%smanifest.json is version %s, this build reads version %d (re-pack: python3 tools/sprites/pack.py --oblique --repack)" % [dir, str(man.get("version", "none")), MANIFEST_VERSION]
+		push_warning("oblique view: " + load_error)
+		return false
 	var at: Dictionary = man.get("atlas", {})
-	shade = _tex(dir + str(at.get("shade", "atlas_shade.png")))
-	mask = _tex(dir + str(at.get("mask", "atlas_mask.png")))
+	var pages: Array = at.get("pages", [])
+	if pages.is_empty() or pages.size() > 2:
+		load_error = dir + "manifest.json has no atlas.pages (one or two)"
+		push_warning("oblique view: " + load_error)
+		return false
+	shade = _tex(dir + str((pages[0] as Dictionary)["shade"]))
+	mask = _tex(dir + str((pages[0] as Dictionary)["mask"]))
 	if shade == null or mask == null:
 		return false
 	sheet = Vector2(shade.get_width(), shade.get_height())
+	shade1 = shade
+	mask1 = mask
+	split = 1048576.0
+	sheet1 = sheet
+	if pages.size() > 1:
+		shade1 = _tex(dir + str((pages[1] as Dictionary)["shade"]))
+		mask1 = _tex(dir + str((pages[1] as Dictionary)["mask"]))
+		if shade1 == null or mask1 == null:
+			return false
+		split = float(at["split"])
+		sheet1 = Vector2(shade1.get_width(), shade1.get_height())
 	ppm = float(man.get("px_per_m", 24.0))
 	elevation = float(man.get("elevation_deg", 40.0))
 	if absf(elevation - 40.0) > 0.5:
@@ -197,6 +236,10 @@ static func _load_standin() -> bool:
 	if shade == null or mask == null:
 		return false
 	sheet = Vector2(shade.get_width(), shade.get_height())
+	shade1 = shade
+	mask1 = mask
+	split = 1048576.0
+	sheet1 = sheet
 	ppm = float(man.get("px_per_m", 24.0))
 	elevation = float(iso.get("elevation_deg", 32.0))
 	var dirs: Dictionary = iso["directions"]

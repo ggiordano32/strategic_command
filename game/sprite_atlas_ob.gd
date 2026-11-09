@@ -6,7 +6,10 @@ extends RefCounted
 ## (((s - 1) * 6 + a) * 8 + d) * 2: (x0, y0, w, h) of frame 0 in px, (anchor x, anchor y, step, frames);
 ## frame k is at x0 + k * step. MIRRORED: true when SE, E, NE repeat SW, W, NW and must be drawn flipped.
 
+## The sheet is two texture pages (no side over 4096): SIZE is the pages stacked, SPLIT_Y the row where page 1
+## starts (frame rects are in the stacked px; a frame at y >= SPLIT_Y is in page 1 at y - SPLIT_Y).
 const SIZE := Vector2i(4096, 5784)
+const SPLIT_Y := 2894
 const MIRRORED := true
 const DIRS := 8
 const ACTIONS := 6

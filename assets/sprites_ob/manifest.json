@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "view": "oblique",
  "elevation_deg": 40,
  "px_per_m": 24,
@@ -428,8 +428,6 @@
    "name": "Heavy Swords",
    "view": "oblique",
    "set": 1,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -1851,8 +1849,6 @@
    "name": "Spearmen",
    "view": "oblique",
    "set": 2,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -3274,8 +3270,6 @@
    "name": "Pikemen",
    "view": "oblique",
    "set": 3,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -4697,8 +4691,6 @@
    "name": "Shock Cavalry",
    "view": "oblique",
    "set": 4,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -6120,8 +6112,6 @@
    "name": "Archers",
    "view": "oblique",
    "set": 5,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -7543,8 +7533,6 @@
    "name": "Javelinmen",
    "view": "oblique",
    "set": 6,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -8966,8 +8954,6 @@
    "name": "Slingers",
    "view": "oblique",
    "set": 7,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -10389,8 +10375,6 @@
    "name": "Gastraphetes",
    "view": "oblique",
    "set": 8,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -11812,8 +11796,6 @@
    "name": "War Elephant",
    "view": "oblique",
    "set": 9,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -13235,8 +13217,6 @@
    "name": "Camel Riders",
    "view": "oblique",
    "set": 10,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -14658,8 +14638,6 @@
    "name": "Camel Archers",
    "view": "oblique",
    "set": 11,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -16081,8 +16059,6 @@
    "name": "Engine Crew",
    "view": "oblique",
    "set": 12,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -17504,8 +17480,6 @@
    "name": "Bolt Thrower",
    "view": "oblique",
    "set": 13,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -18927,8 +18901,6 @@
    "name": "Stone Thrower",
    "view": "oblique",
    "set": 14,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -20350,8 +20322,6 @@
    "name": "Scorpion",
    "view": "oblique",
    "set": 15,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -21773,8 +21743,6 @@
    "name": "Musketeers",
    "view": "oblique",
    "set": 16,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -23196,8 +23164,6 @@
    "name": "West Pikemen",
    "view": "oblique",
    "set": 17,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -24619,8 +24585,6 @@
    "name": "Buccaneers",
    "view": "oblique",
    "set": 18,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -26042,8 +26006,6 @@
    "name": "Rodeleros",
    "view": "oblique",
    "set": 19,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -27465,8 +27427,6 @@
    "name": "Cutlass Men",
    "view": "oblique",
    "set": 20,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -28888,8 +28848,6 @@
    "name": "Lancers",
    "view": "oblique",
    "set": 21,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -30311,8 +30269,6 @@
    "name": "Pistoleers",
    "view": "oblique",
    "set": 22,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -31734,8 +31690,6 @@
    "name": "Native Warriors",
    "view": "oblique",
    "set": 23,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -33157,8 +33111,6 @@
    "name": "Native Bowmen",
    "view": "oblique",
    "set": 24,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -34580,8 +34532,6 @@
    "name": "West Gun Crew",
    "view": "oblique",
    "set": 25,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -36003,8 +35953,6 @@
    "name": "Cannon",
    "view": "oblique",
    "set": 26,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -37426,8 +37374,6 @@
    "name": "Grenadiers",
    "view": "oblique",
    "set": 27,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -38849,8 +38795,6 @@
    "name": "Dragoons",
    "view": "oblique",
    "set": 28,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -40272,8 +40216,6 @@
    "name": "Coureurs des Bois",
    "view": "oblique",
    "set": 29,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -41695,8 +41637,6 @@
    "name": "Boarding Grenadiers",
    "view": "oblique",
    "set": 30,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -43118,8 +43058,6 @@
    "name": "Canoe Raiders",
    "view": "oblique",
    "set": 31,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -44541,8 +44479,6 @@
    "name": "Holcan Warriors",
    "view": "oblique",
    "set": 32,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -45964,8 +45900,6 @@
    "name": "Mortar",
    "view": "oblique",
    "set": 33,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -47387,8 +47321,6 @@
    "name": "Mounted Arquebusiers",
    "view": "oblique",
    "set": 34,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -48810,8 +48742,6 @@
    "name": "Marines",
    "view": "oblique",
    "set": 35,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -50233,8 +50163,6 @@
    "name": "Naval Gun",
    "view": "oblique",
    "set": 36,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -51656,8 +51584,6 @@
    "name": "Colonial Militia",
    "view": "oblique",
    "set": 37,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -53079,8 +53005,6 @@
    "name": "Maroons",
    "view": "oblique",
    "set": 38,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -54502,8 +54426,6 @@
    "name": "Atlatl Throwers",
    "view": "oblique",
    "set": 39,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -55925,8 +55847,6 @@
    "name": "West Slingers",
    "view": "oblique",
    "set": 40,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -57348,8 +57268,6 @@
    "name": "Sea Captain",
    "view": "oblique",
    "set": 41,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -58771,8 +58689,6 @@
    "name": "Privateer",
    "view": "oblique",
    "set": 42,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -60194,8 +60110,6 @@
    "name": "Missionary",
    "view": "oblique",
    "set": 43,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -61617,8 +61531,6 @@
    "name": "Shaman",
    "view": "oblique",
    "set": 44,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -63040,8 +62952,6 @@
    "name": "Torch Raiders",
    "view": "oblique",
    "set": 45,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -64463,8 +64373,6 @@
    "name": "Legionaries",
    "view": "oblique",
    "set": 46,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -65886,8 +65794,6 @@
    "name": "Triarii",
    "view": "oblique",
    "set": 47,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -67309,8 +67215,6 @@
    "name": "Hoplites",
    "view": "oblique",
    "set": 48,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -68732,8 +68636,6 @@
    "name": "Equites",
    "view": "oblique",
    "set": 49,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -70156,8 +70058,6 @@
    "view": "oblique",
    "set": 0,
    "prop": 1,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -71580,8 +71480,6 @@
    "view": "oblique",
    "set": 0,
    "prop": 1,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -73004,8 +72902,6 @@
    "view": "oblique",
    "set": 0,
    "prop": 1,
-   "shade": "atlas_shade.png",
-   "mask": "atlas_mask.png",
    "sheet_size": [
     4096,
     5784
@@ -74425,8 +74321,6 @@
   }
  },
  "atlas": {
-  "shade": "atlas_shade.png",
-  "mask": "atlas_mask.png",
   "size": [
    4096,
    5784
@@ -104492,6 +104386,27 @@
      6
     ]
    ]
-  }
+  },
+  "pages": [
+   {
+    "shade": "atlas_shade.png",
+    "mask": "atlas_mask.png",
+    "y": 0,
+    "size": [
+     4096,
+     2894
+    ]
+   },
+   {
+    "shade": "atlas_shade_1.png",
+    "mask": "atlas_mask_1.png",
+    "y": 2894,
+    "size": [
+     4096,
+     2890
+    ]
+   }
+  ],
+  "split": 2894
  }
 }

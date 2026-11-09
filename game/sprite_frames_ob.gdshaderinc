@@ -2,7 +2,8 @@
 // The oblique soldier atlas frame table (see game/sprite_atlas_ob.gd): entry k =
 // (((set - 1) * 6 + action) * 8 + direction) * 2 + j; j 0: (x0, y0, w, h), 1: (anchor x,
 // anchor y, step, frames). Names end in _ob so a shader may include both tables.
-const vec2 ATLAS_SIZE_OB = vec2(4096.0, 5784.0);
+const vec2 ATLAS_SIZE_OB = vec2(4096.0, 5784.0);   // the pages stacked
+const float ATLAS_SPLIT_OB = 2894.0;   // the row where page 1 starts
 const int ATLAS_ENTRIES_OB = 4704;
 const int ACTIONS_OB = 6;
 const int DIRS_OB = 8;

@@ -87,7 +87,8 @@ uniform sampler2D ob_shade : filter_linear_mipmap, repeat_disable;
 uniform sampler2D ob_mask : filter_linear_mipmap, repeat_disable;
 uniform sampler2D ob_tab : filter_nearest, repeat_disable;
 uniform vec4 ob_cell[64];
-uniform vec2 ob_sheet = vec2(1024.0, 1024.0);
+uniform vec2 ob_sheet = vec2(1024.0, 1024.0);   // page 0 (game/sprite_pages_ob.gdshaderinc: page 1)
+#include "res://game/sprite_pages_ob.gdshaderinc"
 uniform float ob_k = 0.4166667;      // board px per sheet px
 uniform float ob_maxf = 8.0;         // frames per (action, direction) in the table
 uniform sampler2D ob_occ : filter_nearest, repeat_disable;
@@ -679,9 +680,9 @@ void fragment() {
 		}
 		vec2 fp = an.xy + lp;
 		float inside = step(0.0, fp.x) * step(0.0, fp.y) * step(fp.x, fr.z) * step(fp.y, fr.w);
-		vec2 uvo = (fr.xy + clamp(fp, vec2(0.0), fr.zw)) / ob_sheet;
-		vec4 so = texture(ob_shade, uvo);
-		vec4 mo = texture(ob_mask, uvo);
+		vec2 pxo = fr.xy + clamp(fp, vec2(0.0), fr.zw);
+		vec4 so = ob_read(ob_shade, ob_shade1, pxo);
+		vec4 mo = ob_read(ob_mask, ob_mask1, pxo);
 		COLOR = vec4(recolour(so, mo, int(v_look.y + 0.5), v_look.z, v_color.rgb), so.a * v_color.a * inside);
 		if (occ > 0.5) {
 			if (corpses) {
@@ -692,7 +693,7 @@ void fragment() {
 					vec2 off = (q == 0 ? vec2(1.0, 0.0) : (q == 1 ? vec2(-1.0, 0.0) : (q == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)))) * spx;
 					vec2 fq = fp + off;
 					float iq = step(0.0, fq.x) * step(0.0, fq.y) * step(fq.x, fr.z) * step(fq.y, fr.w);
-					float aq = iq * textureLod(ob_shade, (fr.xy + clamp(fq, vec2(0.0), fr.zw)) / ob_sheet, 0.0).a;
+					float aq = iq * ob_read_lod0(ob_shade, ob_shade1, fr.xy + clamp(fq, vec2(0.0), fr.zw)).a;
 					edge = max(edge, 1.0 - step(0.35, aq));
 				}
 				vec4 g = ob_ghost(so.a * inside, edge);

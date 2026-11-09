@@ -54,9 +54,6 @@ func _fresh_atlas(n: Node) -> void:
 		if m.get_shader_parameter("atlas_shade") != null:
 			for p in ["shade", "mask"]:
 				m.set_shader_parameter("atlas_" + p, _file_tex("res://assets/sprites/atlas_%s.png" % p))
-		if m.get_shader_parameter("ob_shade") != null:
-			for p in ["shade", "mask"]:
-				m.set_shader_parameter("ob_" + p, _file_tex("res://assets/sprites_ob/atlas_%s.png" % p))
 	for c in n.get_children():
 		_fresh_atlas(c)
 
@@ -68,9 +65,6 @@ func _run() -> void:
 	await _frames(4)
 	print("frames ok")
 	SpriteOb.ensure()
-	SpriteOb.shade = _file_tex("res://assets/sprites_ob/atlas_shade.png")
-	SpriteOb.mask = _file_tex("res://assets/sprites_ob/atlas_mask.png")
-	SpriteOb.sheet = SpriteOb.shade.get_size()
 	var att: Array = [[UT.index_of("equites"), 40], [UT.index_of("equites_extra"), 40], [UT.index_of("cav"), 40],
 		[UT.index_of("principes"), 100], [UT.index_of("principes"), 100]]
 	var dfn: Array = [[UT.index_of("equites"), 40], [UT.index_of("equites_extra"), 40], [UT.index_of("cav"), 40],

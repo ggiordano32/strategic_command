@@ -2303,6 +2303,34 @@ passes unchanged); nothing there reads a sim or BoardView. `board_slab3d.gdshade
 land board's foam layers, 1 a cast-resin board (the sea's: the layers above the MDF foot read as resin in its depth colour, lighter toward
 the top with a pale meniscus). The sea view's board is the field plus a 300 m margin at y 0 with a 3 m slab and the table 3x the field.
 
+## Soldier sheets under 4096 (as built, 2026-11-09)
+
+The fault: on the owner's Samsung Tab S7 (Adreno 650, Chrome, WebGL 2.0) a 3D battle drew the board, towns and kit but every soldier as a
+black box; in the map camera (tilt 85, the small top-down atlas frames) the men drew right. The oblique soldier sheets
+`assets/sprites_ob/atlas_shade.png` and `atlas_mask.png` were 4096 x 5784 px; every other texture the 3D view samples is at most
+2048 x 2496. A texture taller than the context's MAX_TEXTURE_SIZE (4096 there) is incomplete and samples black.
+
+The design (option A, two pages; the frames' pixels and rects are untouched, so the look is the same):
+- A tighter single 4096 x 4096 sheet cannot hold the frames: the 3,640 distinct frames are 19.5 M px (4096 x 4096 is 16.8 M), the current
+  shelf packing already fills 82 % of the sheet by frame area (88 % with the 4 px alignment steps), so there is no 30 % to win.
+  A texture array needs a runtime build from two images and a different loader; two ordinary imported textures were the smaller change.
+- `tools/sprites/pack.py` cuts the packed sheet pair at the empty row band nearest the middle that no frame crosses (`split_pages`):
+  page 0 `atlas_shade.png` / `atlas_mask.png` (4096 x 2894), page 1 `atlas_shade_1.png` / `atlas_mask_1.png` (4096 x 2890); the mask is
+  cut at the same row as its shade. Total PNG bytes 10.23 MB -> 10.24 MB (lossless, no rescale; the web index.pck is reported in STATUS).
+- Frame rects stay in the pages stacked ("virtual sheet", 4096 x 5784; the table, `SIZE`, the tests unchanged): a frame at
+  y >= `split` (2894) is in page 1 at y - split. No frame crosses the cut and every strip lies in one page.
+- Manifest version 2: `atlas.pages` (shade, mask, y, size per page) and `atlas.split`; the unit entries lose their shade / mask names.
+  `SpriteOb._load_ob` refuses another version with `SpriteOb.load_error` ("manifest.json is version 1, this build reads version 2
+  (re-pack: ... --repack)") and a warning, falling back to the stand-in or flat figures. `pack.py --oblique` writes the new layout from
+  rendered frames; `pack.py --oblique --repack` converts a version 1 pack in place with no render (the frames are not kept in the repo).
+- Shaders: `game/sprite_pages_ob.gdshaderinc` (included by `soldiers.gdshaderinc` and `soldiers3d.gdshaderinc`, so the gpu and cpu
+  paths, the ghost pass and the 2D oblique path) declares `ob_shade1`, `ob_mask1`, `ob_sheet1` (page 1's size) and `ob_split`;
+  `ob_read(page0, page1, px)` branches on `px.y >= ob_split` and samples with `textureGrad` using the derivatives taken before the
+  branch (GLSL ES 3.0 forbids implicit-LOD reads in non-uniform flow; no second read, no extra texture cost); `ob_read_lod0` for the
+  2D occlusion edge test. `ob_sheet` is now page 0's size. `SpriteOb.apply_sheets(mat)` sets all of it for both layers.
+- The three old shot scripts that reloaded the sheets from files (rome_battle_shot, rome_audit_shot, rome_town_cav_shot) no longer do.
+- Tests: `oblique_sheets_test` checks the version, two pages within 4096, mask paired page for page, the pages stacking to the atlas,
+  no frame crossing the cut, `SPLIT_Y`, both pages loaded by `SpriteOb`, and the refusal of a version 1 manifest.
 
 ### The ship models and the one ship look (as built, 2026-11-09, view only)
 

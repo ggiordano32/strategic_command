@@ -13,6 +13,7 @@ extends SceneTree
 ## Exits 0 on success, 1 on failure.
 
 const SpriteAtlasOb := preload("res://game/sprite_atlas_ob.gd")
+const SpriteOb := preload("res://game/sprite_ob.gd")
 const MinisAtlas := preload("res://game/minis_atlas.gd")
 const BattleKitAtlas := preload("res://game/battlekit_atlas.gd")
 const BattleKitAtlas2 := preload("res://game/battlekit_atlas2.gd")
@@ -99,12 +100,45 @@ func _units() -> void:
 				for pair in [["SE", "SW"], ["E", "W"], ["NE", "NW"]]:
 					_check(fr[pair[0]] == fr[pair[1]], "%s/%s mirrored %s" % [uid, act, pair[0]])
 	var atlas_size: Array = ob["atlas"]["size"]
-	var img := Image.new()
-	var err := img.load(ProjectSettings.globalize_path("res://assets/sprites_ob/atlas_shade.png"))
-	_check(err == OK and img.get_width() == int(atlas_size[0]) and img.get_height() == int(atlas_size[1]), "shade atlas image size")
-	var m := Image.new()
-	err = m.load(ProjectSettings.globalize_path("res://assets/sprites_ob/atlas_mask.png"))
-	_check(err == OK and m.get_width() == int(atlas_size[0]) and m.get_height() == int(atlas_size[1]), "mask atlas image size")
+	_check(int(ob.get("version", 0)) == 2, "manifest version 2 (the sheets are pages)")
+	var pages: Array = ob["atlas"]["pages"]
+	var split := int(ob["atlas"]["split"])
+	_check(pages.size() == 2 and int(pages[1]["y"]) == split and int(pages[0]["y"]) == 0, "two pages, page 1 starts at the split")
+	var stacked := 0
+	for k in pages.size():
+		# a page is never taller or wider than a WebGL context's MAX_TEXTURE_SIZE (4096 on the Tab S7): taller sampled black
+		var pg: Dictionary = pages[k]
+		var si := Image.new()
+		var mi := Image.new()
+		var e1 := si.load(ProjectSettings.globalize_path("res://assets/sprites_ob/" + str(pg["shade"])))
+		var e2 := mi.load(ProjectSettings.globalize_path("res://assets/sprites_ob/" + str(pg["mask"])))
+		_check(e1 == OK and e2 == OK, "page %d images load" % k)
+		_check(si.get_width() <= 4096 and si.get_height() <= 4096, "page %d shade %dx%d within 4096" % [k, si.get_width(), si.get_height()])
+		_check(mi.get_size() == si.get_size(), "page %d mask paired with its shade (%s)" % [k, str(mi.get_size())])
+		_check(si.get_size() == Vector2i(int(pg["size"][0]), int(pg["size"][1])), "page %d size matches the manifest" % k)
+		_check(int(pg["y"]) == stacked, "page %d starts where the one above ends" % k)
+		stacked += si.get_height()
+	_check(stacked == int(atlas_size[1]) and int(pages[0]["size"][0]) == int(atlas_size[0]), "the pages stack to the atlas size")
+	# every frame is inside one page (none crosses the cut), checked on all the rects of every unit
+	var crossing := 0
+	var nfr := 0
+	for uid in ob["units"]:
+		for act in (ob["units"][uid]["actions"] as Dictionary).values():
+			for fr in (act["frames"] as Dictionary).values():
+				for r in fr:
+					nfr += 1
+					if int(r[1]) < split and int(r[1]) + int(r[3]) > split:
+						crossing += 1
+	_check(crossing == 0, "no frame crosses the page cut (%d frames)" % nfr)
+	# and the runtime sees the same pages; an old (version 1) manifest is refused with a message
+	_check(SpriteOb.ensure() and SpriteOb.shade1 != null and SpriteOb.shade1.get_height() <= 4096 and SpriteOb.shade.get_height() <= 4096 and SpriteOb.split == float(split), "SpriteOb loads both pages")
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://ob_v1"))
+	var vf := FileAccess.open("user://ob_v1/manifest.json", FileAccess.WRITE)
+	vf.store_string(JSON.stringify({"version": 1, "atlas": {"shade": "atlas_shade.png", "mask": "atlas_mask.png"}}))
+	vf.close()
+	SpriteOb.load_error = ""
+	_check(not SpriteOb._load_ob("user://ob_v1/") and SpriteOb.load_error.contains("version 1") and SpriteOb.load_error.contains("--repack"), "a version 1 manifest is refused: " + SpriteOb.load_error)
+	_check(SpriteAtlasOb.SPLIT_Y == split, "SPLIT_Y matches the manifest")
 	# the generated GDScript table: sets x actions x 8 directions x 2 entries
 	var sets: int = SpriteAtlasOb.SETS.size()
 	_check(SpriteAtlasOb.TABLE.size() == sets * SpriteAtlasOb.ACTIONS * 8 * 2, "TABLE length %d" % SpriteAtlasOb.TABLE.size())

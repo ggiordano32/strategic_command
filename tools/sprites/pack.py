@@ -362,7 +362,7 @@ def pack_rows(rows, out_dir, name):
     return entries, [W, H]
 
 
-def pack_atlas(strips, out_dir, align, gutter, oc, min_w=512):
+def pack_atlas(strips, out_dir, align, gutter, oc, min_w=512, pages_out=None):
     """One shade + one mask atlas for every unit's actions (the game's).
     A strip = one action's frames side by side; strips go on shelves,
     tallest first. Every frame starts on a multiple of `align` px with at
@@ -407,9 +407,55 @@ def pack_atlas(strips, out_dir, align, gutter, oc, min_w=512):
             sheet_m.blit(mk, x0 + k * step, y0)
             rects.append([x0 + k * step, y0, sh.w, sh.h])
         placed[(uid, act)] = {"rects": rects, "anchor": [round(anchor[0], 2), round(anchor[1], 2)], "step": step}
-    sheet_s.save(os.path.join(out_dir, "atlas_shade.png"))
-    sheet_m.save(os.path.join(out_dir, "atlas_mask.png"))
+    if pages_out is not None:
+        # the oblique sheets: no side over 4096 (a context's MAX_TEXTURE_SIZE); frame rects stay in the stacked sheet
+        pages_out.extend(split_pages(sheet_s, sheet_m, [r for v in placed.values() for r in v["rects"]], out_dir))
+    else:
+        sheet_s.save(os.path.join(out_dir, "atlas_shade.png"))
+        sheet_m.save(os.path.join(out_dir, "atlas_mask.png"))
     return placed, [W, H]
+
+
+MAX_SIDE = 4096
+
+
+def split_pages(sheet_s, sheet_m, rects, out_dir):
+    """Cuts the stacked sheet pair at a row no frame crosses (the gap nearest the middle) into page 0 (rows above)
+    and page 1, so no texture is taller than MAX_SIDE; writes atlas_shade.png / atlas_mask.png (page 0) and
+    atlas_shade_1.png / atlas_mask_1.png. Frame rects are not changed: they stay in the stacked sheet's px, a
+    frame at y >= split lives in page 1 at y - split. -> [{"shade", "mask", "y", "size"}, ...]"""
+    W, H = sheet_s.w, sheet_s.h
+    assert W <= MAX_SIDE, "sheet wider than %d" % MAX_SIDE
+    if H <= MAX_SIDE:
+        cuts = [0, H]
+    else:
+        iv = sorted((r[1], r[1] + r[3]) for r in rects)
+        gaps = []          # (start, end) of the empty row bands between frames
+        top = 0
+        for a, b in iv:
+            if a > top:
+                gaps.append((top, a))
+            top = max(top, b)
+        best = None
+        for a, b in gaps:
+            m = (a + b) // 2
+            if m <= MAX_SIDE and H - m <= MAX_SIDE:
+                if best is None or abs(m - H / 2) < abs(best - H / 2):
+                    best = m
+        if best is None:
+            sys.exit("no cut puts both pages within %d" % MAX_SIDE)
+        cuts = [0, best, H]
+    pages = []
+    for k in range(len(cuts) - 1):
+        y0, y1 = cuts[k], cuts[k + 1]
+        suf = "" if k == 0 else "_%d" % k
+        names = {}
+        for kind, im in (("shade", sheet_s), ("mask", sheet_m)):
+            part = Img(W, y1 - y0, px=bytearray(im.px[y0 * W * 4:y1 * W * 4]))
+            names[kind] = "atlas_%s%s.png" % (kind, suf)
+            part.save(os.path.join(out_dir, names[kind]))
+        pages.append({"shade": names["shade"], "mask": names["mask"], "y": y0, "size": [W, y1 - y0]})
+    return pages
 
 
 def _has(act, uid):
@@ -461,6 +507,8 @@ def load_action(d, prefix, n, oc):
 
 def main():
     if "--oblique" in sys.argv:
+        if "--repack" in sys.argv:
+            return repack_oblique(sys.argv[1:])
         return main_oblique(sys.argv[1:])
     global PAINTED
     args = sys.argv[1:]
@@ -647,6 +695,52 @@ def _ob_action(job):
     return uid, act, out, (info["anchor"][0] - x0, info["anchor"][1] - y0)
 
 
+OB_VERSION = 2   # 2: the sheets are pages (atlas.pages), frame rects in the stacked sheet's px; 1 was one 4096 x 5784 sheet
+
+
+def repack_oblique(args):
+    """python3 tools/sprites/pack.py --oblique --repack [--out assets/sprites_ob]
+
+    Version 1 -> 2 without rendering: cuts the existing single sheet pair (atlas_shade.png / atlas_mask.png, the
+    frames' pixels untouched) into pages of at most 4096 per side, rewrites the manifest and the generated tables."""
+    out_dir = os.path.join(ROOT, "assets", "sprites_ob")
+    for i, a in enumerate(args):
+        if a == "--out":
+            out_dir = os.path.abspath(args[i + 1])
+    mp = os.path.join(out_dir, "manifest.json")
+    man = json.load(open(mp))
+    if man.get("version") != 1:
+        sys.exit("--repack takes a version 1 manifest (found %s)" % man.get("version"))
+    at = man["atlas"]
+    sheet_s = Img.load(os.path.join(out_dir, at["shade"]))
+    sheet_m = Img.load(os.path.join(out_dir, at["mask"]))
+    assert [sheet_s.w, sheet_s.h] == at["size"] == [sheet_m.w, sheet_m.h]
+    rects = []
+    for u in man["units"].values():
+        for a in u["actions"].values():
+            for fr in a["frames"].values():
+                rects.extend(fr)
+    pages = split_pages(sheet_s, sheet_m, rects, out_dir)
+    man["version"] = OB_VERSION
+    _man_pages(man, pages)
+    with open(mp, "w") as f:
+        json.dump(man, f, indent=1)
+    write_game_tables_ob(at, SPEC["palettes"], bool(man["mirror"]))
+    print("repacked %s into %d pages: %s" % (at["size"], len(pages), [p["size"] for p in pages]))
+
+
+def _man_pages(man, pages):
+    """The page list in the atlas block; the units keep no sheet names (pages are an atlas matter)."""
+    at = man["atlas"]
+    at.pop("shade", None)
+    at.pop("mask", None)
+    at["pages"] = pages
+    at["split"] = pages[1]["y"] if len(pages) > 1 else 1 << 20
+    for u in man["units"].values():
+        u.pop("shade", None)
+        u.pop("mask", None)
+
+
 def main_oblique(args):
     """python3 tools/sprites/pack.py --oblique [--frames tools/sprites/_frames_ob]
     [--out assets/sprites_ob] [--mirror] [--jobs 8]
@@ -706,16 +800,17 @@ def main_oblique(args):
         keyed[(uid, act)] = anchor
         for dn in rendered:
             strips.append((uid, (act, dn), byd[dn], anchor))
-    placed, size = pack_atlas(strips, out_dir, atl["align"], atl["gutter"], oc, min_w=4096)
+    pages = []
+    placed, size = pack_atlas(strips, out_dir, atl["align"], atl["gutter"], oc, min_w=4096, pages_out=pages)
     man = {
-        "version": 1,
+        "version": OB_VERSION,
         "view": "oblique",
         "elevation_deg": ob["elevation_deg"],
         "px_per_m": ppm,
         "m_per_px": round(1.0 / ppm, 6),
         "directions": OB_DIRS,
         "mirror": mirror,
-        "doc": "Oblique sheets (tabletop pass 3): the camera looks north from the south at elevation_deg, orthographic, px_per_m on the ground plane (the ground's vertical scale on screen is sin(elevation)). Each action lists its frames per direction of the unit's facing: S = facing the camera, then clockwise on the compass as seen on screen: SW, W, NW, N, NE, E, SE. Frames: [x, y, w, h] px in the atlas; anchor: px from a frame's top-left to the unit's origin (the man's feet on the ground); every direction of an action shares one frame size and anchor. mirror true: only S, SW, W, NW, N are rendered and SE, E, NE list the frames of SW, W, NW, to be drawn flipped horizontally. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. atlas.table: per sprite set (1 = sets[0]), per action, per direction (the order of `directions`) two vec4: (x0, y0, w, h) of frame 0 and (anchor x, anchor y, step, frames); frame k is at x0 + k * step.",
+        "doc": "Oblique sheets (tabletop pass 3): the camera looks north from the south at elevation_deg, orthographic, px_per_m on the ground plane (the ground's vertical scale on screen is sin(elevation)). Each action lists its frames per direction of the unit's facing: S = facing the camera, then clockwise on the compass as seen on screen: SW, W, NW, N, NE, E, SE. Frames: [x, y, w, h] px in the atlas (the pages stacked: atlas.size, page 1 starts at atlas.split, see atlas.pages); anchor: px from a frame's top-left to the unit's origin (the man's feet on the ground); every direction of an action shares one frame size and anchor. mirror true: only S, SW, W, NW, N are rendered and SE, E, NE list the frames of SW, W, NW, to be drawn flipped horizontally. Mask: R primary, G secondary, B accent, A = 255 - 128 * check pattern. atlas.table: per sprite set (1 = sets[0]), per action, per direction (the order of `directions`) two vec4: (x0, y0, w, h) of frame 0 and (anchor x, anchor y, step, frames); frame k is at x0 + k * step.",
         "outline": SPEC["outline"],
         "palettes": SPEC["palettes"],
         "units": {},
@@ -748,19 +843,18 @@ def main_oblique(args):
         if uid in props:
             prop_tab[uid] = rows
             man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "oblique", "set": 0, "prop": 1,
-                                 "shade": "atlas_shade.png", "mask": "atlas_mask.png",
                                  "sheet_size": size, "actions": acts}
         else:
             table += rows
             man["units"][uid] = {"name": SPEC["units"][uid]["name"], "view": "oblique",
                                  "set": atl["sets"].index(uid) + 1,
-                                 "shade": "atlas_shade.png", "mask": "atlas_mask.png",
                                  "sheet_size": size, "actions": acts}
-    man["atlas"] = {"shade": "atlas_shade.png", "mask": "atlas_mask.png", "size": size,
+    man["atlas"] = {"size": size,
                     "sets": atl["sets"], "props": props, "actions": list(SPEC["actions"].keys()),
                     "fps": [a["fps"] for a in SPEC["actions"].values()],
                     "palettes": list(SPEC["palettes"].keys()), "directions": OB_DIRS,
                     "table": table, "prop_table": prop_tab}
+    _man_pages(man, pages)
     # a table of this size makes the manifest large: keep it, the tools read it; the game reads the .gd
     with open(os.path.join(out_dir, "manifest.json"), "w") as f:
         json.dump(man, f, indent=1)
@@ -786,7 +880,10 @@ def write_game_tables_ob(atlas, palettes, mirror):
          "## (((s - 1) * %d + a) * 8 + d) * 2: (x0, y0, w, h) of frame 0 in px, (anchor x, anchor y, step, frames);" % na,
          "## frame k is at x0 + k * step. MIRRORED: true when SE, E, NE repeat SW, W, NW and must be drawn flipped.",
          "",
+         "## The sheet is two texture pages (no side over 4096): SIZE is the pages stacked, SPLIT_Y the row where page 1",
+         "## starts (frame rects are in the stacked px; a frame at y >= SPLIT_Y is in page 1 at y - SPLIT_Y).",
          "const SIZE := Vector2i(%d, %d)" % (W, H),
+         "const SPLIT_Y := %d" % atlas["split"],
          "const MIRRORED := %s" % ("true" if mirror else "false"),
          "const DIRS := 8",
          "const ACTIONS := %d" % na,
@@ -817,7 +914,8 @@ def write_game_tables_ob(atlas, palettes, mirror):
          "// The oblique soldier atlas frame table (see game/sprite_atlas_ob.gd): entry k =",
          "// (((set - 1) * %d + action) * 8 + direction) * 2 + j; j 0: (x0, y0, w, h), 1: (anchor x," % na,
          "// anchor y, step, frames). Names end in _ob so a shader may include both tables.",
-         "const vec2 ATLAS_SIZE_OB = vec2(%s, %s);" % (_f(W), _f(H)),
+         "const vec2 ATLAS_SIZE_OB = vec2(%s, %s);   // the pages stacked" % (_f(W), _f(H)),
+         "const float ATLAS_SPLIT_OB = %s;   // the row where page 1 starts" % _f(atlas["split"]),
          "const int ATLAS_ENTRIES_OB = %d;" % n,
          "const int ACTIONS_OB = %d;" % na,
          "const int DIRS_OB = 8;",
