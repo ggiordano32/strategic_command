@@ -68,6 +68,7 @@ extends RefCounted
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
+const CWeather := preload("res://campaign/cweather.gd")
 const CGrid := preload("res://campaign/cgrid.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -1795,6 +1796,7 @@ static func _pending(st: Dictionary, att: Array, dfn: Array, c: int) -> void:
 	var b := {"id": int(st["next_battle"]), "sea": 1, "kind": "sea", "r": near_region(c), "turn": int(st["turn"]),
 		"att": [], "def": [], "reinf": [], "att_f": int(att[0]["f"]), "def_f": int(dfn[0]["f"]), "settlement": 0,
 		"x": CGrid.cx(c), "y": CGrid.cy(c), "af": af, "df": df, "sf": sf}
+	CWeather.set_on(st, b)  # (the battle's weather: a rule since 2026-11-09)
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	_rules().event(st, {"k": "sea_pending", "x": CGrid.cx(c), "y": CGrid.cy(c), "f": int(att[0]["f"]),

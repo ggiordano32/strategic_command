@@ -180,6 +180,59 @@ static func run(key: String, p_seed: int, ticks: int, snap_at: Array = []) -> Di
 	return {"hashes": hashes, "result": sim.result(), "stats": sim.stats.duplicate(), "bad": bad, "sim": sim}
 
 
+## The weather at sea (2026-11-09, sim/wx.gd): "downpour" in the scenario: the tiers in the hash (overcast not), the
+## guns' reload 35 % longer and their reach capped at the sight (150 m), a snapshot restored on a plain setup runs on
+## hash-equal for 300 ticks, and a full run fires fewer broadsides than the clear day's. Returns the failures.
+static func weather() -> int:
+	var fails := 0
+	var plain := scenario("frigates")
+	var wet: Dictionary = plain.duplicate(true)
+	wet["weather"] = "downpour"
+	var over: Dictionary = plain.duplicate(true)
+	over["weather"] = "overcast,summer"
+	var a := SeaSim.new()
+	a.setup(wet, 7)
+	var p := SeaSim.new()
+	p.setup(plain, 7)
+	var o := SeaSim.new()
+	o.setup(over, 7)
+	var full := ST.stat(p.s_type[0], "range")
+	if a.wx_on != 1 or o.wx_on != 0 or a.state_hash() == p.state_hash() or o.state_hash() != p.state_hash() \
+			or a.wx_rl != 35 or a.shot_range(0, ST.SHOT_ROUND) != mini(full, 150) or p.shot_range(0, ST.SHOT_ROUND) != full:
+		printerr("FAIL sea weather: the tiers, the hash rule or the reach (wx_on %d / %d, reach %d / %d)" % [a.wx_on, o.wx_on,
+			a.shot_range(0, ST.SHOT_ROUND), p.shot_range(0, ST.SHOT_ROUND)])
+		return 1
+	for t in 300:
+		a.step()
+	var b := SeaSim.new()
+	b.setup(plain, 7)
+	if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash():
+		printerr("FAIL sea weather: restore on a plain setup")
+		return 1
+	for t in 300:
+		a.step()
+		b.step()
+		if a.state_hash() != b.state_hash():
+			fails += 1
+	if fails > 0:
+		printerr("FAIL sea weather: the restored copy diverged (%d of 300 ticks)" % fails)
+		return 1
+	var rw := run("frigates", 7, 6000)
+	var scn := scenario("frigates")
+	scn["weather"] = "downpour"
+	var sw := SeaSim.new()
+	sw.setup(scn, 7)
+	for t in 6000:
+		sw.step()
+		if sw.ended != 0:
+			break
+	var bc := int((rw["stats"] as Dictionary).get("broadsides", 0))
+	var bw := int(sw.stats.get("broadsides", 0))
+	print("PASS sea weather: downpour in the hash (overcast not), reload +35 %%, reach %d -> %d m, restored on a plain setup 300 ticks equal; broadsides clear %d, downpour %d" % [
+		full, mini(full, 150), bc, bw])
+	return 0
+
+
 static func _side_text(r: Dictionary, side: int) -> String:
 	var sd: Dictionary = r["sides"][side]
 	return "%d ships: %d sunk, %d taken, %d escaped" % [int(sd["ships"]), int(sd["sunk"]), int(sd["taken"]), int(sd["fled"])]

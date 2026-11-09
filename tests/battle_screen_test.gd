@@ -163,6 +163,11 @@ func _check_pre() -> void:
 	_check(ml.contains("Mantlets: 2"), "the mantlets line: " + ml)
 	_check(scr.find_child("odds_bar", true, false) != null and scr.find_child("odds_text", true, false) != null, "the odds bar")
 	var b := CState.battle(cs.st, _bid)
+	# The forecast (2026-11-09): the battle's weather, decided by the rules, and what it does.
+	var bwx := str(b.get("weather", ""))
+	var wl := _label(scr, "battle_weather")
+	_check((bwx == "" and wl == "") or (bwx != "" and wl == "Weather: " + preload("res://game/weather.gd").short_line(bwx) + "."),
+		"the battle card's weather line (%s): %s" % [bwx, wl])
 	_snap = BattleScreen.snapshot(cs.st, b, rome)
 	var want := 0
 	for sd in 2:
@@ -969,8 +974,8 @@ func _track_cases() -> void:
 ## The weather pass, the look (docs/design/art_pipeline.md "The weather pass, the look", 2026-11-06): each kind builds its layer with
 ## no error (the screen layer in every view, the particle volume as well in 3D), rain and snow have their precipitation alive (the
 ## screen shader in the top and oblique views, one MultiMesh in 3D, thinned to a quarter on Low), the storm's strike lifts the flash
-## value and it falls back to 0, fog sets the environment's fog in 3D, a clear day builds nothing, the weather is not in the sim
-## hash, and the shader globals and the tracks' weather_mul return to neutral when the battle goes.
+## value and it falls back to 0, fog sets the environment's fog in 3D, a clear day builds nothing, the sim
+## hashes a weather with no rule as the clear day (2026-11-09: the rules), and the shader globals and the tracks' weather_mul return to neutral when the battle goes.
 func _weather_cases() -> void:
 	const Weather := preload("res://game/weather.gd")
 	const TrackLayer := preload("res://game/track_layer.gd")
@@ -1023,15 +1028,18 @@ func _weather_cases() -> void:
 	_check(Weather.parse("snowcover winter,clear")["ground"] == "snowcover" and Weather.parse("wet")["kind"] == "clear" and Weather.parse("wet,rain")["ground"] == "wet",
 		"weather: the ground token parses in any order and 'wet' is no longer rain")
 	var wcs := {}
-	for t in 40:
+	for t in 40:  # (the view's former pick, now Weather.for_campaign over CWeather.for_turn: the mapping)
 		wcs[Weather.for_campaign(t * 2 + 1, "rome", t * 977)] = 1
 		wcs[Weather.for_campaign(t * 2, "west", t * 977)] = 1
 	_check(wcs.has("clear,winter,snowcover") or wcs.has("overcast,winter,snowcover"), "weather: the campaign mapping gives snow cover without snowfall")
 	_check(wcs.has("overcast,summer,wet") and wcs.has("tempest,summer"), "weather: the campaign mapping gives a wet field and the heavy storm")
-	var same := true
-	for h in hashes:
-		same = same and h == hashes[0]
-	_check(same, "weather: the sim's hash is the same under every weather (view only)")
+	# (2026-11-09, the weather rules: Battle.weather reaches the sim; the weathers with no rule (clear, overcast, a season)
+	# hash as the clear day, every other weather apart from it.)
+	var ws := ["clear", "rain", "snow", "storm", "fog", "overcast", "downpour,autumn", "winter", "clear,winter,snowcover", "overcast,wet", "tempest"]
+	var ok_h := hashes.size() == ws.size()
+	for i in mini(hashes.size(), ws.size()):
+		ok_h = ok_h and (hashes[i] == hashes[0]) == (not Weather.has_rules(str(ws[i])))
+	_check(ok_h, "weather: the sim hashes as the clear day under the weathers with no rule (clear, overcast, a season), apart under the rest")
 
 
 ## Suppression (2026-11-06; docs/design/ui.md "Suppression chips"): a player's musket line under fire is suppressed

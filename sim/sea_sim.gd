@@ -163,6 +163,7 @@ extends RefCounted
 const FM := preload("res://sim/fixed_math.gd")
 const ST := preload("res://sim/sea_types.gd")
 const UT := preload("res://sim/unit_types.gd")
+const Wx := preload("res://sim/wx.gd")
 
 const U := 1024                  # units per metre
 const TIME_LIMIT := 9000         # ticks (15 minutes)
@@ -365,6 +366,13 @@ var s_tgt := PackedInt32Array()
 var s_fire := PackedInt32Array()
 var s_shot := PackedInt32Array()
 var s_ld := PackedInt32Array()       # 2 per ship: the shot loaded (port, starboard)
+## Weather (2026-11-09; sim/wx.gd, docs/design/sea.md): the scenario's "weather", parsed at setup. The guns reload
+## slower in rain and snow and reach no further than the sight; the wind is the sea sim's own and untouched.
+## Hashed only when some tier is set (wx_on).
+var wx_t := PackedInt32Array([0, 0, 0, 0, 0])
+var wx_on: int = 0
+var wx_rl: int = 0       # the guns' reload, % longer
+var wx_sight: int = 0    # metres a ship's guns reach at most (0: no limit)
 var s_rl := PackedInt32Array()       # 2 per ship: reload work left (ticks x 1000)
 var s_tack := PackedInt32Array()
 var s_grap := PackedInt32Array()
@@ -512,6 +520,10 @@ func setup(scn: Dictionary, p_seed: int) -> void:
 	w_goal = w_base
 	w_str = clampi(int(scn.get("wind_str", 80)), 10, 100)
 	deck_on = 1 if int(scn.get("deck", 0)) != 0 else 0
+	wx_t = Wx.tiers(str(scn.get("weather", "")))
+	wx_on = 1 if Wx.any(wx_t) else 0
+	wx_rl = Wx.reload_pct(wx_t)
+	wx_sight = Wx.sight_m(wx_t)
 	var ai: Array = scn.get("ai_sides", [0, 1])
 	ai_sides = PackedInt32Array([int(ai[0]), int(ai[1])])
 	var sk: Array = scn.get("ai_skill", [AVERAGE, AVERAGE])
@@ -1393,7 +1405,7 @@ func _steer(s: int) -> void:
 func _want_range(s: int) -> int:
 	if ST.is_galley(s_type[s]):
 		return MSL_STAND
-	var rng := ST.stat(s_type[s], "range")
+	var rng := shot_range(s, ST.SHOT_ROUND)
 	return mini(int(RANGE_PREF[s_ld[s * 2]]) if s_rl[s * 2] == 0 else int(RANGE_PREF[s_shot[s]]), rng * 8 / 10)
 
 
@@ -2490,9 +2502,11 @@ func deck_request() -> Array:
 func shot_range(s: int, shot: int) -> int:
 	var r := ST.stat(s_type[s], "range")
 	if shot == ST.SHOT_CHAIN:
-		return r * ST.CHAIN_RANGE_PCT / 100
-	if shot == ST.SHOT_GRAPE:
-		return r * ST.GRAPE_RANGE_PCT / 100
+		r = r * ST.CHAIN_RANGE_PCT / 100
+	elif shot == ST.SHOT_GRAPE:
+		r = r * ST.GRAPE_RANGE_PCT / 100
+	if wx_sight > 0 and r > wx_sight:
+		r = wx_sight  # (the weather: no further than the lookouts see)
 	return r
 
 
@@ -2635,7 +2649,7 @@ func _broadside(s: int, k: int, t: int) -> void:
 		s_hit_t[t] = tick
 	if s_hull[t] == 0:
 		_sink(t)
-	s_rl[i] = ST.stat(ty, "reload") * 10 * 1000
+	s_rl[i] = ST.stat(ty, "reload") * 10 * 1000 * (100 + wx_rl) / 100
 	s_ld[i] = s_shot[s]
 	stats["broadsides"] = int(stats["broadsides"]) + 1
 	stats["hits"] = int(stats["hits"]) + hits
@@ -3711,4 +3725,6 @@ func state_hash() -> int:
 	if gal_on != 0:
 		for nm in GAL_ARRAYS:
 			ctx.update((get(nm) as PackedInt32Array).to_byte_array())
+	if wx_on != 0:
+		ctx.update(wx_t.to_byte_array())  # (the weather, 2026-11-09: only when some rule applies)
 	return ctx.finish().decode_u32(0)

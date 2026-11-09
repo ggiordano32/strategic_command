@@ -9,6 +9,7 @@ extends SceneTree
 ## glyphs and the desktop one words; the chips' states (cycle, Mixed, Pistols two-state, armed text), the cards'
 ## state strip and a resize with a selection standing. --shots=DIR saves screenshots. Exits 0 / 1.
 
+const Weather := preload("res://game/weather.gd")
 const Battle := preload("res://game/battle.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
@@ -758,6 +759,7 @@ func _run() -> void:
 			await _frames(4)
 			root.get_texture().get_image().save_png("%s/hud_phone_mixed_more.png" % _shots)
 			b.hud._set_more_open(false)
+		await _weather_check(sc, sz[2])
 		await _ammo_mark_check()
 		await _vet_mark_check()
 		await _groups_check(by_role, sz[2])
@@ -770,6 +772,52 @@ func _run() -> void:
 	UiScale._touch_override = -1
 	print("RESULT: ", "PASS" if failures == 0 else "FAIL (%d)" % failures)
 	quit(0 if failures == 0 else 1)
+
+
+## (2026-11-09) The weather chip and plate (docs/design/ui.md "The weather chip and plate"): a battle under
+## "downpour,wet" shows the chip right of the clock (its rain icon, inside the viewport and clear of the right-hand
+## buttons from the phone's 844 px up; on a phone the ground's word, on a desktop the name), a tap opens the plate under
+## it inside the viewport, titled "Downpour, muddy ground", one line a rule from Weather.effects; the deployment bar's
+## short line is Weather.short_line; a battle given no weather has no chip.
+func _weather_check(sc: Dictionary, phone: bool) -> void:
+	var ws: Dictionary = sc.duplicate(true)
+	ws["weather"] = "downpour,wet"
+	await _new_battle(ws)
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var c: Button = h.wx_chip
+	var cr := c.get_global_rect()
+	var right := INF
+	for k in h._top.get_children():
+		if (k as Control).visible:
+			right = minf(right, (k as Control).get_global_rect().position.x)
+	var wide_enough: bool = vp.x >= 844.0
+	_check(c.visible and c.icon != null and Rect2(Vector2.ZERO, vp).grow(0.5).encloses(cr) and (not wide_enough or cr.end.x <= right + 0.5)
+		and c.text == ("mud" if phone else "Downpour, mud") and b.sim.wx_on == 1,
+		"%s: the weather chip (%s, text '%s') is inside the viewport and clear of the top bar's buttons (left edge %.0f)" % [_size_name, str(cr), c.text, right])
+	c.pressed.emit()
+	await _frames(3)
+	var pnl: PanelContainer = h.wx_panel
+	var t: Label = pnl.find_child("wx_title", true, false) as Label
+	var lines := Weather.effects("downpour,wet")
+	var got := 0
+	for i in lines.size():
+		var l := pnl.find_child("wx_line_%d" % i, true, false) as Label
+		if l != null and l.text == lines[i]:
+			got += 1
+	_check(pnl.visible and Rect2(Vector2.ZERO, vp).grow(0.5).encloses(pnl.get_global_rect()) and t != null
+		and t.text == "Downpour, muddy ground" and got == lines.size() and lines.size() >= 7,
+		"%s: a tap opens the weather plate inside the viewport (%s), titled '%s', %d of %d rule lines" % [_size_name,
+			str(pnl.get_global_rect()), t.text if t != null else "-", got, lines.size()])
+	_check(h.deploy_wx.text == Weather.short_line("downpour,wet") and str(h.deploy_wx.text).contains("reload a third slower"),
+		"%s: the deployment bar's weather line is the short line" % _size_name)
+	if _shots != "" and (_size_name == "844x390" or _size_name == "1280x720"):
+		root.get_texture().get_image().save_png("%s/wx_plate_%s.png" % [_shots, _size_name])
+	h.set_weather_open(false)
+	await _frames(1)
+	_check(not pnl.visible, "%s: the plate closes" % _size_name)
+	await _new_battle(sc)
+	_check(not b.hud.wx_chip.visible and b.sim.wx_on == 0, "%s: a battle given no weather has no chip" % _size_name)
 
 
 ## (2026-11-05) A fleet at the shore: the player's ships (the defenders' frigate and two sloops off the quay) each have

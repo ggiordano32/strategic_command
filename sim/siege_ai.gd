@@ -2610,7 +2610,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		var lat := _spread(rk.x, rk.y, kn[AP.S_ART_SPREAD])
 		var out: int = kn[AP.S_ART_OUT]
 		if carried:
-			out = mini(out, UT.stat(ty, "m_range") * kn[AP.S_LART_PCT] / 100)
+			out = mini(out, int(sim.t_m_range[ty]) * kn[AP.S_LART_PCT] / 100)
 		var spot := _gate_point(sim, g, out, lat)
 		# Battering the wall by the gate (docs/AI.md 35): before the stretch.
 		var bsg := _batter_for(sim, u, g, kn, false)
@@ -2622,9 +2622,9 @@ static func _att_art(sim, u: int, phase: int) -> void:
 			# battery its crew to the towers' engines.)
 			var lob := UT.stat(ty, "m_kind") != 1
 			var gd := BattleAI._d(aim.x - spot.x, aim.y - spot.y)
-			if gd > UT.stat(ty, "m_range") * 85 / 100 or (not lob and sim.lof_block(spot.x, spot.y,
+			if gd > int(sim.t_m_range[ty]) * 85 / 100 or (not lob and sim.lof_block(spot.x, spot.y,
 					sim.height_at(spot.x, spot.y) + 1536, aim.x, aim.y, sim.height_at(aim.x, aim.y) + 1024, 0, 0, 8192) >= 0):
-				spot = _batter_spot(sim, u, bsg, mini(out, UT.stat(ty, "m_range") * 85 / 100), lat)
+				spot = _batter_spot(sim, u, bsg, mini(out, int(sim.t_m_range[ty]) * 85 / 100), lat)
 		elif UT.stat(ty, "m_kind") == 1:
 			# Bolts need a clear flat line to the gate: try further aside.
 			var f: Vector2i = sim.gate_face(g)
@@ -2663,7 +2663,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		var asg := _batter_for(sim, u, g, kn, false)
 		if asg >= 0 and sim.ws_hp[asg] < sim.ws_hp0[asg]:
 			var aa: Vector2i = sim.ws_aim(asg, UT.stat(ty, "m_kind") != 1)
-			if BattleAI._d(aa.x - sim.u_cx[u], aa.y - sim.u_cy[u]) < UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100:
+			if BattleAI._d(aa.x - sim.u_cx[u], aa.y - sim.u_cy[u]) < int(sim.t_m_range[ty]) * kn[AP.S_ART_REACH_PCT] / 100:
 				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != -2 - asg:
 					BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "wall": asg, "run": 0}, 0)
 				return
@@ -2676,7 +2676,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		var csg := _batter_for(sim, u, cg, kn, true)
 		var f: Vector2i = sim.ws_aim(csg, UT.stat(ty, "m_kind") != 1) if csg >= 0 else sim.gate_face(cg)
 		var dcg := BattleAI._d(f.x - sim.u_cx[u], f.y - sim.u_cy[u])
-		var reach: int = UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100
+		var reach: int = int(sim.t_m_range[ty]) * kn[AP.S_ART_REACH_PCT] / 100
 		if dcg < reach:
 			if csg >= 0:
 				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != -2 - csg:
@@ -2688,7 +2688,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 			return
 		# Out of reach: bring the battery up (through the breach if need be)
 		# to 70 % of its range from the citadel's gate.
-		var want := UT.stat(ty, "m_range") * kn[AP.S_ART_CLOSE_PCT] / 100
+		var want := int(sim.t_m_range[ty]) * kn[AP.S_ART_CLOSE_PCT] / 100
 		var spot := Vector2i(f.x + (sim.u_cx[u] - f.x) * want / maxi(dcg, 1),
 			f.y + (sim.u_cy[u] - f.y) * want / maxi(dcg, 1))
 		if sim.u_order[u] != O_MOVE or BattleAI._d(sim.u_dx[u] - spot.x, sim.u_dy[u] - spot.y) > 8 * M:
@@ -2701,7 +2701,7 @@ static func _att_art(sim, u: int, phase: int) -> void:
 		var tc := _tower_cover(sim, _wall_breach(sim, side))
 		if tc >= 0 and _tower_shot_ok(sim, u, kn, tc):
 			var ta: Vector2i = sim.tw_aim(tc, UT.stat(ty, "m_kind") != 1)
-			if BattleAI._d(ta.x - sim.u_cx[u], ta.y - sim.u_cy[u]) < UT.stat(ty, "m_range") * kn[AP.S_ART_REACH_PCT] / 100:
+			if BattleAI._d(ta.x - sim.u_cx[u], ta.y - sim.u_cy[u]) < int(sim.t_m_range[ty]) * kn[AP.S_ART_REACH_PCT] / 100:
 				if sim.u_order[u] != O_ATTACK or sim.u_gtarget[u] != TWR_TGT - tc:
 					BattleAI._order(sim, u, {"type": ORDER_ATTACK, "target": -1, "tower": tc, "run": 0}, 0)
 					BattleAI._count(sim, side, AP.C_SIEGE)
@@ -2774,7 +2774,7 @@ static func _lart_wall_target(sim, u: int, g: int, kn: PackedInt32Array) -> bool
 		return false
 	var side: int = sim.u_side[u]
 	var ty: int = sim.u_type[u]
-	var rng := UT.stat(ty, "m_range")
+	var rng := int(sim.t_m_range[ty])
 	var mn := UT.stat(ty, "m_min")
 	var best := -1
 	var bd := 0
@@ -3282,7 +3282,7 @@ static func _fire_at_gate(sim, u: int, g: int) -> bool:
 	if sim.u_order[u] != O_NONE or sim.u_fighting[u] > 0 or sim.special_left(u) <= 0:
 		return false
 	var gf: Vector2i = sim.gate_face(g)
-	var rng: int = UT.stat(sim.u_type[u], "m_range") * UT.ammo_stat(sk, "range") / 100
+	var rng: int = int(sim.t_m_range[sim.u_type[u]]) * UT.ammo_stat(sk, "range") / 100
 	if BattleAI._d(gf.x - sim.u_cx[u], gf.y - sim.u_cy[u]) > rng:
 		return false
 	if sim.u_akind[u] != 1:
@@ -3622,7 +3622,7 @@ static func _sk_wall_target(sim, u: int, g: int, kn: PackedInt32Array) -> bool:
 	if sim.tick - sim.ai_t[side] > kn[AP.SK_WALL_ART] + 2 * kn[AP.S_HACK_AFTER] / 3:
 		return false
 	var ty: int = sim.u_type[u]
-	var rng := UT.stat(ty, "m_range")
+	var rng := int(sim.t_m_range[ty])
 	var mn := UT.stat(ty, "m_min")
 	var best := -1
 	var bd := 0
@@ -3955,7 +3955,7 @@ static func _tower_near_gate(sim, u: int, g: int, r: int, reach: bool) -> int:
 			continue
 		if reach:
 			var ty: int = sim.u_type[u]
-			if not sim._art_in_range(u, o, UT.stat(ty, "m_min"), UT.stat(ty, "m_range")):
+			if not sim._art_in_range(u, o, UT.stat(ty, "m_min"), int(sim.t_m_range[ty])):
 				continue
 			if UT.stat(ty, "m_kind") == 1 and not sim.lof_units(u, o):
 				continue
@@ -4117,7 +4117,7 @@ static func _tower(sim, u: int) -> void:
 		return
 	var ty: int = sim.u_type[u]
 	var mn := UT.stat(ty, "m_min")
-	var rng := UT.stat(ty, "m_range")
+	var rng := int(sim.t_m_range[ty])
 	var best := -1
 	var best_s := 0
 	for o in sim.n_units:
@@ -5078,7 +5078,7 @@ static func _batter_bld(sim, u: int, kn: PackedInt32Array) -> bool:
 		e = sim.ws_side_pt(sg, true)
 	elif g >= 0 and g < sim.n_gates:
 		e = Vector2i(sim.g_x[g], sim.g_y[g])
-	var reach: int = UT.stat(sim.u_type[u], "m_range") * kn[AP.S_ART_REACH_PCT] / 100
+	var reach: int = int(sim.t_m_range[sim.u_type[u]]) * kn[AP.S_ART_REACH_PCT] / 100
 	var mn: int = UT.stat(sim.u_type[u], "m_min")
 	var best := -1
 	var bt := 0

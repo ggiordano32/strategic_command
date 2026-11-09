@@ -105,7 +105,7 @@ static func _strength(sim, side: int) -> int:
 static func _focus(sim, u: int) -> void:
 	var ty: int = sim.u_type[u]
 	var mn := UT.stat(ty, "m_min")
-	var rng := UT.stat(ty, "m_range")
+	var rng := int(sim.t_m_range[ty])
 	var best := -1
 	var bs := 0
 	for o in sim.n_units:

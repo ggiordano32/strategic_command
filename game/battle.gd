@@ -183,8 +183,9 @@ var _v3d_twist_prev := 1e9    # the two fingers' angle at the last frame (1e9: n
 var _rmb_turn := false        # 3D: the right drag turns and tilts the camera
 var terrain: TerrainLayer
 var tracks: TrackLayer   # the ground-marks layer (tracks on the board)
-## The weather pass, the look (game/weather.gd; view only, never in the sim): the setup's weather string ("storm,winter"; the sandbox's
-## picker and the campaign's season mapping set it, --weather= / ?weather= override it), its spec and the screen layer.
+## The weather (game/weather.gd the look, sim/wx.gd the rules since 2026-11-09): the battle's weather string ("storm,winter"), the
+## scenario's "weather" when it has one (the campaign's pending battle, the sandbox's picks), else this; --weather= / ?weather=
+## override it; _ld_scenario hands it to the sim and sets it back here. Its spec and the screen layer.
 var weather := ""
 var wx_spec: Dictionary = {}
 var wx_layer: CanvasLayer
@@ -463,12 +464,19 @@ func _loading_pack() -> String:
 
 
 func _ld_scenario() -> void:
-	var wa := Weather.launch_arg()
-	wx_spec = Weather.spec(wa if wa != "" else weather)
-	Weather.current = Weather.join(wx_spec["kind"], wx_spec["season"], wx_spec["ground"])
-	Weather.apply_globals(wx_spec)   # (before any shader is built: the board, the trees and the kit read the globals)
 	sim = BattleSim.new()
 	_ld_scn = custom_scenario if not custom_scenario.is_empty() else Scenarios.make(scenario_id)
+	# The weather, a rule since 2026-11-09 (sim/wx.gd): the scenario's "weather" (the campaign's pending battle, the custom
+	# battle's Sky / Season / Ground), else Battle.weather; --weather= / ?weather= override both, in the sim as in the look.
+	var wa := Weather.launch_arg()
+	var w := wa if wa != "" else str(_ld_scn.get("weather", weather))
+	if w != "" and str(_ld_scn.get("weather", "")) != w:
+		_ld_scn = _ld_scn.duplicate()
+		_ld_scn["weather"] = w
+	weather = w
+	wx_spec = Weather.spec(w)
+	Weather.current = Weather.join(wx_spec["kind"], wx_spec["season"], wx_spec["ground"])
+	Weather.apply_globals(wx_spec)   # (before any shader is built: the board, the trees and the kit read the globals)
 	if unit_faction.is_empty() and _ld_scn.get("unit_faction") is Array:
 		unit_faction = _ld_scn["unit_faction"]  # (the West scenarios' factions: Scenarios.west_factions; view only)
 	if terrain_kind >= 0 and _ld_scn.has("terrain"):
@@ -645,6 +653,7 @@ func _ld_hud() -> void:
 		hud.unit_faction = nf
 	hud.build(sim, player_side, interactive)
 	hud.set_title(_hud_title(), hud.book.pack)
+	hud.set_weather(weather)   # (the weather chip and plate: the rules in words, game/weather.gd effects)
 	var su: Array = _ld_scn.get("units", [])
 	for k in mini(su.size(), sim.n_units):
 		if str((su[k] as Dictionary).get("label", "")) != "":

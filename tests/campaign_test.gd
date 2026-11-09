@@ -60,6 +60,8 @@ const CRules := preload("res://campaign/crules.gd")
 const CLanes := preload("res://campaign/clanes.gd")
 const CTurn := preload("res://campaign/cturn.gd")
 const CBattle := preload("res://campaign/cbattle.gd")
+const CWeather := preload("res://campaign/cweather.gd")
+const Wx := preload("res://sim/wx.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
@@ -553,6 +555,45 @@ func _battles() -> void:
 		"a settlement battle is fought on the city's own map (walls %d)" % CState.walls(st2, _r("apulia")))
 	var built2 := CBattle.build(st2, b, rome)
 	_check(str(built2) == str(built), "the scenario is a pure function of the state")
+	# The weather (2026-11-09, campaign/cweather.gd): decided by the rules when the battle is made, the same on a second
+	# resolve of the same submissions, in the fought battle's scenario; a battle without the key is a clear day; the
+	# legacy formats (version < 10) make none.
+	var st2b := CTurn.resolve_turn(st, [CTurn.submission(st, rome, [{"t": "move", "army": int(a["id"]), "to": _r("apulia"), "mode": CData.MODE_ASSAULT}])])
+	var bw := CState.battle_at(st2b, _r("apulia"))
+	var wx := str(b.get("weather", ""))
+	_check(str(bw.get("weather", "")) == wx and CState.hash_text(st2b) == CState.hash_text(st2) and str(sc.get("weather", "")) == wx
+		and (wx != "") == (int(st2["version"]) >= 10),
+		"the pending battle's weather (%s, version %d): the same on a second resolve, and in its scenario" % [wx, int(st2["version"])])
+	var g10 := CState.new_campaign("wx", 4242, [_f("rome")])
+	var got := false
+	for t in 12:
+		var r1 := CTurn.resolve_turn(g10, [])
+		var r2 := CTurn.resolve_turn(g10, [])
+		for pb in r1["battles"]:
+			var w10 := str((pb as Dictionary).get("weather", ""))
+			if not got and int(r1["version"]) >= 10 and w10 != "" and Wx.tiers(w10).size() == 5 and CState.hash_text(r1) == CState.hash_text(r2):
+				got = true
+				var bb := CBattle.build(r1, pb, _f("rome"))
+				_check(str((bb["scenario"] as Dictionary).get("weather", "")) == w10,
+					"a version 10 battle carries its weather (%s, turn %d), alike on two resolves, and its scenario too" % [w10, int(r1["turn"])])
+		if got or not (r1["battles"] as Array).is_empty():
+			break
+		g10 = r1
+	_check(got, "a version 10 campaign makes a battle with a weather within 12 turns")
+	var seen := {}
+	for t in 40:
+		seen[CWeather.for_turn(t, "rome", t * 37 % 100)] = 1
+		seen[CWeather.for_turn(t, "west", t * 53 % 100)] = 1
+	_check(seen.has("clear,summer") and seen.has("snow,winter") and seen.has("rain,summer") and not seen.has("snow,spring"),
+		"the season mapping: Rome's winters snow, the West's wet summers rain (%d kinds seen)" % seen.size())
+	var old_b: Dictionary = b.duplicate(true)
+	old_b.erase("weather")
+	var built_old := CBattle.build(st2, old_b, rome)
+	_check(not (built_old["scenario"] as Dictionary).has("weather") and CWeather.of(old_b) == "", "a battle from an older save (no weather key) is fought on a clear day")
+	var st8 := CState.as_format(_new([_f("rome")]), 8)
+	var b8 := {}
+	CWeather.set_on(st8, b8)
+	_check(not b8.has("weather"), "the legacy formats (version 8) give a battle no weather")
 	# Fake result: attackers win, defenders all killed.
 	var res := sim.result()
 	res["winner"] = 0
@@ -4162,7 +4203,9 @@ func _ai_skilled() -> void:
 	# (2026-11-09, the build order reaches the roster (docs/AI.md 76): with the build-up off here, only the Rome pack's
 	# live mix (CData.AI_LIVE_MIX 1: a mix line no centre can raise gives its share to the others) moves the play;
 	# were 15853336 / 2309884102 and, Easy, 427959d4 / 656603057.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "8f14231b" and int(g["rng"]) == 3981142049,
+	# (2026-11-09, the weather rules (campaign/cweather.gd): each pending battle draws its weather from the state's RNG;
+	# were 8f14231b / 3981142049 and, Easy, 7a712c82 / 4015190316.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "be3d9f7e" and int(g["rng"]) == 3934412497,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4175,7 +4218,8 @@ func _ai_skilled() -> void:
 	# lifted, docs/design/campaign_rules.md "(2026-11-01) Two armies attacking one"; was 3ab3e567, rng 989255646.)
 	# (Moved 2026-11-09 with the Rome pack's live mix, docs/AI.md 76: the Average factions around it; was 427959d4,
 	# rng 656603057.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "7a712c82" and int(ge["rng"]) == 4015190316,
+	# (Moved 2026-11-09 with the weather rules: the battles' weather drawn from the RNG; was 7a712c82, rng 4015190316.)
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "b4041bcf" and int(ge["rng"]) == 1610855359,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false

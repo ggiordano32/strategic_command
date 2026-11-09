@@ -132,6 +132,11 @@ func _init() -> void:
 		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 		quit(0 if _ok else 1)
 		return
+	if OS.get_cmdline_user_args().has("--only=wx"):
+		_test_wx()
+		print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
+		quit(0 if _ok else 1)
+		return
 	if OS.get_cmdline_user_args().has("--only=siege"):
 		_test_siege_snapshots()
 		_test_lockstep_siege()
@@ -218,6 +223,7 @@ func _init() -> void:
 	_test_deploy_unlimited()
 	_test_sea()
 	_test_vet()
+	_test_wx()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
 	quit(0 if _ok else 1)
 
@@ -259,6 +265,96 @@ func _test_vet() -> void:
 		_fail("vet: the restored copy diverged (%d of 300 ticks)" % bad)
 	else:
 		print("PASS vet: levels 1-3 on side 0 in the hash, through snapshot / restore at 60 s (restored on a fresh setup), 300 ticks equal; no level: vet_on 0")
+
+
+## 17. Weather (2026-11-09; "--only=wx"; sim/wx.gd): bench_west_muskets under "downpour,wet" (muskets, guns, mud):
+## the tiers are in the hash (the same battle with no weather hashes otherwise from the first tick; "overcast,summer"
+## hashes as no weather), a copy restored from a snapshot at 40 s carries them and runs on hash-equal for 30 s, and two
+## peers through Lockstep (the enemy under the battle AI) hash alike on every frame, a third joining from a snapshot too.
+func _test_wx() -> void:
+	var scen: Dictionary = Scenarios.make("bench_west_muskets")
+	scen["ai_sides"] = [0, 1]
+	var plain: Dictionary = scen.duplicate(true)
+	var over: Dictionary = scen.duplicate(true)
+	over["weather"] = "overcast,summer"
+	scen["weather"] = "downpour,wet"
+	var a := BattleSim.new()
+	a.setup(scen, 4711)
+	var p := BattleSim.new()
+	p.setup(plain, 4711)
+	var o := BattleSim.new()
+	o.setup(over, 4711)
+	if a.wx_on != 1 or p.wx_on != 0 or o.wx_on != 0 or a.state_hash() == p.state_hash() or o.state_hash() != p.state_hash():
+		_fail("wx: the tiers are not in the hash, or overcast is (wx_on %d / %d / %d)" % [a.wx_on, p.wx_on, o.wx_on])
+		return
+	while a.tick < 400 and a.winner < 0:
+		a.step()
+	var b := BattleSim.new()
+	b.setup(plain, 4711)
+	if not b.restore(a.snapshot()) or b.state_hash() != a.state_hash() or b.wx_on != 1 or b.wx_t != a.wx_t or b.wx_rl != a.wx_rl:
+		_fail("wx: restore at 40 s did not reproduce the weather and the hash")
+		return
+	var bad := 0
+	for t in 300:
+		a.step()
+		b.step()
+		if a.state_hash() != b.state_hash():
+			bad += 1
+	if bad > 0:
+		_fail("wx: the restored copy diverged (%d of 300 ticks)" % bad)
+		return
+	print("PASS wx: downpour,wet in the hash (overcast not), through snapshot / restore at 40 s (on a plain setup), 300 ticks equal")
+	var ls: Dictionary = scen.duplicate(true)
+	ls["ai_sides"] = [1]
+	var probe := BattleSim.new()
+	probe.setup(ls, 4242)
+	var home := _home_split(probe)
+	var enemy: Array = []
+	for u in probe.n_units:
+		if probe.u_side[u] == 1:
+			enemy.append(u)
+	var relay := Relay.new()
+	var pa := _new_peer(ls, home, 0, "A", [0, 1])
+	var pb := _new_peer(ls, home, 1, "B", [0, 1])
+	pa.latency = 1
+	pb.latency = 3
+	pb.d = 4
+	var peers: Array[Peer] = [pa, pb]
+	var total := 600 if quick else 1500
+	var pc: Peer = null
+	var c_join := total / 3
+	var now := 0
+	while now < total * 3 and mini(pa.ls.frame, pb.ls.frame) < total:
+		now += 1
+		for q in peers:
+			_script(q, now, enemy)
+			q.flush(relay, now)
+			q.deliver(relay, now)
+			q.run(q.rng.randi() % 3, true)
+		if pc != null:
+			pc.flush(relay, now)
+			pc.deliver(relay, now)
+			pc.run(4, true)
+		if now == c_join:
+			pc = _new_peer(ls, home, 1, "C", [0, 1])
+			pc.online = true
+			pc.latency = 2
+			if not pc.ls.restore(pa.ls.snapshot()):
+				_fail("wx lockstep: C could not restore A's snapshot")
+				return
+			pc.hashes[pc.ls.frame] = pc.ls.state_hash()
+			pc.cursor = 0
+			while pc.cursor < relay.items.size() and int(relay.items[pc.cursor]["s"]) <= pc.ls.last_s:
+				pc.cursor += 1
+			pc.sent_k = 1 << 30
+	var n_ab := _compare(pa, pb, 0, "wx A/B")
+	var n_ac := _compare(pa, pc, c_join, "wx A/C") if pc != null else 0
+	if n_ab < total / 2 or n_ac < 100 or pa.ls.sim.wx_on != 1:
+		_fail("wx lockstep: too few frames compared (A/B %d, A/C %d) or no weather (wx_on %d)" % [n_ab, n_ac, pa.ls.sim.wx_on])
+	elif n_ab > 0 and n_ac > 0:
+		print("PASS wx lockstep: downpour,wet, %d frames A/B and %d A/C equal (sim tick %d)" % [n_ab, n_ac, pa.ls.sim.tick])
+	if SeaChecks.weather() > 0:
+		_ok = false
 
 
 ## 15. Sea battles (N3a; "--only=sea"; tests/sea_checks.gd): two peers

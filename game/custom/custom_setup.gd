@@ -505,6 +505,9 @@ static func build(st: Dictionary, solo: bool = false) -> Dictionary:
 	var tl := int(st.get("time", 900))
 	if tl >= 60 and tl != 900:
 		sc["time_limit"] = tl
+	var wx := weather_of(st)
+	if wx != "":
+		sc["weather"] = wx  # (the Sky, Season and Ground picks: a rule since 2026-11-09, sim/wx.gd)
 	return {"scenario": sc, "seed": int(st.get("seed", 1)) & 0x7FFFFFFF, "home": home, "sides": players}
 
 
@@ -644,4 +647,20 @@ static func build_sea(st: Dictionary) -> Dictionary:
 	var scn := {"sea": 1, "wind_deg": int(sea.get("wind", 90)), "wind_str": int(sea.get("str", 70)), "ai_sides": [0, 1],
 		"land": land, "layout": lay, "units": units, "time_limit": int(st.get("time", 900)),
 		"ai_skill": [clampi(int(st["sides"][0].get("skill", AIProfile.AVERAGE)), 0, 2), clampi(int(st["sides"][1].get("skill", AIProfile.AVERAGE)), 0, 2)]}
+	var wx := weather_of(st)
+	if wx != "":
+		scn["weather"] = wx  # (the guns' reload and reach: sim/sea_sim.gd)
 	return {"sea": 1, "scenario": scn, "seed": int(st.get("seed", 1))}
+
+
+## The setup's weather string (game/weather.gd's form, Weather.join): the Sky ("weather"), Season and Ground ("wx_ground")
+## picks; "" for a clear day with no season. The scenario's "weather": the sim's rules (sim/wx.gd) and the look.
+static func weather_of(st: Dictionary) -> String:
+	var parts: Array = []
+	var k := str(st.get("weather", "clear"))
+	if k != "clear" and k != "":
+		parts.append(k)
+	for key in ["season", "wx_ground"]:
+		if str(st.get(key, "")) != "":
+			parts.append(str(st[key]))
+	return ",".join(parts)

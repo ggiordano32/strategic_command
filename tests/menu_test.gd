@@ -523,7 +523,7 @@ func _battles_page() -> void:
 
 # ------------------------------------------------------------ how to play ---
 
-## The How to play page (game/campaign/howto_page.gd) at phone sizes: the panel fits the width, all nine sections are
+## The How to play page (game/campaign/howto_page.gd) at phone sizes: the panel fits the width, all ten sections are
 ## there and the last line can be scrolled into view (the page scrolls; it is long).
 func _howto_fit() -> void:
 	var size0 := UiScale.size_name()
@@ -544,7 +544,7 @@ func _howto_fit() -> void:
 		for sec in preload("res://game/campaign/howto.gd").SECTIONS:
 			if m.find_child("howto_h_" + str(sec["id"]), true, false) != null:
 				heads += 1
-		_check(heads == 9, "%s: the nine sections are there" % tag)
+		_check(heads == 10, "%s: the ten sections are there" % tag)
 		var last: Control = m.find_child("howto_ways_3", true, false)
 		var scroll: ScrollContainer = null
 		var p := panel.get_parent()

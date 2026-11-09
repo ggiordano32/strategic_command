@@ -34,6 +34,7 @@ const Terrain := preload("res://sim/terrain.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
+const Wx := preload("res://sim/wx.gd")
 
 var _ok := true
 
@@ -207,6 +208,7 @@ func _init() -> void:
 	_check_play_scenarios()
 	_check_lof()
 	_check_vet()
+	_check_weather()
 	await _check_names()
 	await _check_vet_picker()
 	print("RESULT: %s" % ("PASS" if _ok else "FAIL"))
@@ -1759,6 +1761,66 @@ func _check_occupy() -> void:
 ## armour, damage, reach or ammunition change), no level: no "vet" key and the hash as before, a level: hashed and
 ## through snapshot / restore; the custom setup's picker (the unit entry's fourth element, kept by the ammunition
 ## picker, into the scenario's "vet", through a JSON round trip).
+## The weather (2026-11-09, sim/wx.gd): the custom setup's Sky / Season / Ground reach the scenario; the tiers parse
+## ("downpour,wet" rain 3 + mud; "blizzard" snow 3 + cover; "fog"; "overcast,summer" nothing); the derived numbers (reload
+## +35 %, sight 150 m, the field guns' range capped at it, foot at 90 % of their walk, guns 75 %); fire arrows fall back
+## to plain arrows from rain on and in a blizzard (kept in a drizzle), and a downpour battle runs and repeats.
+func _check_weather() -> void:
+	var st := CS.default_setup(4)
+	st["weather"] = "downpour"
+	st["season"] = "autumn"
+	st["wx_ground"] = "wet"
+	var built := CS.build(st, true)
+	if str((built.get("scenario", {}) as Dictionary).get("weather", "")) != "downpour,autumn,wet":
+		_fail("weather: the custom setup's picks did not reach the scenario (%s)" % str(built.get("scenario", {}).get("weather", "-")))
+		return
+	var st0 := CS.default_setup(4)
+	if (CS.build(st0, true)["scenario"] as Dictionary).has("weather"):
+		_fail("weather: a clear setup with no season put a weather into the scenario")
+	for c in [["downpour,wet", [3, 0, 0, 1, 0]], ["blizzard", [0, 3, 0, 0, 1]], ["fog", [0, 0, 1, 0, 0]], ["overcast,summer", [0, 0, 0, 0, 0]],
+			["drizzle", [1, 0, 0, 0, 0]], ["rain", [2, 0, 0, 1, 0]], ["clear,winter,snowcover", [0, 0, 0, 0, 1]], ["thunderstorm", [3, 0, 0, 1, 0]]]:
+		if Wx.tiers(str(c[0])) != PackedInt32Array(c[1]):
+			_fail("weather: %s parsed to %s, want %s" % [c[0], str(Wx.tiers(str(c[0]))), str(c[1])])
+	var arc := UT.index_of("archer")
+	var mus := UT.index_of("musketeers")
+	var gun := UT.index_of("field_gun")
+	var fa := UT.ammo_index("fire_arrows")
+	var res := {}
+	for w in ["", "drizzle", "rain", "downpour,wet", "blizzard"]:
+		var units := [Scenarios.unit(0, arc, 80, 100, 200, Scenarios.FACE_UP), Scenarios.unit(0, mus, 100, 200, 200, Scenarios.FACE_UP),
+			Scenarios.unit(0, gun, UT.size_of(gun), 300, 220, Scenarios.FACE_UP), Scenarios.unit(1, mus, 100, 200, 60, Scenarios.FACE_DOWN)]
+		units[0]["ak"] = fa
+		var sc := {"width_m": 400, "height_m": 300, "ai_sides": [], "units": units,
+			"orders": [Scenarios.attack(0, 1, 3, 0), Scenarios.attack(0, 3, 1, 0)]}
+		if w != "":
+			sc["weather"] = w
+		var sim := BattleSim.new()
+		sim.setup(sc, 31)
+		res[w] = [sim.u_sk[0], sim.fire_on, sim.wx_on, sim.wx_rl, sim.wx_sight, sim.t_m_range[gun], sim.t_walk[mus], sim.t_walk[gun]]
+		if w == "downpour,wet":
+			var h := []
+			for rep in 2:
+				var s2 := BattleSim.new()
+				s2.setup(sc, 31)
+				for t in 600:
+					s2.step()
+				h.append(s2.state_hash())
+			if h[0] != h[1]:
+				_fail("weather: a downpour battle diverged on repeat")
+	var plain: Array = res[""]
+	var dp: Array = res["downpour,wet"]
+	if int(plain[0]) != fa or int(res["drizzle"][0]) != fa or int(res["rain"][0]) != -1 or int(dp[0]) != -1 or int(res["blizzard"][0]) != -1 \
+			or int(dp[1]) != 0 or int(plain[1]) != 1:
+		_fail("weather: the fire-arrow fallback (special kind clear %d, drizzle %d, rain %d, downpour %d, blizzard %d; fire_on %d / %d)" % [
+			plain[0], res["drizzle"][0], res["rain"][0], dp[0], res["blizzard"][0], plain[1], dp[1]])
+	elif int(plain[2]) != 0 or int(dp[2]) != 1 or int(dp[3]) != 35 or int(dp[4]) != 150 * BattleSim.M or int(dp[5]) != 150 * BattleSim.M \
+			or int(dp[6]) != int(plain[6]) * 90 / 100 or int(dp[7]) != int(plain[7]) * 75 / 100 or int(plain[5]) != UT.stat(gun, "m_range"):
+		_fail("weather: the derived numbers (clear %s, downpour %s)" % [str(plain), str(dp)])
+	else:
+		print("PASS weather: the setup's picks reach the scenario; tiers parse; downpour,wet: reload +%d %%, sight %d m, the guns' range %d m, foot walk %d -> %d, guns %d -> %d; fire arrows kept in a drizzle, plain shot from rain on and in a blizzard; repeats" % [
+			dp[3], dp[4] / BattleSim.M, dp[5] / BattleSim.M, plain[6], dp[6], plain[7], dp[7]])
+
+
 func _check_vet() -> void:
 	var mus := UT.index_of("musketeers")
 	var pik := UT.index_of("w_pikemen")

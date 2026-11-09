@@ -20,6 +20,7 @@ const CCaptain := preload("res://campaign/ccaptain.gd")
 const CSeaBattle := preload("res://campaign/cseabattle.gd")
 const SeaSim := preload("res://sim/sea_sim.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
+const Weather := preload("res://game/weather.gd")
 
 const FATE_NAMES := ["afloat", "sunk", "taken", "escaped"]
 
@@ -119,6 +120,14 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 	var standoff := stand_off_for(st, b, int(s.f))
 	if b.has("land"):
 		info.add_child(Kit.label(landing_line(st, b, standoff), Kit.FONT_SMALL, Kit.COL_GOLD, true))
+	var wxs := str(b.get("weather", ""))
+	if wxs != "":
+		# The forecast (2026-11-09): the guns' reload and reach in a fought battle (the formula's auto-resolve has no weather).
+		var wxl := Kit.label("Weather: " + Weather.short_line(wxs, true) + " (a fought battle; the auto-resolve has no weather).",
+			Kit.FONT_SMALL, Color.WHITE, true)
+		wxl.name = "battle_weather"
+		Kit.label_icon(wxl, Weather.icon_of(wxs))
+		info.add_child(wxl)
 	var status := Kit.vbox(4)
 	status.name = "battle_status"
 	info.add_child(status)

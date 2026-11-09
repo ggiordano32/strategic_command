@@ -377,7 +377,8 @@ func _map_row() -> Control:
 	tlb.disabled = not ed
 	tp.add_child(tlb)
 	r2.add_child(tp)
-	# The weather pass, the look: the kind and the season (view only: no effect on the battle's rules yet; "weather" / "season" keys).
+	# The weather: the sky, the season and the ground ("weather" / "season" / "wx_ground" keys; CustomSetup.weather_of puts them
+	# into the scenario). Since 2026-11-09 a rule (sim/wx.gd): each pick's tip says what it does (game/weather.gd effects).
 	var wx_row := Kit.hbox(6)
 	wx_row.add_child(_small_label("Sky"))
 	var wx_kinds: Array = []
@@ -387,6 +388,10 @@ func _map_row() -> Control:
 		setup["weather"] = str(x)
 		_changed(), 0, 14)
 	wx_kind_dd.name = "custom_weather"
+	for i in Weather.KINDS.size():
+		wx_kind_dd.get_popup().set_item_tooltip(i, "\n".join(Weather.effects(Weather.KINDS[i])))
+	var cur_k := str(setup.get("weather", "clear"))
+	Kit.tip(wx_kind_dd, "Sky: " + Weather.rule_title(cur_k), "\n".join(Weather.effects(cur_k)))
 	wx_kind_dd.disabled = not ed
 	wx_row.add_child(wx_kind_dd)
 	var wx_seasons: Array = []
@@ -395,7 +400,7 @@ func _map_row() -> Control:
 	var wx_season_dd := Kit.dropdown(wx_seasons, str(setup.get("season", "")), func(x):
 		setup["season"] = str(x)
 		_changed(), 0, 14)
-	wx_season_dd.tooltip_text = "The tint; pick a snow kind or Ground: snow cover for snow"
+	wx_season_dd.tooltip_text = "The tint only: no effect on the battle. Pick a snow kind or Ground: snow cover for snow"
 	wx_season_dd.name = "custom_season"
 	wx_season_dd.disabled = not ed
 	wx_row.add_child(wx_season_dd)
@@ -406,6 +411,10 @@ func _map_row() -> Control:
 		setup["wx_ground"] = str(x)
 		_changed(), 0, 14)
 	wx_ground_dd.name = "custom_ground"
+	for i in Weather.GROUNDS.size():
+		wx_ground_dd.get_popup().set_item_tooltip(i, _ground_tip(Weather.GROUNDS[i]))
+	Kit.tip(wx_ground_dd, "Ground: " + Weather.GROUND_NAMES[maxi(Weather.GROUNDS.find(str(setup.get("wx_ground", ""))), 0)],
+		_ground_tip(str(setup.get("wx_ground", ""))))
 	wx_ground_dd.disabled = not ed
 	wx_row.add_child(wx_ground_dd)
 	r2.add_child(wx_row)
@@ -937,3 +946,10 @@ func _refresh_lobby() -> void:
 	_lobby_label.text = text
 	_ready_btn.text = "Not ready" if session.want_ready else "Ready"
 	_start_btn.disabled = not (all_ready and session.want_ready) or session.phase != "lobby"
+
+
+## The Ground pick's tip: what it does on its own (the sky's rain or snow adds its own: the Sky's tip).
+static func _ground_tip(g: String) -> String:
+	if g == "":
+		return "As the sky makes it: rain or worse leaves mud, the snow kinds lay snow."
+	return "\n".join(Weather.effects(g))

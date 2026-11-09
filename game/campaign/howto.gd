@@ -1,5 +1,5 @@
 extends RefCounted
-## One place for the game's teaching words (docs/design/campaign_rules.md "The tutorial"): the nine "How to play"
+## One place for the game's teaching words (docs/design/campaign_rules.md "The tutorial"): the ten "How to play"
 ## sections, the thirteen lessons of the guided first campaign ("Your first command"), the battle tutorial's steps and the
 ## first-time tips. The How to play page (howto_page.gd), the lesson cards (tutorial.gd), the battle steps
 ## (tutorial_battle.gd) and the tips (tips.gd) all read from here, so they never disagree. Plain words for someone who
@@ -7,6 +7,8 @@ extends RefCounted
 
 ## key -> text. Keys: "<section>_<n>" (a section's lines), "lesson_<n>" / "lesson_<n>_title" / "lesson_<n>_obj",
 ## "step_<n>" (the battle tutorial), "nstep_<n>" (the native way), "tip_<key>" (first-time tips), "ui_*" (the cards' buttons and notes).
+const Weather := preload("res://game/weather.gd")
+
 const T := {
 	# 1. The map and the turn
 	"map_1": "The map is split into regions, and every region has one town. A colour shows who owns it; yours is the bright one.",
@@ -144,7 +146,7 @@ const T := {
 	"tip_battle_won": "Victory: the town is yours to run, so open it to recruit and build, and keep an army near to hold it.",
 }
 
-## The nine How to play sections: id, title, the keys of its lines.
+## The ten How to play sections: id, title, the keys of its lines.
 const SECTIONS := [
 	{"id": "map", "title": "The map and the turn", "lines": ["map_1", "map_2", "map_3"]},
 	{"id": "towns", "title": "Towns and buildings", "lines": ["towns_1", "towns_2", "towns_3"]},
@@ -152,6 +154,7 @@ const SECTIONS := [
 	{"id": "move", "title": "Movement and supply", "lines": ["move_1", "move_2", "move_3"]},
 	{"id": "siege", "title": "Sieges", "lines": ["siege_1", "siege_2", "siege_3"]},
 	{"id": "battle", "title": "Battles and the chips", "lines": ["battle_1", "battle_2", "battle_3"]},
+	{"id": "weather", "title": "Weather", "lines": ["weather_1", "weather_2", "weather_3", "weather_4"]},
 	{"id": "sea", "title": "The sea", "lines": ["sea_1", "sea_2", "sea_3"]},
 	{"id": "dip", "title": "Diplomacy and goals", "lines": ["dip_1", "dip_2", "dip_3"]},
 	{"id": "ways", "title": "Three ways to play", "lines": ["ways_1", "ways_2", "ways_3"]},
@@ -165,6 +168,8 @@ const NSTEPS := 6   # the native way's steps (nstep_<n>)
 
 
 static func text(key: String) -> String:
+	if key.begins_with("weather_"):
+		return Weather.howto_line(int(key.get_slice("_", 1)))   # (the Weather page: built from the sim's table, game/weather.gd)
 	return str(T.get(key, ""))
 
 

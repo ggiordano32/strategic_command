@@ -144,6 +144,8 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1) -> Dictionar
 		"wind_str": wstr, "ai_sides": ai, "land": land, "layout": lay, "units": units,
 		"time_limit": int(CData.ship_const("SEA_TIME_LIMIT", 900))}
 	var player_side := 0 if ai[0] == 0 else (1 if ai[1] == 0 else 0)
+	if str(b.get("weather", "")) != "":
+		scn["weather"] = str(b["weather"])  # (the pending battle's weather: the guns' reload and reach, sim/sea_sim.gd)
 	return {"sea": 1, "scenario": scn, "seed": sd, "ships": ships, "map": ships, "player_side": player_side,
 		"bid": int(b["id"]), "battle": int(b["id"]), "x": int(b["x"]), "y": int(b["y"]), "sim_side": [0, 1],
 		"unit_faction": ufac, "controller": controllers(st, units, ufac)}

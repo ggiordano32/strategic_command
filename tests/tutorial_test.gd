@@ -1,7 +1,7 @@
 extends SceneTree
 ## The tutorial (docs/design/campaign_rules.md "The tutorial"), headless:
 ##   godot --headless --script res://tests/tutorial_test.gd
-## One text source (howto.gd: the nine sections, thirteen lessons, six battle steps, ten tips); the first-time tips (shown
+## One text source (howto.gd: the ten sections, thirteen lessons, six battle steps, ten tips); the first-time tips (shown
 ## once, remembered in the tests folder's tips.cfg, reset, never in the real user folder); the guided first campaign
 ## (its state: England at Port Royal, Sevilla la Nueva Spanish, `tutorial` 1; the campaign AI declares no war on the
 ## player for the first thirteen turns; the thirteen lessons driven by the scripted order of each objective with End turn held
@@ -95,7 +95,8 @@ func _run() -> void:
 # ------------------------------------------------------------------ texts ---
 
 func _texts() -> void:
-	_check(Howto.SECTIONS.size() == 9 and str(Howto.SECTIONS[8]["id"]) == "ways" and str(Howto.SECTIONS[8]["title"]) == "Three ways to play", "How to play has nine sections, the ninth Three ways to play")
+	_check(Howto.SECTIONS.size() == 10 and str(Howto.SECTIONS[9]["id"]) == "ways" and str(Howto.SECTIONS[9]["title"]) == "Three ways to play", "How to play has ten sections, the tenth Three ways to play")
+	_check(str(Howto.SECTIONS[6]["id"]) == "weather" and Howto.text("weather_2").contains("reload") and Howto.text("weather_4").contains("Fog"), "the Weather page (2026-11-09) is the seventh section, its words from the sim's table")
 	var all_lines := true
 	for s in Howto.SECTIONS:
 		if (s["lines"] as Array).size() < 1 or (s["lines"] as Array).size() > 4:
@@ -109,7 +110,7 @@ func _texts() -> void:
 		var wt := Howto.text(k)
 		if wt == "" or wt.count(". ") < 1 or wt.count(". ") > 3:
 			ways_ok = false   # (two to four sentences)
-	_check(ways_ok and (Howto.SECTIONS[8]["lines"] as Array) == ["ways_1", "ways_2", "ways_3"], "the ways_1 to ways_3 lines (Europeans, Pirates, Natives) are there, two to four sentences each")
+	_check(ways_ok and (Howto.SECTIONS[9]["lines"] as Array) == ["ways_1", "ways_2", "ways_3"], "the ways_1 to ways_3 lines (Europeans, Pirates, Natives) are there, two to four sentences each")
 	_check(Howto.text("lesson_over").contains("Three ways to play"), "the closing card points at Three ways to play")
 	var lessons_ok := true
 	for n in range(1, Howto.LESSONS + 1):
@@ -889,7 +890,7 @@ func _howto_menus() -> void:
 	for s in Howto.SECTIONS:
 		if m.find_child("howto_h_" + str(s["id"]), true, false) != null:
 			heads += 1
-	_check(heads == 9, "... with the nine sections (%d)" % heads)
+	_check(heads == 10, "... with the ten sections (%d)" % heads)
 	var l: Label = m.find_child("howto_map_1", true, false) as Label
 	_check(l != null and l.text == Howto.text("map_1"), "... in the words of howto.gd")
 	var vp := m.get_viewport_rect().size

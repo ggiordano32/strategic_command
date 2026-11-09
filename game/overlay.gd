@@ -2411,7 +2411,7 @@ func _draw_range(u: int, a0: float, a1: float, col: Color, w: float) -> Array:
 	var ty: int = sim.u_type[u]
 	var cx: int = sim.u_cx[u]
 	var cy: int = sim.u_cy[u]
-	var rng: int = UT.stat(ty, "m_range")
+	var rng: int = sim.t_m_range[ty]  # (the weather caps it at the sight: sim/wx.gd)
 	var c := to_px(cx, cy)
 	var full := a1 - a0 >= TAU - 0.001
 	var steps := RANGE_STEPS if full else maxi(int(RANGE_STEPS * (a1 - a0) / TAU) + 2, 4)

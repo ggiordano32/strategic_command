@@ -84,7 +84,8 @@ extends RefCounted
 ##     stance (CData.ST_*: default, forced march, fortify, raiding); no
 ##     "dest"}] sorted by id,
 ##   battles [pending battle, see crules.gd; version 6: + x, y (its cell),
-##     app (compass sector the lead attacker came from)], next_battle,
+##     app (compass sector the lead attacker came from); version 10, 2026-11-09: + optional weather (a string,
+##     campaign/cweather.gd; absent: a clear day)], next_battle,
 ##   sieges [{r, f (besieging faction), turn (started), supply (turns of
 ##     supplies left), held (turns maintained without an assault), from
 ##     [[army id, region it came from]...]}] sorted by region (version 4;
@@ -522,6 +523,8 @@ static func as_format(st_in: Dictionary, v: int) -> Dictionary:
 			c.erase(k)
 		(c["settings"] as Dictionary).erase("ai_alliances")
 		(c["settings"] as Dictionary).erase("vet")  # (veterancy: version 10 only)
+		for b in c["battles"]:
+			(b as Dictionary).erase("weather")  # (the battles' weather, 2026-11-09: version 10 only)
 	if v < 9:
 		for rs in c["regions"]:
 			(rs as Dictionary).erase("breach")

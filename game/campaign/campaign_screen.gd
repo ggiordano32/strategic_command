@@ -48,6 +48,7 @@ const TownLayer := preload("res://game/campaign/town_layer.gd")
 const LandTrees := preload("res://game/campaign/landtrees.gd")
 const TableFrame := preload("res://game/campaign/table_frame.gd")
 const Weather := preload("res://game/weather.gd")
+const CWeather := preload("res://campaign/cweather.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const Traits := preload("res://game/unit_traits.gd")
 const Saves := preload("res://game/campaign/saves.gd")
@@ -3330,6 +3331,9 @@ func fight(bid: int) -> void:
 		_fight_sea(b, hf)
 		return
 	_battle_built = CBattle.build(st, b, hf)
+	var lesson: bool = tutorial != null and tutorial.is_lesson_battle(b)
+	if lesson:
+		(_battle_built["scenario"] as Dictionary).erase("weather")   # (the tutorial's battle teaches the orders: a clear day)
 	_battle_snap = BattleScreen.snapshot(st, b, f)
 	_battle_id = bid
 	battle = Battle.new()
@@ -3339,7 +3343,7 @@ func fight(bid: int) -> void:
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
-	battle.weather = Weather.for_campaign(int(st["turn"]), CData.pack, int(_battle_built["seed"]))   # (the look only)
+	battle.weather = "" if lesson else CWeather.of(b)   # (the pending battle's weather, decided by the rules: campaign/cweather.gd)
 	battle.scenario_id = "campaign"
 	battle.campaign_mode = true
 	battle.tutorial = tutorial.battle_script(b)
@@ -3460,7 +3464,7 @@ func fight_live(bid: int, create: bool, keep: bool = false) -> void:
 	battle.custom_scenario = _battle_built["scenario"]
 	battle.unit_faction = _battle_built.get("unit_faction", [])
 	battle.seed_value = int(_battle_built["seed"])
-	battle.weather = Weather.for_campaign(int(st["turn"]), CData.pack, int(_battle_built["seed"]))
+	battle.weather = CWeather.of(b)
 	battle.scenario_id = "campaign_live"
 	battle.campaign_mode = true
 	battle.coop = coop

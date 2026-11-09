@@ -3087,7 +3087,7 @@ static func _sk_focus(sim, u: int, kn: PackedInt32Array) -> void:
 	if order == O_MOVE or order == O_WITHDRAW:
 		return
 	var ty: int = sim.u_type[u]
-	var rng := UT.stat(ty, "m_range")
+	var rng := int(sim.t_m_range[ty])
 	var flat := UT.stat(ty, "m_arc") == 0
 	if kn[AP.SUPP_HOLD] != 0 and order == O_ATTACK and _supp_held(sim, u, sim.u_target[u], rng):
 		return  # (its target pinned or suppressed by its fire: kept, docs/AI.md 69)
@@ -3102,7 +3102,7 @@ static func _sk_focus(sim, u: int, kn: PackedInt32Array) -> void:
 		var sc: int = 1000 - sim._unit_dist(u, o) / M * 2
 		var oc: int = sim.u_cls[o]
 		if oc == UT.CLS_MISSILE:
-			if UT.stat(sim.u_type[o], "m_range") < rng:
+			if int(sim.t_m_range[sim.u_type[o]]) < rng:
 				sc += 500
 		elif oc == UT.CLS_CAV:
 			sc += 400 if sim.u_moved[o] == 0 else -300

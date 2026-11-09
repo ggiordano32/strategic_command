@@ -1,7 +1,8 @@
 extends RefCounted
-## The weather pass, the look (2026-11-06; docs/design/art_pipeline.md "The weather pass, the look"). View only: a battle's weather
-## is a view parameter read from the battle's setup (`Battle.weather`, a string such as "storm,winter"), never from or into the
-## sim or the campaign state (the rules half comes later and will make it a sim parameter; `Weather.spec` is what it will read).
+## The weather pass, the look (2026-11-06; docs/design/art_pipeline.md "The weather pass, the look"), and since 2026-11-09 the
+## rules told in words (the bottom of this file; the rules themselves: sim/wx.gd, docs/design/battle_sim.md "Weather in battle").
+## A battle's weather is a string such as "storm,winter": the scenario's "weather" (the campaign's pending battle, decided by
+## campaign/cweather.gd; the sandbox's picks), read by the sim as a rule and by the view as the look (`Battle.weather`).
 ##
 ## A weather is a kind (clear, overcast, drizzle / rain / downpour, storm, light snow / snow / blizzard, fog) and a season (spring,
 ## summer, autumn, winter) which combine: "rain,autumn", "snow,winter", "storm". Tokens in any order, commas or spaces; unknown
@@ -11,6 +12,8 @@ extends RefCounted
 
 const Quality := preload("res://game/quality.gd")
 const TrackLayer := preload("res://game/track_layer.gd")
+const CWeather := preload("res://campaign/cweather.gd")
+const Wx := preload("res://sim/wx.gd")
 
 const KINDS := ["clear", "overcast", "drizzle", "rain", "downpour", "storm", "tempest", "lightsnow", "snow", "blizzard", "fog"]
 const KIND_NAMES := ["Clear", "Overcast", "Drizzle", "Rain", "Downpour", "Thunderstorm", "Heavy thunderstorm", "Light snow", "Snow", "Blizzard", "Fog"]
@@ -73,34 +76,11 @@ static func launch_arg() -> String:
 	return ""
 
 
-## A campaign battle's weather, from the turn's season and the content pack (the campaign has two turns a year, the even turns
-## summer, the odd winter: campaign/cstorm.gd season). View only, the tint and the look; nothing in the rules reads it; the pick is
-## from the turn and a seed in the state the view reads, so both peers see the same.
-## Rome: summer clear (some overcast), winter snow, fog, overcast, or snow lying without snowfall (about half of the winter turns).
-## The West (Caribbean, no snow): the summer turns are the wet season (rain, drizzle, a storm, now and then the heavy one, a wet
-## field under an overcast sky), the winter turns the dry (clear, some overcast).
+## The campaign's season mapping with a seed-hash roll (the look's former pick, kept for the view tests). Since 2026-11-09 the
+## campaign's battles take their weather from the rules (campaign/cweather.gd, one CState.rand draw when the battle is
+## created, stored on the pending battle as "weather"); the mapping itself is CWeather.for_turn.
 static func for_campaign(turn: int, pack: String, seed_v: int) -> String:
-	var summer := turn % 2 == 0
-	var h := (absi(seed_v) * 2654435761 + turn * 40503) % 100
-	if pack == "west":
-		if summer:
-			if h < 12:
-				return "tempest,summer" if h < 5 else "storm,summer"
-			if h < 40:
-				return "rain,summer"
-			if h < 58:
-				return "overcast,summer,wet"
-			return ("drizzle" if h < 80 else "overcast") + ",summer"
-		return ("overcast" if h < 25 else "clear") + ",spring"
-	if summer:
-		return ("overcast" if h < 25 else "clear") + ",summer"
-	if h < 25:
-		return "snow,winter"
-	if h < 33:
-		return "fog,winter"
-	if h < 50:
-		return "overcast,winter"
-	return ("overcast" if h < 75 else "clear") + ",winter,snowcover"
+	return CWeather.for_turn(turn, pack, (absi(seed_v) * 2654435761 + turn * 40503) % 100)
 
 
 ## Everything a view draws, for a weather string. mul: the grade multiplied over the screen (rgb); veil: colour and alpha laid over;
@@ -186,3 +166,168 @@ static func is_clear(s: Dictionary) -> bool:
 
 static func neutral() -> void:
 	apply_globals(spec(""))
+
+
+# ------------------------------------------------------------ the rules in words ---
+# The weather's rules (2026-11-09; sim/wx.gd, docs/design/battle_sim.md "Weather in battle") told to the player: one
+# builder from the sim's tiers to sentences, for the battle HUD's weather chip and plate, the deployment line, the
+# campaign's battle dialog, the custom battle's Sky and Ground tips and the how-to book's Weather page. The numbers come
+# from the sim's table (Wx.WX_*), so the words follow the rules.
+
+## A share in words (35 -> "a third").
+static func frac(pct: int) -> String:
+	match pct:
+		5:
+			return "a little"
+		10:
+			return "a tenth"
+		15:
+			return "about a sixth"
+		20:
+			return "a fifth"
+		25:
+			return "a quarter"
+		35:
+			return "a third"
+		50:
+			return "half"
+	return "%d %%" % pct
+
+
+## The weather's name for the chip and the plate's title: "Downpour, muddy ground", "Clear, snow on the ground".
+static func rule_title(w: String) -> String:
+	var p := parse(w)
+	var t := Wx.tiers(w)
+	var name: String = KIND_NAMES[KINDS.find(str(p["kind"]))]
+	if t[Wx.T_MUD] != 0:
+		return name + ", muddy ground"
+	if t[Wx.T_COVER] != 0 and t[Wx.T_SNOW] == 0:
+		return name + ", snow on the ground"
+	return name
+
+
+## Some rule applies (overcast, the seasons and a clear day: none).
+static func has_rules(w: String) -> bool:
+	return Wx.any(Wx.tiers(w))
+
+
+## The HUD chip's words: the name and the ground short ("Downpour, mud", "Clear, snow"); compact (a phone): the ground's
+## word only ("mud", "snow"), else none (the icon says the sky).
+static func chip_text(w: String, compact: bool) -> String:
+	var t := Wx.tiers(w)
+	var g := ""
+	if t[Wx.T_MUD] != 0:
+		g = "mud"
+	elif t[Wx.T_COVER] != 0:
+		g = "snow"
+	if compact:
+		return g
+	var name: String = KIND_NAMES[KINDS.find(str(parse(w)["kind"]))]
+	if g == "" or (g == "snow" and t[Wx.T_SNOW] > 0):
+		return name
+	return name + ", " + g
+
+
+## The chip's icon (game/ui_icons.gd): sun, cloud, rain, storm, snowflake, fog bands.
+static func icon_of(w: String) -> String:
+	match str(parse(w)["kind"]):
+		"overcast":
+			return "wx_cloud"
+		"drizzle", "rain", "downpour":
+			return "wx_rain"
+		"storm", "tempest":
+			return "wx_storm"
+		"lightsnow", "snow", "blizzard":
+			return "wx_snow"
+		"fog":
+			return "wx_fog"
+	return "wx_cloud" if Wx.tiers(w)[Wx.T_MUD] != 0 else "wx_clear"
+
+
+## Every active rule as a plain sentence, one per line (sea: a sea battle's: the guns and the lookouts only).
+static func effects(w: String, sea := false) -> PackedStringArray:
+	var t := Wx.tiers(w)
+	var out := PackedStringArray()
+	if not Wx.any(t):
+		out.append("No effect on the battle: the sky and the season are a look only.")
+		return out
+	var rl := Wx.reload_pct(t)
+	if rl > 0:
+		out.append(("Ships' guns reload %s slower." if sea else "Muskets, pistols and guns reload %s slower.") % frac(rl))
+	var sm := Wx.sight_m(t)
+	if sea:
+		if sm > 0:
+			out.append("The lookouts see %s as far (%d m): no broadside beyond it." % ["half" if Wx.sight_pct(t) == 50 else "three quarters", sm])
+		if out.is_empty():
+			out.append("No effect at sea: the ground's mud or snow is the land's.")
+		out.append("No effect on the wind, morale or boarding.")
+		return out
+	if not Wx.fire_ok(t):
+		out.append("Fire arrows and fire pots cannot be lit: they shoot plain shot.")
+	if Wx.burn_pct(t) < 100:
+		out.append("Fires already burning go out twice as fast.")
+	var sp := Wx.spread_pct(t)
+	if sp > 0:
+		out.append("Arrows, bullets and shot scatter %s more." % frac(sp))
+	if sm > 0:
+		out.append("You see %s as far (%d m); nobody shoots beyond sight." % ["half" if Wx.sight_pct(t) == 50 else "three quarters", sm])
+	if t[Wx.T_MUD] != 0:
+		out.append("Mud slows foot %s, horse %s, guns, wagons and the ram %s." % [frac(100 - Wx.WX_MUD[Wx.CAT_FOOT]),
+			frac(100 - Wx.WX_MUD[Wx.CAT_HORSE]), frac(100 - Wx.WX_MUD[Wx.CAT_GUN])])
+		out.append("Charges hit %s softer in the mud." % frac(100 - Wx.WX_MUD_CHARGE))
+	if t[Wx.T_COVER] != 0:
+		out.append("Snow on the ground slows foot and horse %s, guns, wagons and the ram %s." % [frac(100 - Wx.WX_COVER[Wx.CAT_FOOT]),
+			frac(100 - Wx.WX_COVER[Wx.CAT_GUN])])
+	out.append("No effect on morale or melee.")
+	return out
+
+
+## One line: the name and the rules in short ("Downpour, muddy ground: guns reload a third slower, no fire arrows, ...").
+static func short_line(w: String, sea := false) -> String:
+	var t := Wx.tiers(w)
+	var parts := PackedStringArray()
+	if not Wx.any(t):
+		return rule_title(w) + ": no effect on the battle"
+	var rl := Wx.reload_pct(t)
+	if rl > 0:
+		parts.append("guns reload %s slower" % frac(rl))
+	var sm := Wx.sight_m(t)
+	if not sea:
+		if not Wx.fire_ok(t):
+			parts.append("no fire arrows")
+		var sp := Wx.spread_pct(t)
+		if sp > 0:
+			parts.append("missiles scatter %s more" % frac(sp))
+	if sm > 0:
+		parts.append("sight %d m" % sm)
+	if not sea:
+		if t[Wx.T_MUD] != 0:
+			parts.append("mud slows the march")
+		elif t[Wx.T_COVER] != 0:
+			parts.append("snow slows the march")
+	if parts.is_empty():
+		return rule_title(w) + ": no effect on the battle"
+	return rule_title(w) + ": " + ", ".join(parts)
+
+
+## The how-to book's Weather page (game/campaign/howto.gd "weather_1" .. "weather_4"): the full table in words.
+static func howto_line(k: int) -> String:
+	var tiers3 := func(tbl: Array, base: int) -> String:
+		return "%s, %s, %s" % [frac(absi(int(tbl[1]) - base)), frac(absi(int(tbl[2]) - base)), frac(absi(int(tbl[3]) - base))]
+	var sm := func(pct: int) -> int:
+		return Wx.WX_SIGHT_M * pct / 100
+	match k:
+		1:
+			return "The weather is a rule in battle. The chip by the battle's clock shows it: tap it for every rule in force; the deployment bar repeats them, and a campaign battle's card gives the forecast before you choose Fight or Auto-resolve. Weather never touches morale, melee, armour or hit points, and an overcast sky or the season only changes the colours."
+		2:
+			return "Rain fouls the powder: muskets, pistols and guns reload %s slower in drizzle, rain and a downpour or thunderstorm, and every missile scatters %s more. From rain on, fire arrows and fire pots cannot be lit (they shoot plain shot), fires burn out twice as fast and the ground turns to mud; a downpour or a storm also cuts sight to %d m." % [
+				tiers3.call(Wx.WX_RL_RAIN, 0), tiers3.call(Wx.WX_SPR_RAIN, 0), sm.call(Wx.WX_SIGHT_RAIN[3])]
+		3:
+			return "Snow: powder reloads %s slower in light snow, snow and a blizzard, and missiles scatter %s more. In snow you see %d m, in a blizzard %d m, and in a blizzard nothing burning can be lit. Snow on the ground slows foot and horse %s, guns, wagons and the ram %s." % [
+				tiers3.call(Wx.WX_RL_SNOW, 0), tiers3.call(Wx.WX_SPR_SNOW, 0), sm.call(Wx.WX_SIGHT_SNOW[2]), sm.call(Wx.WX_SIGHT_SNOW[3]),
+				frac(100 - Wx.WX_COVER[Wx.CAT_FOOT]), frac(100 - Wx.WX_COVER[Wx.CAT_GUN])]
+		4:
+			return "Fog: you see half as far (%d m) and missiles scatter %s more. Nobody shoots beyond what he can see, so the guns' long reach is lost in fog, snow and a downpour. Mud slows foot %s, horse %s, guns, wagons and the ram %s, and charges hit %s softer. At sea the ships' guns reload slower in rain and snow and fire no further than the lookouts see; the wind blows as it always did." % [
+				sm.call(Wx.WX_SIGHT_FOG), frac(Wx.WX_SPR_FOG), frac(100 - Wx.WX_MUD[Wx.CAT_FOOT]), frac(100 - Wx.WX_MUD[Wx.CAT_HORSE]),
+				frac(100 - Wx.WX_MUD[Wx.CAT_GUN]), frac(100 - Wx.WX_MUD_CHARGE)]
+	return ""

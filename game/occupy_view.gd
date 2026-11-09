@@ -51,7 +51,7 @@ static func lit(sim, units: Array) -> Array[int]:
 
 ## The weapon range (m) its fans reach, from unit u's type (capped, floored).
 static func range_m(sim, u: int) -> float:
-	var r := float(UT.stat(sim.u_type[u], "m_range")) / 1024.0 if u >= 0 else 0.0
+	var r := float(sim.t_m_range[sim.u_type[u]]) / 1024.0 if u >= 0 else 0.0
 	return clampf(r, MIN_RANGE_M, MAX_RANGE_M)
 
 

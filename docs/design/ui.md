@@ -1998,6 +1998,42 @@ The 3D battle view is the only view every player gets (docs/design/art_pipeline.
   picks a flat view.
 - **Not touched:** the campaign's city preview and the sea battle screen stay 2D (the sea screen moves to 3D in stage D).
 
+### The weather chip and plate (as built, 2026-11-09)
+
+The owner: "The weather rules need to be clearly communicated to the player, so they know how weather affects the
+gameplay." One sentence builder for every place (game/weather.gd, from the sim's table `sim/wx.gd`, so the words follow
+the numbers): `Weather.effects(w[, sea])` (every active rule a plain sentence), `rule_title` ("Downpour, muddy ground",
+"Clear, snow on the ground"), `short_line` (one line), `chip_text`, `icon_of`, `howto_line`.
+
+- **The chip** (`Hud.wx_chip`, right of the clock in the top-left group): the kind's icon (game/ui_icons.gd `wx_clear`
+  sun, `wx_cloud`, `wx_rain` drops under a cloud, `wx_storm` a bolt, `wx_snow` the snowflake, `wx_fog` three wavy bands);
+  on a desktop the name and the ground ("Downpour, mud"), on a phone the ground's word only ("mud", "snow") or the icon
+  alone; its tip lists the rules. A battle given no weather (the tutorial, the test scenarios) has no chip; a campaign
+  battle always has one ("clear,summer": the sun, "No effect on the battle").
+- **The plate** (`Hud.wx_panel`): a tap (or a hold) on the chip opens it under the chip, titled by the weather with its
+  icon, one line a rule: "Muskets, pistols and guns reload a third slower.", "Fire arrows and fire pots cannot be lit:
+  they shoot plain shot.", "Arrows, bullets and shot scatter a fifth more.", "You see three quarters as far (150 m);
+  nobody shoots beyond sight.", "Mud slows foot a tenth, horse about a sixth, guns, wagons and the ram a quarter.",
+  "Charges hit a tenth softer in the mud.", "No effect on morale or melee."; a weather with no rule: "No effect on the
+  battle: the sky and the season are a look only." Esc, a press outside it or the chip again closes it. 420 px lines on
+  a desktop, 310 on a phone; inside the viewport at 844 x 390 (the plate 330 x 327 under the bar) and 1280 x 720.
+- **The deployment bar** carries the short line under its countdown (`Hud.deploy_wx`, when some rule applies; the field
+  works palette moves down for it): "Downpour, muddy ground: guns reload a third slower, no fire arrows, missiles scatter a
+  fifth more, sight 150 m, mud slows the march".
+- **The campaign's battle card** (Fight / Auto-resolve, game/campaign/battle_screen.gd): "Weather: <short line>." with the
+  icon, its tip every rule and "Fought or auto-resolved, the battle is fought in this weather."; the sea card
+  (sea_screen.gd): the guns' and lookouts' line "(a fought battle; the auto-resolve has no weather)". Not on the
+  tutorial's lesson battle.
+- **The custom battle**: the Sky dropdown's items each carry their rules as a tip and the dropdown's own tip names the
+  pick and its rules; the Ground items the same ("As it comes": the sky decides; Wet: the mud lines; Snow cover: the snow
+  line); the Season's tip says it is the tint only, no effect on the battle.
+- **The how-to book**: a "Weather" section (the seventh of ten, before The sea): four paragraphs built from the table
+  (`Howto.text("weather_<n>")` -> `Weather.howto_line(n)`): where it is shown and what it never touches; rain; snow;
+  fog, mud and the sea.
+- Tests: hud_fit_test `_weather_check` at every size (the chip inside the viewport and clear of the top bar's buttons from
+  844 px, its text, the plate's title and every line, the deployment line, no chip without weather; shots
+  wx_plate_844x390.png and wx_plate_1280x720.png), tutorial_test and menu_test (ten sections), custom_battle_test.
+
 ### The sea camera (as built, 2026-11-09, view only; stage D1 of the sea battle in 3D, behind `--sea-view=3d`)
 
 The sea screen's 3D camera is the land battle's in behaviour (the 3D camera section above), on the sea plane, with its own state (target,

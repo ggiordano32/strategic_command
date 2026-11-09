@@ -77,6 +77,7 @@ const Traits := preload("res://game/unit_traits.gd")
 const BTheme := preload("res://game/battle_theme.gd")
 const AbilityChip := preload("res://game/ability_chip.gd")
 const RoleTile := preload("res://game/role_tile.gd")
+const Weather := preload("res://game/weather.gd")
 const BANNER_SIZE := 30   # the end banner (Cinzel); the pursuit line is 20
 const LONG_PRESS_SEC := 0.5
 # Layout in logical pixels (game/ui_scale.gd turns them into device sizes).
@@ -263,6 +264,14 @@ var title_block: HBoxContainer = null
 var _left: HBoxContainer
 var _title_pack := ""
 var _title_text := ""
+## The weather (2026-11-09; docs/design/ui.md "The weather chip and plate"): a chip right of the clock (the kind's icon,
+## on a desktop its name and the ground, on a phone the ground word); a tap (or a hold) opens the plate under it, titled
+## by the weather, every active rule a plain sentence (Weather.effects). The deployment bar carries the short line.
+var wx_chip: Button
+var wx_panel: PanelContainer
+var wx_box: VBoxContainer
+var deploy_wx: Label
+var _wx := ""
 var _bottom: VBoxContainer
 var book: UnitBook
 var book_button: Button
@@ -317,6 +326,13 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	root.add_child(_left)
 	_left.add_child(stats_button)
 	_ui_controls.append(stats_button)
+	wx_chip = _button("", Vector2(46, BTN_H))
+	wx_chip.name = "wx_chip"
+	wx_chip.add_theme_font_size_override("font_size", FONT_SMALL)
+	wx_chip.visible = false   # (set_weather shows it)
+	wx_chip.pressed.connect(func(): set_weather_open(not wx_panel.visible))
+	_left.add_child(wx_chip)
+	_ui_controls.append(wx_chip)
 	stats_panel = PanelContainer.new()
 	stats_panel.add_theme_stylebox_override("panel", _box(Color(0, 0, 0, 0.6)))
 	stats_panel.position = Vector2(MARGIN, MARGIN * 2 + BTN_H)
@@ -670,6 +686,15 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	opt_box.add_theme_constant_override("separation", 2)
 	opt_panel.add_child(opt_box)
 	_ui_controls.append(opt_panel)
+	wx_panel = PanelContainer.new()
+	wx_panel.name = "wx_panel"
+	wx_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 8.0))
+	wx_panel.visible = false
+	root.add_child(wx_panel)
+	wx_box = VBoxContainer.new()
+	wx_box.add_theme_constant_override("separation", 4)
+	wx_panel.add_child(wx_box)
+	_ui_controls.append(wx_panel)
 	explain_panel = PanelContainer.new()
 	explain_panel.name = "explain_panel"
 	explain_panel.add_theme_stylebox_override("panel", Kit.trim_box(Color(Kit.PANEL_BG, 0.97), 8.0))
@@ -875,9 +900,20 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	deploy_panel.position.y = BTN_H + 2 * MARGIN
 	deploy_panel.visible = false
 	root.add_child(deploy_panel)
+	var dv := VBoxContainer.new()
+	dv.add_theme_constant_override("separation", 2)
+	deploy_panel.add_child(dv)
 	var dh := HBoxContainer.new()
 	dh.add_theme_constant_override("separation", int(GAP) * 2)
-	deploy_panel.add_child(dh)
+	dv.add_child(dh)
+	deploy_wx = Label.new()   # (the weather's short line under the countdown: set_weather)
+	deploy_wx.name = "deploy_wx"
+	deploy_wx.add_theme_font_size_override("font_size", FONT_SMALL)
+	deploy_wx.add_theme_color_override("font_color", Kit.COL_BONE)
+	deploy_wx.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	deploy_wx.custom_minimum_size.x = 300.0
+	deploy_wx.visible = false
+	dv.add_child(deploy_wx)
 	deploy_label = Label.new()
 	deploy_label.add_theme_font_size_override("font_size", FONT)
 	deploy_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -931,6 +967,66 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	_ui_controls.append(controls)
 
 
+## The battle's weather (game/weather.gd's string; Battle sets it after build): the chip, the plate's lines, the deployment
+## bar's short line. Every battle given a weather has the chip (a campaign battle's "clear,summer": the sun, "No effect
+## on the battle"); a battle with none (the tutorial, the test scenarios) has no chip.
+func set_weather(w: String) -> void:
+	_wx = w
+	if wx_chip == null:
+		return
+	Kit.set_icon(wx_chip, Weather.icon_of(w))
+	wx_chip.visible = w != ""   # (a battle set up with no weather at all, the tutorial's, the test scenarios': no chip)
+	_wx_chip_text()
+	Kit.tip(wx_chip, Weather.rule_title(w), "\n".join(Weather.effects(w)) + "\nTap for the weather's rules.")
+	var any := Weather.has_rules(w)
+	deploy_wx.text = Weather.short_line(w)
+	deploy_wx.visible = any
+	if works_panel != null:
+		works_panel.position.y = 2 * BTN_H + 5 * MARGIN + (34.0 if any else 0.0)
+	if wx_panel.visible:
+		set_weather_open(true)
+	_layout_title()   # (the title's room is less the chip's)
+
+
+## The chip's words: on a desktop the weather's name ("Downpour, mud"), on a phone the ground's word or none (the icon).
+func _wx_chip_text() -> void:
+	if wx_chip == null or not wx_chip.visible:
+		return
+	wx_chip.text = Weather.chip_text(_wx, not BTheme.desktop(get_viewport().get_visible_rect().size.x))
+	wx_chip.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT if wx_chip.text != "" else HORIZONTAL_ALIGNMENT_CENTER
+
+
+## Open (or close) the weather plate under its chip: the title, one sentence a rule.
+func set_weather_open(on: bool) -> void:
+	if wx_panel == null:
+		return
+	for k in wx_box.get_children():
+		wx_box.remove_child(k)
+		k.queue_free()
+	if not on:
+		wx_panel.visible = false
+		return
+	var t := Kit.label(Weather.rule_title(_wx), 16, Kit.COL_GOLD)
+	t.name = "wx_title"
+	Kit.label_icon(t, Weather.icon_of(_wx))
+	wx_box.add_child(t)
+	var i := 0
+	for line in Weather.effects(_wx):
+		var l := Kit.label(line, 14, Kit.COL_BONE, true)
+		l.name = "wx_line_%d" % i
+		l.custom_minimum_size.x = 420.0 if BTheme.desktop(get_viewport().get_visible_rect().size.x) else EXPLAIN_W + 40.0
+		wx_box.add_child(l)
+		i += 1
+	wx_panel.visible = true
+	wx_panel.reset_size()
+	var sz := wx_panel.get_combined_minimum_size()
+	var vp := get_viewport().get_visible_rect().size
+	var cr := wx_chip.get_global_rect()
+	wx_panel.position = Vector2(clampf(cr.position.x, MARGIN, maxf(vp.x - sz.x - MARGIN, MARGIN)),
+		minf(cr.end.y + GAP, maxf(vp.y - sz.y - MARGIN, MARGIN)))
+	wx_panel.size = sz
+
+
 ## The battle's name for the top bar (desktop only: the setting's emblem and the name in the title face).
 func set_title(text: String, pack: String) -> void:
 	_title_text = text
@@ -944,6 +1040,7 @@ func set_title(text: String, pack: String) -> void:
 func _layout_title() -> void:
 	if _root == null or _top == null:
 		return
+	_wx_chip_text()
 	var want := BTheme.desktop(get_viewport().get_visible_rect().size.x) and _title_text != ""
 	if not want:
 		if title_block != null:
@@ -955,7 +1052,8 @@ func _layout_title() -> void:
 		_left.add_child(title_block)
 	title_block.visible = true
 	# (as wide as the room between the readout and the buttons on the right; the readout is about 170 px)
-	var room := get_viewport().get_visible_rect().size.x - _top.get_combined_minimum_size().x - 2.0 * MARGIN - 190.0 - 40.0 - 28.0
+	var wxw := wx_chip.get_combined_minimum_size().x + 14.0 if wx_chip != null and wx_chip.visible else 0.0
+	var room := get_viewport().get_visible_rect().size.x - _top.get_combined_minimum_size().x - 2.0 * MARGIN - 190.0 - 40.0 - 28.0 - wxw
 	var tf: Font = Kit.title_font() if Kit.title_font() != null else ThemeDB.fallback_font
 	var tw := tf.get_string_size(_title_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 18).x + 4.0
 	(title_block.get_node("bar_title") as Control).custom_minimum_size.x = clampf(minf(tw, room), 40.0, 520.0)
@@ -1309,6 +1407,19 @@ func _input(event: InputEvent) -> void:
 				cp = (event as InputEventMouseButton).position
 			if cp.x >= 0.0 and not confirm_panel.get_global_rect().has_point(cp) and not _confirm_anchor.get_global_rect().has_point(cp):
 				close_confirm()
+	# The weather plate: Esc or a press outside it (and its chip) closes it.
+	if wx_panel != null and wx_panel.visible:
+		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+			set_weather_open(false)
+			get_viewport().set_input_as_handled()
+		else:
+			var wp := Vector2(-1, -1)
+			if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+				wp = (event as InputEventScreenTouch).position
+			elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+				wp = (event as InputEventMouseButton).position
+			if wp.x >= 0.0 and not wx_panel.get_global_rect().has_point(wp) and not wx_chip.get_global_rect().has_point(wp):
+				set_weather_open(false)
 	# The chip explanation: Esc or a press anywhere outside it closes it.
 	if explain_panel != null and explain_panel.visible:
 		if event is InputEventKey and (event as InputEventKey).pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
@@ -3374,7 +3485,7 @@ func _build_place_ui(root: Control, groups: Control) -> void:
 	# Both sit under the popovers (More, a chip's options, the long-press explanation, the Withdraw confirmation): they were
 	# built after them and so drew over them (the owner: the Undo floated in front of the Run chip's explanation).
 	var low := root.get_child_count()
-	for pnl in [more_panel, opt_panel, explain_panel, confirm_panel]:
+	for pnl in [more_panel, opt_panel, explain_panel, confirm_panel, wx_panel]:
 		if pnl != null and pnl.get_parent() == root:
 			low = mini(low, pnl.get_index())
 	if low < root.get_child_count():

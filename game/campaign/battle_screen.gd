@@ -36,6 +36,7 @@ const Icons := preload("res://game/unit_icons.gd")
 const CityPreview := preload("res://game/campaign/city_preview.gd")
 const GroundPalette := preload("res://game/ground_palette.gd")
 const SeaScreen := preload("res://game/campaign/sea_screen.gd")
+const Weather := preload("res://game/weather.gd")
 const CSeaShore := preload("res://campaign/cfleet.gd")  # (support the shore: the ships in the battle)
 
 const WIDE := 640.0       # logical px: sides side by side from this dialog width
@@ -361,6 +362,15 @@ static func pre(s, st: Dictionary, b: Dictionary) -> Control:
 		wlab.name = "field_works"
 		Kit.label_icon(wlab, "palisade" if bool(snap["works"]["fort"]) else "stakes")
 		info.add_child(wlab)
+	var wxs := str(b.get("weather", ""))
+	if wxs != "" and not (s.tutorial != null and s.tutorial.is_lesson_battle(b)):
+		# The forecast (2026-11-09): the battle's weather, decided by the rules, and what it does (game/weather.gd).
+		var wxl := Kit.label("Weather: " + Weather.short_line(wxs) + ".", Kit.FONT_SMALL, Color.WHITE, true)
+		wxl.name = "battle_weather"
+		wxl.mouse_filter = Control.MOUSE_FILTER_PASS
+		Kit.label_icon(wxl, Weather.icon_of(wxs))
+		Kit.tip(wxl, Weather.rule_title(wxs), "\n".join(Weather.effects(wxs)) + "\nFought or auto-resolved, the battle is fought in this weather.")
+		info.add_child(wxl)
 	var facs: Array = snap["facs"]
 	var hs := CRules.battle_humans(st, b)
 	var human_att: bool = not hs.is_empty() and facs[0].has(hs[0])

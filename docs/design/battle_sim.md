@@ -4524,3 +4524,75 @@ under the pin while the fresh one is pinned): without it 50 %, at half (-5 / -10
 archer2 are no test of the cap (fresh native bowmen beat archer2 in every seed). **Decision (2026-11-06, the same day):** the
 suppression cut halved to -5 / -10 / -15 %; re-run (musket rows, 8 seeds): Hardened v Veteran Musketeers 62 %, men lost
 64.5 v 70.4 (about even in men: the reload gain kept at -10 %), Hardened v fresh 100 % (35 v 62 men), Blooded v fresh 75 %.
+
+### Weather in battle (as built, 2026-11-09)
+
+The owner: "lets tackle the weather rules" and "The weather rules need to be clearly communicated to the player, so they
+know how weather affects the gameplay." The weather was a look (art_pipeline.md "The weather pass" and "Weather variety");
+it is now a rule of the battle sim and the sea sim, deterministic and in the hash, and the player is told what it does
+(ui.md "The weather chip and plate (as built, 2026-11-09)"). The campaign side: campaign_rules.md "Weather on the campaign
+(as built, 2026-11-09)".
+
+- **A scenario parameter.** The scenario's optional `"weather"` string (game/weather.gd's token form: kinds clear,
+  overcast, drizzle, rain, downpour, storm, tempest, lightsnow, snow, blizzard, fog; ground tokens `wet`, `snowcover`;
+  seasons ignored) is parsed once at setup by `sim/wx.gd` `Wx.tiers` into five integers: rain 0-3 (drizzle 1, rain 2,
+  downpour / storm / tempest 3), snowfall 0-3 (light snow 1, snow 2, blizzard 3), fog 0/1, mud 0/1 (`wet`, or rain 2+),
+  snow cover 0/1 (`snowcover`, or any snow kind). `BattleSim.wx_t` holds them, `wx_on` is 1 when any is set, and the
+  derived numbers (`wx_rl`, `wx_spr`, `wx_sight`, `wx_chg`, `wx_gun`, `wx_fire_t`, `wx_burn_u`) are script variables
+  (snapshots carry them).
+- **The hash rule** (the veterancy precedent): `state_hash()` adds `wx_t` only when `wx_on` is 1, so a battle without
+  weather, or under an overcast sky or a season alone, hashes as it always did: every determinism golden stays (the full
+  determinism_test passes unchanged). The sea sim the same (`SeaSim.wx_t`, `wx_on`).
+- **The type tables.** The range cap and the speeds are applied to the type tables after `_load_types` (`_wx_tables`):
+  `t_m_range` capped at the sight, `t_m_volley` at the range, `t_walk` / `t_run` of foot, horse and guns scaled (ships
+  keep theirs), a row whose standard kind burns loses it. The type tables are not in snapshots (`t_*`), so `restore()`
+  re-derives them when the tables carry another weather than the snapshot (`t_wx`, a `t_` copy of the tiers the tables
+  were built with): a sim restored on a plain setup runs on hash-equal (lockstep_test 17).
+- **The table** (`sim/wx.gd`, `WX_*`; the brief's numbers, none changed by the measure):
+
+  | Rule | Drizzle / light snow (tier 1) | Rain / snow (tier 2) | Downpour, storms / blizzard (tier 3) | Fog | Mud | Snow cover |
+  |---|---|---|---|---|---|---|
+  | Powder reload (muskets, pistols, the caracole's brace, every gun and engine with `m_gun`, ships' guns), % longer | rain 10, snow 5 | rain 20, snow 10 | rain 35, snow 15 | - | - | - |
+  | Missile scatter (every shooter, engines too), % more | rain 5, snow 10 | rain 10, snow 20 | rain 20, snow 35 | 20 | - | - |
+  | Sight and the range cap (of `WX_SIGHT_M` 200 m) | - | snow x 0.75 (150 m) | rain x 0.75 (150 m), blizzard x 0.5 (100 m) | x 0.5 (100 m) | - | - |
+  | Fire shot (fire arrows, javelins, pots; a burning standard kind) | lit | rain: not lit; snow: lit | not lit | lit | - | - |
+  | Fires already burning (objects, a burning unit) | - | rain: half as long | rain: half as long | - | - | - |
+  | Speed % (foot / horse / guns, wagons, the ram, a siege tower) | - | - | - | - | 90 / 85 / 75 | 90 / 90 / 75 |
+  | A charge's impact % | - | - | - | - | 90 | - |
+
+  Mud and snow cover do not stack (the worse of the two). Nothing on morale, melee, armour or hit points; overcast and the
+  seasons nothing.
+- **Where it bites in the code.** Reload: `_vet_rl` (every soldier's own weapon: volleys, the rolling fire, the body
+  reload of guns, the countermarch, the caracole) adds `wx_rl` for `t_m_gun` rows; `_wx_rl` for the engines' work
+  (`_update_artillery`'s `need0`), the pistols' brace (`PIS_RELOAD`) and the caracole's wait (`CAR_RELOAD`). Scatter: `_wx_spr`
+  after the veterancy and hero terms at the five spread sites (`_fire`, `_fire_gate`, `_art_fire`, `_art_fire_gate`,
+  `_art_fire_at`). Range:
+  `_wx_cap` on `range_vs`, `mrange` and the three fire checks (a hero's or an ammunition kind's longer reach is capped too),
+  plus the type table. Sight: `_sight` refuses a sight line longer than `wx_sight` (maps with line of sight, `vis_on`:
+  a unit beyond it is hidden from the enemy as behind a wood; on a plain map nothing hides, the cap on the shooting is
+  the rule). Speeds: the type tables; a carried ram or siege tower is capped at `EQ_PACE x wx_gun`, a wagon's pace scaled.
+  The charge: `power x wx_chg / 100` in the impact. Fire: `_wx_no_fire` takes the burning special kind from units and
+  engine groups at setup (they shoot their plain shot; the Ammo chip then has no fire kind to offer); `wx_fire_t`,
+  `wx_burn_u` the burn times.
+- **The sight base.** The sim had no sight radius (line of sight is unlimited in the open), so the brief's "fog x 0.5"
+  needed a base: `WX_SIGHT_M` 200 m, the weather's sight at x 1.0 (a clear day has no limit). Fog and the blizzard 100 m,
+  snow and the downpour 150 m: the look's fog (190 m) and blizzard (260 m) visibility are of that order, and at 100 m
+  the musket (120 m) and bow (120-160 m) lines are shortened too, so fog shortens the fights; artillery (230-520 m) is
+  cut hardest. A base of 300 m would leave every foot line untouched in fog (only scatter).
+- **The AI.** No new behaviour. Its range reads are the sim's capped tables: `BattleAI` (`_sk_focus`'s range and the
+  missile-target score), `SiegeAI` (every battery placement, reach and closing distance) and `ShipAI._focus` now read
+  `sim.t_m_range[ty]` instead of `UT.stat(ty, "m_range")` (identical without weather), so it does not stand off out of
+  reach or order volleys it cannot make; unit-target attacks close to `range_vs` (capped). The overlay's range ring and
+  the occupy fans read the capped table too. A player's scripted order at a gate from beyond the sight waits (as an order
+  beyond the range always did).
+- **The sea.** `SeaSim`: the guns' reload `s_rl` x (100 + reload %) / 100, `shot_range` capped at the sight (the
+  lookouts: fire at will, an ordered target, the AI's engage range `_want_range`, the view's arcs all read it); galleys'
+  missiles, the deck fight and the wind untouched; mud and snow cover nothing at sea.
+- **Where the weather comes from.** The campaign's pending battle (`CBattle.build` / `CSeaBattle.build` copy its
+  `weather` into the scenario), the custom battle's Sky / Season / Ground (`CustomSetup.weather_of`), `Battle.weather`
+  otherwise; `--weather=` / `?weather=` override all three in the sim as in the look (`Battle._ld_scenario`). The
+  tutorial's battles have none (its scenarios set none; the campaign lesson's battle is fought with the key removed).
+- **Tests.** lockstep_test 17 (`--only=wx`: "downpour,wet" in the hash, overcast not, snapshot / restore at 40 s on a
+  plain setup, two peers and a joiner hash-equal), custom_battle_test `_check_weather` (the setup's picks in the scenario,
+  the parse, the derived numbers, the fire-arrow fallback, a repeat), `tests/wx_duel.gd` (the measure below, `--check`
+  the hash rule), the full determinism_test (every golden unchanged).

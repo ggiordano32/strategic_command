@@ -126,6 +126,7 @@ extends RefCounted
 
 const CData := preload("res://campaign/cdata.gd")
 const CState := preload("res://campaign/cstate.gd")
+const CWeather := preload("res://campaign/cweather.gd")
 const UT := preload("res://sim/unit_types.gd")
 const CChars := preload("res://campaign/cchars.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
@@ -968,6 +969,7 @@ static func start_battle(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
 		b["y"] = CGrid.cy(sc)
 		b["app"] = -1
 		b["edge"] = []
+	CWeather.set_on(st, b)  # (the battle's weather: a rule since 2026-11-09)
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	return b
@@ -1334,6 +1336,7 @@ static func start_field_battle(st: Dictionary, r: int, att: Array, defs: Array) 
 	var b := {"id": int(st["next_battle"]), "r": r, "turn": int(st["turn"]), "att": sides[0], "def": sides[1],
 		"att_f": int(att[0]["f"]), "def_f": int(defs[0]["f"]), "reinf": [], "settlement": 0, "new": 1,
 		"kind": "field", "from": from, "edge": []}
+	CWeather.set_on(st, b)  # (the battle's weather: a rule since 2026-11-09)
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	return b
@@ -1674,6 +1677,7 @@ static func start_siege_battle(st: Dictionary, r: int, kind: String, reliever: D
 	var b := {"id": int(st["next_battle"]), "r": r, "turn": int(st["turn"]), "att": att, "def": defs,
 		"att_f": lead, "def_f": CState.owner(st, r), "reinf": [], "settlement": 1 if kind == "assault" else 0,
 		"new": 1, "kind": kind, "from": from}
+	CWeather.set_on(st, b)  # (the battle's weather: a rule since 2026-11-09)
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	sg["held"] = 0
@@ -4343,6 +4347,7 @@ static func _assault6(st: Dictionary, r: int, a: Dictionary) -> Dictionary:
 	var b := {"id": int(st["next_battle"]), "r": r, "turn": int(st["turn"]), "att": att, "def": defs,
 		"att_f": int(a["f"]), "def_f": o, "reinf": [], "settlement": 1, "new": 1, "from": from,
 		"x": CGrid.cx(s), "y": CGrid.cy(s), "app": CGrid.sector(s, CState.cell(a)), "edge": []}
+	CWeather.set_on(st, b)  # (the battle's weather: a rule since 2026-11-09)
 	st["next_battle"] = int(st["next_battle"]) + 1
 	(st["battles"] as Array).append(b)
 	return b

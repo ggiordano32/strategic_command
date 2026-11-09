@@ -61,6 +61,7 @@ const CSeaBattle := preload("res://campaign/cseabattle.gd")
 const CTown := preload("res://campaign/ctown.gd")
 const AP := preload("res://sim/ai_profile.gd")
 const CFleet := preload("res://campaign/cfleet.gd")
+const CWeather := preload("res://campaign/cweather.gd")
 
 const FRONT := 100       # m from the centre line to each side's front
 const SECOND_LINE := 45  # m behind the first
@@ -161,6 +162,9 @@ static func build(st: Dictionary, b: Dictionary, human_f: int = -1, scale_pct: i
 	if b.has("sea"):
 		return CSeaBattle.build(st, b, human_f)  # (N3a) a sea battle: sim/sea_sim.gd
 	var res := _build0(st, b, human_f, scale_pct)
+	var wx := CWeather.of(b)
+	if wx != "":
+		res["scenario"]["weather"] = wx  # (the pending battle's weather: sim/wx.gd's rules, the look)
 	# Heroes and agents: the fit characters of the armies in the battle go in
 	# as the scenario's "chars" (per sim side [{key, name}]); "char_ids" says
 	# which campaign character each of a side's entries is (outcome_from_result).

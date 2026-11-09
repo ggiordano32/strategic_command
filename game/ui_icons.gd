@@ -34,6 +34,7 @@ const NAMES: Array[String] = [
 	"grenade", "pistol", "caracole", "target", "hand", "countermarch",
 	"hat", "knife", "cross", "feathers", "broken_shield",
 	"am_poison", "am_fire", "am_heavy", "am_lead", "am_pots", "am_blast",
+	"wx_clear", "wx_cloud", "wx_rain", "wx_storm", "wx_snow", "wx_fog",
 ]
 ## The West pack's variants (display only): where the pack is "west" the Rome
 ## icons that show a bow, an arrow, a crested helmet, a Roman shield, a spear
@@ -339,6 +340,30 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 			_pl([-0.48, -0.85, -0.48, -0.55, -0.08, 0.0, -0.48, 0.55, -0.48, 0.85])
 			_pl([0.48, -0.85, 0.48, -0.55, 0.08, 0.0, 0.48, 0.55, 0.48, 0.85])
 			_fill([-0.32, 0.8, 0.32, 0.8, 0.0, 0.42])
+		"wx_clear":  # the weather chip (2026-11-09): a clear sky, the sun
+			_sub("summer", 0.0, 0.0, 1.0)
+		"wx_snow":  # ... falling snow, the snowflake
+			_sub("winter", 0.0, 0.0, 1.0)
+		"wx_cloud", "wx_rain", "wx_storm":  # ... a cloud (overcast); rain: slanted drops under it; a storm: a bolt
+			var oy := 0.0 if icon == "wx_cloud" else -0.32
+			var k := 1.0 if icon == "wx_cloud" else 0.8
+			_arc(-0.42 * k, 0.02 * k + oy, 0.32 * k, PI * 0.5, PI * 1.6)
+			_arc(0.04 * k, -0.2 * k + oy, 0.42 * k, PI * 1.08, PI * 1.95)
+			_arc(0.5 * k, 0.04 * k + oy, 0.3 * k, PI * 1.5, PI * 2.5)
+			_l(-0.42 * k, 0.34 * k + oy, 0.5 * k, 0.34 * k + oy)
+			if icon == "wx_rain":
+				for x in [-0.45, 0.0, 0.45]:
+					_l(x + 0.1, 0.32, x - 0.12, 0.85, 0.85)
+			elif icon == "wx_storm":
+				_pl([0.12, 0.2, -0.18, 0.58, 0.12, 0.58, -0.12, 0.95], false, 0.9)
+		"wx_fog":  # ... fog: three wavy bands
+			for y in [-0.5, 0.0, 0.5]:
+				var pts: Array = []
+				for i in 9:
+					var x := -0.88 + 1.76 * i / 8.0
+					pts.append(x)
+					pts.append(y + sin(x * 5.0) * 0.08)
+				_pl(pts, false, 0.9)
 		"summer":  # sun
 			_ring(0, 0, 0.36)
 			for k in 8:

@@ -2294,3 +2294,33 @@ pack state hash stay; format 8 measured: unchanged (Rome `3d28ceda ...`, West `1
 ### The Rome specials' names (as built, 2026-11-07)
 
 The owner: "Rome needs unique names for the special units that make a difference, like the stone throwers with explosives for Syracuse." The Rome pack gains the West's `UNIT_NAMES` (`campaign/data/rome.gd`: faction key -> unit row key -> [name, short, what sets them apart]; view only, no row, stat, key or tier changed, no `CState.VERSION`): the rows that are shared by several factions but carry a special ammunition kind, engine shot or beast of one of them (`AMMO_AVAIL`: fire arrows for the Greek League, Syracuse and Carthage at Range 2; fire javelins for the Iberians and Gauls; lead bullets for Carthage and the Greeks; heavy bolts for Rome and Syracuse at Workshop 1; the explosive stones for Syracuse at Workshop 2; elephants, war dogs) read as that faction's own: Syracuse's stone throwers are the Archimedean Engines ("Archimedes' onagers: with the Workshop raised their stones are packed with pitch and sulphur and burst on landing"), its bolt throwers the Dionysian Catapults, its archers the Sicilian Toxotai; the Greek League's the Scythian Toxotai, Achaean Slingers and Laconian Hounds; Carthage's the Libyan Bowmen, Punic Slingers and Libyan War Elephants; Epirus' Pyrrhus' Elephants and Molossian Hounds; the Iberians' Falarica Throwers; the Gauls' Gaesatae and War Hounds; Rome's Ballistae and Mastiffs (21 rows, the list old -> new in `/home/ggiordano/.cache/sc_look/names.md`). The name is the faction's, not the ammunition's, so a unit without the building level has it too and "- fire arrows" follows when it has the shot. Tier 2 and 3 rows that were already unique (Sacred Band, Silver Shields, Companions, Chaonian Guard, Agema, Numidian Horse, Balearic Slingers, Gastraphetes, the camels ...) are unchanged. Shown by `CData.unit_name` / `unit_short` (the recruit dialog, the army bar tip, the unit rows, the battle HUD card, reports) and the new `CData.unit_desc` (the unit page and the unit book: the faction's line first, the row's own text after); the unit book now shows its faction picker for the Rome pack and lists a faction's renamed rows. Tests: pack_test, campaign_test, hud_fit_test (the new names fit the chit and the dialog), menu_test.
+
+### Weather on the campaign (as built, 2026-11-09)
+
+The rules half of the owner's weather plan ("lets tackle the weather rules"); the battle side is battle_sim.md "Weather in
+battle (as built, 2026-11-09)", the words to the player ui.md "The weather chip and plate (as built, 2026-11-09)".
+
+- **Decided by the rules, not the view.** When a pending battle is created (`CRules`: the assault, the field battle, the
+  siege's assault or sally, the attack on a town from the grid; `CFleet`: a sea battle) `CWeather.set_on(st, b)` draws one
+  `CState.rand(st, 100)` and stores `b["weather"]`, a string in game/weather.gd's token form, from the turn's season and
+  the pack (`CWeather.for_turn`, the integer port of the view's former `Weather.for_campaign`): two turns a year, the even
+  turns summer, the odd winter (`CStorm.season`). Rome: summer clear, a quarter overcast; winter snow 25 %, fog 8 %,
+  overcast 17 %, snow lying with no snowfall 50 % (overcast or clear). The West (no snow): the summer turns the wet season,
+  the heavy storm 5 %, the storm 7 %, rain 28 %, an overcast sky over a wet field 18 %, drizzle 22 %, overcast 20 %; the
+  winter turns the dry, clear with a quarter overcast. The same on two clients (the state's RNG, index order).
+- **No VERSION bump.** The key is optional: a pending battle without it (an older save) is a clear day (`CWeather.of`).
+  Only the current rules (state version 10) draw it; the legacy formats' play (6, 8: campaign_sim's pinned rows, kept
+  exact) makes none and draws nothing, and `as_format(st, < 10)` drops the key.
+- **The fought battle** gets it as the scenario's `"weather"` (`CBattle.build`, `CSeaBattle.build`); the view reads the
+  battle's weather from the state (`campaign_screen` `fight` and the live co-op battle: `CWeather.of(b)`), so both peers
+  see and fight the same weather. The tutorial's lesson battle is fought with the key removed (a clear day: it teaches
+  the orders).
+- **Auto-resolve: no weather term** (decision: the fought battle is where it bites). The formula (AI against AI, the shown
+  odds, the sea's auto-resolve) has none. A human's Auto-resolve of a land battle runs the real battle sim from the same
+  scenario (game/campaign/auto_resolve.gd, "as honest as a fought battle"), so it is fought in the weather too, as the
+  battle card says; the sea's Auto-resolve is the formula, as its card says.
+- **Pins.** The extra RNG draw moves the format 10 play: campaign_sim format 10 Rome and West (every seed), the AI goldens,
+  pack_test ROME_20 (STATUS "Verification pins"); format 6 and 8 rows unchanged. The rules hash moves (online players
+  reload between turns).
+- Tests: campaign_test (`_battles`: the key on a version 10 battle, the same on a second resolve, in the scenario; the
+  season mapping; an older battle with no key fought on a clear day; version 8 makes none), pack_test.

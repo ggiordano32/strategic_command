@@ -31,6 +31,7 @@ const AIProfile := preload("res://sim/ai_profile.gd")
 const Terrain := preload("res://sim/terrain.gd")
 const MapGen := preload("res://sim/mapgen.gd")
 const Scenarios := preload("res://sim/scenarios.gd")
+const Wx := preload("res://sim/wx.gd")
 
 const TICKS_PER_SECOND := 10
 const M := 1024  # sim units per metre
@@ -2419,6 +2420,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 	_preset_breaches(int(scenario.get("breaches", 0)))
 
 	_load_types()
+	_setup_wx(str(scenario.get("weather", "")))
 
 	time_limit = maxi(int(scenario.get("time_limit", TIME_LIMIT / TICKS_PER_SECOND)), 60) * TICKS_PER_SECOND
 	rt_human = maxi(int(scenario.get("rt_human", RT_DETOUR_HUMAN)), 0)
@@ -2807,6 +2809,7 @@ func setup(scenario: Dictionary, p_seed: int) -> void:
 				_kennel_setup(u, int(units[u]["pack_of"]))
 	_reserve_setup(units)
 	_ship_setup(units)
+	_wx_no_fire()
 	fire_on = 0
 	mb_on = 0
 	for u in n_units:
@@ -3409,7 +3412,7 @@ func range_vs(u: int, t: int) -> int:
 	var r := range_h(u_type[u], u_h[u], u_h[t], range_pct(u)) + _wall_rb(u, t) + _works_rb(u, t)
 	if lob_over_wall(u, t):
 		r = r * ARC_OVER_WALL_PCT / 100  # (a lob over a wall: up and steeply down)
-	return r
+	return _wx_cap(r)
 
 
 ## Unit u's missiles at unit t must be lobbed over a wall (ARC_OVER_WALL_PCT
@@ -4079,6 +4082,19 @@ const VET_MAX := 3
 var u_vet := PackedInt32Array()  # per unit: its level 0-3 (static; hashed only once a unit has one: vet_on)
 var vet_on: int = 0              # 1: some unit has a level (the battle's veterancy rules run; u_vet hashed)
 
+## Weather (2026-11-09; docs/design/battle_sim.md "Weather in battle"; the table is sim/wx.gd): the scenario's "weather"
+## string, parsed once at setup into tiers. Hashed only when some tier is set (wx_on), so a battle without weather hashes as before.
+var wx_t := PackedInt32Array([0, 0, 0, 0, 0])  # rain, snowfall, fog, mud, snow cover (Wx.T_*)
+var wx_on: int = 0               # 1: some tier set (the weather rules run; wx_t hashed)
+var wx_rl: int = 0               # gunpowder reload time, % longer
+var wx_spr: int = 0              # missile scatter, % more
+var wx_sight: int = 0            # sight and the missile range cap (sim units; 0: no limit)
+var wx_chg: int = 100            # a charge's impact %
+var wx_gun: int = 100            # guns', wagons' and the ram's pace %
+var wx_fire_t: int = FIRE_TICKS  # an object set alight burns this long (halved at rain tier 2+)
+var wx_burn_u: int = BURN_UNIT   # ... a unit struck by fire burns this long
+var t_wx := PackedInt32Array([0, 0, 0, 0, 0])  # the tiers the type tables carry (a t_ table: not in snapshots; restore re-derives)
+
 
 ## Veterancy: unit u's melee attack and defence gains (pikes about half).
 func _vet_att(u: int) -> int:
@@ -4091,8 +4107,10 @@ func _vet_def(u: int) -> int:
 	return VET_DEF_PIKE[lv] if t_cls[u_otype[u]] == UT.CLS_PIKE else VET_DEF[lv]
 
 
-## Veterancy: reload time `r` (ticks) of unit u's own weapon.
+## Veterancy: reload time `r` (ticks) of unit u's own weapon (and the weather: a powder weapon's reload, wx_rl % longer).
 func _vet_rl(u: int, r: int) -> int:
+	if wx_rl != 0 and t_m_gun[u_type[u]] != 0:
+		r = r * (100 + wx_rl) / 100
 	if vet_on == 0 or u_vet[u] == 0:
 		return r
 	return maxi(r * (100 - VET_RL[u_vet[u]]) / 100, 1)
@@ -4103,6 +4121,83 @@ func _vet_spr(u: int, sp: int) -> int:
 	if vet_on == 0 or u_vet[u] == 0:
 		return sp
 	return sp * (100 - VET_SPR[u_vet[u]]) / 100
+
+
+## The weather: a gunpowder reload `r` (ticks) of type ty (an engine's, a brace of pistols': ty -1), wx_rl % longer.
+func _wx_rl(ty: int, r: int) -> int:
+	if wx_rl == 0 or (ty >= 0 and t_m_gun[ty] == 0):
+		return r
+	return r * (100 + wx_rl) / 100
+
+
+## The weather: missile scatter `sp`, wx_spr % more (every shooter).
+func _wx_spr(sp: int) -> int:
+	if wx_spr == 0:
+		return sp
+	return sp * (100 + wx_spr) / 100
+
+
+## The weather: a range `r` capped at the sight (nothing is shot blind).
+func _wx_cap(r: int) -> int:
+	if wx_sight > 0 and r > wx_sight:
+		return wx_sight
+	return r
+
+
+## The weather (sim/wx.gd), from the scenario's "weather" string: the tiers, the derived numbers, and on the type tables
+## (rebuilt by every setup) the missile range capped at the sight and the walk and run of foot, horse and guns in mud
+## or snow (ships, on the water, keep theirs).
+func _setup_wx(w: String) -> void:
+	wx_t = Wx.tiers(w)
+	wx_on = 1 if Wx.any(wx_t) else 0
+	wx_rl = Wx.reload_pct(wx_t)
+	wx_spr = Wx.spread_pct(wx_t)
+	wx_sight = Wx.sight_m(wx_t) * M
+	wx_chg = Wx.charge_pct(wx_t)
+	wx_gun = Wx.speed_pct(wx_t, Wx.CAT_GUN)
+	wx_fire_t = FIRE_TICKS * Wx.burn_pct(wx_t) / 100
+	wx_burn_u = BURN_UNIT * Wx.burn_pct(wx_t) / 100
+	_wx_tables()
+
+
+## The weather on the type tables (from _load_types' values): the range cap, the walk and run, the burning standard kinds.
+func _wx_tables() -> void:
+	t_wx = wx_t.duplicate()
+	if wx_on == 0:
+		return
+	if not Wx.fire_ok(wx_t):
+		for t in t_m_ak.size():
+			if t_m_ak[t] >= 0 and t_k_fire[t_m_ak[t]] > 0:
+				t_m_ak[t] = -1
+	for t in t_m_range.size():
+		if wx_sight > 0 and t_m_range[t] > wx_sight:
+			t_m_range[t] = wx_sight
+		t_m_volley[t] = mini(t_m_volley[t], t_m_range[t])
+		if t_ship[t] != 0:
+			continue
+		var cat := Wx.CAT_FOOT
+		if t_cls[t] == UT.CLS_ART:
+			cat = Wx.CAT_GUN
+		elif t_mount[t] != UT.MOUNT_FOOT and t_mount[t] != UT.MOUNT_DOG:
+			cat = Wx.CAT_HORSE
+		var sp := Wx.speed_pct(wx_t, cat)
+		if sp != 100:
+			t_walk[t] = maxi(t_walk[t] * sp / 100, 1)
+			t_run[t] = maxi(t_run[t] * sp / 100, 1)
+
+
+## The weather: fire shot cannot be lit (rain 2+, a blizzard): every special kind that burns is taken away (a row's
+## burning standard kind: _wx_tables); the unit, its engines, shoot their plain shot.
+func _wx_no_fire() -> void:
+	if wx_on == 0 or Wx.fire_ok(wx_t):
+		return
+	for u in n_units:
+		if u_sk[u] >= 0 and t_k_fire[u_sk[u]] > 0:
+			u_sk[u] = -1
+			u_akind[u] = 0
+	for g in n_eg:
+		if eg_sk[g] >= 0 and t_k_fire[eg_sk[g]] > 0:
+			eg_sk[g] = -1
 
 
 ## Unit u's full morale: its men's type's, plus its veterancy.
@@ -12986,9 +13081,11 @@ func _update_units() -> void:
 			# wagon at its pace (its horses alive: theirs; none: the crew's).
 			var cq := u_carry[u]
 			if q_kind[cq] == EQ_WAGON:
-				speed = UT.wagon_pace(q_tier[cq], q_hn[cq])
+				speed = UT.wagon_pace(q_tier[cq], q_hn[cq]) * wx_gun / 100
 			else:
 				speed = carry_pace(t_walk[ty], q_kind[cq], u_alive[u])
+				if wx_gun != 100 and EQ_PACE[q_kind[cq]] > 0:
+					speed = mini(speed, EQ_PACE[q_kind[cq]] * wx_gun / 100)  # (the weather: the ram, a siege tower in mud or snow)
 		var sus := u_sus[u] if sup_on != 0 and u_fighting[u] == 0 else SUP_NONE
 		if sus != SUP_NONE and SUPP_CHARGE_FREE != 0 and u_order[u] == O_ATTACK and u_target[u] >= 0 \
 				and u_sus[u_target[u]] == SUP_PIN and t_m_ammo[ty] <= 0:
@@ -15951,6 +16048,8 @@ func _impact(r: int, t: int, mom: int) -> void:
 		stat_crush += 1
 	stat_impacts += 1
 	var power := t_charge[rty] * mom / 100
+	if wx_chg != 100:
+		power = power * wx_chg / 100  # (the weather: mud under the hooves and feet)
 	if ch_on != 0 and (u_aura[ur] & AU_CAV) != 0:
 		power = power * (100 + t_chv[CV_MOM]) / 100  # a cavalry hero near: the charge goes in harder
 		stat_ch_mom += 1
@@ -16637,7 +16736,7 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 	if lob_over_wall(u, ft):
 		rp = rp * ARC_OVER_WALL_PCT / 100  # (a lob over a wall)
 	if ter_on == 0 and map_on == 0 and fwh_on == 0:
-		if dist > t_m_range[ty] * rp / 100 or dist <= 0 or pr_free < 0:
+		if dist > _wx_cap(t_m_range[ty] * rp / 100) or dist <= 0 or pr_free < 0:
 			return
 	else:
 		var pk := _peek(u)
@@ -16683,6 +16782,7 @@ func _fire(i: int, u: int, ft: int, ty: int, ak: int = -1, aim: int = -1) -> voi
 		spread = spread * (100 - t_chv[CV_SPR]) / 100  # a missile hero near: straighter
 		stat_ch_rng += 1
 	spread = _vet_spr(u, spread)  # (veterancy: they shoot straighter)
+	spread = _wx_spr(spread)  # (the weather: wilder)
 	if vis_on != 0 and u_seen[ft] == 0:
 		spread = spread * BLIND_SPREAD / 100  # lobbed at where it was last seen
 		stat_blind += 1
@@ -16730,7 +16830,7 @@ func _shot_ok(sx: int, sy: int, ax: int, ay: int, dist: int, ty: int, skip0: int
 	var ha := elev_at(ax, ay) if obs_on != 0 else gh_at(ax, ay)
 	if dist > range_h(ty, hs, ha, rp) + wb:
 		return false
-	if dist > t_m_range[ty] * rp / 100:
+	if dist > _wx_cap(t_m_range[ty] * rp / 100):
 		stat_range_up += 1
 	if t_m_arc[ty] == 0 and lof_block(sx, sy, hs + LOF_EYE, ax, ay, ha + LOF_BODY,
 			dist * t_m_apex[ty] / 100, 0, LOF_STEP, skip0, skip1, tskip) >= 0:
@@ -16988,7 +17088,7 @@ func range_pct(u: int) -> int:
 
 ## Missile range of unit u (flat ground) with the kind it means to shoot.
 func mrange(u: int) -> int:
-	return t_m_range[u_type[u]] * range_pct(u) / 100
+	return _wx_cap(t_m_range[u_type[u]] * range_pct(u) / 100)
 
 
 ## Missiles (shots) of its special kind unit u has left: its men's, or its
@@ -17018,7 +17118,7 @@ func _kind_shock(ud: int, k: int, fear: bool = true) -> void:
 	if t_k_fire[k] > 0:
 		if u_burn[ud] == 0:
 			stat_unit_burn += 1
-		u_burn[ud] = BURN_UNIT
+		u_burn[ud] = wx_burn_u
 
 
 ## A man of unit ud struck and not killed by a poisoned missile of unit by:
@@ -17085,7 +17185,7 @@ func _ignite(p: int) -> void:
 		if _rand() % 100 < ch:
 			if g_burn[g] == 0:
 				stat_ignite += 1
-			g_burn[g] = FIRE_TICKS
+			g_burn[g] = wx_fire_t
 	for e in n_eng:
 		if e_state[e] == E_WRECKED or e_state[e] == E_RESERVE:
 			continue
@@ -17098,7 +17198,7 @@ func _ignite(p: int) -> void:
 		if _rand() % 100 < ch:
 			if e_burn[e] == 0:
 				stat_ignite += 1
-			e_burn[e] = FIRE_TICKS
+			e_burn[e] = wx_fire_t
 	for q in n_eq:
 		if q_state[q] == Q_WRECKED or (q_state[q] == Q_PLANTED and EQ_EXPOSED[q_kind[q]] == 0):
 			continue  # (planted ladders stand against the wall, out of reach)
@@ -17117,7 +17217,7 @@ func _ignite(p: int) -> void:
 		if _rand() % 100 < ch:
 			if q_burn[q] == 0:
 				stat_ignite += 1
-			q_burn[q] = FIRE_TICKS
+			q_burn[q] = wx_fire_t
 	if not ob_fire.is_empty():
 		_ignite_bld(p, x, y)
 
@@ -17402,7 +17502,7 @@ func _fire_gate(i: int, u: int, g: int, ty: int, k: int) -> void:
 		stat_ak_shots += 1
 	stat_shots += 1
 	facing[i] = FM.atan2_a(dy, dx)
-	var spread := _vet_spr(u, t_m_spread0[ty] + dist * t_m_spread[ty] / 1000)
+	var spread := _wx_spr(_vet_spr(u, t_m_spread0[ty] + dist * t_m_spread[ty] / 1000))
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	var ux := dx * FM.TRIG_ONE / dist
@@ -17859,7 +17959,7 @@ func _update_artillery() -> void:
 		# Shoot: set up, standing, a target, loaded, crewed and on the bearing.
 		if u_depl[u] < full or not aim or u_moved[u] != 0 or u_rprog[u] > 0:
 			continue
-		var need0 := t_m_reload[ty] * t_crew[ty]
+		var need0 := _wx_rl(ty, t_m_reload[ty] * t_crew[ty])
 		for k in ne:
 			var e := e0 + k
 			if e_state[e] != E_OK or e_ammo[e] <= 0:
@@ -18273,7 +18373,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 	if heroed:
 		rp = rp * (100 + t_chv[CV_RNG]) / 100
 	if ter_on == 0 and map_on == 0:
-		if dist > t_m_range[ty] * rp / 100 or dist < t_m_min[ty] or dist <= 0:
+		if dist > _wx_cap(t_m_range[ty] * rp / 100) or dist < t_m_min[ty] or dist <= 0:
 			return false
 	elif dist < t_m_min[ty] or dist <= 0 or not _shot_ok(sx, sy, ax, ay, dist, ty, _skip0(u), _skip1(ft), 0, rp):
 		return false
@@ -18291,7 +18391,7 @@ func _art_fire(e: int, u: int, ft: int, ty: int) -> bool:
 		stat_stones += 1
 	if t_m_gun[ty] != 0:
 		stat_cannon += 1
-	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var spread := _wx_spr(t_m_spread0[ty] + dist * t_m_spread[ty] / 1000)
 	if heroed:
 		spread = spread * (100 - t_chv[CV_SPR]) / 100
 		stat_ch_rng += 1
@@ -18350,7 +18450,7 @@ func _art_fire_gate(e: int, u: int, g: int, ty: int) -> bool:
 		stat_stones += 1
 	if t_m_gun[ty] != 0:
 		stat_cannon += 1
-	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var spread := _wx_spr(t_m_spread0[ty] + dist * t_m_spread[ty] / 1000)
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	if lon > 0:
@@ -18412,7 +18512,7 @@ func _art_fire_at(e: int, u: int, wa: Vector2i, ty: int) -> bool:
 		stat_stones += 1
 	if t_m_gun[ty] != 0:
 		stat_cannon += 1
-	var spread := t_m_spread0[ty] + dist * t_m_spread[ty] / 1000
+	var spread := _wx_spr(t_m_spread0[ty] + dist * t_m_spread[ty] / 1000)
 	var lat := (_rand() % (spread + 1) + _rand() % (spread + 1)) - spread
 	var lon := ((_rand() % (spread + 1) + _rand() % (spread + 1)) - spread) * 3 / 2
 	if lon > 0:
@@ -20943,6 +21043,8 @@ func _seen(t: int) -> bool:
 
 ## Unit o's men see unit t (centroid to centroid, o's eye to t's body).
 func _sight(o: int, t: int) -> bool:
+	if wx_sight > 0 and FM.approx_len(u_cx[t] - u_cx[o], u_cy[t] - u_cy[o]) > wx_sight:
+		return false  # (the weather: beyond the sight)
 	stat_vis_rays += 1
 	return sight_line(u_cx[o], u_cy[o], u_h[o] + VIS_EYE, u_cx[t], u_cy[t], u_h[t] + LOF_BODY)
 
@@ -22396,6 +22498,9 @@ func restore(blob: PackedByteArray) -> bool:
 	for k in d:
 		set(k, d[k])
 	_destr_restore()  # (the fallen pieces' rubble on the static cells)
+	if t_wx != wx_t:
+		_load_types()  # (the type tables carry another weather than the snapshot's: re-derived)
+		_wx_tables()
 	_croot_ep = -1  # (derived from the gates: recomputed on use)
 	_aroot_ep = -1  # (amphibious units' pieces: the same)
 	_adist = {}
@@ -22459,6 +22564,9 @@ func state_hash() -> int:
 	if vet_on != 0:
 		# Veterancy (2026-11-06): only in a battle where some unit has a level.
 		ctx.update(u_vet.to_byte_array())
+	if wx_on != 0:
+		# Weather (2026-11-09): only in a battle with some weather rule.
+		ctx.update(wx_t.to_byte_array())
 	if sup_used != 0:
 		# Suppression (2026-11-06): only once a unit gained some.
 		for arr in [u_sup, u_sus, u_sut, u_suc, u_sct, u_sfb, u_suh, u_spv, u_sst]:
@@ -24970,7 +25078,7 @@ func _pistol_pass() -> void:
 				continue
 			if state[i] != S_FIGHTING:
 				if s_pis[i] == 0 or not engaged:
-					s_prl[i] = tick + PIS_RELOAD
+					s_prl[i] = tick + _wx_rl(-1, PIS_RELOAD)
 				continue
 			if s_pis[i] > 0 or s >= files or held or alive <= files:
 				continue
@@ -24986,7 +25094,7 @@ func _pistol_pass() -> void:
 					slot_of[i] = s2
 					target[i] = -1
 					state[i] = S_FORMED
-					s_prl[i] = tick + PIS_RELOAD
+					s_prl[i] = tick + _wx_rl(-1, PIS_RELOAD)
 					s_rtw[i] = 1  # (back down the gap beside his file, as the countermarch)
 					rt_on = 1
 					u_pptr[u] = (k0 + q + 1) % nr
@@ -25314,7 +25422,7 @@ func _caracole(u: int) -> void:
 		u_car[u] = 0  # (caught while back: it fights where it stands)
 		return
 	if pistol:
-		if tick - u_crk[u] < CAR_RELOAD:
+		if tick - u_crk[u] < _wx_rl(-1, CAR_RELOAD):
 			return
 		var base := u_slot_base[u]
 		for s in u_alive[u]:
