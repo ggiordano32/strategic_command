@@ -1,6 +1,6 @@
 {
  "_note": "the pins in force; docs/STATUS.md 'Verification pins' is the source of truth, keep this file equal to it",
-  "_moved": "2026-11-09 PLACEHOLDER: the lanes trade by agreement and the overland retreat landed together on main; the pins below are the retreat worktree's and must be regenerated on the combined code",
+ "_moved": "2026-11-09: the lanes trade by agreement and the overland retreat, combined on main: the format 10 arrays (rome10, west10) regenerated on the combined code (they were the retreat branch's placeholders); the format 6 and format 8 arrays unchanged",
  "rome": [
   "0f2285b3",
   "06797ef3",
@@ -18,19 +18,19 @@
   "ae54a8ec"
  ],
  "rome10": [
-  "0bbb6a16",
-  "b8670bfc",
-  "b592f9c0",
-  "7ccf7842",
-  "b17e1cdb",
-  "25c33dd7"
+  "dd25d623",
+  "dadda95a",
+  "f859d55d",
+  "4324b56a",
+  "dec794ba",
+  "fefbe896"
  ],
  "west10": [
-  "d51755c0",
-  "6e279d6e",
-  "31d3a4d8",
-  "ba681812",
-  "0ef7ca58",
-  "5b2a8a6d"
+  "6e02e7b7",
+  "b85391a8",
+  "a3c972b8",
+  "ec344370",
+  "f99bc0da",
+  "6ca80838"
  ]
 }

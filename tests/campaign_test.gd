@@ -4225,7 +4225,9 @@ func _ai_skilled() -> void:
 	# (2026-11-09, the overland retreat: a version 10 beaten army retreats over land only, the battle's own ring no
 	# longer shuts it in, it re-embarks or holds, a draw moves nobody; were be3d9f7e / 3934412497 and, Easy,
 	# b4041bcf / 1610855359.)
-	_check(CState.hash_text(CState.as_format(g, 7)) == "fa27f1f1" and int(g["rng"]) == 3934412497,
+	# (2026-11-09, the lanes trade by agreement and the overland retreat combined: the regeneration on one code;
+	# were fa27f1f1 / 3934412497 and, Easy, 5a7dee1f / 3343726202.)
+	_check(CState.hash_text(CState.as_format(g, 7)) == "cf3c257f" and int(g["rng"]) == 1949347644,
 		"Average plays and draws the RNG exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(g, 7)), int(g["rng"])])
 	var ge := CState.new_campaign("test", 4242, [])
 	ge["factions"][_f("macedon")]["ai_skill"] = CP.EASY
@@ -4240,7 +4242,7 @@ func _ai_skilled() -> void:
 	# rng 656603057.)
 	# (Moved 2026-11-09 with the weather rules: the battles' weather drawn from the RNG; was 7a712c82, rng 4015190316.)
 	# (Moved 2026-11-09 with the overland retreat; was b4041bcf, rng 1610855359.)
-	_check(CState.hash_text(CState.as_format(ge, 7)) == "5a7dee1f" and int(ge["rng"]) == 3343726202,
+	_check(CState.hash_text(CState.as_format(ge, 7)) == "f31515c9" and int(ge["rng"]) == 4165945036,
 		"an Easy faction plays exactly as before step 4 (%s, rng %d)" % [CState.hash_text(CState.as_format(ge, 7)), int(ge["rng"])])
 	CAI.no_beasts = false
 	CBattle.old_walls = false
