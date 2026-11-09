@@ -396,7 +396,7 @@ func tail(s []string, n int) []string {
 func runLive(ctxA context.Context, ca *console, newBrowser func() (context.Context, context.CancelFunc),
 	front func(context.Context), phone chromedp.Action[chromedp.Void], url, inv string, check func(bool, string), fails *int) int {
 	t0 := time.Now()
-	if err := chromedp.Do(ctxA, phone, chromedp.Navigate(url+"/?nettest=livea"+inv)); err != nil {
+	if err := chromedp.Do(ctxA, phone, chromedp.Navigate(url+"/?nettest=livea"+inv+"&server="+url)); err != nil {
 		fmt.Println("navigate A:", err)
 		return 1
 	}
@@ -414,7 +414,7 @@ func runLive(ctxA context.Context, ca *console, newBrowser func() (context.Conte
 	cb := &console{who: "B"}
 	listen(ctxB, cb)
 	front(ctxB)
-	if err := chromedp.Do(ctxB, phone, chromedp.Navigate(url+"/?nettest=liveb&join="+code[1])); err != nil {
+	if err := chromedp.Do(ctxB, phone, chromedp.Navigate(url+"/?nettest=liveb&join="+code[1]+"&server="+url)); err != nil {
 		fmt.Println("navigate B:", err)
 		return 1
 	}

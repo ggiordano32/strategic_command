@@ -936,15 +936,13 @@ a long string").** View only.
   Tests with `--dev`). Audio: a Sound On / Off capsule and three sliders (master, effects, ambient) with their percent.
   The page sits in a trim panel so it reads over any picture; it scrolls (the Help buttons are at the bottom).
 - *Table motion (tabletop pass 5, 2026-10-30)*: a third capsule **Motion / Still** (`home_battle_dive`, in-game `menu_battle_dive`,
-  stored `[video] battle_dive = on | off`, default on, `game/table_motion.gd`) shares the Battle look row with Battle view (the same
-  `_beside` pair, so the Options page does not grow and does not scroll at 1024 x 576). Motion is the camera's dive onto the table as a
+  stored `[video] battle_dive = on | off`, default on, `game/table_motion.gd`) shares the Battle look row (the same
+  `_beside` pair, so the Options page does not grow and does not scroll at 1024 x 576; the Battle view capsule that was the pair's second one is gone, stage B, 2026-11-09). Motion is the camera's dive onto the table as a
   battle opens (`Battle.dive`, game/battle.gd) and the die that rolls on the campaign's Auto-resolve
   (game/campaign/die_roll.gd); Still turns both off; `--no-dive` does the same for one run. A tap or key skips either. Takes effect at the next battle /
   auto-resolve. Details: docs/design/art_pipeline.md "Pass 5, furniture and motion".
-- *Crest ghost (tabletop pass 6, 2026-10-30)*: a fourth capsule **Crest off / Crest on** (`home_crest_ghost`, in-game `menu_crest_ghost`,
-  stored `[video] crest_ghost = on | off`, default off, `BoardView.crest_ghost_pref`, `--crest-ghost=on|off`) joins the same Battle look row
-  (the `_beside` pair, which wraps on the narrow layouts). On (oblique view only): a man hidden by a crest nearer the camera draws as the faction ghost,
-  as men behind a wall do. It costs a pass over the ground, so it is off by default. Takes effect at the next battle. Details:
+- *Crest ghost (tabletop pass 6, 2026-10-30; the Options row removed 2026-11-09, stage B)*: the crest ghost is oblique-only, so its capsule is gone;
+  `BoardView.crest_ghost_pref` answers only the developer flag `--crest-ghost=on|off` (an old stored `[video] crest_ghost` is ignored).
   docs/design/art_pipeline.md "Pass 6, the hills".
 
 **Map view switch and the Looks rows (as built, 2026-10-25).** The campaign map's bottom-left button showed the
@@ -1705,9 +1703,12 @@ only, with the sim's second pass (docs/design/battle_sim.md "Suppression, second
 
 docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; this is its setting and its controls.
 
-- **The setting.** Options > Looks > Battle view gains a third capsule, **3D**, beside Top and Oblique (`[video] battle_view =
-  3d`; the default stays Oblique; takes effect at the next battle; on the web it fetches the oblique sheets' pack as Oblique does,
-  and a battle without them is drawn from the top). Graphics High turns the lamp's shadows on, Low off.
+- **The setting.** *Superseded 2026-11-09 (stage B):* there is no setting. The 3D view is the only battle view players get:
+  `BoardView.pref()` always answers "3d" (a saved `[video] battle_view` of top or oblique from an old settings file reads as 3d and
+  is never written again), the Options has no Battle view capsule, and the web query parameter is honoured for 3d only.
+  `--battle-view=top|oblique` on the command line and the tests' `BoardView.force` stay as a hidden developer aid until stage C
+  deletes the flat views. (Before: Options > Looks > Battle view had a third capsule, 3D, beside Top and Oblique, default Oblique.)
+  Graphics High turns the lamp's shadows on, Low off.
 - **The camera** is the oblique view's (the same zoom levels, the fit, the clamp, the dive, the pinch and pans) plus a free turn in
   yaw and a tilt from 25 to 60 degrees (40 the start). The battle opens facing the player's side. A turn keeps a little inertia
   when let go (decays in 0.35 s); there is no snapping (the men's sheet directions step every 45 degrees as they do when the men
@@ -1723,8 +1724,8 @@ docs/design/art_pipeline.md "The 3D battle view, step one" has the view itself; 
   watch) turns the table across and tilts it up and down, about the screen's centre (the spike's orbit: 0.3 degrees a pixel across,
   0.2 up and down); a right drag with a selection still lays out a line, a right click still orders. Q / E held turn the table
   (when no group move is under way; during one they still turn the group), Home / End held tilt it. Middle drag, W A S D and the
-  arrows pan, the wheel and Page Up / Down zoom, as before. The Keys page lists "3D view: turn the table" and "3D view: tilt the
-  camera" in the battle's view section.
+  arrows pan, the wheel and Page Up / Down zoom, as before. The Keys page lists "Turn the table" and "Tilt the
+  camera" (since stage B without the "3D view:" prefix) in the battle's view section.
 - **Taps and the overlay.** Every tap, drag and long press goes through the same board transform as the other views
   (`Battle._screen_to_world` -> `BoardView.to_world`, now the 3D camera's inverse onto the board's ground), so orders land where
   tapped at any yaw and tilt; the overlay (selection, previews, the placement tool's ghost and handles, range rings, cover chips,
@@ -1977,6 +1978,22 @@ the counter is not checked on a device.
 Stage A, G6 (art_pipeline.md "The ghost and the map camera"): the owner, on the 3D view: "a top down camera as an overview is good, it can be a key and a chit. No need for a gesture."
 
 - **The chit.** A compass chit (46 x 42 px, the new `compass` icon: a ring with a north needle) in the top bar between Paths and Pause (`Hud.map_button`, a toggle, `map_toggled`; hidden in the flat views). Its tip: "Straight down over the whole battle, north up (N). Press again to go back to the camera you had. Dragging to turn or tilt leaves it." Pressed while the map camera is on; `hud_fit_test` checks it at 844 x 390 and 1280 x 720 (shown in 3D only, as high as Pause, inside the viewport and clear of its neighbours, pressing enters and leaves).
-- **The key** is **N** (free: M is the walls, T the assassin's attempt), `camera_map` in `game/controls.gd`: the Keys page lists "3D view: the map camera" in the battle's view section (touch: the Map chit; mouse: the chit or the key). The how-to (`game/campaign/howto.gd`) lists no battle camera keys, so it is unchanged.
+- **The key** is **N** (free: M is the walls, T the assassin's attempt), `camera_map` in `game/controls.gd`: the Keys page lists "The map camera" (named "3D view: the map camera" until stage B) in the battle's view section (touch: the Map chit; mouse: the chit or the key). The how-to (`game/campaign/howto.gd`) lists no battle camera keys, so it is unchanged.
 - **The camera.** `Battle._map_set` saves the camera (yaw, tilt, zoom, position), snaps to yaw 0 (north up) and `V3D_MAP_TILT` 85 degrees, and fits the whole battle (`_fit_camera(true)`: both armies' extent, and in the deployment phase the deployment zones too, so the whole zone is in the frame); a second press (key or chit) puts the saved camera back exactly. Pan and zoom work in it (the clamp and the fit are the usual ones: v3d_test checks the board transform and the 3D camera agree at 85 degrees, to 0.00 px). A tilt up does nothing (85 is above the 60 degree clamp); a turn or a tilt down leaves the map camera (the chit un-presses) from the steepest legal tilt (60, the clamp's), keeping yaw 0 and the zoom and place, so there is no jump back to the old camera: the old camera comes only from the second press. The 25-60 degree clamp for the free camera is unchanged (`V3D_TILT_MIN/MAX`); the map camera is a preset outside it, never reached by a gesture.
 - **Men from above.** From a tilt of 75 degrees (`cam_b.y > 0.966` in `soldiers3d.gdshaderinc`) the men in the camera's own pass lie on the board as the top-down atlas frames (the stand-in's flat path, rotated by their facing), not as standing cards (which would be figures smeared along the ground north of their feet); the lamp's shadow pass keeps the standing card (so a man's shadow is the same). Chosen over lying the standing cards flatter: the top-down frames exist for every set and read as men from overhead (shot map_west_town_close_1280x720.png).
+
+### Stage B, the Options and the Keys page without a view choice (as built, 2026-11-09, view only)
+
+The 3D battle view is the only view every player gets (docs/design/art_pipeline.md "Stage B, the 3D view is the only view (as built, 2026-11-09)").
+
+- **Options.** The Battle view capsule (Top / Oblique / 3D) and the Crest ghost capsule (Crest off / Crest on) are removed from Options > Looks
+  (`OptionsRows`: the `battle_view` and `crest_ghost` controls and their `refresh` lines). The Looks section is Battle look with Table
+  motion beside it (`_beside("battle_look", "battle_dive", ...)`, the anchor chain now one link), then Map view, Map style, Emblems; checked
+  at 844 x 390 and 1280 x 720 (shots in ~/.cache/sc_stageb/shots/keep/). The Soldiers tip no longer says "in the 3D view" (Compatible
+  "draws no footprints").
+- **Keys page.** The three camera rows read "Turn the table", "Tilt the camera" and "The map camera" (the key N, the Map chip); no row names the
+  Top or Oblique view.
+- **The setting.** None: `BoardView.pref()` is "3d" for players (see "The 3D battle view's camera"). menu_test checks the rows are gone, that
+  Table motion still sits beside Battle look, that a saved battle_view of top, oblique or 3d reads as 3d, and that `BoardView.force` still
+  picks a flat view.
+- **Not touched:** the campaign's city preview and the sea battle screen stay 2D (the sea screen moves to 3D in stage D).

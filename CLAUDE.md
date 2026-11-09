@@ -1,6 +1,6 @@
 # Strategic Command
 
-2D co-op grand strategy game in Godot 4 (GDScript), web-first. The design is
+Co-op grand strategy game in Godot 4 (GDScript), web-first: a 2D campaign map and 3D battles. The design is
 indexed in `docs/DESIGN.md` (sections in `docs/design/<area>.md`); the short
 current state, open items by area and how to run things are in `docs/STATUS.md`
 (its dated history is in `docs/history/`). Read STATUS and the design area you

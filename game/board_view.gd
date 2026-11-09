@@ -1,7 +1,7 @@
 extends RefCounted
 ## The battle view's board transform (tabletop pass 3, docs/design/art_pipeline.md "Pass 3, the oblique view").
-## A view preference in user://settings.cfg [video] battle_view = top | oblique ("--battle-view=top|oblique" overrides
-## it for the session; default oblique since 2026-10-30, the owner's call). On the web a battle whose oblique sheets
+## The view is 3D for every player (stage B, 2026-11-09); "--battle-view=top|oblique" is a hidden developer aid until stage C
+## removes the flat views (an old [video] battle_view setting is ignored). On the web a battle whose oblique sheets
 ## are missing (a broken build; they ship in the main pack) would be drawn in the top view (`web_top`, never set now). View only: it reads the sim's heights once per battle and never writes the sim.
 ##
 ## Top: the board is the world (world pixels, the map seen from straight above), as before.
@@ -91,6 +91,9 @@ static var grid_min := 0.0
 static var _mats: Array = []         # weak refs of every material `apply` was called on (use_grid re-applies them)
 
 
+## The battle view every player gets is "3d" (stage B, 2026-11-09): a saved [video] battle_view of top or oblique (an old
+## settings file) reads as 3d and nothing in the Options sets another. Hidden developer aid until stage C deletes the flat views:
+## `--battle-view=top|oblique` on the command line and the tests' `force`. The web query parameter honours 3d only.
 static func pref() -> String:
 	if force == "top" or force == "oblique" or force == "3d":
 		return force
@@ -99,30 +102,11 @@ static func pref() -> String:
 			var v := str(a).get_slice("=", 1).to_lower()
 			if v == "top" or v == "oblique" or v == "3d":
 				return v
-	if OS.has_feature("web"):
-		var q = JavaScriptBridge.eval("window.location.search", true)
-		if q is String and (q as String).contains("battle-view=top"):
-			return "top"   # (a testing aid, like the other two)
-		if q is String and (q as String).contains("battle-view=oblique"):
-			return "oblique"
-		if q is String and (q as String).contains("battle-view=3d"):
-			return "3d"
-	var cf := ConfigFile.new()
-	if cf.load(SETTINGS) != OK:
-		return "oblique"
-	var sv := str(cf.get_value("video", "battle_view", "oblique"))
-	return sv if sv == "top" or sv == "3d" else "oblique"
-
-
-static func save_pref(v: String) -> void:
-	var cf := ConfigFile.new()
-	cf.load(SETTINGS)
-	cf.set_value("video", "battle_view", v)
-	cf.save(SETTINGS)
+	return "3d"
 
 
 ## Testing aids: "--height-exag=1.4", "--lift-grid" (the coarse grid everywhere), "--no-steps" (the fine field smooth),
-## "--crest-ghost=on|off" (the setting `[video] crest_ghost`, default off).
+## "--crest-ghost=on|off" (a flag only).
 static func _arg(prefix: String, default := "") -> String:
 	for a in OS.get_cmdline_user_args():
 		if str(a).begins_with(prefix):
@@ -130,21 +114,10 @@ static func _arg(prefix: String, default := "") -> String:
 	return default
 
 
+## (the flat views' crest ghost is a developer aid now: the command-line flag only, no setting)
 static func crest_ghost_pref() -> bool:
 	var v := _arg("--crest-ghost=")
-	if v != "":
-		return v == "on" or v == "1" or v == "true"
-	var cf := ConfigFile.new()
-	if cf.load(SETTINGS) != OK:
-		return false
-	return str(cf.get_value("video", "crest_ghost", "off")) == "on"
-
-
-static func save_crest_ghost(on: bool) -> void:
-	var cf := ConfigFile.new()
-	cf.load(SETTINGS)
-	cf.set_value("video", "crest_ghost", "on" if on else "off")
-	cf.save(SETTINGS)
+	return v == "on" or v == "1" or v == "true"
 
 
 ## Set up the view for a new battle on `sim` (before the layers are built).

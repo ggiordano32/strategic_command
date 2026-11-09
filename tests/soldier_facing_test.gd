@@ -34,6 +34,13 @@ func _frames(n: int) -> void:
 
 
 func _initialize() -> void:
+	# The flat soldier layers are what this test draws (the 3D view hides them): the oblique developer aid, until stage C
+	# converts or deletes the test (--battle-view=top|oblique still picks the other flat view).
+	var picked := false
+	for a in OS.get_cmdline_user_args():
+		picked = picked or str(a).begins_with("--battle-view=")
+	if not picked:
+		preload("res://game/board_view.gd").force = "oblique"
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--shots="):
 			_shots = a.get_slice("=", 1)

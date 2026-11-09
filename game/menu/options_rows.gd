@@ -9,7 +9,7 @@ extends RefCounted
 ##   rows.build(parent, {"prefix": "home", "narrow": false, "title": true, "dev": false, "win": get_window(),
 ##       "on_size": Callable, "on_controls": Callable, "on_book": Callable, "on_tests": Callable})
 ##   rows.refresh()   # the controls show the stored values again
-## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, battle_view, map_view, map_style,
+## Controls are named "<prefix>_<key>": ui_size, quality, soldiers, fullscreen, battle_look, battle_dive, map_view, map_style,
 ## menu_emblems; audio_mute and audio_master / audio_effects / audio_ambient (sliders).
 
 const Kit := preload("res://game/campaign/ui_kit.gd")
@@ -64,7 +64,7 @@ func build(parent: Control, o: Dictionary) -> void:
 			refresh())
 	_choice(parent, "soldiers", "Soldiers", "How the soldiers are drawn. Compatible works on every device.", [["Auto", "auto"], ["Compatible", "cpu"]],
 		SoldierLayer.load_pref(), "Soldiers", "Auto: the fast way, switching by itself to compatible if this device shows no soldiers. " \
-		+ "Compatible: always the way that works everywhere (a little more work per tick); in the 3D view it draws no footprints.", func(v): SoldierLayer.save_pref(str(v)))
+		+ "Compatible: always the way that works everywhere (a little more work per tick); it draws no footprints.", func(v): SoldierLayer.save_pref(str(v)))
 	_toggle(parent, "fullscreen", "Fullscreen", "Fill the whole screen.", DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN,
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
@@ -72,20 +72,10 @@ func build(parent: Control, o: Dictionary) -> void:
 	_choice(parent, "battle_look", "Battle look", "Diorama is the heavier look, Painterly the lighter.", [["Diorama", "diorama"], ["Painterly", "painterly"]], BattleLook.pref(),
 		"Battle look", "Diorama: a tabletop miniatures board (splatted ground, rim light and outlines, saturated colour, a bevelled edge): " \
 		+ "the heavier of the two. Painterly: the softer, grounded look and the lighter one. Graphics Low trims both. Takes effect at the next battle.", func(v): BattleLook.save_pref(str(v)))
-	# The Battle view beside it, on the same row (tabletop pass 3, game/board_view.gd).
-	_beside("battle_look", "battle_view", [["Top", "top"], ["Oblique", "oblique"], ["3D", "3d"]], BoardView.pref(), "Battle view",
-		"Oblique (the default): the tabletop seen from its southern edge at 40 degrees, the hills rising, the figures, walls " \
-		+ "and town standing upright; men behind a wall or a house show as ghosts. Top: the battle map from straight above, " \
-		+ "the lighter of the two. 3D: the table as a real model under a lamp, the camera free to turn (twist two fingers, or " \
-		+ "right drag) and tilt (two fingers side by side up or down), the painted figures standing on it, real shadows on " \
-		+ "Graphics High. Takes effect at the next battle.", func(v): BoardView.save_pref(str(v)))
 	# The table's motion on the same row (tabletop pass 5, game/table_motion.gd): the dive onto the table and the die.
-	_beside("battle_view", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",
+	_beside("battle_look", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",
 		"Motion (the default): the camera dives onto the table as a battle opens, and a die rolls on an Auto-resolve. Still: " \
 		+ "neither. A tap or a key skips either one. Takes effect at the next battle.", func(v): TableMotion.save_pref(str(v) == "on"))
-	_beside("battle_dive", "crest_ghost", [["Crest off", "off"], ["Crest on", "on"]], "on" if BoardView.crest_ghost_pref() else "off", "Crest ghost",
-		"Off (the default): men behind a hill's crest are drawn as they are. On (the oblique view): a man hidden by a crest nearer the camera is drawn as a ghost, "
-		+ "as men behind a wall are. Costs a pass over the ground. Takes effect at the next battle.", func(v): BoardView.save_crest_ghost(str(v) == "on"))
 	MapView.load_view_pref()
 	_choice(parent, "map_view", "Map view", "Terrain draws the ground and the sea; Political only the owners' colours. Political is the lightest.",
 		[["Terrain", "terrain"], ["Political", "political"]], "terrain" if MapView.terrain_view else "political", "Map view",
@@ -375,9 +365,7 @@ func refresh() -> void:
 	put.call("soldiers", SoldierLayer.load_pref())
 	put.call("fullscreen", 1 if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN else 0)
 	put.call("battle_look", BattleLook.pref())
-	put.call("battle_view", BoardView.pref())
 	put.call("battle_dive", "on" if TableMotion.enabled() else "off")
-	put.call("crest_ghost", "on" if BoardView.crest_ghost_pref() else "off")
 	MapView.load_view_pref()
 	put.call("map_view", "terrain" if MapView.terrain_view else "political")
 	put.call("map_style", MapView.style_pref)

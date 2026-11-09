@@ -94,14 +94,15 @@ func _scenario(by_role: Dictionary) -> Dictionary:
 	return sc
 
 
-## The bar is the same in every Battle view (docs/design/art_pipeline.md "The 3D battle view, step one"): at the phone and the
+## The bar is the same in every battle view, 3D only by default (docs/design/art_pipeline.md "The 3D battle view, step one"): at the phone and the
 ## desktop size the battle opens in the top, the oblique and the 3D view (the 3D scene only in the last), nothing selected and
 ## the mixed selection fit, and --shots= saves each (hud_views_<view>_<size>.png).
 func _views_check(sc: Dictionary, by_role: Dictionary) -> void:
 	for sz in [[844, 390, true], [1280, 720, false]]:
 		_size_name = "%dx%d" % [sz[0], sz[1]]
 		await _resize(sz[0], sz[1], sz[2])
-		for v in ["top", "oblique", "3d"]:
+		# (stage B: the 3D view alone; the flat views' passes, a hidden developer aid, behind --all-views)
+		for v in (["top", "oblique", "3d"] if "--all-views" in OS.get_cmdline_user_args() else ["3d"]):
 			BoardView.force = v
 			await _new_battle(sc)
 			_check((b.view3d != null) == (v == "3d") and BoardView.oblique == (v != "top"),

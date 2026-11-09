@@ -22,6 +22,7 @@ const PackView := preload("res://game/campaign/pack_view.gd")
 const MenuPrefs := preload("res://game/menu/menu_prefs.gd")
 const Emblem := preload("res://game/menu/emblem.gd")
 const Quality := preload("res://game/quality.gd")
+const TableMotion := preload("res://game/table_motion.gd")
 const Kit := preload("res://game/campaign/ui_kit.gd")
 const CStory := preload("res://campaign/cstory.gd")
 const Accounts := preload("res://game/net/accounts.gd")
@@ -623,7 +624,7 @@ func _options_page() -> void:
 		"quality": func(): return Quality.load_pref(),
 		"soldiers": func(): return SoldierLayer.load_pref(),
 		"battle_look": func(): return BattleLook.pref(),
-		"battle_view": func(): return preload("res://game/board_view.gd").pref(),
+		"battle_dive": func(): return "on" if TableMotion.enabled() else "off",
 		"confirm_orders": func(): return ConfirmOrders.pref(),
 		"map_view": func(): return "terrain" if MapView.terrain_view else "political",
 		"map_style": func(): return MapView.style_pref,
@@ -643,6 +644,23 @@ func _options_page() -> void:
 				printerr("   %s: picked %s, stored %s" % [key, str(v), str((stored[key] as Callable).call())])
 		_check(all_ok, "%s: each choice sets the stored value (%s)" % [key, ", ".join(sg.values.map(func(x): return str(x)))])
 	UiScale.set_size_name(root, size0)
+	# Stage B (2026-11-09): the 3D view is the only battle view, so Options has no Battle view or Crest ghost row; an old saved
+	# [video] battle_view reads as 3d; Table motion stays beside Battle look.
+	var BV := preload("res://game/board_view.gd")
+	_check(not rows.seg.has("battle_view") and not rows.seg.has("crest_ghost"), "Options: no Battle view and no Crest ghost row")
+	_check(rows.seg["battle_dive"].get_parent().get_parent() == rows.seg["battle_look"].get_parent().get_parent(), "Options: Table motion sits beside Battle look")
+	var cfv := ConfigFile.new()
+	cfv.load("user://settings.cfg")
+	var bv0 = cfv.get_value("video", "battle_view", null)
+	for old in ["top", "oblique", "3d"]:
+		cfv.set_value("video", "battle_view", old)
+		cfv.save("user://settings.cfg")
+		_check(BV.pref() == "3d", "an old saved battle_view '%s' reads as 3d" % old)
+	cfv.set_value("video", "battle_view", bv0)
+	cfv.save("user://settings.cfg")
+	BV.force = "top"
+	_check(BV.pref() == "top", "the developer aid (BoardView.force) still picks a flat view")
+	BV.force = ""
 	# Confirm orders shares the UI size row (one capsule beside the other, so the page keeps its height); the stored value is
 	# [ui] confirm_orders, "auto" with nothing stored; the Controls page lists the placement tool.
 	var cs_row = rows.seg.get("confirm_orders")

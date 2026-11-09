@@ -34,7 +34,7 @@ func _initialize() -> void:
 
 
 func _w2s(x: int, y: int) -> Vector2:
-	return battle.get_canvas_transform() * (Vector2(x, y) / 1024.0 * Battle.PX_PER_M)
+	return battle.world_to_screen(Vector2(x, y) / 1024.0 * Battle.PX_PER_M)   # (the view's own projection: 3D by default)
 
 
 func _process(_d: float) -> bool:

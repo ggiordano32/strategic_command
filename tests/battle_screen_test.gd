@@ -24,7 +24,8 @@ extends SceneTree
 ## A fleet at the shore (2026-11-05): a port town battle with the player's ships off the quay opens with the ship
 ## layer under the men (drawn by the board's lift in the oblique view), a hull for each of the three ships in her
 ## faction's colours, each ship's crew on her deck.
-## Then the whole run again in the oblique battle view (tabletop pass 3, BoardView.force = "oblique"; the checks
+## By default the run is the 3D view alone (stage B); with --all-views the whole run goes top, oblique, then 3D.
+## The oblique pass: the whole run again in the oblique battle view (tabletop pass 3, BoardView.force = "oblique"; the checks
 ## marked "[oblique]"): the same assertions, plus the battles open in that view with the upright figures' shaders; and once
 ## more in the 3D view (BoardView.force = "3d", "[3d]"; docs/design/art_pipeline.md "The 3D battle view, step one"): the same
 ## assertions plus `_v3d_cases`.
@@ -87,7 +88,14 @@ func _check(c: bool, what: String) -> void:
 
 
 func _initialize() -> void:
-	BoardView.force = "top"
+	# Stage B (2026-11-09): the 3D view is the only view players get, so the default run is the [3d] pass alone; the
+	# flat views' [top] and [oblique] passes (a hidden developer aid until stage C deletes them) run behind --all-views.
+	if "--all-views" in OS.get_cmdline_user_args():
+		BoardView.force = "top"
+	else:
+		BoardView.force = "3d"
+		_oblique = true
+		_v3d = true
 	_begin()
 
 

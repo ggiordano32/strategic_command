@@ -18,7 +18,7 @@ var fails := 0
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
 	cpu = "--cpu" in args
-	BoardView.force = "oblique" if "--oblique" in args else "top"
+	BoardView.force = "oblique" if "--oblique" in args else ("top" if "--top" in args else "3d")   # (3D by default; the flat views are a developer aid)
 	for a in args:
 		if a.begins_with("--shots="): shots = a.get_slice("=", 1)
 		if a.begins_with("--ticks="): ticks = int(a.get_slice("=", 1))
@@ -96,7 +96,7 @@ func _case(name: String, units: Array, orders: Array) -> void:
 	for i in 10:
 		ov._process(0.1)
 	var left: int = ov.flashes_live
-	print("%-10s %s %s fire ticks %3d | shots in the sim on the biggest tick %3d | flashes shown %3d | before (unit flag) %4d | ticks with shown != shots %d | a second later %d | F_FIRED units %d" % [name, "cpu" if cpu else "gpu", "obl" if BoardView.force == "oblique" else "top", fire_ticks, max_fire, max_flash, max_before, bad, left, stale])
+	print("%-10s %s %s fire ticks %3d | shots in the sim on the biggest tick %3d | flashes shown %3d | before (unit flag) %4d | ticks with shown != shots %d | a second later %d | F_FIRED units %d" % [name, "cpu" if cpu else "gpu", BoardView.force, fire_ticks, max_fire, max_flash, max_before, bad, left, stale])
 	if bad > 0 or left != 0 or stale > 0:
 		fails += 1
 	if name == "bows":

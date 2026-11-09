@@ -899,7 +899,12 @@ func _build_ground_canvas() -> void:
 
 
 func _ground_canvas_refresh() -> void:
-	if _gc_vp == null or sim.rub_n == _gc_rub:
+	if _gc_vp == null:
+		return
+	if _gc_node.sim != sim:
+		_gc_node.sim = sim   # (a co-op battle rebinds to the session's sim after setup: the ground canvas follows it, redrawn once)
+		_gc_rub = -1
+	if sim.rub_n == _gc_rub:
 		return
 	_gc_rub = sim.rub_n
 	_gc_node.cells = CityDraw.rubble_cells(sim)

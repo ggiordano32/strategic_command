@@ -33,7 +33,7 @@ var wait := 0
 
 
 func _initialize() -> void:
-	BoardView.force = "oblique"
+	BoardView.force = "3d"   # (--view=oblique|top: the flat views, a developer aid)
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	for a in OS.get_cmdline_user_args():
 		var v: String = a.get_slice("=", 1)
