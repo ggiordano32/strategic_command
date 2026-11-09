@@ -16,6 +16,9 @@
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers [-shots DIR]
 //	    only the 3D battle check (the default flow's battle part; works against tools/serve_web.py too). -v3d is the same
 //	    check, kept as a flag so older scripts work (the 3D view is the default flow's battle view since 2026-11-09)
+//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -ghost [-shots DIR]
+//	    only the ghost check: the 3D ghost pass (stencil test) on the GPU path with the web context's stencil attributes
+//	    logged; our men in the open must not be ghosted over (see checkGhost)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -oblique [-shots DIR]
 //	    only the one-download check: the oblique sheets are in index.pck, so a battle fetches no second pack
 //	    (see checkOblique; works against tools/serve_web.py too)
@@ -139,6 +142,7 @@ func main() {
 	soldiersOnly := flag.Bool("soldiers", false, "only check that a 3D battle draws its soldiers (both paths, the automatic switch)")
 	obliqueOnly := flag.Bool("oblique", false, "only check that the oblique sheets ride in the main download (no second pack)")
 	v3dOnly := flag.Bool("v3d", false, "the same as -soldiers (the 3D view is the default flow's battle view; kept so older scripts work)")
+	ghostOnly := flag.Bool("ghost", false, "only check that the 3D ghost pass's stencil test works in WebGL (see checkGhost)")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
 	audioLoop := flag.Bool("audio-loop", false, "only check that the ambient bed loops without a gap (plays bed_map for 54 s)")
@@ -229,6 +233,15 @@ func main() {
 	}
 	if *v3dOnly || *soldiersOnly {
 		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
+		if fails == 0 {
+			fmt.Println("RESULT: PASS")
+			return
+		}
+		fmt.Printf("RESULT: FAIL (%d)\n", fails)
+		os.Exit(1)
+	}
+	if *ghostOnly {
+		checkGhost(ctxA, ca, phone, *url, *shots, check)
 		if fails == 0 {
 			fmt.Println("RESULT: PASS")
 			return
@@ -474,6 +487,54 @@ func checkOblique(ctx context.Context, c *console, phone chromedp.Action[chromed
 			p := filepath.Join(shots, "web_oblique.png")
 			os.WriteFile(p, png, 0o644)
 			fmt.Println("  screenshot", p)
+		}
+	}
+}
+
+// checkGhost: the 3D ghost pass (game/soldiers3d_ghost.gdshader) draws our hidden men only where the stencil is not 1, which the
+// men's pass writes. WebGL2 contexts from Godot's web template have no stencil in the default framebuffer unless the 3D scene
+// renders into its own buffers; if the test failed there, the ghost would be drawn over every man. The game's own probe
+// (game/view3d.gd _ghost_probe, ?ghost-probe) logs the context's stencil attributes and compares the frame with the ghost shown
+// and hidden around each own unit in the open of the skirmish: "GHOST_PROBE units=N worst_frac=F changed=C control_changed=K" (F: share of a unit's
+// patch that the ghost changed; 0 when the stencil works). ?soldiers=gpu forces the vertex texture path (swiftshader may fall to
+// the compatible path, where the ghost is dropped and the probe prints nothing).
+func checkGhost(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
+	for _, g := range []string{"1", "0"} {
+		c.reset()
+		t0 := time.Now()
+		if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&battle-view=3d&soldiers=gpu&quality=high&ghost="+g+"&ghost-probe")); err != nil {
+			check(false, "ghost="+g+": navigate: "+err.Error())
+			return
+		}
+		pr := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`), 240*time.Second)
+		check(pr != nil && pr[3] == "v3d-gpu" && atoi(pr[1]) >= 50, fmt.Sprintf("ghost=%s: the GPU soldier path draws: %v", g, pr))
+		if g == "0" {
+			time.Sleep(3 * time.Second)
+			check(c.find(regexp.MustCompile(`GHOST_PROBE`)) == nil, "ghost=0: no ghost pass, no probe")
+		} else {
+			ctxl := c.wait(regexp.MustCompile(`GHOST_PROBE context (.*)`), 60*time.Second)
+			fmt.Printf("  web context: %v\n", idx(ctxl, 1))
+			m := c.wait(regexp.MustCompile(`GHOST_PROBE units=(\d+) worst_frac=([\d.]+) changed=(\d+) control_changed=(\d+)(?: men_px=(\d+))?`), 180*time.Second)
+			check(m != nil && atoi(m[1]) >= 1, fmt.Sprintf("the ghost probe saw own units in the open: %v (%.1f s)", m, time.Since(t0).Seconds()))
+			var f float64
+			if m != nil {
+				fmt.Sscanf(m[2], "%f", &f)
+			}
+			check(m != nil && f < 0.05, fmt.Sprintf("the ghost leaves our men in the open alone (worst share of a patch changed %v, %v pixels)", idx(m, 2), idx(m, 3)))
+			check(m != nil && atoi(m[4]) >= 20, fmt.Sprintf("positive control: with the men's pass hidden the ghost does draw: %v pixels changed", idx(m, 4)))
+		}
+		if shots != "" {
+			if png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
+				p := filepath.Join(shots, "web_ghost_"+g+".png")
+				os.WriteFile(p, png, 0o644)
+				fmt.Println("  screenshot", p)
+			}
+		}
+	}
+	for _, l := range c.all {
+		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
+			check(false, "shader error: "+strings.TrimSpace(l))
+			break
 		}
 	}
 }

@@ -36,6 +36,7 @@ const SLAB_SHADER := preload("res://game/board_slab3d.gdshader")
 const TREE_SHADER := preload("res://game/trees3d.gdshader")
 const MEN_SHADER := preload("res://game/soldiers3d.gdshader")
 const MEN_SHADER_CPU := preload("res://game/soldiers3d_cpu.gdshader")
+const GHOST_SHADER := preload("res://game/soldiers3d_ghost.gdshader")
 const BASE_SHADER := preload("res://game/soldier_bases3d.gdshader")
 const BASE_SHADER_CPU := preload("res://game/soldier_bases3d_cpu.gdshader")
 const PR_SHADER := preload("res://game/projectiles3d.gdshader")
@@ -108,6 +109,9 @@ var men_mmi: MultiMeshInstance3D
 var men_mat: ShaderMaterial
 var base_mmi: MultiMeshInstance3D
 var base_mat: ShaderMaterial
+## The ghost (G5): the viewer's own men's silhouette where the men's pass was hidden (stencil, High and the GPU path only).
+var ghost_mmi: MultiMeshInstance3D
+var ghost_mat: ShaderMaterial
 var pr_mmi: MultiMeshInstance3D
 var pr_mat: ShaderMaterial
 ## Materials whose interpolation (alpha, now) follows the soldier layer's every frame.
@@ -136,6 +140,11 @@ var _gc_rub := -1
 ## round the biggest unit and the drawn pixels counted; none with men alive on the fine path (a texture read in the vertex
 ## stage, which some devices' WebGL does not do: Chrome on the Tab S7) switches the men, the bases, the missiles and the kit to
 ## the compatible shaders (the coarse grid) and remembers it for later battles (the soldier layer's pref "cpu").
+## The ghost's strength, and the view height (m) it starts to fade from and is at GHOST_FAR_K of its strength at.
+const GHOST_K := 0.35
+const GHOST_NEAR_M := 150.0
+const GHOST_FAR_M := 500.0
+const GHOST_FAR_K := 0.3
 const PROBE_LAYER := 1 << 19
 const PROBE_PX := 128
 const PROBE_FRAMES := 30
@@ -428,6 +437,17 @@ func _build_men() -> void:
 	base_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(base_mmi)
 	sl.v3d_mm = mm
+	if not grid and not Quality.is_low() and sl.viewer_side >= 0 and not ("--ghost=0" in SoldierLayer._launch_args()):
+		ghost_mat = ShaderMaterial.new()
+		ghost_mat.shader = GHOST_SHADER
+		_men_params(ghost_mat, sl)
+		ghost_mat.set_shader_parameter("own_side", float(sl.viewer_side & 1))
+		ghost_mat.set_shader_parameter("ghost_k", GHOST_K)
+		ghost_mmi = MultiMeshInstance3D.new()
+		ghost_mmi.multimesh = mm
+		ghost_mmi.material_override = ghost_mat
+		ghost_mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(ghost_mmi)
 	var pm := MultiMesh.new()
 	pm.transform_format = MultiMesh.TRANSFORM_3D
 	pm.mesh = card_quad()
@@ -804,6 +824,8 @@ func sync_camera() -> void:
 	var rel := lamp_yaw - BoardView.yaw if lamp_yaw > -999.0 else 0.0
 	var sk := _turn2(Vector2(PAINT_KEY.x, PAINT_KEY.y), rel)
 	var side := side_amt * (sk.x - PAINT_KEY.x) / Vector2(PAINT_KEY.x, PAINT_KEY.y).length() * 0.5
+	if ghost_mat != null:
+		ghost_mat.set_shader_parameter("ghost_k", GHOST_K * lerpf(1.0, GHOST_FAR_K, smoothstep(GHOST_NEAR_M, GHOST_FAR_M, cam_size)))
 	if tree_mat != null:
 		var t2 := _turn2(Vector2(_tree_ld.x, _tree_ld.y), rel)
 		tree_mat.set_shader_parameter("light_dir", Vector3(t2.x, t2.y, _tree_ld.z))
@@ -969,12 +991,93 @@ func _probe() -> void:
 		if SoldierLayer.forced_path() == "":
 			SoldierLayer.save_pref("cpu")
 		_probe_frames = 0
+	elif ghost_mmi != null and "--ghost-probe" in SoldierLayer._launch_args():
+		_ghost_probe.call_deferred()
+
+
+## Testing aid (--ghost-probe, or ?ghost-probe on the web; tools webcheck -ghost): does the stencil test work on the main
+## framebuffer? Prints the context's stencil attributes (web), then pauses and compares the frame with the ghost pass shown and
+## hidden around each own unit on screen that is in the open (the men's pass wrote stencil 1 under them, so the ghost must
+## leave them alone): "GHOST_PROBE units=N worst_frac=F ..." (F = share of the patch's pixels that changed by more than 0.12; control_changed = the same count with the men's pass hidden, where the ghost must show).
+func _ghost_probe() -> void:
+	if OS.has_feature("web"):
+		var at = JavaScriptBridge.eval("(function(){var c=document.getElementById('canvas');var g=c&&c.getContext('webgl2');" +
+			"if(!g)return 'no webgl2';var a=g.getContextAttributes();return 'stencil='+a.stencil+' depth='+a.depth+' bits='+g.getParameter(g.STENCIL_BITS);})()", true)
+		print("GHOST_PROBE context ", at)
+	battle._set_paused(true)
+	for u in sim.n_units:   # close on the first own unit: at the opening zoom a man is a pixel or two
+		if sim.u_alive[u] >= 10 and (sim.u_side[u] & 1) == (battle.soldiers.viewer_side & 1) and sim.u_cls[u] != 5:
+			battle.hud.visible = false
+			battle._zoom_at(battle.get_viewport_rect().size * 0.5, 4.0 / battle.camera.zoom.x)
+			battle._cam_to(Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0 * ppm)
+			break
+	for i in 12:
+		await RenderingServer.frame_post_draw
+	var vp := get_viewport()
+	ghost_mmi.visible = false
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	var off := vp.get_texture().get_image()
+	ghost_mmi.visible = true
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	var on := vp.get_texture().get_image()
+	# The positive control: with the men's pass hidden nothing writes stencil, so the ghost must show where the men stand.
+	men_mmi.visible = false
+	ghost_mmi.visible = false
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	var c_off := vp.get_texture().get_image()
+	ghost_mmi.visible = true
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	var c_on := vp.get_texture().get_image()
+	men_mmi.visible = true
+	var sz := off.get_size()
+	var units := 0
+	var worst := 0.0
+	var total_changed := 0
+	var ctl_changed := 0
+	var men_px := 0
+	for u in sim.n_units:
+		if sim.u_alive[u] < 10 or (sim.u_side[u] & 1) != (battle.soldiers.viewer_side & 1) or sim.u_cls[u] == 5:
+			continue
+		var w := Vector2(sim.u_cx[u], sim.u_cy[u]) / 1024.0
+		var p3 := Vector3(w.x, BoardView.ground_m(w * ppm) + 1.0, w.y)
+		if cam.is_position_behind(p3):
+			continue
+		var q := cam.unproject_position(p3)
+		if q.x < 40 or q.y < 40 or q.x > sz.x - 40 or q.y > sz.y - 40:
+			continue
+		units += 1
+		var n := 0
+		var ch := 0
+		for dy in range(-16, 17, 2):
+			for dx in range(-16, 17, 2):
+				var x := int(q.x) + dx
+				var y := int(q.y) + dy
+				var a := on.get_pixel(x, y)
+				var b := off.get_pixel(x, y)
+				n += 1
+				var cm := c_off.get_pixel(x, y)
+				if absf(cm.r - b.r) + absf(cm.g - b.g) + absf(cm.b - b.b) > 0.02:
+					men_px += 1
+				var ca := c_on.get_pixel(x, y)
+				var cb := c_off.get_pixel(x, y)
+				if absf(ca.r - cb.r) + absf(ca.g - cb.g) + absf(ca.b - cb.b) > 0.02:
+					ctl_changed += 1
+				if absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b) > 0.02:
+					ch += 1
+		total_changed += ch
+		worst = maxf(worst, float(ch) / float(n))
+	print("GHOST_PROBE units=%d worst_frac=%.3f changed=%d control_changed=%d men_px=%d" % [units, worst, total_changed, ctl_changed, men_px])
 
 
 ## The compatible shaders from now on (the coarse lift grid in every vertex stage; the board keeps its mesh this battle).
 func _use_compatible() -> void:
 	BoardView.use_grid()
 	BoardView.vtf_off = true   # (the footprints' stamp reads its ring texture in a vertex stage: off on this path)
+	_drop_ghost()
 	men_mat.shader = MEN_SHADER_CPU
 	base_mat.shader = BASE_SHADER_CPU
 	pr_mat.shader = PR_SHADER_CPU
@@ -998,6 +1101,7 @@ func path_name() -> String:
 func apply_quality() -> void:
 	if not Quality.is_low():
 		return
+	_drop_ghost()
 	if shadows and not "--v3d-shadows=1" in OS.get_cmdline_user_args():
 		set_shadows(false)
 	if base_mat != null:
@@ -1012,6 +1116,16 @@ func apply_quality() -> void:
 	var wl = battle.get("wx_layer") if battle != null else null
 	if wl != null:
 		wl.set("low", true)
+
+
+## The ghost off (Graphics Low, the compatible soldiers path): its instance leaves the scene, the men's stencil write stays (cheap).
+func _drop_ghost() -> void:
+	if ghost_mmi != null:
+		ghost_mmi.queue_free()
+		card_mats.erase(ghost_mat)
+		tick_mats.erase(ghost_mat)
+		ghost_mmi = null
+		ghost_mat = null
 
 
 func set_shadows(on: bool) -> void:

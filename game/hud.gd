@@ -40,6 +40,7 @@ signal stance_set(stance: int)    # a row of the Stance options: 0 Line, 1 Cover
 signal add_toggled(on: bool)
 signal orders_toggled(on: bool)
 signal paths_toggled(on: bool)
+signal map_toggled(on: bool)   # the map camera chit (3D): nearly straight down, north up
 signal book_pressed
 signal card_long_pressed(unit: int)
 signal chip_book_pressed   # the 'Unit book' row of a chip's long-press explanation: battle.gd opens the selected unit's page
@@ -171,6 +172,7 @@ var _note_left := 0.0
 var _arr_seen := 0
 var pause_button: Button
 var orders_button: Button
+var map_button: Button        # the 3D battle view: the map camera (pressed while in it)
 var paths_button: Button      # town maps: the Paths overlay (impassable ground hatched)
 var speed_button: Button
 ## Speed popover under the speed button: value label, slider (quarter
@@ -350,6 +352,13 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	Kit.tip(paths_button, "Paths", "Hatch what men cannot walk on (houses, walls, rocks) when a unit is selected or a route is drawn; streets and alleys stay clear.\nRed: cannot be crossed.\nAmber: rubble: slow going, low cover (a breached wall, a fallen house).")
 	paths_button.toggled.connect(func(on: bool): paths_toggled.emit(on))
 	paths_button.visible = false   # (shown on town maps)
+	map_button = _button("", Vector2(46, BTN_H), "compass")
+	map_button.name = "map"
+	map_button.toggle_mode = true
+	BTheme.plate(map_button, true)
+	Kit.tip(map_button, "Map camera", "Straight down over the whole battle, north up (N). Press again to go back to the camera you had. Dragging to turn or tilt leaves it.")
+	map_button.toggled.connect(func(on: bool): map_toggled.emit(on))
+	map_button.visible = false   # (shown in the 3D view)
 	pause_button = _button("Pause", Vector2(74, BTN_H))
 	pause_button.pressed.connect(func(): pause_pressed.emit())
 	speed_button = _button("1x", Vector2(50, BTN_H))
@@ -369,7 +378,7 @@ func build(sim, player_side: int, interactive: bool) -> void:
 	controls_button = _button("Keys", Vector2(54, BTN_H), "key")
 	Kit.tip(controls_button, "Controls", "Every touch, mouse and key input (F1).")
 	controls_button.pressed.connect(func(): controls_pressed.emit())
-	for b in [withdraw_all_button, book_button, controls_button, orders_button, paths_button, pause_button, speed_button, menu]:
+	for b in [withdraw_all_button, book_button, controls_button, orders_button, paths_button, map_button, pause_button, speed_button, menu]:
 		top.add_child(b)
 	_top = top
 	_ui_controls.append(top)

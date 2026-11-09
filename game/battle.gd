@@ -694,6 +694,8 @@ func _ld_connect() -> void:
 	hud.occupy_pressed.connect(_toggle_occupy)
 	hud.waypoints_pressed.connect(_toggle_waypoints)
 	hud.paths_toggled.connect(_on_paths_toggled)
+	hud.map_toggled.connect(_map_set)
+	hud.map_button.visible = view3d != null
 	hud.deploy_pressed.connect(_toggle_deploy)
 	hud.refill_pressed.connect(_toggle_refill)
 	hud.ammo_pressed.connect(_toggle_ammo)
@@ -1269,13 +1271,19 @@ func _end_finished() -> void:
 
 ## Frame both armies in the part of the screen the HUD leaves clear (below
 ## the top buttons, above the group bar and unit cards).
-func _fit_camera() -> void:
+func _fit_camera(with_zones := false) -> void:
 	var vp := get_viewport_rect().size
 	var lo := Vector2(sim.field_w, sim.field_h)
 	var hi := Vector2.ZERO
 	for u in sim.n_units:
 		lo = lo.min(Vector2(sim.u_minx[u], sim.u_miny[u]))
 		hi = hi.max(Vector2(sim.u_maxx[u], sim.u_maxy[u]))
+	if with_zones and sim.phase == BattleSim.PHASE_DEPLOY:
+		# (the map camera during the deployment: the deployment zones too, the whole of them in the frame)
+		var dz: PackedInt32Array = sim.dep_z
+		for k in dz.size() / 6:
+			lo = lo.min(Vector2(dz[k * 6 + 2], dz[k * 6 + 3]))
+			hi = hi.max(Vector2(dz[k * 6 + 4], dz[k * 6 + 5]))
 	lo = lo / M * PX_PER_M
 	hi = hi / M * PX_PER_M
 	if BoardView.oblique:
@@ -4334,6 +4342,8 @@ func _v3d_build(board: Node2D) -> void:
 
 const V3D_TILT_MIN := 25.0
 const V3D_TILT_MAX := 60.0
+const V3D_MAP_TILT := 85.0       # the map camera: nearly straight down (north up)
+const V3D_FLAT_TILT := 75.0      # (soldiers3d.gdshaderinc flat_top, sin 75 = 0.966: from this tilt the men lie on the board as the top-down frames)
 const V3D_KEY_TURN := 1.4        # radians a second (Q / E held)
 const V3D_KEY_TILT := 30.0       # degrees a second (Home / End held)
 const V3D_INERTIA_SEC := 0.35    # the turn's inertia decays with this time constant
@@ -4345,6 +4355,10 @@ const V3D_TWIST_DEAD := 0.14     # radians (8 degrees) of two-finger twist befor
 func _v3d_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
 	if view3d == null:
 		return
+	if _map_view:
+		if dyaw == 0.0 and dtilt >= 0.0:
+			return   # (the map camera is the most from above there is: nothing more to tilt, and no turn)
+		_map_leave(false)   # a turn or a tilt down leaves it, from the steepest legal tilt (the clamp's)
 	camera.force_update_scroll()
 	var g := _screen_to_world(pivot)
 	BoardView.set_view(wrapf(BoardView.yaw + dyaw, -PI, PI), clampf(BoardView.elev_deg + dtilt, V3D_TILT_MIN, V3D_TILT_MAX))
@@ -4353,6 +4367,57 @@ func _v3d_turn(dyaw: float, dtilt: float, pivot: Vector2) -> void:
 	camera.position += (s - pivot) / camera.zoom
 	_clamp_camera()
 	overlay.queue_redraw()
+
+
+## The map camera (G6, 2026-11-09): a preset that snaps to nearly straight down (V3D_MAP_TILT), north up (yaw 0), at the fit of the
+## whole battle (the deployment zones too while deploying); the second press (or the chit again) puts the camera back as it was.
+## Panning and zooming work in it; a turn or a tilt down leaves it (`_v3d_turn`). View only.
+var _map_view := false
+var _map_prev := {}
+
+func _map_set(on: bool) -> void:
+	if view3d == null or on == _map_view:
+		if hud != null and hud.map_button != null:
+			hud.map_button.set_pressed_no_signal(_map_view)
+		return
+	if on:
+		_map_prev = {"yaw": BoardView.yaw, "elev": BoardView.elev_deg, "zoom": camera.zoom.x, "pos": camera.position}
+		_map_view = true
+		_v3d_yaw_vel = 0.0
+		BoardView.set_view(0.0, V3D_MAP_TILT)
+		camera.force_update_scroll()
+		_fit_camera(true)
+		_clamp_camera()
+		_count("map_camera_on")
+	else:
+		_map_leave(true)
+	hud.map_button.set_pressed_no_signal(_map_view)
+	overlay.queue_redraw()
+
+
+func _map_toggle() -> void:
+	if view3d != null:
+		_map_set(not _map_view)
+
+
+## Out of the map camera: back to the camera it replaced (restore), or only the tilt to the steepest legal one (a gesture).
+func _map_leave(restore: bool) -> void:
+	if not _map_view:
+		return
+	_map_view = false
+	if restore and not _map_prev.is_empty():
+		BoardView.set_view(float(_map_prev["yaw"]), float(_map_prev["elev"]))
+		camera.zoom = Vector2.ONE * float(_map_prev["zoom"])
+		camera.position = _map_prev["pos"]
+		camera.force_update_scroll()
+		_clamp_camera()
+	else:
+		BoardView.set_view(BoardView.yaw, V3D_TILT_MAX)
+		camera.force_update_scroll()
+	_map_prev = {}
+	if hud != null and hud.map_button != null:
+		hud.map_button.set_pressed_no_signal(false)
+	_count("map_camera_off")
 
 
 ## Held keys and the inertia of a turn (every frame, 3D only).
@@ -4725,6 +4790,8 @@ func _on_key(e: InputEventKey) -> void:
 			_toggle_char(int(CHAR_TYPES[act]))
 		"orders_overlay":
 			hud.orders_button.button_pressed = not hud.orders_button.button_pressed
+		"camera_map":
+			_map_toggle()
 		"ready":
 			if place_on:
 				_place_go()

@@ -146,6 +146,8 @@ static var BINDINGS: Array = [
 		"touch": "Three fingers with nothing selected, drag up or down", "mouse": "Right drag up or down (as turning); Home / End held", "keys": []},
 	{"id": "camera_tilt_up", "s": "battle", "label": "Tilt up", "touch": "-", "mouse": "-", "keys": [KEY_HOME], "hidden": true},
 	{"id": "camera_tilt_down", "s": "battle", "label": "Tilt down", "touch": "-", "mouse": "-", "keys": [KEY_END], "hidden": true},
+	{"id": "camera_map", "s": "battle", "label": "3D view: the map camera (nearly straight down, north up, the whole deployment or battle in view; pan and zoom work; again goes back to the camera you had; turning or tilting leaves it)",
+		"touch": "The Map chip (a compass) in the top bar", "mouse": "The Map chip, or the key", "keys": [KEY_N]},
 	{"id": "zoom", "s": "battle", "label": "Zoom",
 		"touch": "Pinch", "mouse": "Mouse wheel; Page Up / Page Down", "keys": []},
 	{"id": "zoom_in", "s": "battle", "label": "Zoom in", "touch": "-", "mouse": "-", "keys": [KEY_PAGEUP], "hidden": true},

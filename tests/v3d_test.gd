@@ -32,6 +32,9 @@ const UiScale := preload("res://game/ui_scale.gd")
 const Kit3D := preload("res://game/kit3d.gd")
 const KitAtlas := preload("res://game/battlekit_atlas.gd")
 const Quality := preload("res://game/quality.gd")
+const SoldierLayer := preload("res://game/soldier_layer.gd")
+const Scenarios := preload("res://sim/scenarios.gd")
+const UT := preload("res://sim/unit_types.gd")
 
 
 ## A stand-in for the Telemetry autoload: keeps the events it is given.
@@ -302,6 +305,11 @@ func _run() -> void:
 		"snow: the flakes volume is built")
 	await _open("battle_2000")
 	_check(battle.view3d.wx == null and battle.wx_layer == null, "a clear day builds no weather layer")
+	# --- 11 the ghost (2026-11-09, game/soldiers3d_ghost.gdshader): the viewer's own men hidden behind a house show a faint silhouette
+	# of their faction's colour, the enemy's never, a visible man's never (the stencil the men's own pass writes), none on Low
+	await _check_ghost()
+	# --- 12 the map camera (2026-11-09)
+	await _check_map()
 	# --- 10 stage A (2026-11-09): Graphics going Low mid-battle reaches the 3D view (terrain_layer's Auto measurement runs while that
 	# layer is hidden), the compatible path draws no footprints, and the battle_view telemetry event carries the view's facts
 	Quality.session_low = false
@@ -343,6 +351,279 @@ func _run() -> void:
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")
 	quit(0 if ok else 1)
+
+
+## The viewer's pixel (image px) of a 3D point.
+func _px(p3: Vector3, img: Image) -> Vector2i:
+	var sc := Vector2(img.get_size()) / root.get_visible_rect().size
+	var q: Vector2 = battle.view3d.cam.unproject_position(p3) * sc
+	return Vector2i(clampi(int(q.x), 0, img.get_width() - 1), clampi(int(q.y), 0, img.get_height() - 1))
+
+
+## Men of unit u set down in a grid (8 wide, rows toward the north) at board point (x, y) metres; the sim is paused.
+func _place(u: int, x: float, y: float) -> Array:
+	var sim = battle.sim
+	var men: Array = []
+	var n := 0
+	for i in sim.n:
+		if sim.unit_of[i] == u and sim.state[i] != BattleSim.S_DEAD and sim.state[i] != BattleSim.S_OFF:
+			sim.pos_x[i] = int((x + float(n % 8 - 4) * 1.4) * 1024.0)
+			sim.pos_y[i] = int((y - float(n / 8) * 1.4) * 1024.0)
+			sim.prev_x[i] = sim.pos_x[i]
+			sim.prev_y[i] = sim.pos_y[i]
+			men.append(i)
+			n += 1
+	sim.u_cx[u] = int(x * 1024.0)
+	sim.u_cy[u] = int(y * 1024.0)
+	return men
+
+
+## A man's chest as a 3D point.
+func _chest(i: int) -> Vector3:
+	var sim = battle.sim
+	var w := Vector2(sim.pos_x[i], sim.pos_y[i]) / 1024.0
+	return Vector3(w.x, BoardView.ground_m(w * Battle.PX_PER_M) + 1.0, w.y)
+
+
+func _cdiff(a: Color, b: Color) -> float:
+	return absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b)
+
+
+## The frame with the ghost instance shown or not.
+func _frame(ghost_on: bool) -> Image:
+	var gm = battle.view3d.ghost_mmi
+	if gm != null:
+		gm.visible = ghost_on
+	await _f(4)
+	return root.get_texture().get_image()
+
+
+func _check_ghost() -> void:
+	await _open("west_town")
+	var v = battle.view3d
+	if v.ghost_mmi == null:
+		_check(Quality.is_low() or v.path_name() == "cpu", "the ghost is off on Graphics Low and the compatible soldiers path (path %s)" % v.path_name())
+		return
+	var sim = battle.sim
+	battle._set_paused(true)
+	var mine: Array = []
+	var theirs := -1
+	for k in sim.n_units:
+		if sim.u_alive[k] >= 10 and sim.u_cls[k] != 5:
+			if sim.u_side[k] == battle.player_side and mine.size() < 2:
+				mine.append(k)
+			elif sim.u_side[k] != battle.player_side and theirs < 0:
+				theirs = k
+	_check(mine.size() == 2 and theirs >= 0, "ghost: two own units and an enemy unit to place")
+	if mine.size() < 2 or theirs < 0:
+		return
+	var bl: Array = (sim.map_info["city"] as Dictionary).get("buildings", [])
+	var r: Array = bl[mini(3, bl.size() - 1)]
+	var cx := float(int(r[0]) + int(r[2])) * 0.5
+	var cy := float(int(r[1]) + int(r[3])) * 0.5
+	var hh := float(int(r[3]) - int(r[1])) * 0.5
+	var own_h := _place(mine[0], cx - 5.0, cy - hh + 0.5)    # behind the house (its north edge; the camera looks from the south)
+	var enemy_h := _place(theirs, cx + 40.0, cy - hh + 0.5)  # (away: it takes the same place in the second frame)
+	var open := _place(mine[1], cx, cy + hh + 9.0)           # in the open south of it
+	BoardView.set_view(0.0, 28.0)
+	battle.soldiers.upload()
+	battle.soldiers.set_alpha(1.0)
+	battle._view_tick()
+	battle._fit_camera()
+	battle._zoom_at(battle.get_viewport_rect().size * 0.5, 3.0 / battle.camera.zoom.x)
+	battle._cam_to(Vector2(cx, cy + 3.0) * Battle.PX_PER_M)
+	battle.hud.visible = false
+	await _f(20)
+	battle.soldiers.upload()
+	var on := await _frame(true)
+	var off := await _frame(false)
+	var off1 := off
+	var pal := SoldierLayer.palette_texture().get_image()
+	var fac := pal.get_pixel(0, clampi(int(battle.soldiers._pal_rows[mine[0]]), 0, pal.get_height() - 1))
+	var best := 0.0
+	var toward := false
+	for i in own_h:
+		var q := _px(_chest(i), on)
+		var d := _cdiff(on.get_pixelv(q), off.get_pixelv(q))
+		if d > best:
+			best = d
+			toward = _cdiff(on.get_pixelv(q), fac) < _cdiff(off.get_pixelv(q), fac)
+	_check(best > 0.12 and toward, "ghost: an own unit behind a house leaves ghost pixels of its faction's colour at its men's place (change %.2f, toward the faction colour %s)" % [best, str(toward)])
+	_place(mine[0], cx - 40.0, cy - hh + 0.5)
+	enemy_h = _place(theirs, cx - 5.0, cy - hh + 0.5)        # the enemy behind the same house, our men away
+	battle.soldiers.upload()
+	await _f(3)
+	on = await _frame(true)
+	off = await _frame(false)
+	var worst_e := 0.0
+	for i in enemy_h:
+		var q := _px(_chest(i), on)
+		worst_e = maxf(worst_e, _cdiff(on.get_pixelv(q), off.get_pixelv(q)))
+	_check(worst_e < 0.02, "ghost: an enemy unit behind the same house leaves none (worst change %.3f)" % worst_e)
+	var worst_o := 0.0
+	for i in open:
+		var q := _px(_chest(i), on)
+		worst_o = maxf(worst_o, _cdiff(on.get_pixelv(q), off.get_pixelv(q)))
+	_check(worst_o < 0.02, "ghost: an own unit in the open is not ghosted over itself (worst change %.3f)" % worst_o)
+	# Low: the pass leaves the scene (our men back behind the house, the enemy away, as in the first frame)
+	_place(theirs, cx + 40.0, cy - hh + 0.5)
+	_place(mine[0], cx - 5.0, cy - hh + 0.5)
+	battle.soldiers.upload()
+	v._drop_ghost()
+	await _f(4)
+	var low := root.get_texture().get_image()
+	var worst_l := 0.0
+	for i in own_h:
+		var q := _px(_chest(i), low)
+		worst_l = maxf(worst_l, _cdiff(low.get_pixelv(q), off1.get_pixelv(q)))
+	_check(v.ghost_mmi == null and worst_l < 0.02, "ghost: Graphics Low (the pass dropped) draws no ghost (worst change %.3f)" % worst_l)
+	if Quality.load_pref() == "auto" and not Quality.session_low:
+		Quality.session_low = true
+		await _open("west_town")
+		_check(battle.view3d.ghost_mmi == null, "ghost: a battle built on Graphics Low builds no ghost pass")
+		Quality.session_low = false
+
+
+func _key(code: Key) -> void:
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.physical_keycode = code
+	e.pressed = true
+	battle._on_key(e)
+
+
+## The map camera (G6, 2026-11-09): the key and the chit enter and leave it; yaw 0 and tilt about 85 in it, the whole deployment
+## and both armies in the frame; pan and zoom work in it; a turn or a tilt down leaves it; the second press puts the camera back.
+func _check_map() -> void:
+	await _open("battle_2000")
+	var hud = battle.hud
+	var fw: Vector2 = BoardView.field_px
+	_check(hud.map_button != null and hud.map_button.visible and hud.map_button.toggle_mode, "map: the compass chit is in the top bar of the 3D view")
+	BoardView.set_view(deg_to_rad(37.0), 33.0)
+	battle.camera.zoom = Vector2.ONE * 1.7
+	battle._cam_to(fw * 0.4)
+	await _f(2)
+	var y0 := BoardView.yaw
+	var e0 := BoardView.elev_deg
+	var z0: float = battle.camera.zoom.x
+	var p0: Vector2 = battle.camera.position
+	_key(KEY_N)
+	await _f(3)
+	_check(battle._map_view and absf(BoardView.yaw) < 1e-4 and absf(BoardView.elev_deg - 85.0) < 0.01 and hud.map_button.button_pressed,
+		"map: the key N snaps to north up (yaw %.3f) and 85 degrees (%.1f), the chit pressed" % [BoardView.yaw, BoardView.elev_deg])
+	_check(BoardView.lift_k > 0.0 and BoardView.lift_k < 0.2 and BoardView.ob_c > 0.99, "map: near 90 degrees the lifts shrink (lift_k %.3f) and the ground depth is 1 (%.3f)" % [BoardView.lift_k, BoardView.ob_c])
+	# the whole deployment and both armies in the frame
+	var sim = battle.sim
+	var vp: Vector2 = battle.get_viewport_rect().size
+	var pts: Array = []
+	for u in sim.n_units:
+		if sim.u_alive[u] > 0:
+			pts.append(Vector2(sim.u_minx[u], sim.u_miny[u]))
+			pts.append(Vector2(sim.u_maxx[u], sim.u_maxy[u]))
+	var nz := 0
+	if sim.phase == BattleSim.PHASE_DEPLOY:
+		for k in sim.dep_z.size() / 6:
+			pts.append(Vector2(sim.dep_z[k * 6 + 2], sim.dep_z[k * 6 + 3]))
+			pts.append(Vector2(sim.dep_z[k * 6 + 4], sim.dep_z[k * 6 + 5]))
+			nz += 1
+	var inside := true
+	var worst := 0.0
+	for q in pts:
+		var s2: Vector2 = battle.world_to_screen(q / 1024.0 * Battle.PX_PER_M)
+		if s2.x < 0.0 or s2.y < 0.0 or s2.x > vp.x or s2.y > vp.y:
+			inside = false
+		worst = maxf(worst, maxf(maxf(-s2.x, s2.x - vp.x), maxf(-s2.y, s2.y - vp.y)))
+	_check(inside and pts.size() > 4, "map: every army's extent%s is in the frame (%d points, worst overshoot %.1f px)" % [" and the %d deployment zones" % nz if nz > 0 else "", pts.size(), worst])
+	# the projection holds at 85 degrees: the 3D camera puts the ground where the board transform does
+	battle.view3d.sync_camera()
+	var ct := battle.get_viewport().canvas_transform
+	var wpx := 0.0
+	var rt := 0.0
+	for j in 4:
+		for i in 4:
+			var w := Vector2(fw.x * (0.2 + 0.2 * i), fw.y * (0.2 + 0.2 * j))
+			var bp := BoardView.to_board(w)
+			rt = maxf(rt, BoardView.to_board(BoardView.to_world(bp)).distance_to(bp))
+			var s2: Vector2 = ct * bp
+			var s3: Vector2 = battle.view3d.cam.unproject_position(Vector3(w.x / Battle.PX_PER_M, BoardView.ground_m(w), w.y / Battle.PX_PER_M))
+			if s2.x > 0.0 and s2.y > 0.0 and s2.x < vp.x and s2.y < vp.y:
+				wpx = maxf(wpx, s3.distance_to(s2))
+	_check(rt < 0.5 and wpx < 1.0, "map: at 85 degrees the board transform round-trips (%.3f px) and the 3D camera agrees (%.2f px)" % [rt, wpx])
+	# pan and zoom work in it
+	battle._zoom_at(vp * 0.5, 1.5)
+	battle.camera.position += Vector2(40.0, 20.0)
+	await _f(2)
+	_check(battle._map_view and hud.map_button.button_pressed, "map: pan and zoom keep the map camera")
+	# a tilt up (more from above) does nothing; a turn or a tilt down leaves it, and the chit un-presses
+	battle._v3d_turn(0.0, 5.0, vp * 0.5)
+	_check(battle._map_view and absf(BoardView.elev_deg - 85.0) < 0.01, "map: a tilt up changes nothing")
+	battle._v3d_turn(0.3, 0.0, vp * 0.5)
+	_check(not battle._map_view and not hud.map_button.button_pressed and BoardView.elev_deg <= battle.V3D_TILT_MAX + 0.01,
+		"map: orbiting leaves it (the chit un-presses; tilt %.0f from the clamp's steepest)" % BoardView.elev_deg)
+	battle._map_set(true)
+	battle._v3d_turn(0.0, -4.0, vp * 0.5)
+	_check(not battle._map_view and not hud.map_button.button_pressed, "map: tilting down leaves it")
+	# the chit enters; the second press (the key) restores the previous camera
+	BoardView.set_view(y0, e0)
+	battle.camera.zoom = Vector2.ONE * z0
+	battle.camera.position = p0
+	hud.map_button.button_pressed = true
+	await _f(2)
+	_check(battle._map_view and hud.map_button.button_pressed and absf(BoardView.elev_deg - 85.0) < 0.01, "map: the chit enters the map camera")
+	_key(KEY_N)
+	await _f(2)
+	_check(not battle._map_view and not hud.map_button.button_pressed and absf(BoardView.yaw - y0) < 1e-4 and absf(BoardView.elev_deg - e0) < 0.01
+		and absf(battle.camera.zoom.x - z0) < 1e-4 and battle.camera.position.distance_to(p0) < 0.5,
+		"map: the second press restores yaw %.0f, tilt %.0f and zoom %.2f" % [rad_to_deg(BoardView.yaw), BoardView.elev_deg, battle.camera.zoom.x])
+	hud.map_button.button_pressed = true
+	hud.map_button.button_pressed = false
+	await _f(2)
+	_check(not battle._map_view and absf(BoardView.elev_deg - e0) < 0.01, "map: the chit again leaves it")
+	# the men from above: the top-down frames (the shader's flat branch) are drawn: the probe sees men at 85 degrees too
+	if DisplayServer.get_name() != "headless":
+		battle._map_set(true)
+		battle._zoom_at(vp * 0.5, 4.0 / battle.camera.zoom.x)
+		battle._cam_to(Vector2(sim.u_cx[0], sim.u_cy[0]) / 1024.0 * Battle.PX_PER_M)
+		await _f(6)
+		var img := root.get_texture().get_image()
+		var sc2 := Vector2(img.get_size()) / root.get_visible_rect().size
+		var q := battle.world_to_screen(Vector2(sim.u_cx[0], sim.u_cy[0]) / 1024.0 * Battle.PX_PER_M) * sc2
+		var varied := 0
+		var c0 := img.get_pixelv(Vector2i(clampi(int(q.x), 0, img.get_width() - 1), clampi(int(q.y), 0, img.get_height() - 1)))
+		for dy in range(-30, 31, 6):
+			for dx in range(-30, 31, 6):
+				var c := img.get_pixelv(Vector2i(clampi(int(q.x) + dx, 0, img.get_width() - 1), clampi(int(q.y) + dy, 0, img.get_height() - 1)))
+				if _cdiff(c, c0) > 0.25:
+					varied += 1
+		_check(varied > 12, "map: the men are drawn from above (%d of 121 samples around a unit differ from its middle)" % varied)
+		battle._map_set(false)
+	# a deployment (the zones count): a small field, the army in a corner of its zone
+	battle.queue_free()
+	await _f(2)
+	battle = Battle.new()
+	battle.custom_scenario = {"width_m": 300, "height_m": 300, "ai_sides": [1], "orders": [], "units": [
+		Scenarios.unit(0, UT.HEAVY, 100, 150, 270, Scenarios.FACE_UP),
+		Scenarios.unit(1, UT.HEAVY, 100, 150, 60, Scenarios.FACE_DOWN)], "terrain": {"kind": 0}, "deploy_time": 600}
+	battle.player_side = 0
+	battle.seed_value = 5
+	root.add_child(battle)
+	await _f(6)
+	battle._set_paused(true)
+	var sd = battle.sim
+	var zin := true
+	var nzd := 0
+	battle._map_set(true)
+	await _f(3)
+	var vpd: Vector2 = battle.get_viewport_rect().size
+	for k in sd.dep_z.size() / 6:
+		nzd += 1
+		for q in [Vector2(sd.dep_z[k * 6 + 2], sd.dep_z[k * 6 + 3]), Vector2(sd.dep_z[k * 6 + 4], sd.dep_z[k * 6 + 5]),
+				Vector2(sd.dep_z[k * 6 + 2], sd.dep_z[k * 6 + 5]), Vector2(sd.dep_z[k * 6 + 4], sd.dep_z[k * 6 + 3])]:
+			var s2: Vector2 = battle.world_to_screen(q / 1024.0 * Battle.PX_PER_M)
+			if s2.x < 0.0 or s2.y < 0.0 or s2.x > vpd.x or s2.y > vpd.y:
+				zin = false
+	_check(sd.phase == BattleSim.PHASE_DEPLOY and nzd > 0 and zin, "map: in the deployment phase the whole of the %d deployment zones is in the frame" % nzd)
+	battle._map_set(false)
 
 
 ## 4b: a box around unit u's men (and whatever else falls in it) dragged with the mouse at three yaws.

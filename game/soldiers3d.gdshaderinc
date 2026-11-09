@@ -50,6 +50,8 @@ uniform vec3 cam_b = vec3(0.0, 0.643, 0.766);
 uniform float cam_yaw = 0.0;
 uniform float side_k = 0.0;           // view3d.gd SIDE_K turned by the camera's yaw against the lamp's
 uniform float low = 0.0;
+uniform float own_side = -1.0;        // the ghost pass (GHOST): the viewer's side, the only men it draws
+uniform float ghost_k = 0.35;         // ... its strength (view3d.gd GHOST_K, faded by the zoom)
 
 const int SPRITES = 12;
 const float CELL_X0 = -1.6;
@@ -265,7 +267,12 @@ void vertex() {
 		VERTEX = feet + vec3(c.x * r, 0.03, c.y * r);
 	}
 #else
-	if (st == 5) {
+#ifdef GHOST
+	bool gskip = float(side) != own_side || st >= 4;   // (the ghost: the viewer's living men only, never the enemy's)
+#else
+	bool gskip = false;
+#endif
+	if (st == 5 || gskip) {
 		VERTEX = vec3(0.0, -10000.0, 0.0);
 	} else {
 		vec2 vel = cur - prv;
@@ -309,7 +316,11 @@ void vertex() {
 		}
 		vec4 cell = set > 0 ? ob_cell[set] : vec4(0.0);
 		float n = ob_count(cell.w, act);
-		if (set <= 0 || n < 0.5) {
+		// The map camera (battle.gd V3D_MAP_TILT, from V3D_FLAT_TILT = 75 degrees: sin 0.966): seen from nearly straight above a standing
+		// card would be a figure smeared along the ground north of his feet, so in the camera's own pass the man lies on the board
+		// as the top-down frame (the stand-in's path); the shadow pass keeps the upright card (the lamp's shadow of a standing man).
+		bool flat_top = cam_b.y > 0.966 && dot(INV_VIEW_MATRIX[2].xyz, cam_b) >= 0.999;
+		if (set <= 0 || n < 0.5 || flat_top) {
 			vec4 col;
 			vec4 look;
 			vec2 pos = place_flat(pw, ang, st, spr, set, side, sel, fire, shoot, fired, gun, idx, vel, pal, deadfade, uv, col, look);
@@ -421,6 +432,40 @@ void fragment() {
 		col = mix(inner, prim * 0.4, ring);
 	}
 	ALBEDO = col;
+}
+#elif defined(GHOST)
+// The ghost (docs/design/art_pipeline.md "The ghost and the map camera"): the card's silhouette in the faction's colour, drawn only
+// where the men's own pass left the stencil unset (a man the depth test hid behind a house, a wall or a crest; a visible man
+// wrote the stencil), blended at ghost_k.
+void fragment() {
+	float a;
+	vec3 col;
+	if (v_ob.z >= 0.0) {
+		ivec2 tc = ivec2(int(v_ob.z + 0.5), int(v_ob.w + 0.5));
+		vec4 fr = texelFetch(ob_tab, tc, 0);
+		vec4 an = texelFetch(ob_tab, tc + ivec2(1, 0), 0);
+		vec2 lp = v_ob.xy;
+		if (an.z > 0.5) {
+			lp.x = -lp.x;
+		}
+		vec2 fp = an.xy + lp;
+		float inside = step(0.0, fp.x) * step(0.0, fp.y) * step(fp.x, fr.z) * step(fp.y, fr.w);
+		vec2 uvo = (fr.xy + clamp(fp, vec2(0.0), fr.zw)) / ob_sheet;
+		a = texture(ob_shade, uvo).a * inside;
+	} else if (v_look.x > 0.5) {
+		a = texture(atlas_shade, UV).a * v_color.a;
+	} else {
+		a = texture(proc_tex, UV).a * v_color.a;
+	}
+	if (a < 0.5) {
+		discard;
+	}
+	col = own_side > 0.5 ? color_side1 : color_side0;
+	if (v_look.x > 0.5) {
+		col = texelFetch(pal_tex, ivec2(0, int(v_look.y + 0.5)), 0).rgb;
+	}
+	ALBEDO = mix(col, vec3(1.0), 0.18);
+	ALPHA = ghost_k;
 }
 #else
 void fragment() {

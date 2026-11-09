@@ -110,10 +110,41 @@ func _views_check(sc: Dictionary, by_role: Dictionary) -> void:
 			await _fit("%s view: nothing selected" % v, false)
 			await _select_types([], by_role)
 			await _fit("%s view: everything (mixed)" % v)
+			_top_check(v)
 			if _shots != "":
 				await _frames(6)
 				root.get_texture().get_image().save_png("%s/hud_views_%s_%s.png" % [_shots, v, _size_name])
 	BoardView.force = ""
+
+
+## The top bar (the map camera chit, 2026-11-09): in the 3D view the compass chit is there, as high as its neighbours, inside the
+## viewport and clear of them; in the flat views it is hidden. No top-bar control reaches past the viewport or over another.
+func _top_check(view: String) -> void:
+	var h = b.hud
+	var vp: Vector2 = root.get_visible_rect().size
+	var m: Button = h.map_button
+	_check(m.visible == (view == "3d"), "%s %s: the map chit is %s" % [_size_name, view, "shown" if view == "3d" else "hidden"])
+	var bad: Array[String] = []
+	var prev := Rect2()
+	for c in h._top.get_children():
+		if not (c as Control).visible:
+			continue
+		var r: Rect2 = (c as Control).get_global_rect()
+		if not Rect2(Vector2.ZERO, vp).grow(0.5).encloses(r):
+			bad.append("%s past the viewport %s" % [c.name, str(r)])
+		if prev.size != Vector2.ZERO and r.position.x < prev.end.x - 0.5:
+			bad.append("%s overlaps its left neighbour" % c.name)
+		prev = r
+	if view == "3d":
+		var mr := m.get_global_rect()
+		var pm: Button = h.pause_button
+		_check(is_equal_approx(mr.size.y, pm.get_global_rect().size.y) and mr.size.x >= 36.0 and mr.size.x <= 64.0 and m.icon != null,
+			"%s 3d: the map chit is %s px, as high as Pause, with its compass icon" % [_size_name, str(mr.size)])
+		m.button_pressed = true
+		_check(m.button_pressed and b._map_view, "%s 3d: pressing the chit enters the map camera (its pressed look on)" % _size_name)
+		m.button_pressed = false
+		_check(not b._map_view, "%s 3d: pressing it again leaves it" % _size_name)
+	_check(bad.is_empty(), "%s %s: the top bar's controls are inside the viewport and clear of each other (%s)" % [_size_name, view, ", ".join(bad)])
 
 
 func _new_battle(sc: Dictionary, side := 0) -> void:

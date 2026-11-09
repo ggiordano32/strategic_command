@@ -30,7 +30,7 @@ const NAMES: Array[String] = [
 	"copy", "export", "plus", "minus",
 	"tr_siege", "tr_shock", "tr_anti_cav", "tr_fearsome", "tr_ap", "tr_long_range", "tr_skirmish", "tr_fire", "tr_beast", "tr_fast",
 	"cl_foot", "cl_spear", "cl_horse", "cl_missile", "cl_beast", "cl_engine",
-	"details", "embark", "more",
+	"details", "embark", "more", "compass",
 	"grenade", "pistol", "caracole", "target", "hand", "countermarch",
 	"hat", "knife", "cross", "feathers", "broken_shield",
 	"am_poison", "am_fire", "am_heavy", "am_lead", "am_pots", "am_blast",
@@ -504,6 +504,10 @@ static func _glyph(icon: String, c: Vector2, s: float) -> void:
 		"withdraw":  # out of a door, back
 			_pl([0.05, -0.55, 0.05, -0.85, 0.85, -0.85, 0.85, 0.85, 0.05, 0.85, 0.05, 0.55])
 			_arrow(0.5, 0.0, -0.88, 0.0, 0.5)
+		"compass":  # a ring with a north needle (the battle's map camera)
+			_arc(0.0, 0.0, 0.82, 0.0, TAU)
+			_pl([0.0, -0.58, 0.2, 0.0, 0.0, 0.58, -0.2, 0.0], true)
+			_l(0.0, -0.98, 0.0, -0.84)
 		"view_map":  # folded map
 			_pl([-0.88, -0.6, -0.3, -0.82, 0.3, -0.6, 0.88, -0.82, 0.88, 0.6, 0.3, 0.82, -0.3, 0.6, -0.88, 0.82], true)
 			_l(-0.3, -0.82, -0.3, 0.6, 0.8)
