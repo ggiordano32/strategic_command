@@ -26,7 +26,6 @@ const WeatherLayer := preload("res://game/weather_layer.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const TableMotion := preload("res://game/table_motion.gd")
-const ObliquePack := preload("res://game/oblique_pack.gd")
 const KitOccluder := preload("res://game/kit_occluder.gd")
 const BoardLayer := preload("res://game/board_layer.gd")
 const BattleDof := preload("res://game/battle_dof.gd")
@@ -94,6 +93,7 @@ const ZOOM_MAX := 4.0
 var player_side := 0
 const STATS_WINDOW := 20          # ticks (2 s) for sim ms average / worst
 const TELEMETRY_SAMPLE_SEC := 5.0
+const LOOK_SAMPLE_SEC := 10.0    # the battle_view event: the first this-many seconds of frames
 # Ticks at which the state hash is reported, so runs of the same scenario and
 # seed can be compared across devices (multiples of 10).
 const HASH_CHECKPOINTS := [100, 300, 600, 1000, 1500, 2000, 3000, 4000]
@@ -170,6 +170,9 @@ var camera: Camera2D
 ## The 3D battle view (BoardView.v3d; game/view3d.gd), else null. Its camera follows `camera` every frame; the turn and the tilt
 ## are BoardView's yaw and elevation (set by `_v3d_turn`), the gestures in _update_pinch, _right_motion and _keys_held.
 var view3d: Node3D = null
+var _look_t := 0.0               # frames and seconds of the battle_view event's window (telemetry)
+var _look_n := 0
+var _look_sent := false
 var _v3d_yaw_vel := 0.0       # radians a second still turning after a twist or a drag (inertia)
 var _v3d_turning := false     # a twist or a turning drag is under way (no inertia meanwhile)
 var _v3d_acc_ang := 0.0       # the twist so far in this two-finger gesture (until its dead zone)
@@ -326,28 +329,13 @@ const PAN_SPEED := 900.0      # screen px per second for keyboard panning
 
 
 func _ready() -> void:
-	# The web's oblique sheets are a separate pack (game/oblique_pack.gd): start the fetch if the menu has not (or ask
-	# once more after a cancel), and hold the battle's start while it runs so the first oblique battle already draws the
-	# real sheets. Cancelled or failed: this battle is drawn from the top (BoardView.web_top).
 	if tap_msec < 0:
 		tap_msec = Time.get_ticks_msec()
 	if staged:
 		loading = BattleLoading.new()
 		add_child(loading)
 		loading.setup(_loading_title(), _loading_pack())
-	var obp := ObliquePack.ensure(false, true)
-	if obp != null:
-		# (the pack's own bar, with its Cancel, rides above the plate; the plate's bar follows the download, then starts again)
-		var on_progress := func(done: int, total: int):
-			if loading != null and total > 0:
-				loading.set_phase("Fetching the battle sheets", float(done) / float(total))
-		if loading != null:
-			loading.set_phase("Fetching the battle sheets", 0.0)
-			obp.progress.connect(on_progress)
-		await obp.wait()
-		if obp.progress.is_connected(on_progress):
-			obp.progress.disconnect(on_progress)
-	BoardView.web_top = OS.has_feature("web") and not ObliquePack.sheets_present()
+	BoardView.web_top = false   # the sheets are in the main download (no second pack, no Top fallback on the web)
 	await _load_run()
 
 
@@ -1434,6 +1422,11 @@ func _process(delta: float) -> void:
 	if _tele != null and not _ended:
 		_win_frames.append(delta)
 		_win_time += delta
+		if not _look_sent:
+			_look_t += delta
+			_look_n += 1
+			if _look_t >= LOOK_SAMPLE_SEC:
+				_send_look()
 		if _win_time >= TELEMETRY_SAMPLE_SEC:
 			_send_perf_sample()
 
@@ -1661,6 +1654,20 @@ func _reset_window() -> void:
 	_win_time = 0.0
 	_input_counts = {}
 	_orders_by_type = {}
+
+
+## One `battle_view` event 10 s into a battle (view only): the Battle view in use, the 3D path ("gpu": vertex texture reads,
+## "cpu": the compatible shaders; "" outside 3D), the quality tier in force, the mean fps of those first seconds and whether
+## the footprints are off (the compatible 3D path). Tells which devices run which path and how fast (docs/design/art_pipeline.md).
+func _send_look() -> void:
+	_look_sent = true
+	var v3d_path := ""
+	if view3d != null and view3d.has_method("path_name"):
+		v3d_path = view3d.path_name()
+	_t("battle_view", {"scenario": scenario_id, "view": "3d" if BoardView.v3d else ("oblique" if BoardView.oblique else "top"),
+		"v3d_path": v3d_path, "quality": "low" if Quality.is_low() else "high", "quality_pref": Quality.load_pref(),
+		"fps_first10": _look_n / maxf(_look_t, 0.001), "frames": _look_n, "seconds": _look_t,
+		"prints_off": BoardView.v3d and BoardView.vtf_off, "soldiers": sim.n})
 
 
 func _send_perf_sample() -> void:

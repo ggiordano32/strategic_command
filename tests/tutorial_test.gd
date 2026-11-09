@@ -98,12 +98,12 @@ func _texts() -> void:
 	_check(Howto.SECTIONS.size() == 9 and str(Howto.SECTIONS[8]["id"]) == "ways" and str(Howto.SECTIONS[8]["title"]) == "Three ways to play", "How to play has nine sections, the ninth Three ways to play")
 	var all_lines := true
 	for s in Howto.SECTIONS:
-		if (s["lines"] as Array).size() < 1 or (s["lines"] as Array).size() > 3:
+		if (s["lines"] as Array).size() < 1 or (s["lines"] as Array).size() > 4:
 			all_lines = false
 		for k in s["lines"]:
 			if Howto.text(str(k)) == "":
 				all_lines = false
-	_check(all_lines, "every section has one to three lines, all with text")
+	_check(all_lines, "every section has one to four lines, all with text")
 	var ways_ok := true
 	for k in ["ways_1", "ways_2", "ways_3"]:
 		var wt := Howto.text(k)

@@ -17,7 +17,6 @@ const AudioFx := preload("res://game/audio.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const Quality := preload("res://game/quality.gd")
 const SoldierLayer := preload("res://game/soldier_layer.gd")
-const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const BoardView := preload("res://game/board_view.gd")
 const ConfirmOrders := preload("res://game/confirm_orders.gd")
@@ -65,7 +64,7 @@ func build(parent: Control, o: Dictionary) -> void:
 			refresh())
 	_choice(parent, "soldiers", "Soldiers", "How the soldiers are drawn. Compatible works on every device.", [["Auto", "auto"], ["Compatible", "cpu"]],
 		SoldierLayer.load_pref(), "Soldiers", "Auto: the fast way, switching by itself to compatible if this device shows no soldiers. " \
-		+ "Compatible: always the way that works everywhere (a little more work per tick).", func(v): SoldierLayer.save_pref(str(v)))
+		+ "Compatible: always the way that works everywhere (a little more work per tick); in the 3D view it draws no footprints.", func(v): SoldierLayer.save_pref(str(v)))
 	_toggle(parent, "fullscreen", "Fullscreen", "Fill the whole screen.", DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN,
 		"Fullscreen", "Works on desktop and Android browsers; iPhone Safari has no fullscreen for pages: use Add to Home Screen.", func(on: bool):
 			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN if on else DisplayServer.WINDOW_MODE_WINDOWED))
@@ -79,10 +78,7 @@ func build(parent: Control, o: Dictionary) -> void:
 		+ "and town standing upright; men behind a wall or a house show as ghosts. Top: the battle map from straight above, " \
 		+ "the lighter of the two. 3D: the table as a real model under a lamp, the camera free to turn (twist two fingers, or " \
 		+ "right drag) and tilt (two fingers side by side up or down), the painted figures standing on it, real shadows on " \
-		+ "Graphics High. On the web Oblique and 3D download their figures once (12 MB). Takes effect at the next battle.", func(v):
-			BoardView.save_pref(str(v))
-			if str(v) == "oblique" or str(v) == "3d":
-				ObliquePack.ensure(true))
+		+ "Graphics High. Takes effect at the next battle.", func(v): BoardView.save_pref(str(v)))
 	# The table's motion on the same row (tabletop pass 5, game/table_motion.gd): the dive onto the table and the die.
 	_beside("battle_view", "battle_dive", [["Motion", "on"], ["Still", "off"]], "on" if TableMotion.enabled() else "off", "Table motion",
 		"Motion (the default): the camera dives onto the table as a battle opens, and a die rolls on an Auto-resolve. Still: " \

@@ -31,6 +31,23 @@ const BattleSim := preload("res://sim/battle_sim.gd")
 const UiScale := preload("res://game/ui_scale.gd")
 const Kit3D := preload("res://game/kit3d.gd")
 const KitAtlas := preload("res://game/battlekit_atlas.gd")
+const Quality := preload("res://game/quality.gd")
+
+
+## A stand-in for the Telemetry autoload: keeps the events it is given.
+class _Tele extends Node:
+	var got: Array
+
+	func _init(g: Array) -> void:
+		got = g
+
+	func flush() -> void:
+		pass
+
+	func event(kind: String, data: Dictionary = {}) -> void:
+		var r := {"kind": kind}
+		r.merge(data)
+		got.append(r)
 
 var ok := true
 var battle: Battle
@@ -285,6 +302,43 @@ func _run() -> void:
 		"snow: the flakes volume is built")
 	await _open("battle_2000")
 	_check(battle.view3d.wx == null and battle.wx_layer == null, "a clear day builds no weather layer")
+	# --- 10 stage A (2026-11-09): Graphics going Low mid-battle reaches the 3D view (terrain_layer's Auto measurement runs while that
+	# layer is hidden), the compatible path draws no footprints, and the battle_view telemetry event carries the view's facts
+	Quality.session_low = false
+	await _open("battle_2000", "storm,summer")
+	var v10 = battle.view3d
+	var hidden10: bool = not battle.terrain.visible
+	var high10: bool = not Quality.is_low() and Quality.load_pref() == "auto"
+	_check(hidden10, "3D: the terrain layer is hidden (its Auto measurement still runs: process_mode %d)" % battle.terrain.process_mode)
+	if high10 and v10.wx != null and v10.wx.mmi != null:
+		var drawn_before: int = v10.wx.drawn
+		_check(v10.shadows and v10.lamp.shadow_enabled and v10.fx.lights.size() > 0 and drawn_before > 8, "High: shadows on, flash lights pooled (%d), %d streaks" % [v10.fx.lights.size(), drawn_before])
+		Quality.session_low = true   # (what the measurement does after a slow first 3 s)
+		battle.terrain.apply_quality()
+		_check(not v10.shadows and not v10.lamp.shadow_enabled, "a mid-battle downgrade turns the lamp's shadows off")
+		_check(v10.fx.lights.is_empty() and v10.fx.lights_on == 0, "... drops the flash lights")
+		_check(v10.wx.drawn == maxi(1, drawn_before / 4) and v10.wx.mmi.multimesh.visible_instance_count == v10.wx.drawn, "... quarters the precipitation (%d from %d)" % [v10.wx.drawn, drawn_before])
+		_check(battle.wx_layer.low, "... and the weather layer's lightning is off (low)")
+		_check(float(v10.base_mat.get_shader_parameter("low")) == 1.0, "... and the board takes the Low look")
+		Quality.session_low = false
+	# the compatible path: no footprints
+	BoardView.vtf_off = true
+	var pl = battle.tracks.footprints if battle.get("tracks") != null else null
+	await _f(3)
+	_check(pl == null or pl.off, "the compatible 3D path: the footprint layer switches itself off")
+	BoardView.vtf_off = false
+	# the telemetry event
+	battle._look_t = 10.5
+	battle._look_n = 630
+	battle._look_sent = false
+	var seen: Array = []
+	battle._tele = _Tele.new(seen)
+	battle._send_look()
+	_check(seen.size() == 1 and seen[0]["kind"] == "battle_view" and seen[0]["view"] == "3d" and seen[0]["v3d_path"] in ["gpu", "cpu"]
+		and absf(float(seen[0]["fps_first10"]) - 60.0) < 0.5 and seen[0]["quality"] in ["low", "high"],
+		"the battle_view event: view 3d, path, quality and the first seconds' fps (%s)" % str(seen))
+	battle._tele.free()
+	battle._tele = null
 	BoardView.force = ""
 	ConfirmOrders.force = ""
 	print("RESULT: ", "PASS" if ok else "FAIL")

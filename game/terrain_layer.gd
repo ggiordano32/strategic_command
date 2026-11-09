@@ -137,6 +137,9 @@ func apply_quality() -> void:
 		var tl = par.get("trees")
 		if tl != null and tl.has_method("apply_quality"):
 			tl.apply_quality()
+		var v3 = par.get("view3d")   # (a downgrade mid-battle reaches the 3D view too; this layer is hidden there, its _process runs)
+		if v3 != null and v3.has_method("apply_quality"):
+			v3.apply_quality()
 
 
 ## The auto check's window starts again (the battle is playable: the setup's own slow frames never count against the device).

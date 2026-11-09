@@ -1964,3 +1964,10 @@ hidden and its cells drawn as rubble, two counters drawn).
 Known: the drag and the double tap on a piece do nothing new (the tap and the click do); bolt throwers can be ordered at
 a work and do almost nothing to it (their share of a gate's 80); the 3D view draws the heap flat as it draws a breach;
 the counter is not checked on a device.
+
+### Stage A, input and tutorial in 3D (as built, 2026-11-09)
+
+- **Input at turned angles (G3).** `tests/input_test.gd` runs in 3D (`-- --battle-view=3d --v3d-yaw=0|120|240`, windowed) with every check through the view's own directions: the mouse right-drag line is straight along the drag and ordered along `BoardView.dir_world(Vector2(1, 0))` (not world east), the placement ghost's body handle moves along that same direction, the right-click group spacing compares the units' order anchors (`ax`, `ay`: where the group move keeps them) instead of their centres, which were still walking at some yaws, and the empty spot clicked keeps 80 m from the field's edge (a turned view puts the same screen point near an edge). Passes at yaws 0, 120 and 240 (and, before the change, the saved Oblique preference). Run it alone when the Fire chip popover checks flake under load.
+- **Tutorial (G4).** `tutorial_battle.gd` and `tutorial_native.gd` point through `b.world_to_screen`, so the pointer sits on the right ground at any yaw; the 3D view opens turned to face the player's side, which only turns the board the pointer is drawn on. The six cards' words (`step_1` ... `step_6`, `nstep_1` ... `nstep_6`) mention the blue zone, chips, Start battle and orders, no view name, so none changed. `tutorial_native_test` (3D, 844 x 390) passes; `tutorial_test` (3D, 844 x 390) passed except a stale check from the veterancy commit (the Armies section has four lines; the test now allows one to four). `tutorial_shots.gd` and the native test's `--shots=` regenerated in 3D at 844 x 390.
+- **Battle look in 3D (G11).** Options > Battle look (Diorama / Painterly) applies in the 3D view as in the flat ones; no row hidden.
+

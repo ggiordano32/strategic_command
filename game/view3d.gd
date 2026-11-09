@@ -955,7 +955,7 @@ func _probe() -> void:
 				drawn += 1
 	vp.queue_free()
 	men_mmi.layers &= ~PROBE_LAYER
-	if "--v3d-probe-fail" in OS.get_cmdline_user_args() and men_mat.shader == MEN_SHADER:
+	if ("--v3d-probe-fail" in SoldierLayer._launch_args() or "--v3d-probe-fail=1" in SoldierLayer._launch_args()) and men_mat.shader == MEN_SHADER:
 		drawn = 0
 	probe_drawn = drawn
 	var men := int(sim.u_alive[best])
@@ -974,6 +974,7 @@ func _probe() -> void:
 ## The compatible shaders from now on (the coarse lift grid in every vertex stage; the board keeps its mesh this battle).
 func _use_compatible() -> void:
 	BoardView.use_grid()
+	BoardView.vtf_off = true   # (the footprints' stamp reads its ring texture in a vertex stage: off on this path)
 	men_mat.shader = MEN_SHADER_CPU
 	base_mat.shader = BASE_SHADER_CPU
 	pr_mat.shader = PR_SHADER_CPU
@@ -983,6 +984,34 @@ func _use_compatible() -> void:
 		BoardView.apply(m)
 	for km in kit_meshes:
 		km["rev"] = -1   # (the meshes on the coarse grid's ground)
+
+
+## The soldiers' path now in use, for telemetry: "gpu" (vertex texture reads) or "cpu" (the compatible shaders).
+func path_name() -> String:
+	return "cpu" if men_mat != null and men_mat.shader == MEN_SHADER_CPU else "gpu"
+
+
+## Graphics went Low during the battle (Auto's first-seconds measurement, game/terrain_layer.gd, which keeps running while that
+## layer is hidden in 3D): what Low trims here follows now: the lamp's shadows (the board's painted hill shade instead), the Low
+## board look, the ground decals, the flash lights, the weather's precipitation and lightning. The kit meshes, the board's mesh
+## cap and the footprints' window are sized once per battle and change at the next one.
+func apply_quality() -> void:
+	if not Quality.is_low():
+		return
+	if shadows and not "--v3d-shadows=1" in OS.get_cmdline_user_args():
+		set_shadows(false)
+	if base_mat != null:
+		base_mat.set_shader_parameter("low", 1.0)
+	if _gc_node != null and not _gc_node.low:
+		_gc_node.low = true
+		_gc_node.queue_redraw()
+	if fx != null and fx.has_method("drop_lights"):
+		fx.drop_lights()
+	if wx != null and wx.has_method("apply_quality"):
+		wx.apply_quality()
+	var wl = battle.get("wx_layer") if battle != null else null
+	if wl != null:
+		wl.set("low", true)
 
 
 func set_shadows(on: bool) -> void:

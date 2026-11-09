@@ -4,7 +4,6 @@ extends Control
 const AudioFx := preload("res://game/audio.gd")
 const Weather := preload("res://game/weather.gd")
 const Quality := preload("res://game/quality.gd")
-const ObliquePack := preload("res://game/oblique_pack.gd")
 const BattleWarm := preload("res://game/battle_warm.gd")
 const BattleLook := preload("res://game/battle_look.gd")
 const TouchScroll := preload("res://game/touch_scroll.gd")
@@ -169,7 +168,6 @@ func _ready() -> void:
 	show_page("home")
 	_activate_bg.call_deferred()
 	_first_launch_offer.call_deferred()
-	ObliquePack.ensure.call_deferred()  # web, Battle view Oblique, sheets absent: fetch oblique.pck now
 	BattleWarm.start(self, func(): return _battle != null)   # the battle's once-per-session caches, built while the menu idles
 	book = UnitBook.new()
 	add_child(book)

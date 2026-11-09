@@ -2,7 +2,7 @@ extends RefCounted
 ## The battle view's board transform (tabletop pass 3, docs/design/art_pipeline.md "Pass 3, the oblique view").
 ## A view preference in user://settings.cfg [video] battle_view = top | oblique ("--battle-view=top|oblique" overrides
 ## it for the session; default oblique since 2026-10-30, the owner's call). On the web a battle whose oblique sheets
-## are not mounted (game/oblique_pack.gd: the download cancelled or failed) is drawn in the top view (`web_top`). View only: it reads the sim's heights once per battle and never writes the sim.
+## are missing (a broken build; they ship in the main pack) would be drawn in the top view (`web_top`, never set now). View only: it reads the sim's heights once per battle and never writes the sim.
 ##
 ## Top: the board is the world (world pixels, the map seen from straight above), as before.
 ## Oblique: the table seen from the south, the camera 40 degrees above the horizon (50 degrees from the vertical, the
@@ -73,6 +73,7 @@ static var lift_min := 0.0
 static var base_m := 0.0
 static var _uni := PackedVector4Array()
 static var exag := HEIGHT_EXAG
+static var vtf_off := false          # the 3D view runs on the compatible path (no vertex texture reads): the footprints' stamp cannot run, so they are off
 static var fine := false             # the fine lift field is in use (else the coarse grid)
 static var fine_nx := 2
 static var fine_ny := 2
@@ -152,6 +153,11 @@ static func begin(sim, p_px_per_m: float) -> void:
 	oblique = (pv == "oblique" or pv == "3d") and not web_top
 	v3d = pv == "3d" and not web_top
 	set_view(0.0, ELEVATION_DEG)
+	vtf_off = false
+	if v3d:
+		var sl = load("res://game/soldier_layer.gd")
+		var fp: String = sl.forced_path()
+		vtf_off = fp == "cpu" or (fp == "" and sl.load_pref() == "cpu")
 	px_per_m = p_px_per_m
 	exag = HEIGHT_EXAG
 	var ex := _arg("--height-exag=")

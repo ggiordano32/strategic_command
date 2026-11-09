@@ -20,6 +20,7 @@ extends Node
 const BattleSim := preload("res://sim/battle_sim.gd")
 const UT := preload("res://sim/unit_types.gd")
 const Quality := preload("res://game/quality.gd")
+const BoardView := preload("res://game/board_view.gd")
 
 const CAP := 49152            # ring entries
 const RING_W := 256           # the ring texture's width (CAP / RING_W rows)
@@ -73,6 +74,7 @@ var _batch_from := 0
 var _batch_all := false
 var _mmi: MultiMeshInstance2D = null
 var _ring_tex: ImageTexture = null
+var off := false               # the compatible 3D path: the stamp (a vertex texture read) cannot run, nothing is made or drawn
 var _ring_img: Image = null
 var _have_win := false
 
@@ -145,6 +147,13 @@ func _apply_win(m: ShaderMaterial) -> void:
 ## Called every frame by the TrackLayer: a slice of the men per sim tick, the batch landing once a sim second, the window
 ## following the camera.
 func process(battle) -> void:
+	if BoardView.v3d and BoardView.vtf_off:
+		# The compatible 3D path (this device cannot read a texture in a vertex stage, which the stamp does): no prints, no cost.
+		if not off:
+			off = true
+			if vp != null:
+				vp.render_target_update_mode = SubViewport.UPDATE_DISABLED
+		return
 	var tick: int = sim.tick
 	if tick < _last_tick:
 		_last_tick = -1   # (a restore went back in time)

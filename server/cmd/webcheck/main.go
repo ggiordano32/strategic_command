@@ -14,24 +14,22 @@
 //	    the lobby, 600 frames in lockstep with every frame's hash compared over
 //	    the relay, then B leaves and joins again mid-battle (snapshot)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -soldiers [-shots DIR]
-//	    only the soldier check (works against tools/serve_web.py too)
+//	    only the 3D battle check (the default flow's battle part; works against tools/serve_web.py too). -v3d is the same
+//	    check, kept as a flag so older scripts work (the 3D view is the default flow's battle view since 2026-11-09)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -oblique [-shots DIR]
-//	    only the oblique pack check: a battle opened with ?battle-view=oblique fetches oblique.pck, mounts it and
-//	    finds the real sheets (see checkOblique; works against tools/serve_web.py too)
-//	go run ./cmd/webcheck -url http://127.0.0.1:8092 -v3d [-shots DIR]
-//	    only the 3D battle view check: a battle opened with ?battle-view=3d fetches the oblique pack, builds the 3D
-//	    scene and its probe sees the men drawn in WebGL ("V3D_PROBE drawn=N"; see checkV3d; works against any static server)
+//	    only the one-download check: the oblique sheets are in index.pck, so a battle fetches no second pack
+//	    (see checkOblique; works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio [-audio-autoplay] [-audio-query '&audio-exp=master']
 //	    only the sound check (see audio.go; works against tools/serve_web.py too)
 //	go run ./cmd/webcheck -url http://127.0.0.1:8092 -audio-loop
 //	    only the ambient bed loop check: 54 s of bed_map, no gap at the seam (checkAudioLoop)
 //
-// After the turn flow, A loads ?scenario=skirmish&speed=3 and the battle's
-// soldier self-check (game/soldier_layer.gd, console "SOLDIER_PROBE") must
-// report soldiers drawn in WebGL: the sim can run perfectly with nothing on
-// screen, which no other check notices. Both rendering paths are checked
-// (the data texture and the CPU-fed fallback, ?soldiers=cpu), and the
-// automatic switch between them (see checkSoldiers). Last, sound: in a
+// After the turn flow, A loads a battle in the 3D view (?battle-view=3d) and
+// its self-check (game/view3d.gd, console "V3D_PROBE") must report soldiers
+// drawn in WebGL: the sim can run perfectly with nothing on screen, which no
+// other check notices. Both rendering paths are checked (vertex texture reads,
+// "v3d-gpu", and the compatible shaders, "v3d-cpu", ?soldiers=cpu), and the
+// automatic switch between them (?v3d-probe-fail, see checkSoldiers). Last, sound: in a
 // browser without the autoplay flag, one click (desktop) and one tap
 // (phone) must start the page's AudioContext and a test clip that plays
 // (?audio-debug=1, see checkAudio).
@@ -138,9 +136,9 @@ func main() {
 	timeout := flag.Duration("timeout", 4*time.Minute, "overall timeout")
 	flag.BoolVar(&verbose, "v", false, "print every console line")
 	live := flag.Bool("live", false, "check a live co-op battle instead of the turn flow")
-	soldiersOnly := flag.Bool("soldiers", false, "only check that a battle draws its soldiers")
-	obliqueOnly := flag.Bool("oblique", false, "only check the on-demand oblique sheets pack in a battle")
-	v3dOnly := flag.Bool("v3d", false, "only check the 3D battle view: the scene builds and its probe sees the men")
+	soldiersOnly := flag.Bool("soldiers", false, "only check that a 3D battle draws its soldiers (both paths, the automatic switch)")
+	obliqueOnly := flag.Bool("oblique", false, "only check that the oblique sheets ride in the main download (no second pack)")
+	v3dOnly := flag.Bool("v3d", false, "the same as -soldiers (the 3D view is the default flow's battle view; kept so older scripts work)")
 	audioOnly := flag.Bool("audio", false, "only check that sound plays after the first input")
 	audioAutoplay := flag.Bool("audio-autoplay", false, "also run the sound check with --autoplay-policy=no-user-gesture-required")
 	audioLoop := flag.Bool("audio-loop", false, "only check that the ambient bed loops without a gap (plays bed_map for 54 s)")
@@ -221,13 +219,16 @@ func main() {
 	if *invite != "" {
 		inv = "&invite=" + *invite
 	}
+	// The page names its own server: the origin probe (6 s) loses to a slow first frame on a loaded machine and the page
+	// then falls back to the default server (a failure seen at HEAD too, 2026-11-09).
+	srv := "&server=" + *url
 	t0 := time.Now()
 	front(ctxA)
 	if *live {
 		os.Exit(runLive(ctxA, ca, newBrowser, front, phone, *url, inv, check, &fails))
 	}
-	if *v3dOnly {
-		checkV3d(ctxA, ca, phone, *url, *shots, check)
+	if *v3dOnly || *soldiersOnly {
+		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
 		if fails == 0 {
 			fmt.Println("RESULT: PASS")
 			return
@@ -244,16 +245,7 @@ func main() {
 		fmt.Printf("RESULT: FAIL (%d)\n", fails)
 		os.Exit(1)
 	}
-	if *soldiersOnly {
-		checkSoldiers(ctxA, ca, phone, *url, *shots, check)
-		if fails == 0 {
-			fmt.Println("RESULT: PASS")
-			return
-		}
-		fmt.Printf("RESULT: FAIL (%d)\n", fails)
-		os.Exit(1)
-	}
-	if err := chromedp.Do(ctxA, phone, chromedp.Navigate(*url+"/?nettest=a"+inv)); err != nil {
+	if err := chromedp.Do(ctxA, phone, chromedp.Navigate(*url+"/?nettest=a"+inv+srv)); err != nil {
 		fmt.Println("navigate A:", err)
 		os.Exit(1)
 	}
@@ -271,7 +263,7 @@ func main() {
 	cb := &console{who: "B"}
 	listen(ctxB, cb)
 	front(ctxB)
-	if err := chromedp.Do(ctxB, phone, chromedp.Navigate(*url+"/?nettest=b&join="+code[1])); err != nil {
+	if err := chromedp.Do(ctxB, phone, chromedp.Navigate(*url+"/?nettest=b&join="+code[1]+srv)); err != nil {
 		fmt.Println("navigate B:", err)
 		os.Exit(1)
 	}
@@ -317,27 +309,32 @@ func main() {
 	os.Exit(1)
 }
 
-// checkSoldiers: a battle in the browser draws its soldiers, on both
-// rendering paths (game/soldier_layer.gd). The battle's self-check renders
-// only the soldier layers around the biggest unit into a small offscreen
-// viewport ~30 frames in and prints the pixels drawn and the path:
-//   - the default (texture) path;
-//   - the CPU-fed fallback, forced with ?soldiers=cpu;
-//   - the automatic switch: ?soldier-probe-fail=1 makes the texture path's
-//     probe report nothing drawn, as on the devices it fails on; the layer
-//     must switch to the CPU-fed path and draw there;
-//   - the next battle starts on the CPU-fed path (remembered in
-//     user://settings.cfg, the browser's storage).
+// checkSoldiers: a battle in the browser, in the 3D view (the only battle view the web needs since 2026-11-09), draws its
+// soldiers, on both rendering paths (game/view3d.gd). The view's self-check renders only the men around the biggest unit
+// into a small offscreen viewport ~30 frames in and prints the pixels drawn and the path ("V3D_PROBE drawn=N men=M path=P"):
+//   - a West town first (its kit pieces are meshes from the main pack's kit3d.res, the scene builds), the default path
+//     (vertex texture reads, "v3d-gpu");
+//   - the compatible shaders, forced with ?soldiers=cpu ("v3d-cpu");
+//   - the automatic switch: ?v3d-probe-fail makes the gpu path's probe report nothing drawn, as on the devices it fails
+//     on; the view must switch to the compatible shaders and draw there;
+//   - the next battle starts on the compatible path (remembered in user://settings.cfg, the browser's storage).
 func checkSoldiers(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
-	probe := regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=(\w+)`)
-	run := func(query, what string, wantPath string, shot string) {
+	probe := regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`)
+	built := regexp.MustCompile(`view3d: built in ([\d.]+) ms \(board (\d+) verts, (\d+) trees, (\d+) kit meshes, shadows (\w+)\)`)
+	run := func(scenario, query, what string, wantPath string, shot string) {
 		c.reset()
 		t0 := time.Now()
-		if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3"+query)); err != nil {
+		if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario="+scenario+"&speed=3&battle-view=3d"+query)); err != nil {
 			check(false, what+": navigate: "+err.Error())
 			return
 		}
-		m := c.wait(probe, 90*time.Second)
+		b := c.wait(built, 240*time.Second)
+		check(b != nil, fmt.Sprintf("%s: the 3D scene builds: %v ms, board %v verts, %v kit meshes, shadows %v (%.1f s)",
+			what, idx(b, 1), idx(b, 2), idx(b, 4), idx(b, 5), time.Since(t0).Seconds()))
+		if scenario == "west_town" {
+			check(b != nil && atoi(b[4]) > 50, fmt.Sprintf("%s: the town's kit pieces are meshes: %v", what, idx(b, 4)))
+		}
+		m := c.wait(probe, 120*time.Second)
 		check(m != nil && atoi(m[1]) >= 50 && m[3] == wantPath, fmt.Sprintf(
 			"%s: %v pixels around a unit of %v men on the %v path (want %s; %.1f s)",
 			what, idx(m, 1), idx(m, 2), idx(m, 3), wantPath, time.Since(t0).Seconds()))
@@ -349,24 +346,24 @@ func checkSoldiers(ctx context.Context, c *console, phone chromedp.Action[chrome
 			}
 		}
 	}
-	run("", "a battle draws its soldiers in WebGL (texture path)", "gpu", "web_soldiers_gpu.png")
-	run("&soldiers=cpu", "a battle draws its soldiers in WebGL (CPU-fed path, forced)", "cpu", "web_soldiers_cpu.png")
+	run("west_town", "", "a 3D battle draws its soldiers in WebGL (vertex texture path)", "v3d-gpu", "web_v3d.png")
+	run("skirmish", "&soldiers=cpu", "a 3D battle draws its soldiers in WebGL (compatible path, forced)", "v3d-cpu", "web_v3d_cpu.png")
 	// The automatic switch.
 	c.reset()
 	t0 := time.Now()
-	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&soldier-probe-fail=1")); err != nil {
+	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=skirmish&speed=3&battle-view=3d&v3d-probe-fail=1")); err != nil {
 		check(false, "automatic switch: navigate: "+err.Error())
 	} else {
-		first := c.wait(probe, 90*time.Second)
-		check(first != nil && first[1] == "0" && first[3] == "gpu", fmt.Sprintf(
-			"a failing texture path is seen: %v pixels on the %v path", idx(first, 1), idx(first, 3)))
-		second := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=cpu`), 60*time.Second)
+		first := c.wait(probe, 120*time.Second)
+		check(first != nil && first[1] == "0" && first[3] == "v3d-gpu", fmt.Sprintf(
+			"a failing vertex texture path is seen: %v pixels on the %v path", idx(first, 1), idx(first, 3)))
+		second := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=v3d-cpu`), 60*time.Second)
 		check(second != nil && atoi(second[1]) >= 50, fmt.Sprintf(
-			"... and the layer switches to the CPU-fed path, which draws: %v pixels (%.1f s)",
+			"... and the view switches to the compatible shaders, which draw: %v pixels (%.1f s)",
 			idx(second, 1), time.Since(t0).Seconds()))
 		time.Sleep(2 * time.Second) // let user:// reach the browser's storage
 	}
-	run("", "the next battle starts on the remembered CPU-fed path", "cpu", "")
+	run("skirmish", "", "the next battle starts on the remembered compatible path", "v3d-cpu", "")
 	for _, l := range c.all {
 		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
 			check(false, "shader error: "+strings.TrimSpace(l))
@@ -452,40 +449,10 @@ func idx(m []string, i int) string {
 	return m[i]
 }
 
-// checkOblique: the oblique Battle view on the web (game/oblique_pack.gd). A battle opened with
-// ?battle-view=oblique must download oblique.pck, mount it ("oblique pack: loaded ... sheets found"), draw
-// its soldiers (SOLDIER_PROBE) and print neither loader's fallback notice (game/sprite_ob.gd, game/kit_ob.gd).
-// checkV3d: the 3D Battle view on the web (game/view3d.gd, docs/design/art_pipeline.md "The 3D battle view, step one"). A
-// battle opened with ?battle-view=3d mounts the oblique sheets (downloading oblique.pck when absent), builds its 3D scene
-// ("view3d: built ...", a West town: its kit pieces as meshes, step two) and its own probe ("V3D_PROBE drawn=N men=M path=v3d-gpu|v3d-cpu") must see the men drawn.
-func checkV3d(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
-	c.reset()
-	t0 := time.Now()
-	// (a West town: its houses, towers and props are meshes since step two, game/kit3d.gd from the oblique pack)
-	if err := chromedp.Do(ctx, phone, chromedp.Navigate(url+"/?scenario=west_town&speed=3&battle-view=3d")); err != nil {
-		check(false, "3d: navigate: "+err.Error())
-		return
-	}
-	b := c.wait(regexp.MustCompile(`view3d: built in ([\d.]+) ms \(board (\d+) verts, (\d+) trees, (\d+) kit meshes, shadows (\w+)\)`), 240*time.Second)
-	check(b != nil, fmt.Sprintf("the 3D scene builds: %v ms, board %v verts, shadows %v (%.1f s)", idx(b, 1), idx(b, 2), idx(b, 5), time.Since(t0).Seconds()))
-	check(b != nil && atoi(b[4]) > 50, fmt.Sprintf("the town's kit pieces are meshes: %v", idx(b, 4)))
-	m := c.wait(regexp.MustCompile(`V3D_PROBE drawn=(\d+) men=(\d+) path=(\S+)`), 120*time.Second)
-	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the 3D battle draws its men: %v pixels, %v men, %v path", idx(m, 1), idx(m, 2), idx(m, 3)))
-	time.Sleep(2 * time.Second)
-	for _, l := range c.all {
-		if strings.Contains(l, "SHADER ERROR") || strings.Contains(l, "Shader compilation failed") {
-			check(false, "a shader failed: "+strings.TrimSpace(l))
-		}
-	}
-	if shots != "" && m != nil {
-		if png, err := chromedp.Run(ctx, chromedp.CaptureScreenshot()); err == nil {
-			p := filepath.Join(shots, "web_v3d.png")
-			os.WriteFile(p, png, 0o644)
-			fmt.Println("  screenshot", p)
-		}
-	}
-}
-
+// checkOblique: one download (game/oblique_pack.gd, docs/design/distribution.md "One download"). The oblique sheets and
+// the 3D kit meshes are in index.pck, so a battle (opened here in the Oblique view, which draws the same sheets) must
+// fetch no second pack: no "oblique pack:" console line, no request for oblique.pck, the soldiers drawn, neither loader's
+// fallback notice (game/sprite_ob.gd, game/kit_ob.gd).
 func checkOblique(ctx context.Context, c *console, phone chromedp.Action[chromedp.Void], url, shots string, check func(bool, string)) {
 	c.reset()
 	t0 := time.Now()
@@ -493,19 +460,13 @@ func checkOblique(ctx context.Context, c *console, phone chromedp.Action[chromed
 		check(false, "oblique: navigate: "+err.Error())
 		return
 	}
-	dl := c.wait(regexp.MustCompile(`oblique pack: downloading (\S+)`), 90*time.Second)
-	check(dl != nil, fmt.Sprintf("the pack download starts: %v", idx(dl, 1)))
-	ld := c.wait(regexp.MustCompile(`oblique pack: loaded \((\d+) bytes\), the oblique sheets found`), 120*time.Second)
-	check(ld != nil, fmt.Sprintf("the pack mounts and the sheets are found: %v bytes (%.1f s)", idx(ld, 1), time.Since(t0).Seconds()))
-	m := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=(\w+)`), 90*time.Second)
-	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the oblique battle draws its soldiers: %v pixels, %v men, %v path", idx(m, 1), idx(m, 2), idx(m, 3)))
+	m := c.wait(regexp.MustCompile(`SOLDIER_PROBE drawn=(\d+) men=(\d+) path=(\w+)`), 120*time.Second)
+	check(m != nil && atoi(m[1]) >= 50, fmt.Sprintf("the oblique battle draws its soldiers from the main pack: %v pixels, %v men, %v path (%.1f s)",
+		idx(m, 1), idx(m, 2), idx(m, 3), time.Since(t0).Seconds()))
 	time.Sleep(2 * time.Second)
 	for _, l := range c.all {
-		if strings.Contains(l, "oblique view: no assets/") || strings.Contains(l, "oblique pack: fetch failed") {
-			check(false, "a loader fell back: "+strings.TrimSpace(l))
-		}
-		if strings.Contains(l, "oblique") && strings.Contains(l, "pack") {
-			fmt.Println("  console:", strings.TrimSpace(l))
+		if strings.Contains(l, "oblique view: no assets/") || strings.Contains(l, "oblique pack") || strings.Contains(l, "oblique.pck") {
+			check(false, "a second pack or a loader fallback: "+strings.TrimSpace(l))
 		}
 	}
 	if shots != "" && m != nil {

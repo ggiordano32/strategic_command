@@ -32,6 +32,16 @@ var lamp_now := 1.0
 var _t := 0.0
 
 
+## Graphics went Low mid-battle: the precipitation drops to a quarter of its streaks (what a battle that opens on Low draws).
+func apply_quality() -> void:
+	if mmi == null or drawn <= 4:
+		return
+	var n := maxi(1, drawn / 4)
+	mmi.multimesh.visible_instance_count = n
+	mat.set_shader_parameter("count", float(n))
+	drawn = n
+
+
 func setup(p_view, p_spec: Dictionary) -> void:
 	view = p_view
 	spec = p_spec

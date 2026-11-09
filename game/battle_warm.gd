@@ -4,7 +4,7 @@ extends RefCounted
 ## procedural atlas 270, the tree atlas 145, the oblique figure sheets (SpriteOb) 690, the kit sheet (KitOb) 210, the 3D kit
 ## meshes (Kit3D) 160. They are static caches (every battle after the first found them built), so building them one a second
 ## from a few seconds after the menu appears moves about 1.5 s of desktop time off the first Start. Only what the Battle view
-## in use needs; on the web only once the oblique pack is mounted (never before: a cache built without the sheets would
+## in use needs; (the web has them in index.pck since 2026-11-09; before: only once the oblique pack was mounted, never before: a cache built without the sheets would
 ## latch empty); never in a headless run, never while a battle is open or starting. View only.
 
 const SoldierLayer := preload("res://game/soldier_layer.gd")
@@ -12,13 +12,10 @@ const TreeLayer := preload("res://game/tree_layer.gd")
 const SpriteOb := preload("res://game/sprite_ob.gd")
 const KitOb := preload("res://game/kit_ob.gd")
 const Kit3D := preload("res://game/kit3d.gd")
-const ObliquePack := preload("res://game/oblique_pack.gd")
 const BoardView := preload("res://game/board_view.gd")
 
 const FIRST_SEC := 4.0     # the menu has been up this long before the first one
 const GAP_SEC := 1.2       # between two
-const RETRY_SEC := 2.0     # the web's pack not mounted yet
-const MAX_RETRY := 60
 
 ## Steps run so far (a test reads it).
 static var done: Array[String] = []
@@ -67,15 +64,11 @@ static func _later(host: Node, busy: Callable, step: int, tries: int, sec: float
 			_run(h, busy, step, tries))
 
 
-static func _run(host: Node, busy: Callable, step: int, tries: int) -> void:
+static func _run(host: Node, busy: Callable, step: int, _tries: int) -> void:
 	if busy.call():
 		return
 	var view := BoardView.pref()
 	var sheets := view != "top"
-	if sheets and OS.has_feature("web") and not ObliquePack.sheets_present():
-		if ObliquePack.wanted() and tries < MAX_RETRY:
-			_later(host, busy, step, tries + 1, RETRY_SEC)   # (still downloading, or not asked yet)
-		return
 	match step:
 		0:
 			SoldierLayer._make_atlas()

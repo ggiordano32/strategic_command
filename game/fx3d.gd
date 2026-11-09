@@ -85,6 +85,14 @@ func setup(p_view) -> void:
 	imp.setup(view)
 
 
+## Graphics went Low mid-battle: the pooled flash lights go (none on Low).
+func drop_lights() -> void:
+	for l in lights:
+		l.queue_free()
+	lights.clear()
+	lights_on = 0
+
+
 func _make_mmi(n: int, mat: ShaderMaterial, aabb: AABB) -> MultiMeshInstance3D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D

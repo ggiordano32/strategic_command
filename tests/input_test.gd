@@ -2541,6 +2541,12 @@ func _rm_empty_spot(from_x: float) -> Vector2:
 		for xx in range(2, 9):
 			var p := Vector2(vs.x * (from_x + xx * 0.05), vs.y * yy * 0.1)
 			var w := battle._screen_to_world(p)
+			# (inside the field with room for a group's spread: a turned 3D view puts the same screen point near an edge)
+			var fw := battle.sim.field_w / 1024.0 * Battle.PX_PER_M
+			var fh := battle.sim.field_h / 1024.0 * Battle.PX_PER_M
+			var edge := 80.0 * Battle.PX_PER_M
+			if w.x < edge or w.y < edge or w.x > fw - edge or w.y > fh - edge:
+				continue
 			if battle._pick_unit(w) < 0 and battle._pick_unit(w + Vector2(60, 0)) < 0 \
 					and battle._pick_unit(w - Vector2(60, 0)) < 0 and not battle.hud.is_over_ui(p):
 				return p
@@ -2616,7 +2622,10 @@ func _step_rm_check_box() -> void:
 
 func _step_rm_right_move() -> void:
 	_rm_seq = _pending_moves()
-	_rm_off = Vector2(battle.sim.u_cx[_bc[1]] - battle.sim.u_cx[_bc[0]], battle.sim.u_cy[_bc[1]] - battle.sim.u_cy[_bc[0]]).length()
+	# (the group move keeps the units' anchors, where their orders end, relative to each other: not their centres, which
+	# are still walking at some yaws)
+	_rm_off = Vector2(battle.orders.value(_bc[1], "ax") - battle.orders.value(_bc[0], "ax"),
+		battle.orders.value(_bc[1], "ay") - battle.orders.value(_bc[0], "ay")).length()
 	_rm_spot = _rm_empty_spot(0.0)
 	_no_double_tap()
 	battle._last_rtap_time = -10.0
@@ -2682,14 +2691,17 @@ func _step_rm_check_drag() -> void:
 	if os.size() == 3:
 		# Left to right along the drag (+x on screen) in the units' current order.
 		var before: Array = _rm_order.duplicate()
-		before.sort_custom(func(x: int, y: int) -> bool: return battle.sim.u_cx[x] < battle.sim.u_cx[y])
+		# (screen-right in world terms: BoardView.dir_world, not world east, which a turned 3D view does not share)
+		var right := BoardView.dir_world(Vector2(1, 0)).normalized()
+		before.sort_custom(func(x: int, y: int) -> bool: return Vector2(battle.sim.u_cx[x], battle.sim.u_cy[x]).dot(right) < Vector2(battle.sim.u_cx[y], battle.sim.u_cy[y]).dot(right))
 		var after: Array = os.duplicate()
-		after.sort_custom(func(x, y) -> bool: return x["x"] < y["x"])
+		after.sort_custom(func(x, y) -> bool: return Vector2(x["x"], x["y"]).dot(right) < Vector2(y["x"], y["y"]).dot(right))
 		var same := true
 		for i in 3:
 			same = same and int(after[i]["unit"]) == int(before[i])
 		_check(same, "mouse: the units keep their left-to-right order along the line")
-		_check(os[0]["y"] == os[1]["y"] or absi(int(os[0]["y"]) - int(os[1]["y"])) < 1024, "mouse: the line is straight along the drag")
+		var dline := Vector2(os[0]["x"] - os[1]["x"], os[0]["y"] - os[1]["y"])
+		_check(absf(dline.cross(right)) < 1024.0, "mouse: the line is straight along the drag (%.2f m off)" % (absf(dline.cross(right)) / 1024.0))
 	battle._select(-1)
 
 
@@ -4587,7 +4599,9 @@ func _step_pl_body_up() -> void:
 
 func _step_pl_check_body() -> void:
 	var b := battle
-	_check(b.place_on and b.place_c.x > _pl_c0.x + 10.0 and absf(b.place_c.y - _pl_c0.y) < 30.0, "placement: the body handle moves the ghost (dx %.0f)" % (b.place_c.x - _pl_c0.x))
+	var pr := BoardView.dir_world(Vector2(1, 0)).normalized()   # (the drag is screen-right: along dir_world, not world east at a turned yaw)
+	var pmove := b.place_c - _pl_c0
+	_check(b.place_on and pmove.dot(pr) > 10.0 and absf(pmove.cross(pr)) < 30.0, "placement: the body handle moves the ghost (along the drag %.0f, across %.0f)" % [pmove.dot(pr), pmove.cross(pr)])
 	_check(_pl_pending() == _pl_orders and b.selection.size() == 1, "placement: ... without an order")
 	_check(b.camera.position.is_finite(), "placement: the camera did not pan with the drag")
 

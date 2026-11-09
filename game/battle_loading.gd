@@ -29,7 +29,7 @@ var shown_for_test := false   # tests and shots: the plate at full alpha at once
 func setup(p_title: String, p_pack: String) -> void:
 	_title = p_title
 	_pack = p_pack
-	layer = 110   # (under the oblique pack's download bar, layer 120, which keeps its Cancel button)
+	layer = 110   # (over the pause and the HUD)
 	name = "battle_loading"
 	cover = Control.new()
 	cover.name = "loading_cover"

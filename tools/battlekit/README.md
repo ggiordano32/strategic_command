@@ -151,4 +151,4 @@ the ground, triangulated, collapsed to a budget only when over it (1,400 a build
 smart-projected UVs, the emission albedo times a soft AO (a ground plane under it) baked with Cycles at 7 px/m (3.5 for the
 landmarks), `<piece>.json` (Godot frame) and `<piece>.png`. `kit3d_res.gd` shelf-packs the textures into one 2048 atlas
 (scaled together until they fit) and writes `assets/battlekit_ob/kit3d.res` (one ArrayMesh, a surface per piece; the mask
-class in UV2.x) and `kit3d_albedo.png`; both ride in the web's oblique pack.
+class in UV2.x) and `kit3d_albedo.png`; both ride in the web's main pack (index.pck) since 2026-11-09.
